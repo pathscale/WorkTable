@@ -4,6 +4,7 @@ mod primary_key;
 mod row;
 mod table;
 pub mod lock;
+pub mod persistence;
 
 // mod ty;
 // mod value;
@@ -20,7 +21,7 @@ pub mod prelude {
     pub use crate::in_memory::{RowWrapper, StorableRow, ArchivedRow};
     pub use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
     pub use crate::{
-        in_memory::page::Link, TableIndex, TableRow, WorkTable,
+        in_memory::data::Link, TableIndex, TableRow, WorkTable,
         WorkTableError, lock::Lock
     };
     pub use table::select::{SelectQueryExecutor, SelectQueryBuilder, SelectResult, SelectResultExecutor, Order};

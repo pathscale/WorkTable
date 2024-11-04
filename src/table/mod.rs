@@ -8,7 +8,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use scc::ebr::Guard;
 use scc::tree_index::TreeIndex;
 
-use crate::in_memory::page::{Link, DATA_INNER_LENGTH};
+use crate::in_memory::data::{Link, DATA_INNER_LENGTH};
 use crate::in_memory::{DataPages, RowWrapper, StorableRow};
 use crate::lock::LockMap;
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};

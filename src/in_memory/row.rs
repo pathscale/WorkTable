@@ -5,7 +5,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 /// Common trait for the `Row`s that can be stored on the [`Data`] page.
 ///
-/// [`Data`]: crate::in_memory::page::Data
+/// [`Data`]: crate::in_memory::data::Data
 pub trait StorableRow {
     type WrappedRow: Archive + Debug;
 }

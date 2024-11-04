@@ -1,16 +1,12 @@
-mod data;
-mod link;
 mod r#type;
+mod table_info;
+mod index;
 
 use derive_more::{Display, From};
 use rkyv::{with::Skip, Archive, Deserialize, Serialize};
 
-use crate::in_memory::page::r#type::PageType;
 use crate::in_memory::space;
-
-pub use data::DATA_INNER_LENGTH;
-pub use link::Link;
-pub use {data::Data, data::ExecutionError as DataExecutionError, data::Hint as DataHint};
+use crate::persistence::page::r#type::PageType;
 
 // TODO: Move to config
 /// The size of a page. Header size and other parts are _included_ in this size.
@@ -87,9 +83,9 @@ pub struct General<Inner = Empty> {
 )]
 pub struct Empty {
     #[with(Skip)]
-    page_id: Id,
+    pub page_id: Id,
 
-    bytes: [u8; INNER_PAGE_LENGTH],
+    pub bytes: [u8; INNER_PAGE_LENGTH],
 }
 
 impl Empty {
@@ -103,9 +99,10 @@ impl Empty {
 
 #[cfg(test)]
 mod tests {
-    use crate::in_memory::page::{
-        self, r#type::PageType, GeneralHeader, HEADER_LENGTH, INNER_PAGE_LENGTH, PAGE_SIZE,
-    };
+    use crate::in_memory::data::Data;
+    use crate::persistence::page;
+    use crate::persistence::page::{GeneralHeader, HEADER_LENGTH, INNER_PAGE_LENGTH, PAGE_SIZE};
+    use crate::persistence::page::r#type::PageType;
 
     fn get_general_header() -> GeneralHeader {
         GeneralHeader {
@@ -144,7 +141,7 @@ mod tests {
     fn general_data_page_valid() {
         let page = page::General {
             header: get_general_header(),
-            inner: page::Data::<()>::new(1.into()),
+            inner: Data::<()>::new(1.into()),
         };
         let bytes = rkyv::to_bytes::<_, 4096>(&page).unwrap();
 

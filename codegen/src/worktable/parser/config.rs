@@ -1,9 +1,10 @@
-use crate::worktable::model::{Config, Index};
-use crate::worktable::Parser;
-use proc_macro2::{Delimiter, Ident, TokenTree};
-use std::collections::HashMap;
 use std::str::FromStr;
+
+use proc_macro2::{Delimiter, TokenTree};
 use syn::spanned::Spanned;
+
+use crate::worktable::model::Config;
+use crate::worktable::Parser;
 
 const CONFIG_FIELD_NAME: &str = "config";
 

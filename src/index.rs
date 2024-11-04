@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use scc::TreeIndex;
 
-use crate::in_memory::page::Link;
+use crate::in_memory::data::Link;
 use crate::prelude::LockFreeSet;
 use crate::WorkTableError;
 

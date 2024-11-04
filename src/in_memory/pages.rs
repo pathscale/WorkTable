@@ -7,11 +7,12 @@ use lockfree::stack::Stack;
 use rkyv::ser::serializers::AllocSerializer;
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::in_memory::page;
-use crate::in_memory::page::{DataExecutionError, Link, DATA_INNER_LENGTH};
+use crate::in_memory::data;
+use crate::in_memory::data::{DataExecutionError, Link, DATA_INNER_LENGTH};
 use crate::in_memory::row::{RowWrapper, StorableRow};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
+use crate::persistence::page;
 
 #[derive(Debug)]
 pub struct DataPages<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
@@ -19,7 +20,7 @@ where
     Row: StorableRow,
 {
     /// Pages vector. Currently, not lock free.
-    pages: RwLock<Vec<Arc<page::Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
+    pages: RwLock<Vec<Arc<data::Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
 
     /// Stack with empty [`Link`]s. It stores [`Link`]s of rows that was deleted.
     empty_links: Stack<Link>,
@@ -39,7 +40,7 @@ where
 {
     pub fn new() -> Self {
         Self {
-            pages: RwLock::new(vec![Arc::new(page::Data::new(0.into()))]),
+            pages: RwLock::new(vec![Arc::new(data::Data::new(0.into()))]),
             empty_links: Stack::new(),
             row_count: AtomicU64::new(0),
             last_page_id: AtomicU32::new(0),
@@ -135,7 +136,7 @@ where
         if tried_page == self.current_page.load(Ordering::Relaxed) {
             let index = self.last_page_id.fetch_add(1, Ordering::Relaxed) + 1;
 
-            pages.push(Arc::new(page::Data::new(index.into())));
+            pages.push(Arc::new(data::Data::new(index.into())));
             self.current_page.fetch_add(1, Ordering::Relaxed);
         }
     }

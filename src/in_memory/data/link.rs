@@ -1,6 +1,6 @@
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::in_memory::page;
+use crate::persistence::page;
 
 pub const LINK_LENGTH: usize = 12;
 
@@ -15,8 +15,8 @@ pub struct Link {
 
 #[cfg(test)]
 mod tests {
-    use crate::in_memory::page::link::LINK_LENGTH;
-    use crate::in_memory::page::Link;
+    use crate::in_memory::data::link::LINK_LENGTH;
+    use crate::in_memory::data::Link;
 
     #[test]
     fn link_length_valid() {
