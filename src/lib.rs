@@ -5,6 +5,7 @@ mod row;
 mod table;
 pub mod lock;
 pub mod persistence;
+pub mod util;
 
 // mod ty;
 // mod value;
