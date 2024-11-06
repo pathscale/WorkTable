@@ -7,6 +7,7 @@ use scc::ebr::Guard;
 use scc::TreeIndex;
 
 use crate::in_memory::data;
+use crate::persistence::page::PAGE_SIZE;
 use crate::util::SizeMeasurable;
 
 /// Represents `key/value` pair of B-Tree index, where value is always
@@ -43,7 +44,7 @@ impl<T> Default for IndexPage<T> {
         }
     }
 }
-pub fn map_tree_index<T>(index: Arc<TreeIndex<T, data::Link>>) -> Vec<IndexPage<T>>
+pub fn map_tree_index<T, const PAGE_SIZE: usize>(index: Arc<TreeIndex<T, data::Link>>) -> Vec<IndexPage<T>>
 where T: Clone + Ord + SizeMeasurable + 'static
 {
     let guard = Guard::new();
@@ -57,7 +58,7 @@ where T: Clone + Ord + SizeMeasurable + 'static
             link,
         };
         current_size += index_value.approx_size();
-        if current_size > 4096 {
+        if current_size > PAGE_SIZE {
             pages.push(current_page.clone());
             current_page.index_values.clear();
             current_size = 8 + index_value.approx_size()
@@ -76,7 +77,9 @@ mod test {
     use scc::TreeIndex;
 
     use crate::persistence::page::index::map_tree_index;
+    use crate::persistence::page::PAGE_SIZE;
     use crate::prelude::Link;
+    use crate::util::SizeMeasurable;
 
     #[test]
     fn map_single_value() {
@@ -88,16 +91,65 @@ mod test {
         };
         index.insert(1u32, l).expect("is ok");
 
-        let res = map_tree_index(index);
+        let res = map_tree_index::<_, { PAGE_SIZE }>(index);
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].index_values.len(), 1);
         let v = &res[0].index_values[0];
         assert_eq!(v.key, 1);
         assert_eq!(v.link, l);
-        assert!(rkyv::to_bytes::<_, 0>(&res[0]).unwrap().len() <= 4096)
+        assert_eq!(rkyv::to_bytes::<_, 0>(&res[0]).unwrap().len(), 1u32.approx_size() + l.approx_size() + 8)
     }
 
-    // TODO: Add test for full page (about 4096, or just on border of 4096).
-    // TODO: Add test more than one page.
-    // TODO: Add tests for `String` keys same one, full and more than one page.
+    #[test]
+    fn map_page_border() {
+        let index = Arc::new(TreeIndex::new());
+        for i in 0..1023 {
+            let l = Link {
+                page_id: 1.into(),
+                offset: 0,
+                length: 32,
+            };
+            index.insert(i, l).expect("is ok");
+        }
+
+        let res = map_tree_index::<_, { PAGE_SIZE }>(index.clone());
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].index_values.len(), 1023);
+        // As 1023 * 16 + 8
+        assert_eq!(rkyv::to_bytes::<_, 0>(&res[0]).unwrap().len(), 16_376);
+
+        let l = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 32,
+        };
+        index.insert(1024, l).expect("is ok");
+        let res = map_tree_index::<_, { PAGE_SIZE }>(index.clone());
+        assert_eq!(res.len(), 2);
+        assert_eq!(res[0].index_values.len(), 1023);
+        assert_eq!(res[1].index_values.len(), 1);
+        // As 16 + 8
+        assert_eq!(rkyv::to_bytes::<_, 0>(&res[0]).unwrap().len(), 16_376);
+        assert_eq!(rkyv::to_bytes::<_, 0>(&res[1]).unwrap().len(), 24);
+    }
+
+    #[test]
+    fn map_single_string() {
+        let index = Arc::new(TreeIndex::new());
+        let l = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 32,
+        };
+        let s = "some string example".to_string();
+        index.insert(s.clone(), l).expect("is ok");
+
+        let res = map_tree_index::<_, { PAGE_SIZE }>(index);
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].index_values.len(), 1);
+        let v = &res[0].index_values[0];
+        assert_eq!(v.key, s);
+        assert_eq!(v.link, l);
+        assert_eq!(rkyv::to_bytes::<_, 0>(&res[0]).unwrap().len(), s.approx_size() + l.approx_size() + 8)
+    }
 }
