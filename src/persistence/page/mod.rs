@@ -1,11 +1,13 @@
 mod r#type;
 mod table_info;
 mod index;
+mod general_header;
 
 use derive_more::{Display, From};
 use rkyv::{with::Skip, Archive, Deserialize, Serialize};
 
 use crate::in_memory::space;
+use crate::persistence::page::general_header::GeneralHeader;
 use crate::persistence::page::r#type::PageType;
 
 // TODO: Move to config
@@ -50,22 +52,16 @@ pub const INNER_PAGE_LENGTH: usize = PAGE_SIZE - HEADER_LENGTH;
 )]
 pub struct Id(u32);
 
+impl Id {
+    pub fn next(self) -> Self {
+        Id(self.0 + 1)
+    }
+}
+
 impl From<Id> for usize {
     fn from(value: Id) -> Self {
         value.0 as usize
     }
-}
-
-/// Header that appears on every page before page's data.
-#[derive(
-    Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-)]
-pub struct GeneralHeader {
-    page_id: Id,
-    previous_id: Id,
-    next_id: Id,
-    page_type: PageType,
-    space_id: space::Id,
 }
 
 /// General page representation.
