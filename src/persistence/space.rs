@@ -1,6 +1,9 @@
+//! [`Space`] type declaration.
+
 use crate::persistence::page;
 
-
+/// [`Space`] represents whole [`WorkTable`] file.
+#[derive(Debug, Default)]
 pub struct Space {
-    pages: Vec<page::General>
+    pub pages: Vec<page::General>
 }

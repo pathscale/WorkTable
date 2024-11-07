@@ -21,7 +21,7 @@ pub enum PageType {
     /// Header for empty `Page`. Used in case page is just allocated.
     Empty = 0,
     /// Space header `Page` type.
-    SpaceHeader = 1,
+    SpaceInfo = 1,
     /// Table data `Page` type.
     Data = 2,
     /// Index `Page` type.

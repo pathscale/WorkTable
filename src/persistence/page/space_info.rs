@@ -3,7 +3,9 @@
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::space;
+use crate::persistence::page;
 use crate::persistence::page::GeneralHeader;
+use crate::persistence::page::r#type::PageType;
 
 pub type SpaceName = String;
 
@@ -33,3 +35,19 @@ pub struct SpaceInfo {
     Archive, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct Interval(usize, usize);
+
+impl From<SpaceInfo> for page::General<SpaceInfo> {
+    fn from(info: SpaceInfo) -> Self {
+        let header = GeneralHeader {
+            page_id: page::Id::from(0),
+            previous_id: page::Id::from(0),
+            next_id: page::Id::from(0),
+            page_type: PageType::SpaceInfo,
+            space_id: info.id,
+        };
+        page::General {
+            header,
+            inner: info,
+        }
+    }
+}

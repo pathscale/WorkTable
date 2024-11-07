@@ -69,8 +69,8 @@ impl From<Id> for usize {
     Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct General<Inner = Empty> {
-    header: GeneralHeader,
-    inner: Inner,
+    pub header: GeneralHeader,
+    pub inner: Inner,
 }
 
 /// Empty page. It's default allocated page.
