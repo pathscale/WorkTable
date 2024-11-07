@@ -37,16 +37,33 @@ impl Generator {
         let iter_with_async = Self::gen_iter_with_async(row_type);
         let select_executor = self.gen_select_executor();
         let select_result_executor = self.gen_select_result_executor();
+        let table_name_lit = Literal::string(self.name.to_string().as_str());
         let table = if let Some(page_size) = &self.config.as_ref().map(|c| c.page_size).flatten() {
             let literal = Literal::usize_unsuffixed(*page_size as usize);
             quote! {
-                #[derive(Debug, Default)]
+                #[derive(Debug)]
                 pub struct #ident(WorkTable<#row_type, #pk_type, #index_type, <#pk_type as TablePrimaryKey>::Generator, #literal>);
+
+                impl Default for #ident {
+                    fn default() -> Self {
+                        let mut inner = WorkTable::default();
+                        inner.table_name = #table_name_lit;
+                        Self(inner)
+                    }
+                }
             }
         } else {
             quote! {
-                #[derive(Debug, Default)]
+                #[derive(Debug)]
                 pub struct #ident(WorkTable<#row_type, #pk_type, #index_type>);
+
+                impl Default for #ident {
+                    fn default() -> Self {
+                        let mut inner = WorkTable::default();
+                        inner.table_name = #table_name_lit;
+                        Self(inner)
+                    }
+                }
             }
         };
 
@@ -54,6 +71,10 @@ impl Generator {
             #table
 
             impl #ident {
+                pub fn name(&self) -> &'static str {
+                    &self.0.table_name
+                }
+
                 pub fn select(&self, pk: #pk_type) -> Option<#row_type> {
                     self.0.select(pk)
                 }

@@ -34,6 +34,8 @@ pub struct WorkTable<
     pub pk_gen: PkGen,
 
     pub lock_map: LockMap,
+
+    pub table_name: &'static str,
 }
 
 // Manual implementations to avoid unneeded trait bounds.
@@ -53,6 +55,7 @@ where
             indexes: I::default(),
             pk_gen: Default::default(),
             lock_map: LockMap::new(),
+            table_name: ""
         }
     }
 }
@@ -157,6 +160,13 @@ mod tests {
             }
         }
     );
+
+    #[test]
+    fn table_name() {
+        let table = TestWorkTable::default();
+        let name = table.name();
+        assert_eq!(name, "Test")
+    }
 
     #[test]
     fn iter_with() {

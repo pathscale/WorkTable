@@ -1,14 +1,14 @@
 mod r#type;
-mod table_info;
+mod space_info;
 mod index;
 mod general_header;
 
 use derive_more::{Display, From};
 use rkyv::{with::Skip, Archive, Deserialize, Serialize};
 
-use crate::in_memory::space;
 use crate::persistence::page::general_header::GeneralHeader;
-use crate::persistence::page::r#type::PageType;
+
+pub use space_info::SpaceInfo;
 
 // TODO: Move to config
 /// The size of a page. Header size and other parts are _included_ in this size.
