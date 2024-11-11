@@ -1,18 +1,17 @@
-use std::fmt::Debug;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-
+use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
 use lockfree::stack::Stack;
 use rkyv::ser::serializers::AllocSerializer;
 use rkyv::{Archive, Deserialize, Serialize};
+use std::fmt::Debug;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use crate::in_memory::data;
 use crate::in_memory::data::{DataExecutionError, Link, DATA_INNER_LENGTH};
 use crate::in_memory::row::{RowWrapper, StorableRow};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
-use crate::persistence::page;
 
 #[derive(Debug)]
 pub struct DataPages<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
@@ -69,16 +68,14 @@ where
                     DataExecutionError::InvalidLink => {
                         self.empty_links.push(link);
                         self.retry_insert(general_row)
-                    },
-                    DataExecutionError::PageIsFull { .. } |
-                    DataExecutionError::SerializeError |
-                    DataExecutionError::DeserializeError => {
-                        Err(e.into())
                     }
+                    DataExecutionError::PageIsFull { .. }
+                    | DataExecutionError::SerializeError
+                    | DataExecutionError::DeserializeError => Err(e.into()),
                 }
             } else {
                 Ok(link)
-            }
+            };
         }
 
         let (link, tried_page) = {
@@ -168,13 +165,15 @@ where
     pub fn with_ref<Op, Res>(&self, link: Link, op: Op) -> Result<Res, ExecutionError>
     where
         Row: Archive,
-        Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res
+        Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
         let pages = self.pages.read().unwrap();
         let page = pages
             .get::<usize>(link.page_id.into())
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let gen_row = page.get_row_ref(link).map_err(ExecutionError::DataPageError)?;
+        let gen_row = page
+            .get_row_ref(link)
+            .map_err(ExecutionError::DataPageError)?;
         let res = op(gen_row);
         Ok(res)
     }
@@ -183,16 +182,21 @@ where
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataPages")
     )]
-    pub unsafe fn with_mut_ref<Op, Res>(&self, link: Link, mut op: Op) -> Result<Res, ExecutionError>
+    pub unsafe fn with_mut_ref<Op, Res>(
+        &self,
+        link: Link,
+        mut op: Op,
+    ) -> Result<Res, ExecutionError>
     where
         Row: Archive,
-        Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res
+        Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
         let pages = self.pages.read().unwrap();
         let page = pages
             .get::<usize>(link.page_id.into())
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let gen_row = page.get_mut_row_ref(link)
+        let gen_row = page
+            .get_mut_row_ref(link)
             .map_err(ExecutionError::DataPageError)?
             .get_unchecked_mut();
         let res = op(gen_row);
@@ -227,9 +231,9 @@ where
 pub enum ExecutionError {
     DataPageError(DataExecutionError),
 
-    PageNotFound(#[error(not(source))] page::Id),
+    PageNotFound(#[error(not(source))] PageId),
 
-    Locked
+    Locked,
 }
 
 #[cfg(test)]

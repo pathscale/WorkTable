@@ -1,17 +1,16 @@
-use std::cell::UnsafeCell;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
-
+use data_bucket::page::PageId;
 use derive_more::{Display, Error};
 use rkyv::ser::serializers::AllocSerializer;
 use rkyv::{
     with::{Skip, Unsafe},
     AlignedBytes, Archive, Deserialize, Serialize,
 };
+use std::cell::UnsafeCell;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::in_memory::data;
-use crate::persistence::page;
 use crate::persistence::page::INNER_PAGE_LENGTH;
 
 #[cfg(feature = "perf_measurements")]
@@ -27,10 +26,10 @@ pub const DATA_INNER_LENGTH: usize = INNER_PAGE_LENGTH - DATA_HEADER_LENGTH;
 pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     /// [`Id`] of the [`General`] page of this [`Data`].
     ///
-    /// [`Id]: page::Id
+    /// [`Id]: PageId
     /// [`General`]: page::General
     #[with(Skip)]
-    id: page::Id,
+    id: PageId,
 
     /// Offset to the first free byte on this [`Data`] page.
     free_offset: AtomicU32,
@@ -45,20 +44,9 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 
 unsafe impl<Row, const DATA_LENGTH: usize> Sync for Data<Row, DATA_LENGTH> {}
 
-impl<Row, const DATA_LENGTH: usize> From<page::Empty> for Data<Row, DATA_LENGTH> {
-    fn from(e: page::Empty) -> Self {
-        Self {
-            id: e.page_id,
-            free_offset: AtomicU32::default(),
-            inner_data: UnsafeCell::default(),
-            _phantom: PhantomData,
-        }
-    }
-}
-
 impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     /// Creates new [`Data`] page.
-    pub fn new(id: page::Id) -> Self {
+    pub fn new(id: PageId) -> Self {
         Self {
             id,
             free_offset: AtomicU32::default(),

@@ -1,6 +1,5 @@
+use data_bucket::page::PageId;
 use rkyv::{Archive, Deserialize, Serialize};
-
-use crate::persistence::page;
 
 pub const LINK_LENGTH: usize = 12;
 
@@ -8,7 +7,7 @@ pub const LINK_LENGTH: usize = 12;
     Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct Link {
-    pub page_id: page::Id,
+    pub page_id: PageId,
     pub offset: u32,
     pub length: u32,
 }
