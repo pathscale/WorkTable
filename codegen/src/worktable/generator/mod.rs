@@ -1,9 +1,9 @@
 mod index;
 mod primary_key;
+mod queries;
 mod row;
 mod table;
 mod wrapper;
-mod queries;
 
 use proc_macro2::Ident;
 

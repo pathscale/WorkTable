@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crate::in_memory::data;
-use crate::in_memory::data::{DataExecutionError, Link, DATA_INNER_LENGTH};
+use crate::in_memory::data::{DataExecutionError, DATA_INNER_LENGTH};
 use crate::in_memory::row::{RowWrapper, StorableRow};
+use crate::prelude::Link;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 

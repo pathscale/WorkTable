@@ -9,7 +9,8 @@ pub trait PrimaryKeyGenerator<T> {
 }
 
 impl<T> PrimaryKeyGenerator<T> for AtomicU32
-where T: From<u32>
+where
+    T: From<u32>,
 {
     fn next(&self) -> T {
         self.fetch_add(1, Ordering::Relaxed).into()
@@ -17,14 +18,18 @@ where T: From<u32>
 }
 
 impl<T> PrimaryKeyGenerator<T> for AtomicU64
-where T: From<u64>{
+where
+    T: From<u64>,
+{
     fn next(&self) -> T {
         self.fetch_add(1, Ordering::Relaxed).into()
     }
 }
 
 impl<T> PrimaryKeyGenerator<T> for AtomicI64
-where T: From<i64>{
+where
+    T: From<i64>,
+{
     fn next(&self) -> T {
         self.fetch_add(1, Ordering::Relaxed).into()
     }

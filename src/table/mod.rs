@@ -1,5 +1,6 @@
 pub mod select;
 
+use data_bucket::Link;
 use derive_more::{Display, Error, From};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
@@ -8,7 +9,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use scc::ebr::Guard;
 use scc::tree_index::TreeIndex;
 
-use crate::in_memory::data::{Link, DATA_INNER_LENGTH};
+use crate::in_memory::data::DATA_INNER_LENGTH;
 use crate::in_memory::{DataPages, RowWrapper, StorableRow};
 use crate::lock::LockMap;
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
@@ -55,7 +56,7 @@ where
             indexes: I::default(),
             pk_gen: Default::default(),
             lock_map: LockMap::new(),
-            table_name: ""
+            table_name: "",
         }
     }
 }
@@ -134,6 +135,17 @@ mod tests {
 
     use crate::prelude::*;
     use crate::select::Order;
+
+    use data_bucket::{
+        map_tree_index, map_unique_tree_index, IndexData, PersistIndex, PersistableIndex,
+        SizeMeasurable,
+    };
+
+    #[derive(Debug, Default, Clone, PersistIndex)]
+    pub struct TestIndexIndex {
+        exchnage_idx: TreeIndex<String, std::sync::Arc<LockFreeSet<Link>>>,
+        test_idx: TreeIndex<i64, Link>,
+    }
 
     worktable! (
         name: Test,

@@ -40,7 +40,7 @@ impl Generator {
         self.index_name = Some(ident.clone());
         let struct_def = quote! {pub struct #ident};
         quote! {
-            #[derive(Debug, Default, Clone)]
+            #[derive(Debug, Default, Clone, PersistIndex)]
             #struct_def {
                 #(#index_rows),*
             }
@@ -72,7 +72,9 @@ impl Generator {
                 }
             }).collect::<Vec<_>>();
 
-        let delete_rows = self.columns.indexes
+        let delete_rows = self
+            .columns
+            .indexes
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
@@ -88,7 +90,8 @@ impl Generator {
                         }
                     }
                 }
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
         let row_type_name = self.row_name.as_ref().unwrap();
         let index_type_name = self.index_name.as_ref().unwrap();

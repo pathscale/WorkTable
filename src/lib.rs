@@ -22,8 +22,11 @@ pub mod prelude {
     pub use crate::in_memory::{ArchivedRow, RowWrapper, StorableRow};
     pub use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
     use crate::table;
-    pub use crate::{
-        in_memory::data::Link, lock::Lock, TableIndex, TableRow, WorkTable, WorkTableError,
+    pub use crate::{lock::Lock, TableIndex, TableRow, WorkTable, WorkTableError};
+    pub use data_bucket::{
+        map_index_pages_to_general, map_tree_index, map_unique_tree_index, GeneralHeader,
+        GeneralPage, IndexData, Link, PersistIndex, PersistTable, SpaceInfoData, PersistableIndex,
+        PageType
     };
     pub use derive_more::{From, Into};
     pub use lockfree::set::Set as LockFreeSet;

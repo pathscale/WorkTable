@@ -20,13 +20,12 @@ impl Generator {
         let index_type = self.index_name.as_ref().unwrap();
 
         let get_next = match self.columns.generator_type {
-            GeneratorType::Custom |
-            GeneratorType::Autoincrement => {
+            GeneratorType::Custom | GeneratorType::Autoincrement => {
                 quote! {
-                pub fn get_next_pk(&self) -> #pk_type {
-                    self.0.get_next_pk()
+                    pub fn get_next_pk(&self) -> #pk_type {
+                        self.0.get_next_pk()
+                    }
                 }
-            }
             }
             GeneratorType::None => {
                 quote! {}
@@ -38,11 +37,18 @@ impl Generator {
         let select_executor = self.gen_select_executor();
         let select_result_executor = self.gen_select_result_executor();
         let table_name_lit = Literal::string(self.name.to_string().as_str());
+        let const_name = Ident::new(
+            format!("{}_PAGE_SIZE", name.to_string().to_uppercase()).as_str(),
+            Span::mixed_site(),
+        );
+
         let table = if let Some(page_size) = &self.config.as_ref().map(|c| c.page_size).flatten() {
-            let literal = Literal::usize_unsuffixed(*page_size as usize);
+            let page_size = Literal::usize_unsuffixed(*page_size as usize);
             quote! {
-                #[derive(Debug)]
-                pub struct #ident(WorkTable<#row_type, #pk_type, #index_type, <#pk_type as TablePrimaryKey>::Generator, #literal>);
+                const #const_name: usize = #page_size;
+
+                #[derive(Debug, PersistTable)]
+                pub struct #ident(WorkTable<#row_type, #pk_type, #index_type, <#pk_type as TablePrimaryKey>::Generator, #const_name>);
 
                 impl Default for #ident {
                     fn default() -> Self {
@@ -54,7 +60,9 @@ impl Generator {
             }
         } else {
             quote! {
-                #[derive(Debug)]
+                const #const_name: usize = 4096 * 4;
+
+                #[derive(Debug, PersistTable)]
                 pub struct #ident(WorkTable<#row_type, #pk_type, #index_type>);
 
                 impl Default for #ident {
@@ -119,31 +127,36 @@ impl Generator {
         let name = &self.name;
         let ident = Ident::new(format!("{}WorkTable", name).as_str(), Span::mixed_site());
 
-        let columns = self.columns.columns_map.iter().map(|(name, _)| {
-            let lit = Literal::string(name.to_string().as_str());
-            quote! {
-                #lit => {
-                    sort = Box::new(move |left, right| {match sort(left, right) {
-                        std::cmp::Ordering::Equal => {
-                            match q {
-                                Order::Asc => {
-                                    (&left.#name).partial_cmp(&right.#name).unwrap()
-                                },
-                                Order::Desc => {
-                                    (&right.#name).partial_cmp(&left.#name).unwrap()
+        let columns = self
+            .columns
+            .columns_map
+            .iter()
+            .map(|(name, _)| {
+                let lit = Literal::string(name.to_string().as_str());
+                quote! {
+                    #lit => {
+                        sort = Box::new(move |left, right| {match sort(left, right) {
+                            std::cmp::Ordering::Equal => {
+                                match q {
+                                    Order::Asc => {
+                                        (&left.#name).partial_cmp(&right.#name).unwrap()
+                                    },
+                                    Order::Desc => {
+                                        (&right.#name).partial_cmp(&left.#name).unwrap()
+                                    }
                                 }
-                            }
-                        },
-                        std::cmp::Ordering::Less => {
-                            std::cmp::Ordering::Less
-                        },
-                        std::cmp::Ordering::Greater => {
-                            std::cmp::Ordering::Greater
-                        },
-                    }});
+                            },
+                            std::cmp::Ordering::Less => {
+                                std::cmp::Ordering::Less
+                            },
+                            std::cmp::Ordering::Greater => {
+                                std::cmp::Ordering::Greater
+                            },
+                        }});
+                    }
                 }
-            }
-        }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
         quote! {
             impl SelectResultExecutor<#row_type> for #ident {

@@ -21,15 +21,15 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             "columns" => {
                 let res = parser.parse_columns()?;
                 columns = Some(res)
-            },
+            }
             "indexes" => {
                 let res = parser.parse_indexes()?;
                 indexes = Some(res);
-            },
+            }
             "queries" => {
                 let res = parser.parse_queries()?;
                 queries = Some(res)
-            },
+            }
             "config" => {
                 let res = parser.parse_configs()?;
                 config = Some(res)

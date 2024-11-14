@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::in_memory::data;
 use crate::persistence::page::INNER_PAGE_LENGTH;
+use crate::prelude::Link;
 
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
@@ -59,7 +60,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataRow")
     )]
-    pub fn save_row<const N: usize>(&self, row: &Row) -> Result<data::Link, ExecutionError>
+    pub fn save_row<const N: usize>(&self, row: &Row) -> Result<Link, ExecutionError>
     where
         Row: Archive + Serialize<AllocSerializer<N>>,
     {
@@ -76,7 +77,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[offset as usize..][..length as usize].copy_from_slice(bytes.as_slice());
 
-        let link = data::Link {
+        let link = Link {
             page_id: self.id,
             offset,
             length,
@@ -92,8 +93,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     pub unsafe fn save_row_by_link<const N: usize>(
         &self,
         row: &Row,
-        link: data::Link,
-    ) -> Result<data::Link, ExecutionError>
+        link: Link,
+    ) -> Result<Link, ExecutionError>
     where
         Row: Archive + Serialize<AllocSerializer<N>>,
     {
@@ -112,7 +113,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 
     pub unsafe fn get_mut_row_ref(
         &self,
-        link: data::Link,
+        link: Link,
     ) -> Result<Pin<&mut <Row as Archive>::Archived>, ExecutionError>
     where
         Row: Archive,
@@ -130,10 +131,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataRow")
     )]
-    pub fn get_row_ref(
-        &self,
-        link: data::Link,
-    ) -> Result<&<Row as Archive>::Archived, ExecutionError>
+    pub fn get_row_ref(&self, link: Link) -> Result<&<Row as Archive>::Archived, ExecutionError>
     where
         Row: Archive,
     {
@@ -150,7 +148,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataRow")
     )]
-    pub fn get_row(&self, link: data::Link) -> Result<Row, ExecutionError>
+    pub fn get_row(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive,
         <Row as Archive>::Archived: Deserialize<Row, rkyv::de::deserializers::SharedDeserializeMap>,

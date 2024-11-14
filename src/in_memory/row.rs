@@ -46,7 +46,8 @@ impl<Inner> RowWrapper<Inner> for GeneralRow<Inner> {
 }
 
 impl<Inner> ArchivedRow for ArchivedGeneralRow<Inner>
-where Inner: Archive
+where
+    Inner: Archive,
 {
     fn is_locked(&self) -> Option<u16> {
         None

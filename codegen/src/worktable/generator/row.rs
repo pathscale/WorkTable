@@ -19,11 +19,15 @@ impl Generator {
                 self.#pk_field.clone().into()
             }
         } else {
-            let vals = pk.vals.keys().map(|i| {
-                quote! {
-                    self.#i.clone()
-                }
-            }).collect::<Vec<_>>();
+            let vals = pk
+                .vals
+                .keys()
+                .map(|i| {
+                    quote! {
+                        self.#i.clone()
+                    }
+                })
+                .collect::<Vec<_>>();
             quote! {
                 (#(#vals),*).into()
             }
