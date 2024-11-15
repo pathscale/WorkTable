@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 worktable! (
     name: Test,
+    persistence: true,
     columns: {
         id: Uuid primary_key,
         another: i64,
