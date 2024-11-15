@@ -543,7 +543,6 @@ mod tests {
 
     mod custom_pk {
         use std::sync::atomic::{AtomicU64, Ordering};
-
         use derive_more::From;
         use rkyv::{Archive, Deserialize, Serialize};
         use worktable_codegen::worktable;
@@ -563,6 +562,7 @@ mod tests {
             PartialEq,
             Ord,
             Serialize,
+            SizeMeasure
         )]
         #[archive(compare(PartialEq))]
         #[archive_attr(derive(Debug))]

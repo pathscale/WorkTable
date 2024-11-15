@@ -47,7 +47,7 @@ impl Generator {
             quote! {
                 const #const_name: usize = #page_size;
 
-                #[derive(Debug)]
+                #[derive(Debug, PersistTable)]
                 pub struct #ident(WorkTable<#row_type, #pk_type, #index_type, <#pk_type as TablePrimaryKey>::Generator, #const_name>);
 
                 impl Default for #ident {
@@ -62,7 +62,7 @@ impl Generator {
             quote! {
                 const #const_name: usize = 4096 * 4;
 
-                #[derive(Debug)]
+                #[derive(Debug, PersistTable)]
                 pub struct #ident(WorkTable<#row_type, #pk_type, #index_type>);
 
                 impl Default for #ident {

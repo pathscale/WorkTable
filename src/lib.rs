@@ -26,7 +26,7 @@ pub mod prelude {
     pub use data_bucket::{
         map_index_pages_to_general, map_tree_index, map_unique_tree_index, GeneralHeader,
         GeneralPage, IndexData, Link, PersistIndex, PersistTable, SpaceInfoData, PersistableIndex,
-        PageType, SizeMeasurable
+        PageType, SizeMeasurable, align, SizeMeasure
     };
     pub use derive_more::{From, Into};
     pub use lockfree::set::Set as LockFreeSet;
