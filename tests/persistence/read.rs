@@ -16,11 +16,10 @@ worktable! (
 );
 
 fn test_read () {
-    let persistence_config = PersistenceEngineConfig {
-        path: "tests/db",
-    };
-    let engine = Arc::new(PersistenceEngine::new(persistence_config));
-
-    let space = TestSpace::read(engine);
+    // this call will read space file from `tests/db`. It will be `tests/db/test.wt`
+    // TODO: How to config this? Maybe we will need to have DATABASE_CONFIG env
+    let space = TestSpace::read();
     let table = space.into_table();
+
+    // Check tables data
 }

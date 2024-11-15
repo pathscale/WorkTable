@@ -17,14 +17,10 @@ worktable! (
 
 #[test]
 fn test_persist () {
-    let persistence_config = PersistenceEngineConfig {
-        path: "tests/db/",
-    };
-    let engine = Arc::new(PersistenceEngine::new(persistence_config));
-
-    let table = TestWorkTable::new(engine.clone());
+    let table = TestWorkTable::new();
     let space: TestSpace = table.into_space();
     // this call will save space file to `tests/db`. It will be `tests/db/test.wt`
+    // TODO: How to config this? Maybe we will need to have DATABASE_CONFIG env
     space.persist();
 
     // check if file is same to expected
