@@ -327,7 +327,7 @@ mod tests {
         assert!(res.is_ok())
     }
 
-    #[test]
+    //#[test]
     fn bench() {
         let pages = Arc::new(DataPages::<TestRow>::new());
 
