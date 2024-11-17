@@ -1,3 +1,4 @@
+mod attribute;
 mod columns;
 mod config;
 mod index;

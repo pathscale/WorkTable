@@ -41,31 +41,26 @@ impl Generator {
             format!("{}_PAGE_SIZE", name.to_string().to_uppercase()).as_str(),
             Span::mixed_site(),
         );
-
-        let table = if let Some(page_size) = &self.config.as_ref().map(|c| c.page_size).flatten() {
-            let page_size = Literal::usize_unsuffixed(*page_size as usize);
+        let persist_type_part = if self.is_persist {
             quote! {
-                const #const_name: usize = #page_size;
-
-                #[derive(Debug, PersistTable)]
-                pub struct #ident(WorkTable<#row_type, #pk_type, #index_type, <#pk_type as TablePrimaryKey>::Generator, #const_name>);
-
-                impl Default for #ident {
-                    fn default() -> Self {
+                , std::sync::Arc<DatabaseManager>
+            }
+        } else {
+            quote! {}
+        };
+        let new_impl = if self.is_persist {
+            quote! {
+                 impl #ident {
+                    fn new(manager:  std::sync::Arc<DatabaseManager>) -> Self {
                         let mut inner = WorkTable::default();
                         inner.table_name = #table_name_lit;
-                        Self(inner)
+                        Self(inner, manager)
                     }
                 }
             }
         } else {
             quote! {
-                const #const_name: usize = 4096 * 4;
-
-                #[derive(Debug, PersistTable)]
-                pub struct #ident(WorkTable<#row_type, #pk_type, #index_type>);
-
-                impl Default for #ident {
+                 impl Default for #ident {
                     fn default() -> Self {
                         let mut inner = WorkTable::default();
                         inner.table_name = #table_name_lit;
@@ -75,8 +70,43 @@ impl Generator {
             }
         };
 
+        let table = if let Some(page_size) = &self.config.as_ref().map(|c| c.page_size).flatten() {
+            let page_size = Literal::usize_unsuffixed(*page_size as usize);
+            quote! {
+                const #const_name: usize = #page_size;
+
+                #[derive(Debug, PersistTable)]
+                pub struct #ident(
+                    WorkTable<
+                        #row_type,
+                        #pk_type,
+                        #index_type,
+                        <#pk_type as TablePrimaryKey>::Generator,
+                        #const_name
+                    >
+                    #persist_type_part
+                );
+            }
+        } else {
+            quote! {
+                const #const_name: usize = 4096 * 4;
+
+                #[derive(Debug, PersistTable)]
+                pub struct #ident(
+                    WorkTable<
+                        #row_type,
+                        #pk_type,
+                        #index_type
+                    >
+                    #persist_type_part
+                );
+            }
+        };
+
         quote! {
             #table
+
+            #new_impl
 
             impl #ident {
                 pub fn name(&self) -> &'static str {

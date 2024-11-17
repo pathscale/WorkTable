@@ -16,6 +16,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut config = None;
 
     let name = parser.parse_name()?;
+    let is_persist = parser.parse_persist()?;
     while let Some(ident) = parser.peek_next() {
         match ident.to_string().as_str() {
             "columns" => {
@@ -42,7 +43,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     if let Some(i) = indexes {
         columns.indexes = i
     }
-    let mut generator = Generator::new(name, columns);
+    let mut generator = Generator::new(name, is_persist, columns);
     generator.queries = queries;
     generator.config = config;
 

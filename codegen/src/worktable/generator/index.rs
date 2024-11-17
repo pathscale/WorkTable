@@ -140,7 +140,7 @@ mod tests {
         columns.indexes = idx;
 
         let ident = Ident::new("Test", Span::call_site());
-        let mut generator = Generator::new(ident, columns);
+        let mut generator = Generator::new(ident, false, columns);
 
         let res = generator.gen_type_def();
 
@@ -169,7 +169,7 @@ mod tests {
         columns.indexes = idx;
 
         let ident = Ident::new("Test", Span::call_site());
-        let mut generator = Generator::new(ident, columns);
+        let mut generator = Generator::new(ident, false, columns);
         generator.gen_type_def();
         generator.gen_pk_def();
         generator.gen_row_def();

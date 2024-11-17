@@ -99,7 +99,7 @@ mod tests {
         let columns = parser.parse_columns().unwrap();
 
         let ident = Ident::new("Test", Span::call_site());
-        let mut generator = Generator::new(ident, columns);
+        let mut generator = Generator::new(ident, false, columns);
 
         let pk_def = generator.gen_pk_def();
 
@@ -120,7 +120,7 @@ mod tests {
         let columns = parser.parse_columns().unwrap();
 
         let ident = Ident::new("Test", Span::call_site());
-        let mut generator = Generator::new(ident, columns);
+        let mut generator = Generator::new(ident, false, columns);
 
         let pk_def = generator.gen_pk_def();
 

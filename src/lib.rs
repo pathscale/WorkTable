@@ -6,6 +6,7 @@ mod row;
 mod table;
 pub use data_bucket as persistence;
 pub mod util;
+mod database;
 
 // mod ty;
 // mod value;
@@ -28,6 +29,7 @@ pub mod prelude {
         GeneralPage, IndexData, Link, PersistIndex, PersistTable, SpaceInfoData, PersistableIndex,
         PageType, SizeMeasurable, align, SizeMeasure
     };
+    pub use crate::database::DatabaseManager;
     pub use derive_more::{From, Into};
     pub use lockfree::set::Set as LockFreeSet;
     pub use scc::{ebr::Guard, tree_index::TreeIndex};
