@@ -1,6 +1,6 @@
 pub mod select;
 
-use data_bucket::Link;
+use data_bucket::{Link, INNER_PAGE_LENGTH};
 use derive_more::{Display, Error, From};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
@@ -9,7 +9,6 @@ use rkyv::{Archive, Deserialize, Serialize};
 use scc::ebr::Guard;
 use scc::tree_index::TreeIndex;
 
-use crate::in_memory::data::DATA_INNER_LENGTH;
 use crate::in_memory::{DataPages, RowWrapper, StorableRow};
 use crate::lock::LockMap;
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
@@ -21,7 +20,7 @@ pub struct WorkTable<
     Pk,
     I = (),
     PkGen = <Pk as TablePrimaryKey>::Generator,
-    const DATA_LENGTH: usize = DATA_INNER_LENGTH,
+    const DATA_LENGTH: usize = INNER_PAGE_LENGTH,
 > where
     Pk: Clone + Ord + 'static,
     Row: StorableRow,
@@ -140,12 +139,6 @@ mod tests {
         map_tree_index, map_unique_tree_index, IndexData, PersistIndex, PersistableIndex,
         SizeMeasurable,
     };
-
-    #[derive(Debug, Default, Clone, PersistIndex)]
-    pub struct TestIndexIndex {
-        exchnage_idx: TreeIndex<String, std::sync::Arc<LockFreeSet<Link>>>,
-        test_idx: TreeIndex<i64, Link>,
-    }
 
     worktable! (
         name: Test,
@@ -542,9 +535,9 @@ mod tests {
     }
 
     mod custom_pk {
-        use std::sync::atomic::{AtomicU64, Ordering};
         use derive_more::From;
         use rkyv::{Archive, Deserialize, Serialize};
+        use std::sync::atomic::{AtomicU64, Ordering};
         use worktable_codegen::worktable;
 
         use crate::prelude::*;
@@ -562,7 +555,7 @@ mod tests {
             PartialEq,
             Ord,
             Serialize,
-            SizeMeasure
+            SizeMeasure,
         )]
         #[archive(compare(PartialEq))]
         #[archive_attr(derive(Debug))]

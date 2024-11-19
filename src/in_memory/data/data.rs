@@ -159,6 +159,11 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             .deserialize(&mut map)
             .map_err(|_| ExecutionError::DeserializeError)
     }
+
+    pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
+        let data = unsafe { &*self.inner_data.get() };
+        data.0.clone()
+    }
 }
 
 /// Error that can appear on [`Data`] page operations.

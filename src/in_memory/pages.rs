@@ -226,6 +226,11 @@ where
         self.empty_links.push(link);
         Ok(())
     }
+
+    pub fn get_bytes(&self) -> Vec<[u8; DATA_LENGTH]> {
+        let pages = self.pages.read().unwrap();
+        pages.iter().map(|p| p.get_bytes()).collect()
+    }
 }
 
 #[derive(Debug, Display, Error, From)]

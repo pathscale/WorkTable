@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use worktable::worktable;
-use worktable::prelude::*;
 use uuid::Uuid;
+use worktable::prelude::*;
+use worktable::worktable;
 
 worktable! (
     name: Test,
@@ -17,9 +17,9 @@ worktable! (
 );
 
 #[test]
-fn test_persist () {
+fn test_persist() {
     let manager = Arc::new(DatabaseManager {
-        config_path: "tests/data".to_string()
+        config_path: "tests/data".to_string(),
     });
     let table = TestWorkTable::new(manager);
 
@@ -31,8 +31,8 @@ fn test_persist () {
         table.insert(row).unwrap();
     }
     let space: TestSpace = table.into_space();
-    let a = 1;
-    // this call will save space file to `tests/db`. It will be `tests/db/test.wt`
+    println!("{:?}", space.data);
+    // this call will save space file to `tests/db`. It will be `tests/data/test.wt`
     // TODO: How to config this? Maybe we will need to have DATABASE_CONFIG env
     space.persist().unwrap();
 

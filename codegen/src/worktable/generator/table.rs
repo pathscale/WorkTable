@@ -69,13 +69,22 @@ impl Generator {
                 }
             }
         };
+        let derive = if self.is_persist {
+            quote! {
+                 #[derive(Debug, PersistTable)]
+            }
+        } else {
+            quote! {
+                 #[derive(Debug)]
+            }
+        };
 
         let table = if let Some(page_size) = &self.config.as_ref().map(|c| c.page_size).flatten() {
             let page_size = Literal::usize_unsuffixed(*page_size as usize);
             quote! {
                 const #const_name: usize = #page_size;
 
-                #[derive(Debug, PersistTable)]
+                #derive
                 pub struct #ident(
                     WorkTable<
                         #row_type,
@@ -89,9 +98,9 @@ impl Generator {
             }
         } else {
             quote! {
-                const #const_name: usize = 4096 * 4;
+                const #const_name: usize = INNER_PAGE_LENGTH;
 
-                #[derive(Debug, PersistTable)]
+                #derive
                 pub struct #ident(
                     WorkTable<
                         #row_type,

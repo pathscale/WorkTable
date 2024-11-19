@@ -20,13 +20,13 @@ impl Generator {
         let def = if vals.len() == 1 {
             let type_ = vals.values().next().unwrap();
             quote! {
-                #[derive(Clone, Debug, From, Eq, Into, PartialEq, PartialOrd, Ord)]
+                #[derive(Clone, rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, From, Eq, Into, PartialEq, PartialOrd, Ord)]
                 pub struct #ident(#type_);
             }
         } else {
             let types = vals.values();
             quote! {
-                #[derive(Clone, Debug, From, Eq, Into, PartialEq, PartialOrd, Ord)]
+                #[derive(Clone, rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, From, Eq, Into, PartialEq, PartialOrd, Ord)]
                 pub struct #ident(#(#types),*);
             }
         };

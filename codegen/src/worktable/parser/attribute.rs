@@ -6,9 +6,8 @@ use crate::worktable::parser::Parser;
 // TODO: Move this to separate attributes section because now it only parses persist.
 impl Parser {
     pub fn parse_persist(&mut self) -> syn::Result<bool> {
-
         let Some(ident) = self.input_iter.peek().cloned() else {
-            return Ok(false)
+            return Ok(false);
         };
         let TokenTree::Ident(ident) = ident else {
             return Err(syn::Error::new(
