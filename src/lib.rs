@@ -29,7 +29,7 @@ pub mod prelude {
         align, map_data_pages_to_general, map_index_pages_to_general, map_tree_index,
         map_unique_tree_index, persist_page, DataPage, GeneralHeader, GeneralPage, IndexData,
         Interval, Link, PageType, PersistIndex, PersistTable, Persistable, PersistableIndex,
-        SizeMeasurable, SizeMeasure, SpaceInfoData, INNER_PAGE_LENGTH, PAGE_SIZE,
+        SizeMeasurable, SizeMeasure, SpaceInfoData, INNER_PAGE_LENGTH, PAGE_SIZE, HEADER_LENGTH
     };
     pub use derive_more::{From, Into};
     pub use lockfree::set::Set as LockFreeSet;

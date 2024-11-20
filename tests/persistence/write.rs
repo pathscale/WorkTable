@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::check_if_files_are_same;
-use uuid::Uuid;
+
 use worktable::prelude::*;
 use worktable::worktable;
 
