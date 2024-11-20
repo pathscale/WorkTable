@@ -26,10 +26,10 @@ pub mod prelude {
     use crate::table;
     pub use crate::{lock::Lock, TableIndex, TableRow, WorkTable, WorkTableError};
     pub use data_bucket::{
-        align, map_index_pages_to_general, map_tree_index, map_unique_tree_index, persist_page,
-        GeneralHeader, GeneralPage, IndexData, Interval, Link, PageType, PersistIndex,
-        PersistTable, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoData,
-        PAGE_SIZE, DataPage, INNER_PAGE_LENGTH, map_data_pages_to_general
+        align, map_data_pages_to_general, map_index_pages_to_general, map_tree_index,
+        map_unique_tree_index, persist_page, DataPage, GeneralHeader, GeneralPage, IndexData,
+        Interval, Link, PageType, PersistIndex, PersistTable, Persistable, PersistableIndex,
+        SizeMeasurable, SizeMeasure, SpaceInfoData, INNER_PAGE_LENGTH, PAGE_SIZE,
     };
     pub use derive_more::{From, Into};
     pub use lockfree::set::Set as LockFreeSet;
