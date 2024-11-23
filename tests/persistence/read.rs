@@ -1,7 +1,6 @@
 use std::fs::File;
 use worktable::worktable;
 use worktable::prelude::*;
-use uuid::Uuid;
 
 
 worktable! (
