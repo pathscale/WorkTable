@@ -86,12 +86,12 @@ fn test_index_parse() {
 #[test]
 fn test_data_parse() {
     let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
-    let index = parse_data_page::<{ TEST_PAGE_SIZE }, { TEST_INNER_SIZE }>(&mut file, 3).unwrap();
+    let data = parse_data_page::<{ TEST_PAGE_SIZE }, { TEST_INNER_SIZE }>(&mut file, 3).unwrap();
 
-    assert_eq!(index.header.space_id, 0.into());
-    assert_eq!(index.header.page_id, 3.into());
-    assert_eq!(index.header.previous_id, 2.into());
-    assert_eq!(index.header.next_id, 0.into());
-    assert_eq!(index.header.page_type, PageType::Data);
-    assert_eq!(index.header.data_length, 4752);
+    assert_eq!(data.header.space_id, 0.into());
+    assert_eq!(data.header.page_id, 3.into());
+    assert_eq!(data.header.previous_id, 2.into());
+    assert_eq!(data.header.next_id, 0.into());
+    assert_eq!(data.header.page_type, PageType::Data);
+    assert_eq!(data.header.data_length, 4752);
 }
