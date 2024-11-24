@@ -9,7 +9,7 @@ use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
-
+use data_bucket::{DataPage, GeneralPage};
 use crate::persistence::page::INNER_PAGE_SIZE;
 use crate::prelude::Link;
 
@@ -51,6 +51,15 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             id,
             free_offset: AtomicU32::default(),
             inner_data: UnsafeCell::default(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn from_data_page(page: GeneralPage<DataPage<DATA_LENGTH>>) -> Self {
+        Self {
+            id: page.header.page_id,
+            free_offset:  AtomicU32::from(page.header.data_length),
+            inner_data: UnsafeCell::new(AlignedBytes(page.inner.data)),
             _phantom: PhantomData,
         }
     }

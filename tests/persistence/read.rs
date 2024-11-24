@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::sync::Arc;
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -94,4 +95,17 @@ fn test_data_parse() {
     assert_eq!(data.header.next_id, 0.into());
     assert_eq!(data.header.page_type, PageType::Data);
     assert_eq!(data.header.data_length, 4752);
+}
+
+#[test]
+fn test_space_parse() {
+    // TODO: Finalise this test.
+    let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
+    let space = TestSpace::parse_file(&mut file).unwrap();
+
+    let manager = Arc::new(DatabaseManager {
+        config_path: "tests/data".to_string(),
+    });
+    let table = space.into_worktable(manager);
+    println!("{:?}", table)
 }

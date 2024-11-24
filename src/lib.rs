@@ -21,7 +21,8 @@ pub use worktable_codegen::worktable;
 
 pub mod prelude {
     pub use crate::database::DatabaseManager;
-    pub use crate::in_memory::{ArchivedRow, RowWrapper, StorableRow};
+    pub use crate::lock::LockMap;
+    pub use crate::in_memory::{ArchivedRow, RowWrapper, StorableRow, DataPages, Data};
     pub use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
     use crate::table;
     pub use crate::{lock::Lock, TableIndex, TableRow, WorkTable, WorkTableError};
@@ -29,7 +30,7 @@ pub mod prelude {
         align, map_data_pages_to_general, map_index_pages_to_general, map_tree_index,
         map_unique_tree_index, parse_page, persist_page, DataPage, GeneralHeader,
         GeneralPage, IndexData, Interval, Link, PageType, PersistIndex, PersistTable, Persistable,
-        PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoData, HEADER_SIZE, INNER_PAGE_SIZE,
+        PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoData, GENERAL_HEADER_SIZE, INNER_PAGE_SIZE,
         PAGE_SIZE, parse_data_page
     };
     pub use derive_more::{From, Into};

@@ -87,7 +87,7 @@ impl Generator {
             let page_size = Literal::usize_unsuffixed(*page_size as usize);
             quote! {
                      const #page_const_name: usize = #page_size;
-                     const #inner_const_name: usize = #page_size - HEADER_SIZE;
+                     const #inner_const_name: usize = #page_size - GENERAL_HEADER_SIZE;
 
                      #derive
                      pub struct #ident(
@@ -104,7 +104,7 @@ impl Generator {
         } else {
             quote! {
                 const #page_const_name: usize = PAGE_SIZE;
-                const #inner_const_name: usize = #page_const_name - HEADER_SIZE;
+                const #inner_const_name: usize = #page_const_name - GENERAL_HEADER_SIZE;
 
                 #derive
                 pub struct #ident(

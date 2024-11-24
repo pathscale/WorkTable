@@ -48,6 +48,19 @@ where
         }
     }
 
+    pub fn from_data(vec: Vec<Arc<data::Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>) -> Self {
+        // TODO: Add empty_links persistence.
+        // TODO: Add row_count persistence.
+        let len = vec.len();
+        Self {
+            pages: RwLock::new(vec),
+            empty_links: Stack::new(),
+            row_count: AtomicU64::new(0),
+            last_page_id: AtomicU32::new(len as u32),
+            current_page: AtomicU32::new(len as u32),
+        }
+    }
+
     #[cfg_attr(
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataPages")
