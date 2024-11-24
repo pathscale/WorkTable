@@ -37,8 +37,12 @@ impl Generator {
         let select_executor = self.gen_select_executor();
         let select_result_executor = self.gen_select_result_executor();
         let table_name_lit = Literal::string(self.name.to_string().as_str());
-        let const_name = Ident::new(
+        let page_const_name = Ident::new(
             format!("{}_PAGE_SIZE", name.to_string().to_uppercase()).as_str(),
+            Span::mixed_site(),
+        );
+        let inner_const_name = Ident::new(
+            format!("{}_INNER_SIZE", name.to_string().to_uppercase()).as_str(),
             Span::mixed_site(),
         );
         let persist_type_part = if self.is_persist {
@@ -82,23 +86,25 @@ impl Generator {
         let table = if let Some(page_size) = &self.config.as_ref().map(|c| c.page_size).flatten() {
             let page_size = Literal::usize_unsuffixed(*page_size as usize);
             quote! {
-                const #const_name: usize = #page_size;
+                     const #page_const_name: usize = #page_size;
+                     const #inner_const_name: usize = #page_size - HEADER_SIZE;
 
-                #derive
-                pub struct #ident(
-                    WorkTable<
-                        #row_type,
-                        #pk_type,
-                        #index_type,
-                        <#pk_type as TablePrimaryKey>::Generator,
-                        #const_name
-                    >
-                    #persist_type_part
-                );
-            }
+                     #derive
+                     pub struct #ident(
+            a             WorkTable<
+                             #row_type,
+                             #pk_type,
+                             #index_type,
+                             <#pk_type as TablePrimaryKey>::Generator,
+                             #inner_const_name
+                         >
+                         #persist_type_part
+                     );
+                 }
         } else {
             quote! {
-                const #const_name: usize = INNER_PAGE_LENGTH;
+                const #page_const_name: usize = PAGE_SIZE;
+                const #inner_const_name: usize = #page_const_name - HEADER_SIZE;
 
                 #derive
                 pub struct #ident(

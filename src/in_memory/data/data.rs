@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::in_memory::data;
-use crate::persistence::page::INNER_PAGE_LENGTH;
+use crate::persistence::page::INNER_PAGE_SIZE;
 use crate::prelude::Link;
 
 #[cfg(feature = "perf_measurements")]
@@ -21,7 +21,7 @@ use performance_measurement_codegen::performance_measurement;
 pub const DATA_HEADER_LENGTH: usize = 4;
 
 /// Length of the inner [`Data`] page part.
-pub const DATA_INNER_LENGTH: usize = INNER_PAGE_LENGTH - DATA_HEADER_LENGTH;
+pub const DATA_INNER_LENGTH: usize = INNER_PAGE_SIZE - DATA_HEADER_LENGTH;
 
 #[derive(Archive, Deserialize, Debug, Serialize)]
 pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
@@ -191,7 +191,7 @@ mod tests {
 
     use rkyv::{Archive, Deserialize, Serialize};
 
-    use crate::in_memory::data::data::{Data, INNER_PAGE_LENGTH};
+    use crate::in_memory::data::data::{Data, INNER_PAGE_SIZE};
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -208,7 +208,7 @@ mod tests {
         let data = Data::<()>::new(1.into());
         let bytes = rkyv::to_bytes::<_, 4096>(&data).unwrap();
 
-        assert_eq!(bytes.len(), INNER_PAGE_LENGTH)
+        assert_eq!(bytes.len(), INNER_PAGE_SIZE)
     }
 
     #[test]

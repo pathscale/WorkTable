@@ -1,6 +1,6 @@
 pub mod select;
 
-use data_bucket::{Link, INNER_PAGE_LENGTH};
+use data_bucket::{Link, INNER_PAGE_SIZE};
 use derive_more::{Display, Error, From};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
@@ -20,7 +20,7 @@ pub struct WorkTable<
     Pk,
     I = (),
     PkGen = <Pk as TablePrimaryKey>::Generator,
-    const DATA_LENGTH: usize = INNER_PAGE_LENGTH,
+    const DATA_LENGTH: usize = INNER_PAGE_SIZE,
 > where
     Pk: Clone + Ord + 'static,
     Row: StorableRow,
