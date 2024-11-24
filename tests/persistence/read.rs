@@ -1,5 +1,4 @@
 use std::fs::File;
-
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -27,7 +26,7 @@ worktable! (
 #[test]
 fn test_info_parse() {
     let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
-    let info = parse_info(&mut file).unwrap();
+    let info = parse_page::<SpaceInfoData, { TEST_PAGE_SIZE as u32 }>(&mut file, 0).unwrap();
 
     assert_eq!(info.header.space_id, 0.into());
     assert_eq!(info.header.page_id, 0.into());
@@ -54,7 +53,7 @@ fn test_info_parse() {
 #[test]
 fn test_index_parse() {
     let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
-    let index = parse_index::<u128, { TEST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
+    let index = parse_page::<IndexData<u128>, { TEST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 1.into());
@@ -82,4 +81,17 @@ fn test_index_parse() {
         key += 1;
         offset += length;
     }
+}
+
+#[test]
+fn test_data_parse() {
+    let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
+    let index = parse_data_page::<{ TEST_PAGE_SIZE }, { TEST_INNER_SIZE }>(&mut file, 3).unwrap();
+
+    assert_eq!(index.header.space_id, 0.into());
+    assert_eq!(index.header.page_id, 3.into());
+    assert_eq!(index.header.previous_id, 2.into());
+    assert_eq!(index.header.next_id, 0.into());
+    assert_eq!(index.header.page_type, PageType::Data);
+    assert_eq!(index.header.data_length, 4752);
 }

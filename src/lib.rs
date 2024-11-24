@@ -27,10 +27,10 @@ pub mod prelude {
     pub use crate::{lock::Lock, TableIndex, TableRow, WorkTable, WorkTableError};
     pub use data_bucket::{
         align, map_data_pages_to_general, map_index_pages_to_general, map_tree_index,
-        map_unique_tree_index, parse_index, parse_info, persist_page, DataPage, GeneralHeader,
+        map_unique_tree_index, parse_page, persist_page, DataPage, GeneralHeader,
         GeneralPage, IndexData, Interval, Link, PageType, PersistIndex, PersistTable, Persistable,
         PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoData, HEADER_SIZE, INNER_PAGE_SIZE,
-        PAGE_SIZE,
+        PAGE_SIZE, parse_data_page
     };
     pub use derive_more::{From, Into};
     pub use lockfree::set::Set as LockFreeSet;

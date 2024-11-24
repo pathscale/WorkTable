@@ -227,9 +227,9 @@ where
         Ok(())
     }
 
-    pub fn get_bytes(&self) -> Vec<[u8; DATA_LENGTH]> {
+    pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
         let pages = self.pages.read().unwrap();
-        pages.iter().map(|p| p.get_bytes()).collect()
+        pages.iter().map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed))).collect()
     }
 }
 

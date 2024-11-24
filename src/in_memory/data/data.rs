@@ -10,7 +10,6 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::in_memory::data;
 use crate::persistence::page::INNER_PAGE_SIZE;
 use crate::prelude::Link;
 
@@ -33,7 +32,7 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     id: PageId,
 
     /// Offset to the first free byte on this [`Data`] page.
-    free_offset: AtomicU32,
+    pub free_offset: AtomicU32,
 
     /// Inner array of bytes where deserialized `Row`s will be stored.
     #[with(Unsafe)]
