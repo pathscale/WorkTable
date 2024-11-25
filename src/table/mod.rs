@@ -3,7 +3,6 @@ pub mod select;
 use derive_more::{Display, Error, From};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
-use rkyv::ser::serializers::AllocSerializer;
 use rkyv::{Archive, Deserialize, Serialize};
 use scc::ebr::Guard;
 use scc::tree_index::TreeIndex;
@@ -81,7 +80,6 @@ where
         Row: Archive,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Deserialize<
             <Row as StorableRow>::WrappedRow,
-            rkyv::de::deserializers::SharedDeserializeMap,
         >,
     {
         let guard = Guard::new();

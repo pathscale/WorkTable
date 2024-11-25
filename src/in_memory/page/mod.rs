@@ -86,7 +86,7 @@ pub struct General<Inner = Empty> {
     Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub struct Empty {
-    #[with(Skip)]
+    #[rkyv(with = Skip)]
     page_id: Id,
 
     bytes: [u8; INNER_PAGE_LENGTH],
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn general_header_length_valid() {
         let header = get_general_header();
-        let bytes = rkyv::to_bytes::<_, 32>(&header).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&header).unwrap();
 
         assert_eq!(bytes.len(), HEADER_LENGTH)
     }
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn general_empty_page_valid() {
         let page = get_general_page();
-        let bytes = rkyv::to_bytes::<_, 4096>(&page).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&page).unwrap();
 
         assert_eq!(bytes.len(), PAGE_SIZE)
     }
@@ -146,7 +146,7 @@ mod tests {
             header: get_general_header(),
             inner: page::Data::<()>::new(1.into()),
         };
-        let bytes = rkyv::to_bytes::<_, 4096>(&page).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&page).unwrap();
 
         assert_eq!(bytes.len(), PAGE_SIZE)
     }
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn empty_page_valid() {
         let page = page::Empty::new(1.into());
-        let bytes = rkyv::to_bytes::<_, 4096>(&page).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&page).unwrap();
 
         assert_eq!(bytes.len(), INNER_PAGE_LENGTH)
     }

@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{cell::UnsafeCell, fmt::Debug};
 use std::sync::atomic::AtomicBool;
 
 use rkyv::{Archive, Deserialize, Serialize};
