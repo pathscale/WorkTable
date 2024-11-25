@@ -91,7 +91,7 @@ impl Generator {
 
                      #derive
                      pub struct #ident(
-            a             WorkTable<
+                         WorkTable<
                              #row_type,
                              #pk_type,
                              #index_type,

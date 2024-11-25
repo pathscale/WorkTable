@@ -23,7 +23,7 @@ pub mod prelude {
     pub use crate::database::DatabaseManager;
     pub use crate::lock::LockMap;
     pub use crate::in_memory::{ArchivedRow, RowWrapper, StorableRow, DataPages, Data};
-    pub use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
+    pub use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey, PrimaryKeyGeneratorState};
     use crate::table;
     pub use crate::{lock::Lock, TableIndex, TableRow, WorkTable, WorkTableError};
     pub use data_bucket::{

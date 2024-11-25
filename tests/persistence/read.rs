@@ -1,20 +1,7 @@
 use std::fs::File;
 use std::sync::Arc;
 use worktable::prelude::*;
-use worktable::worktable;
-
-worktable! (
-    name: Test,
-    persist: true,
-    columns: {
-        id: u128 primary_key,
-        another: u64,
-    },
-    indexes: {
-        another_idx: another,
-    },
-);
-
+use crate::persistence::{TEST_PAGE_SIZE, TEST_INNER_SIZE, TestSpace, get_test_wt};
 // fn test_read () {
 //     // this call will read space file from `tests/db`. It will be `tests/db/test.wt`
 //     // TODO: How to config this? Maybe we will need to have DATABASE_CONFIG env
@@ -34,7 +21,7 @@ fn test_info_parse() {
     assert_eq!(info.header.previous_id, 0.into());
     assert_eq!(info.header.next_id, 1.into());
     assert_eq!(info.header.page_type, PageType::SpaceInfo);
-    assert_eq!(info.header.data_length, 100);
+    assert_eq!(info.header.data_length, 108);
 
     assert_eq!(info.inner.id, 0.into());
     assert_eq!(info.inner.page_count, 2);
@@ -49,6 +36,7 @@ fn test_info_parse() {
         Some(&vec![Interval(2, 2)])
     );
     assert_eq!(info.inner.data_intervals, vec![Interval(3, 3)]);
+    assert_eq!(info.inner.empty_links_list, vec![]);
 }
 
 #[test]
@@ -107,5 +95,7 @@ fn test_space_parse() {
         config_path: "tests/data".to_string(),
     });
     let table = space.into_worktable(manager);
-    println!("{:?}", table)
+    let expected = get_test_wt();
+
+    assert_eq!(table.select_all().execute().unwrap(), expected.select_all().execute().unwrap());
 }

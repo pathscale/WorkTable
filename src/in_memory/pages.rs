@@ -244,6 +244,25 @@ where
         let pages = self.pages.read().unwrap();
         pages.iter().map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed))).collect()
     }
+
+    pub fn get_empty_links(&self) -> Vec<Link> {
+        let mut res = vec![];
+        for l in self.empty_links.pop_iter() {
+            res.push(l)
+        }
+
+        res
+    }
+
+    pub fn with_empty_links(mut self, links: Vec<Link>) -> Self {
+        let stack = Stack::new();
+        for l in links {
+            stack.push(l)
+        }
+        self.empty_links = stack;
+
+        self
+    }
 }
 
 #[derive(Debug, Display, Error, From)]
