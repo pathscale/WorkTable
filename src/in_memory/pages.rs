@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 use derive_more::{Display, Error, From};
 use lockfree::stack::Stack;
 use rkyv::ser::serializers::AllocSerializer;
-use rkyv::{Archive, Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Portable, Serialize};
 
 use crate::in_memory::page;
 use crate::in_memory::page::{DataExecutionError, Link, DATA_INNER_LENGTH};
@@ -146,11 +146,7 @@ where
     )]
     pub fn select(&self, link: Link) -> Result<Row, ExecutionError>
     where
-        Row: Archive,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Deserialize<
-            <Row as StorableRow>::WrappedRow,
-            rkyv::de::deserializers::SharedDeserializeMap,
-        >,
+        Row: Archive
     {
         let pages = self.pages.read().unwrap();
         let page = pages
@@ -184,7 +180,7 @@ where
     )]
     pub unsafe fn with_mut_ref<Op, Res>(&self, link: Link, mut op: Op) -> Result<Res, ExecutionError>
     where
-        Row: Archive,
+        Row: Archive + Portable,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res
     {
         let pages = self.pages.read().unwrap();
@@ -247,8 +243,7 @@ mod tests {
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
     )]
-    #[archive(compare(PartialEq))]
-    #[archive_attr(derive(Debug))]
+
     struct TestRow {
         a: u64,
         b: u64,
