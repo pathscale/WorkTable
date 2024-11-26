@@ -7,7 +7,7 @@ fn test_persist() {
     remove_file_if_exists("tests/data/test.wt".to_string());
 
     let table = get_test_wt();
-    table.persist();
+    table.persist().unwrap();
 
     assert!(check_if_files_are_same(
         "tests/data/test.wt".to_string(),
