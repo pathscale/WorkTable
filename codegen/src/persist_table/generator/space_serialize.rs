@@ -37,16 +37,44 @@ impl Generator {
         let persisted_pk_fn = self.gen_persisted_primary_key_fn()?;
         let into_space = self.gen_into_space()?;
 
-        let space_persist = self.gen_persist_fn()?;
+        let persist_fn = self.gen_persist_fn()?;
+        let from_file_fn = self.gen_from_file_fn()?;
+
+        let space_persist = self.gen_space_persist_fn()?;
 
         Ok(quote! {
             impl #ident {
                 #space_info_fn
                 #persisted_pk_fn
                 #into_space
+
+                #persist_fn
+                #from_file_fn
             }
 
             #space_persist
+        })
+    }
+
+    fn gen_persist_fn(&self) -> syn::Result<TokenStream> {
+        Ok(quote! {
+            pub fn persist(&self) -> eyre::Result<()> {
+                let mut space = self.into_space();
+                space.persist()?;
+                Ok(())
+            }
+        })
+    }
+
+    fn gen_from_file_fn(&self) -> syn::Result<TokenStream> {
+        let name = self.struct_def.ident.to_string().replace("WorkTable", "");
+        let space_ident = Ident::new(format!("{}Space", name).as_str(), Span::mixed_site());
+        Ok(quote! {
+            pub fn load_from_file(file: &mut std::fs::File, manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
+                let space = #space_ident::parse_file(file)?;
+                let table = space.into_worktable(manager);
+                Ok(table)
+            }
         })
     }
 
@@ -153,7 +181,7 @@ impl Generator {
         })
     }
 
-    fn gen_persist_fn(&self) -> syn::Result<TokenStream> {
+    fn gen_space_persist_fn(&self) -> syn::Result<TokenStream> {
         let name = self.struct_def.ident.to_string().replace("WorkTable", "");
         let space_ident = Ident::new(format!("{}Space", name).as_str(), Span::mixed_site());
         let file_name = Literal::string(format!("{}.wt", name.to_lowercase()).as_str());

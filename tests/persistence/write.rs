@@ -1,13 +1,13 @@
-use crate::check_if_files_are_same;
-use crate::persistence::{get_test_wt, TestSpace};
+use crate::{check_if_files_are_same, remove_file_if_exists};
+
+use crate::persistence::get_test_wt;
 
 #[test]
 fn test_persist() {
+    remove_file_if_exists("tests/data/test.wt".to_string());
+
     let table = get_test_wt();
-    let mut space: TestSpace = table.into_space();
-    // this call will save space file to `tests/db`. It will be `tests/data/test.wt`
-    // TODO: How to config this? Maybe we will need to have DATABASE_CONFIG env
-    space.persist().unwrap();
+    table.persist();
 
     assert!(check_if_files_are_same(
         "tests/data/test.wt".to_string(),

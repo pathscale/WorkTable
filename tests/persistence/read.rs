@@ -1,15 +1,9 @@
-use crate::persistence::{get_test_wt, TestSpace, TEST_INNER_SIZE, TEST_PAGE_SIZE};
 use std::fs::File;
 use std::sync::Arc;
+
 use worktable::prelude::*;
-// fn test_read () {
-//     // this call will read space file from `tests/db`. It will be `tests/db/test.wt`
-//     // TODO: How to config this? Maybe we will need to have DATABASE_CONFIG env
-//     let space = TestSpace::read();
-//     let table = space.into_table();
-//
-//     // Check tables data
-// }
+
+use crate::persistence::{get_test_wt, TestWorkTable, TEST_INNER_SIZE, TEST_PAGE_SIZE};
 
 #[test]
 fn test_info_parse() {
@@ -87,14 +81,11 @@ fn test_data_parse() {
 
 #[test]
 fn test_space_parse() {
-    // TODO: Finalise this test.
     let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
-    let space = TestSpace::parse_file(&mut file).unwrap();
-
     let manager = Arc::new(DatabaseManager {
         config_path: "tests/data".to_string(),
     });
-    let table = space.into_worktable(manager);
+    let table = TestWorkTable::load_from_file(&mut file, manager).unwrap();
     let expected = get_test_wt();
 
     assert_eq!(

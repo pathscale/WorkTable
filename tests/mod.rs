@@ -1,5 +1,7 @@
+use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::path::Path;
 
 mod persistence;
 
@@ -24,4 +26,10 @@ pub fn check_if_files_are_same(got: String, expected: String) -> bool {
     }
 
     true
+}
+
+pub fn remove_file_if_exists(path: String) {
+    if Path::new(path.as_str()).exists() {
+        fs::remove_file(path.as_str()).unwrap();
+    }
 }

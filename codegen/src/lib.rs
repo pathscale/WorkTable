@@ -4,6 +4,8 @@ mod worktable;
 
 use proc_macro::TokenStream;
 
+// TODO: Refactor this codegen stuff because it's now too strange.
+
 #[proc_macro]
 pub fn worktable(input: TokenStream) -> TokenStream {
     worktable::expand(input.into())
