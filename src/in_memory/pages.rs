@@ -48,7 +48,9 @@ where
         }
     }
 
-    pub fn from_data(vec: Vec<Arc<data::Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>) -> Self {
+    pub fn from_data(
+        vec: Vec<Arc<data::Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>,
+    ) -> Self {
         // TODO: Add empty_links persistence.
         // TODO: Add row_count persistence.
         let len = vec.len();
@@ -242,7 +244,10 @@ where
 
     pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
         let pages = self.pages.read().unwrap();
-        pages.iter().map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed))).collect()
+        pages
+            .iter()
+            .map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed)))
+            .collect()
     }
 
     pub fn get_empty_links(&self) -> Vec<Link> {

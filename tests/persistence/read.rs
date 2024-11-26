@@ -1,7 +1,7 @@
+use crate::persistence::{get_test_wt, TestSpace, TEST_INNER_SIZE, TEST_PAGE_SIZE};
 use std::fs::File;
 use std::sync::Arc;
 use worktable::prelude::*;
-use crate::persistence::{TEST_PAGE_SIZE, TEST_INNER_SIZE, TestSpace, get_test_wt};
 // fn test_read () {
 //     // this call will read space file from `tests/db`. It will be `tests/db/test.wt`
 //     // TODO: How to config this? Maybe we will need to have DATABASE_CONFIG env
@@ -97,5 +97,8 @@ fn test_space_parse() {
     let table = space.into_worktable(manager);
     let expected = get_test_wt();
 
-    assert_eq!(table.select_all().execute().unwrap(), expected.select_all().execute().unwrap());
+    assert_eq!(
+        table.select_all().execute().unwrap(),
+        expected.select_all().execute().unwrap()
+    );
 }

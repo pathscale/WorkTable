@@ -135,11 +135,6 @@ mod tests {
     use crate::prelude::*;
     use crate::select::Order;
 
-    use data_bucket::{
-        map_tree_index, map_unique_tree_index, IndexData, PersistIndex, PersistableIndex,
-        SizeMeasurable,
-    };
-
     worktable! (
         name: Test,
         columns: {

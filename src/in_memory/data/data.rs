@@ -1,4 +1,7 @@
+use crate::persistence::page::INNER_PAGE_SIZE;
+use crate::prelude::Link;
 use data_bucket::page::PageId;
+use data_bucket::{DataPage, GeneralPage};
 use derive_more::{Display, Error};
 use rkyv::ser::serializers::AllocSerializer;
 use rkyv::{
@@ -9,9 +12,6 @@ use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
-use data_bucket::{DataPage, GeneralPage};
-use crate::persistence::page::INNER_PAGE_SIZE;
-use crate::prelude::Link;
 
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
@@ -58,7 +58,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     pub fn from_data_page(page: GeneralPage<DataPage<DATA_LENGTH>>) -> Self {
         Self {
             id: page.header.page_id,
-            free_offset:  AtomicU32::from(page.header.data_length),
+            free_offset: AtomicU32::from(page.header.data_length),
             inner_data: UnsafeCell::new(AlignedBytes(page.inner.data)),
             _phantom: PhantomData,
         }

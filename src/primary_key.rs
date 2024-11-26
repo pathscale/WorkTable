@@ -25,8 +25,7 @@ where
     }
 }
 
-impl PrimaryKeyGeneratorState for AtomicU32
-{
+impl PrimaryKeyGeneratorState for AtomicU32 {
     type State = u32;
 
     fn get_state(&self) -> Self::State {
@@ -47,8 +46,7 @@ where
     }
 }
 
-impl PrimaryKeyGeneratorState for AtomicU64
-{
+impl PrimaryKeyGeneratorState for AtomicU64 {
     type State = u64;
 
     fn get_state(&self) -> Self::State {
@@ -69,8 +67,7 @@ where
     }
 }
 
-impl PrimaryKeyGeneratorState for AtomicI64
-{
+impl PrimaryKeyGeneratorState for AtomicI64 {
     type State = i64;
 
     fn get_state(&self) -> Self::State {
@@ -82,11 +79,14 @@ impl PrimaryKeyGeneratorState for AtomicI64
     }
 }
 
-impl PrimaryKeyGeneratorState for ()
-{
+impl PrimaryKeyGeneratorState for () {
     type State = ();
 
-    fn get_state(&self) -> Self::State { () }
+    fn get_state(&self) -> Self::State {
+        ()
+    }
 
-    fn from_state((): Self::State) -> Self { () }
+    fn from_state((): Self::State) -> Self {
+        ()
+    }
 }
