@@ -33,6 +33,10 @@ used to load table from file.
 
 - Support for `Option` types in columns.
 - Support of `delete` queries.
+- Added generation of `Space` object that represents file that stores table's data. 
+- Added `DatbaseManager` object that is used to control multiple tables.
+- Added methods for `Worktables` to use data in files. `persist` is used to save data to file. `load_from_file` is 
+used to load table from file.
 
 ### Fixed
 
