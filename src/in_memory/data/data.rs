@@ -1,8 +1,7 @@
-use std::cell::UnsafeCell;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicI32, AtomicU16, AtomicU32, Ordering};
-
+use crate::persistence::page::INNER_PAGE_SIZE;
+use crate::prelude::Link;
+use data_bucket::page::PageId;
+use data_bucket::{DataPage, GeneralPage};
 use derive_more::{Display, Error};
 use rkyv::bytecheck::CheckBytes;
 use rkyv::rancor::Strategy;
@@ -16,9 +15,11 @@ use rkyv::{Portable,
     with::{Skip, Unsafe},
     Archive, Deserialize, Serialize,
 };
-use smart_default::SmartDefault;
+use std::cell::UnsafeCell;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::in_memory::page::{self, INNER_PAGE_LENGTH};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 
@@ -26,44 +27,19 @@ use performance_measurement_codegen::performance_measurement;
 pub const DATA_HEADER_LENGTH: usize = 4;
 
 /// Length of the inner [`Data`] page part.
-pub const DATA_INNER_LENGTH: usize = INNER_PAGE_LENGTH - DATA_HEADER_LENGTH;
-
-/// Hint can be used to save row size, it `Row` is sized. It can predict how much `Row`s can be saved on page.
-/// Also, it counts saved rows.
-#[derive(Archive, Deserialize, Debug, Serialize, SmartDefault)]
-pub struct Hint {
-    #[default(_code = "AtomicI32::new(-1)")]
-    #[rkyv(with = AtomicLoad<Relaxed>)]
-    row_size: AtomicI32,
-    #[rkyv(with = AtomicLoad<Relaxed>)]
-    capacity: AtomicU16,
-    #[rkyv(with = AtomicLoad<Relaxed>)]
-    row_length: AtomicU16,
-}
-
-impl Hint {
-    pub fn from_row_size(size: usize) -> Self {
-        let capacity = DATA_INNER_LENGTH / size;
-        Self {
-            row_size: AtomicI32::new(-1),
-            capacity: AtomicU16::new(capacity as u16),
-            row_length: AtomicU16::default(),
-        }
-    }
-}
+pub const DATA_INNER_LENGTH: usize = INNER_PAGE_SIZE - DATA_HEADER_LENGTH;
 
 #[derive(Archive, Deserialize, Debug, Serialize)]
 pub struct Data<Row, const DATA_LENGTH: usize = 4> {
     /// [`Id`] of the [`General`] page of this [`Data`].
     ///
-    /// [`Id]: page::Id
+    /// [`Id]: PageId
     /// [`General`]: page::General
-    #[rkyv(with = Skip)]
-    id: page::Id,
+    #[with(Skip)]
+    id: PageId,
 
     /// Offset to the first free byte on this [`Data`] page.
-    #[rkyv(with = AtomicLoad<Relaxed>)]
-    free_offset: AtomicU32,
+    pub free_offset: AtomicU32,
 
     /// Inner array of bytes where deserialized `Row`s will be stored.
     #[rkyv(with = UnsafeCell)]
@@ -75,20 +51,9 @@ pub struct Data<Row, const DATA_LENGTH: usize = 4> {
 
 unsafe impl<Row, const DATA_LENGTH: usize> Sync for Data<Row, DATA_LENGTH> {}
 
-impl<Row, const DATA_LENGTH: usize> From<page::Empty> for Data<Row, DATA_LENGTH> {
-    fn from(e: page::Empty) -> Self {
-        Self {
-            id: e.page_id,
-            free_offset: AtomicU32::default(),
-            inner_data: UnsafeCell::default(),
-            _phantom: PhantomData,
-        }
-    }
-}
-
 impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     /// Creates new [`Data`] page.
-    pub fn new(id: page::Id) -> Self {
+    pub fn new(id: PageId) -> Self {
         Self {
             id,
             free_offset: AtomicU32::default(),
@@ -97,11 +62,20 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         }
     }
 
+    pub fn from_data_page(page: GeneralPage<DataPage<DATA_LENGTH>>) -> Self {
+        Self {
+            id: page.header.page_id,
+            free_offset: AtomicU32::from(page.header.data_length),
+            inner_data: UnsafeCell::new(AlignedBytes(page.inner.data)),
+            _phantom: PhantomData,
+        }
+    }
+
     #[cfg_attr(
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataRow")
     )]
-    pub fn save_row<const N: usize>(&self, row: &Row) -> Result<page::Link, ExecutionError>
+    pub fn save_row<const N: usize>(&self, row: &Row) -> Result<Link, ExecutionError>
     where
         Row: Archive
     {
@@ -118,7 +92,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[offset as usize..][..length as usize].copy_from_slice(bytes.as_slice());
 
-        let link = page::Link {
+        let link = Link {
             page_id: self.id,
             offset,
             length,
@@ -134,8 +108,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     pub unsafe fn save_row_by_link<const N: usize>(
         &self,
         row: &Row,
-        link: page::Link,
-    ) -> Result<page::Link, ExecutionError>
+        link: Link,
+    ) -> Result<Link, ExecutionError>
     where
         Row: Archive
     {
@@ -154,8 +128,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 
     pub unsafe fn get_mut_row_ref(
         &self,
-        link: page::Link,
-    ) -> Result<Seal<'_, Row>, ExecutionError>
+        link: Link,
+    ) -> Result<Pin<&mut <Row as Archive>::Archived>, ExecutionError>
     where
         Row: Archive + Portable +
         for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, rkyv::rancor::Error>>,
@@ -173,10 +147,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataRow")
     )]
-    pub fn get_row_ref(
-        &self,
-        link: page::Link,
-    ) -> Result<&Row, ExecutionError>
+    pub fn get_row_ref(&self, link: Link) -> Result<&<Row as Archive>::Archived, ExecutionError>
     where
         Row: Archive + Portable +
         for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, rkyv::rancor::Error>>
@@ -194,13 +165,18 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataRow")
     )]
-    pub fn get_row(&self, link: page::Link) -> Result<Row, ExecutionError>
+    pub fn get_row(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive + Portable + Clone +
         for<'a> CheckBytes<Strategy<Validator<ArchiveValidator<'a>, SharedValidator>, rkyv::rancor::Error>>
     {
         let row = self.get_row_ref(link)?;
         return Ok(row.to_owned());
+    }
+
+    pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
+        let data = unsafe { &*self.inner_data.get() };
+        data.0.clone()
     }
 }
 
@@ -229,7 +205,7 @@ mod tests {
 
     use rkyv::{Archive, Deserialize, Portable, Serialize};
 
-    use crate::in_memory::page::data::{Data, INNER_PAGE_LENGTH};
+    use crate::in_memory::data::data::{Data, INNER_PAGE_SIZE};
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Portable, Serialize,
@@ -245,7 +221,7 @@ mod tests {
         let data = Data::<()>::new(1.into());
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&data).unwrap();
 
-        assert_eq!(bytes.len(), INNER_PAGE_LENGTH)
+        assert_eq!(bytes.len(), INNER_PAGE_SIZE)
     }
 
     #[test]
