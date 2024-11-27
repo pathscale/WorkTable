@@ -18,6 +18,7 @@ use rkyv::{Portable,
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(feature = "perf_measurements")]
@@ -29,20 +30,43 @@ pub const DATA_HEADER_LENGTH: usize = 4;
 /// Length of the inner [`Data`] page part.
 pub const DATA_INNER_LENGTH: usize = INNER_PAGE_SIZE - DATA_HEADER_LENGTH;
 
+#[derive(Archive, Deserialize, Serialize)]
+#[rkyv(remote = NonNull<T>)]
+#[rkyv(archived = ArchivedNonNull)]
+pub struct NonNullDef<T: ?Sized> {
+    pointer: *const T,
+}
+
+impl<T> From<NonNullDef<T>> for NonNull<T>
+where T: ?Sized
+{
+    fn from(value: NonNullDef<T>) -> NonNull<T> {
+        unsafe { NonNull::<T>::new_unchecked(value.pointer as *mut T) }
+    }
+}
+
+#[derive(Archive, Deserialize, Serialize)]
+pub struct AlignedVecDef<const ALIGNMENT: usize = 16> {
+    ptr: NonNullDef<u8>,
+    cap: usize,
+    len: usize,
+}
+
 #[derive(Archive, Deserialize, Debug, Serialize)]
 pub struct Data<Row, const DATA_LENGTH: usize = 4> {
     /// [`Id`] of the [`General`] page of this [`Data`].
     ///
     /// [`Id]: PageId
     /// [`General`]: page::General
-    #[with(Skip)]
+    #[rkyv(with = Skip)]
     id: PageId,
 
     /// Offset to the first free byte on this [`Data`] page.
+    #[rkyv(with = AtomicLoad<Relaxed>)]
     pub free_offset: AtomicU32,
 
     /// Inner array of bytes where deserialized `Row`s will be stored.
-    #[rkyv(with = UnsafeCell)]
+    #[rkyv(with = Unsafe)]
     inner_data: UnsafeCell<AlignedVec<DATA_LENGTH>>,
 
     /// `Row` phantom data.
