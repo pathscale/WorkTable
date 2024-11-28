@@ -21,6 +21,7 @@ worktable! (
 pub fn get_test_wt() -> TestWorkTable {
     let manager = Arc::new(DatabaseManager {
         config_path: "tests/data".to_string(),
+        database_files_dir: "test/data".to_string(),
     });
     let table = TestWorkTable::new(manager);
 

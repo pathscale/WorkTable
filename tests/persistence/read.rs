@@ -81,11 +81,11 @@ fn test_data_parse() {
 
 #[test]
 fn test_space_parse() {
-    let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
     let manager = Arc::new(DatabaseManager {
         config_path: "tests/data".to_string(),
+        database_files_dir: "tests/data".to_string(),
     });
-    let table = TestWorkTable::load_from_file(&mut file, manager).unwrap();
+    let table = TestWorkTable::load_from_file(manager).unwrap();
     let expected = get_test_wt();
 
     assert_eq!(

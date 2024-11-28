@@ -70,8 +70,10 @@ impl Generator {
         let name = self.struct_def.ident.to_string().replace("WorkTable", "");
         let space_ident = Ident::new(format!("{}Space", name).as_str(), Span::mixed_site());
         Ok(quote! {
-            pub fn load_from_file(file: &mut std::fs::File, manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
-                let space = #space_ident::parse_file(file)?;
+            pub fn load_from_file(manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
+                let filename = std::path::Path::new(manager.database_files_dir.as_str()).join(String::from(#name).to_lowercase() + ".wt");
+                let mut file = std::fs::File::open(filename)?;
+                let space = #space_ident::parse_file(&mut file)?;
                 let table = space.into_worktable(manager);
                 Ok(table)
             }
