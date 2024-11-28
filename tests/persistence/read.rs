@@ -7,7 +7,7 @@ use crate::persistence::{get_empty_test_wt, get_test_wt, TestWorkTable, TEST_INN
 
 #[test]
 fn test_info_parse() {
-    let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
+    let mut file = File::open("tests/data/expected/test.wt").unwrap();
     let info = parse_page::<SpaceInfoData, { TEST_PAGE_SIZE as u32 }>(&mut file, 0).unwrap();
 
     assert_eq!(info.header.space_id, 0.into());
@@ -35,7 +35,7 @@ fn test_info_parse() {
 
 #[test]
 fn test_index_parse() {
-    let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
+    let mut file = File::open("tests/data/expected/test.wt").unwrap();
     let index = parse_page::<IndexData<u128>, { TEST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
@@ -68,7 +68,7 @@ fn test_index_parse() {
 
 #[test]
 fn test_data_parse() {
-    let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
+    let mut file = File::open("tests/data/expected/test.wt").unwrap();
     let data = parse_data_page::<{ TEST_PAGE_SIZE }, { TEST_INNER_SIZE }>(&mut file, 3).unwrap();
 
     assert_eq!(data.header.space_id, 0.into());
@@ -83,7 +83,7 @@ fn test_data_parse() {
 fn test_space_parse() {
     let manager = Arc::new(DatabaseManager {
         config_path: "tests/data".to_string(),
-        database_files_dir: "tests/data".to_string(),
+        database_files_dir: "tests/data/expected".to_string(),
     });
     let table = TestWorkTable::load_from_file(manager).unwrap();
     let expected = get_test_wt();
