@@ -74,7 +74,7 @@ impl Generator {
             pub fn load_from_file(manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
                 let filename = std::path::Path::new(manager.database_files_dir.as_str()).join(String::from(#name).to_lowercase() + ".wt");
                 let Ok(mut file) = std::fs::File::open(filename) else {
-                    return Ok(#wt_ident(Default::default(), manager));
+                    return Ok(#wt_ident::new(manager));
                 };
                 let space = #space_ident::parse_file(&mut file)?;
                 let table = space.into_worktable(manager);
