@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use worktable::prelude::*;
 
-use crate::persistence::{get_test_wt, TestWorkTable, TEST_INNER_SIZE, TEST_PAGE_SIZE};
+use crate::persistence::{get_empty_test_wt, get_test_wt, TestWorkTable, TEST_INNER_SIZE, TEST_PAGE_SIZE};
 
 #[test]
 fn test_info_parse() {
@@ -88,6 +88,20 @@ fn test_space_parse() {
     let table = TestWorkTable::load_from_file(manager).unwrap();
     let expected = get_test_wt();
 
+    assert_eq!(
+        table.select_all().execute().unwrap(),
+        expected.select_all().execute().unwrap()
+    );
+}
+
+#[test]
+fn test_space_parse_no_file() {
+    let manager = Arc::new(DatabaseManager {
+        config_path: "tests/data".to_string(),
+        database_files_dir: "tests/data/non-existent".to_string(),
+    });
+    let table = TestWorkTable::load_from_file(manager).unwrap();
+    let expected = get_empty_test_wt();
     assert_eq!(
         table.select_all().execute().unwrap(),
         expected.select_all().execute().unwrap()
