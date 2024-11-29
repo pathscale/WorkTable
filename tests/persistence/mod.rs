@@ -18,6 +18,15 @@ worktable! (
     },
 );
 
+worktable! (
+    name: TestWithoutSecondaryIndexes,
+    persist: true,
+    columns: {
+        id: u128 primary_key,
+        another: u64,
+    },
+);
+
 pub fn get_empty_test_wt() -> TestWorkTable
 {
     let manager = Arc::new(DatabaseManager {
@@ -33,6 +42,25 @@ pub fn get_test_wt() -> TestWorkTable {
 
     for i in 1..100 {
         let row = TestRow {
+            another: i as u64,
+            id: i,
+        };
+        table.insert(row).unwrap();
+    }
+
+    table
+}
+
+pub fn get_test_wt_without_secondary_indexes() -> TestWithoutSecondaryIndexesWorkTable {
+    let manager = Arc::new(DatabaseManager {
+        config_path: "tests/data".to_string(),
+        database_files_dir: "test/data".to_string(),
+    });
+
+    let table = TestWithoutSecondaryIndexesWorkTable::new(manager);
+
+    for i in 1..100 {
+        let row = TestWithoutSecondaryIndexesRow {
             another: i as u64,
             id: i,
         };
