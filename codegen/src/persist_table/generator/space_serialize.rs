@@ -1,3 +1,4 @@
+use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::__private::Span;
 use quote::quote;
@@ -70,9 +71,13 @@ impl Generator {
         let name = self.struct_def.ident.to_string().replace("WorkTable", "");
         let space_ident = Ident::new(format!("{}Space", name).as_str(), Span::mixed_site());
         let wt_ident = self.struct_def.ident.clone();
+        let name_underscore = name.from_case(Case::Pascal).to_case(Case::Snake);
+
         Ok(quote! {
             pub fn load_from_file(manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
-                let filename = std::path::Path::new(manager.database_files_dir.as_str()).join(String::from(#name).to_lowercase() + ".wt");
+                let filename = format!("{}/{}.wt", manager.database_files_dir.as_str(), #name_underscore);
+                println!("{:?}", filename);
+                let filename = std::path::Path::new(filename.as_str());
                 let Ok(mut file) = std::fs::File::open(filename) else {
                     return Ok(#wt_ident::new(manager));
                 };
@@ -192,7 +197,7 @@ impl Generator {
     fn gen_space_persist_fn(&self) -> syn::Result<TokenStream> {
         let name = self.struct_def.ident.to_string().replace("WorkTable", "");
         let space_ident = Ident::new(format!("{}Space", name).as_str(), Span::mixed_site());
-        let file_name = Literal::string(format!("{}.wt", name.to_lowercase()).as_str());
+        let file_name = Literal::string(format!("{}.wt", name.from_case(Case::Pascal).to_case(Case::Snake)).as_str());
 
         Ok(quote! {
             impl<const DATA_LENGTH: usize> #space_ident<DATA_LENGTH> {
