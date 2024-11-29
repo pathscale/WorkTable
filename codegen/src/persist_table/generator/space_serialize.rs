@@ -164,7 +164,10 @@ impl Generator {
                 let secondary_intevals = indexes.get_intervals();
                 info.inner.secondary_index_intervals = secondary_intevals;
 
-                let previous_header = indexes.get_last_header_mut();
+                let previous_header = match indexes.get_last_header_mut() {
+                    Some(previous_header) => previous_header,
+                    None => previous_header,
+                };
                 let data = map_data_pages_to_general(self.0.data.get_bytes().into_iter().map(|(b, offset)| DataPage {
                     data: b,
                     length: offset,
