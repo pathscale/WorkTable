@@ -156,15 +156,29 @@ impl Generator {
                 info.inner.page_count = 1;
                 let mut header = &mut info.header;
 
-                let mut primary_index = map_index_pages_to_general(self.get_peristed_primary_key(), &mut header);
+                let mut primary_index = map_index_pages_to_general(
+                    self.get_peristed_primary_key(),
+                    &mut header
+                );
                 let interval = Interval(
-                    primary_index.first().unwrap().header.page_id.into(),
-                    primary_index.last().unwrap().header.page_id.into()
+                    primary_index.first()
+                        .expect("Primary index page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into(),
+                    primary_index.last()
+                        .expect("Primary index page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into()
                 );
                 info.inner.page_count += primary_index.len() as u32;
 
                 info.inner.primary_key_intervals = vec![interval];
-                let previous_header = &mut primary_index.last_mut().unwrap().header;
+                let previous_header = &mut primary_index
+                    .last_mut()
+                    .expect("Primary index page always exists, even if empty")
+                    .header;
                 let mut indexes = self.0.indexes.get_persisted_index(previous_header);
                 let secondary_intevals = indexes.get_intervals();
                 info.inner.secondary_index_intervals = secondary_intevals;
@@ -178,8 +192,18 @@ impl Generator {
                     length: offset,
                 }).collect::<Vec<_>>(), previous_header);
                 let interval = Interval(
-                    data.first().unwrap().header.page_id.into(),
-                    data.last().unwrap().header.page_id.into()
+                    data
+                        .first()
+                        .expect("Data page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into(),
+                    data
+                        .last()
+                        .expect("Data page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into()
                 );
                 info.inner.data_intervals = vec![interval];
 
