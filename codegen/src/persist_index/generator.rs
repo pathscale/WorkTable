@@ -297,7 +297,15 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| Literal::string(f.ident.as_ref().expect("index fields should always be named fields").to_string().as_str()))
+            .map(|f| {
+                Literal::string(
+                    f.ident
+                        .as_ref()
+                        .expect("index fields should always be named fields")
+                        .to_string()
+                        .as_str(),
+                )
+            })
             .map(|l| quote! { #l, })
             .collect();
 
