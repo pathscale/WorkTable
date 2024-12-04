@@ -1,9 +1,9 @@
+use std::collections::HashMap;
+
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::__private::Span;
 use quote::{quote, ToTokens};
 use syn::ItemStruct;
-
-use std::collections::HashMap;
 
 pub struct Generator {
     struct_def: ItemStruct,
@@ -267,6 +267,7 @@ impl Generator {
         }
     }
 
+    /// Generates `PersistableIndex` trait implementation for persisted index.
     pub fn gen_persistable_impl(&self) -> syn::Result<TokenStream> {
         let ident = &self.struct_def.ident;
         let name_generator = NameGenerator {
@@ -274,31 +275,43 @@ impl Generator {
         };
         let name_ident = name_generator.get_persisted_index_ident();
 
-        let field_names_lits: Vec<_> = self
-            .struct_def
-            .fields
-            .iter()
-            .map(|f| Literal::string(f.ident.as_ref().unwrap().to_string().as_str()))
-            .map(|l| quote! { #l, })
-            .collect();
-        let persisted_index_fn = self.gen_persisted_index_fn()?;
+        let get_index_names_fn = self.gen_get_index_names_fn();
+        let get_persisted_index_fn = self.gen_get_persisted_index_fn();
         let from_persisted_fn = self.gen_from_persisted_fn()?;
 
         Ok(quote! {
             impl PersistableIndex for #ident {
                 type PersistedIndex = #name_ident;
 
-                fn get_index_names(&self) -> Vec<&str> {
-                    vec![#(#field_names_lits)*]
-                }
-
-                #persisted_index_fn
+                #get_index_names_fn
+                #get_persisted_index_fn
                 #from_persisted_fn
             }
         })
     }
 
-    fn gen_persisted_index_fn(&self) -> syn::Result<TokenStream> {
+    /// Generates `get_index_names` function of `PersistableIndex` trait for persisted index. It just returns names of
+    /// all indexes as strings.
+    fn gen_get_index_names_fn(&self) -> TokenStream {
+        let field_names_lits: Vec<_> = self
+            .struct_def
+            .fields
+            .iter()
+            .map(|f| Literal::string(f.ident.as_ref().expect("index fields should always be named fields").to_string().as_str()))
+            .map(|l| quote! { #l, })
+            .collect();
+
+        quote! {
+            fn get_index_names(&self) -> Vec<&str> {
+                vec![#(#field_names_lits)*]
+            }
+        }
+    }
+
+    /// Generates `get_persisted_index` function of `PersistableIndex` trait for persisted index. It maps every
+    /// `TreeIndex` into `Vec` of `IndexPage`s using `map_tree_index`/`map_unique_tree_index` functions.
+    fn gen_get_persisted_index_fn(&self) -> TokenStream {
+        // TODO: Refactor this names generation using worktable's NameGenerator.
         let name = self.struct_def.ident.to_string().replace("Index", "");
         let const_name = Ident::new(
             format!("{}_PAGE_SIZE", name.to_uppercase()).as_str(),
@@ -328,31 +341,37 @@ impl Generator {
                 let ty = self.field_types.get(i).unwrap();
                 if is_unique {
                     quote! {
-                        let mut #i = map_index_pages_to_general(map_unique_tree_index::<#ty, #const_name>(&self.#i), previous_header);
+                        let mut #i = map_index_pages_to_general(
+                            map_unique_tree_index::<#ty, #const_name>(&self.#i),
+                            previous_header
+                        );
                         previous_header = &mut #i.last_mut().unwrap().header;
                     }
                 } else {
                     quote! {
-                        let mut #i =  map_index_pages_to_general(map_tree_index::<#ty, #const_name>(&self.#i), previous_header);
+                        let mut #i =  map_index_pages_to_general(
+                            map_tree_index::<#ty, #const_name>(&self.#i),
+                            previous_header
+                        );
                         previous_header = &mut #i.last_mut().unwrap().header;
                     }
                 }
             })
             .collect();
 
-        Ok(quote! {
+        quote! {
             fn get_persisted_index(&self, header: &mut GeneralHeader) -> Self::PersistedIndex {
                 let mut previous_header = header;
-
                 #(#field_names_init)*
-
                 Self::PersistedIndex {
                     #(#idents,)*
                 }
             }
-        })
+        }
     }
 
+    /// Generates `from_persisted` function of `PersistableIndex` trait for persisted index. It maps every page in
+    /// persisted page back to `TreeIndex`
     fn gen_from_persisted_fn(&self) -> syn::Result<TokenStream> {
         let idents = self
             .struct_def
