@@ -5,19 +5,23 @@ use quote::__private::Span;
 use quote::{quote, ToTokens};
 use syn::ItemStruct;
 
+use crate::name_generator::WorktableNameGenerator;
+
 pub struct Generator {
     struct_def: ItemStruct,
     field_types: HashMap<Ident, TokenStream>,
 }
 
-pub struct NameGenerator<'a> {
-    struct_ident: &'a Ident,
-}
+impl WorktableNameGenerator {
+    pub fn from_index_ident(index_ident: &Ident) -> Self {
+        Self {
+            name: index_ident.to_string().replace("Index", "")
+        }
+    }
 
-impl<'a> NameGenerator<'a> {
     pub fn get_persisted_index_ident(&self) -> Ident {
         Ident::new(
-            format!("{}Persisted", self.struct_ident).as_str(),
+            format!("{}IndexPersisted", self.name).as_str(),
             Span::mixed_site(),
         )
     }
@@ -34,9 +38,7 @@ impl Generator {
     /// Generates persisted index type. This type has same name as index, but with `Persisted` postfix. Field names of
     /// this type are same to index type, and values are `Vec<GeneralPage<IndexData<T>>>`, where `T` is index key type.
     pub fn gen_persist_type(&mut self) -> syn::Result<TokenStream> {
-        let name_generator = NameGenerator {
-            struct_ident: &self.struct_def.ident,
-        };
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let name_ident = name_generator.get_persisted_index_ident();
 
         let mut fields = vec![];
@@ -89,9 +91,7 @@ impl Generator {
     }
 
     pub fn gen_persist_impl(&mut self) -> syn::Result<TokenStream> {
-        let name_generator = NameGenerator {
-            struct_ident: &self.struct_def.ident,
-        };
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let name_ident = name_generator.get_persisted_index_ident();
 
         let get_intervals_fn = self.gen_get_intervals_fn();
@@ -232,12 +232,8 @@ impl Generator {
     /// Generates `parse_from_file` function for persisted index. It calls `parse_page` function for every page in each
     /// index interval and collects them into `Vec`'s. Then this `Vec`'s are used to construct persisted index object.
     fn gen_parse_from_file_fn(&self) -> TokenStream {
-        // TODO: Refactor this names generation using worktable's NameGenerator.
-        let name = self.struct_def.ident.to_string().replace("Index", "");
-        let page_const_name = Ident::new(
-            format!("{}_PAGE_SIZE", name.to_uppercase()).as_str(),
-            Span::mixed_site(),
-        );
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let page_const_name = name_generator.get_page_size_const_ident();
 
         let field_names_literals: Vec<_> = self
             .struct_def
@@ -294,9 +290,7 @@ impl Generator {
     /// Generates `PersistableIndex` trait implementation for persisted index.
     pub fn gen_persistable_impl(&self) -> syn::Result<TokenStream> {
         let ident = &self.struct_def.ident;
-        let name_generator = NameGenerator {
-            struct_ident: &self.struct_def.ident,
-        };
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let name_ident = name_generator.get_persisted_index_ident();
 
         let get_index_names_fn = self.gen_get_index_names_fn();
@@ -343,12 +337,8 @@ impl Generator {
     /// Generates `get_persisted_index` function of `PersistableIndex` trait for persisted index. It maps every
     /// `TreeIndex` into `Vec` of `IndexPage`s using `map_tree_index`/`map_unique_tree_index` functions.
     fn gen_get_persisted_index_fn(&self) -> TokenStream {
-        // TODO: Refactor this names generation using worktable's NameGenerator.
-        let name = self.struct_def.ident.to_string().replace("Index", "");
-        let const_name = Ident::new(
-            format!("{}_PAGE_SIZE", name.to_uppercase()).as_str(),
-            Span::mixed_site(),
-        );
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let const_name = name_generator.get_page_size_const_ident();
         let idents = self
             .struct_def
             .fields

@@ -18,7 +18,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     Ok(quote! {
         #type_def
         #impl_def
-
         #persistable_def
     })
 }
