@@ -43,20 +43,36 @@ impl Generator {
         let mut types = vec![];
 
         for field in &self.struct_def.fields {
-            fields.push(field.ident.clone().unwrap());
+            fields.push(
+                field
+                    .ident
+                    .clone()
+                    .expect("index fields should always be named fields"),
+            );
             let index_type = field.ty.to_token_stream().to_string();
             let mut split = index_type.split("<");
-            // skip `TreeIndex`
+            // skip `TreeIndex` ident.
             split.next();
-            let substr = split.next().unwrap().to_string();
-            types.push(substr.split(",").next().unwrap().to_string());
+            let substr = split
+                .next()
+                .expect("index type should always contain key generic")
+                .to_string();
+            types.push(
+                substr
+                    .split(",")
+                    .next()
+                    .expect("index type should always contain key and value generics")
+                    .to_string(),
+            );
         }
 
         let fields: Vec<_> = fields
             .into_iter()
             .zip(types)
             .map(|(i, t)| {
-                let t: TokenStream = t.parse().unwrap();
+                let t: TokenStream = t
+                    .parse()
+                    .expect("should be valid because parsed from declaration");
                 self.field_types.insert(i.clone(), t.clone());
                 quote! {
                     #i: Vec<GeneralPage<IndexData<#t>>>,
@@ -100,7 +116,7 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().unwrap())
+            .map(|f| f.ident.as_ref().expect("index fields should always be named fields"))
             .map(|i| {
                 quote! {
                     if header.is_none() {
@@ -142,7 +158,11 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().unwrap())
+            .map(|f| {
+                f.ident
+                    .as_ref()
+                    .expect("index fields should always be named fields")
+            })
             .map(|i| {
                 quote! {
                     for mut page in &mut self.#i {
@@ -253,7 +273,11 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().unwrap())
+            .map(|f| {
+                f.ident
+                    .as_ref()
+                    .expect("index fields should always be named fields")
+            })
             .collect::<Vec<_>>();
 
         quote! {
@@ -329,7 +353,11 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().unwrap())
+            .map(|f| {
+                f.ident
+                    .as_ref()
+                    .expect("index fields should always be named fields")
+            })
             .collect::<Vec<_>>();
         let field_names_init: Vec<_> = self
             .struct_def
@@ -337,7 +365,7 @@ impl Generator {
             .iter()
             .map(|f| {
                 (
-                    f.ident.as_ref().unwrap(),
+                    f.ident.as_ref().expect("index fields should always be named fields"),
                     !f.ty
                         .to_token_stream()
                         .to_string()
@@ -346,14 +374,16 @@ impl Generator {
                 )
             })
             .map(|(i, is_unique)| {
-                let ty = self.field_types.get(i).unwrap();
+                let ty = self.field_types.get(i).expect("should be available as constructed from same values");
                 if is_unique {
                     quote! {
                         let mut #i = map_index_pages_to_general(
                             map_unique_tree_index::<#ty, #const_name>(&self.#i),
                             previous_header
                         );
-                        previous_header = &mut #i.last_mut().unwrap().header;
+                        previous_header = &mut #i.last_mut()
+                            .expect("at least one page should be presented, even if index contains no values")
+                            .header;
                     }
                 } else {
                     quote! {
@@ -361,7 +391,9 @@ impl Generator {
                             map_tree_index::<#ty, #const_name>(&self.#i),
                             previous_header
                         );
-                        previous_header = &mut #i.last_mut().unwrap().header;
+                        previous_header = &mut #i.last_mut()
+                            .expect("at least one page should be presented, even if index contains no values")
+                            .header;
                     }
                 }
             })
@@ -385,14 +417,21 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().unwrap())
+            .map(|f| {
+                f.ident
+                    .as_ref()
+                    .expect("index fields should always be named fields")
+            })
             .collect::<Vec<_>>();
         let index_gen = self
             .struct_def
             .fields
             .iter()
             .map(|f| {
-                let i = f.ident.as_ref().unwrap();
+                let i = f
+                    .ident
+                    .as_ref()
+                    .expect("index fields should always be named fields");
                 let is_unique = !f
                     .ty
                     .to_token_stream()
