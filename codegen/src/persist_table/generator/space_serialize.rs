@@ -98,11 +98,13 @@ impl Generator {
                     id: 0.into(),
                     page_count: 0,
                     name: #literal_name.to_string(),
+                    row_schema: vec![],
                     primary_key_intervals: vec![],
                     secondary_index_intervals: std::collections::HashMap::new(),
                     data_intervals: vec![],
                     pk_gen_state: <<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State::default(),
-                    empty_links_list: vec![]
+                    empty_links_list: vec![],
+                    secondary_index_map: std::collections::HashMap::new(),
                 };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,
