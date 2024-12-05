@@ -90,3 +90,23 @@ impl PrimaryKeyGeneratorState for () {
         ()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicI64, AtomicU64};
+    use super::PrimaryKeyGenerator;
+
+    #[test]
+    fn test_pk_gen_state_atomic_u64() {
+        let mut state = AtomicU64::new(0);
+        assert_eq!(<AtomicU64 as PrimaryKeyGenerator<u64>>::next(&mut state), 0);
+        assert_eq!(<AtomicU64 as PrimaryKeyGenerator<u64>>::next(&mut state), 1);
+    }
+
+    #[test]
+    fn test_pk_gen_state_atomic_i64() {
+        let mut state = AtomicI64::new(0);
+        assert_eq!(<AtomicI64 as PrimaryKeyGenerator<i64>>::next(&mut state), 0);
+        assert_eq!(<AtomicI64 as PrimaryKeyGenerator<i64>>::next(&mut state), 1);
+    }
+}
