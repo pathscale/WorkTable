@@ -123,6 +123,31 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(link)
     }
 
+    /// This function is unsafe because:
+    /// 1. It performs raw memory access
+    /// 2. It doesn't verify if the data being written is valid for the Row type
+    /// 3. The caller must ensure update_offset + bytes.len() doesn't exceed link.length
+    pub unsafe fn update_data_at_link(
+        &self,
+        link: Link,
+        update_offset: u32,
+        bytes: &[u8],
+    ) -> Result<(), ExecutionError> {
+        if link.offset > self.free_offset.load(Ordering::Relaxed) {
+            return Err(ExecutionError::InvalidLink);
+        }
+
+        if update_offset as usize + bytes.len() > link.length as usize {
+            return Err(ExecutionError::InvalidUpdateLength);
+        }
+
+        let inner_data = unsafe { &mut *self.inner_data.get() };
+        let start = (link.offset + update_offset) as usize;
+        inner_data[start..][..bytes.len()].copy_from_slice(bytes);
+
+        Ok(())
+    }
+
     pub unsafe fn get_mut_row_ref(
         &self,
         link: Link,
@@ -193,6 +218,9 @@ pub enum ExecutionError {
 
     /// Link provided for saving `Row` is invalid.
     InvalidLink,
+
+    /// Update length exceeds the linked data's length
+    InvalidUpdateLength,
 }
 
 #[cfg(test)]
@@ -203,7 +231,7 @@ mod tests {
 
     use rkyv::{Archive, Deserialize, Serialize};
 
-    use crate::in_memory::data::data::{Data, INNER_PAGE_SIZE};
+    use super::{Data, ExecutionError, INNER_PAGE_SIZE};
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -260,6 +288,32 @@ mod tests {
     }
 
     #[test]
+    fn data_page_update_at_link() {
+        let page = Data::<TestRow>::new(1.into());
+        let row = TestRow { a: 10, b: 20 };
+        let link = page.save_row::<16>(&row).unwrap();
+        
+        let new_bytes = 20u64.to_le_bytes();
+        unsafe { page.update_data_at_link(link, 0, &new_bytes).unwrap() };
+        
+        let updated_row = page.get_row(link).unwrap();
+        assert_eq!(updated_row.a, 20);
+        assert_eq!(updated_row.b, 20);
+    }
+
+    #[test]
+    fn data_page_update_invalid_offset() {
+        let page = Data::<TestRow>::new(1.into());
+        let row = TestRow { a: 10, b: 20 };
+        let link = page.save_row::<16>(&row).unwrap();
+        
+        let new_bytes = 20u64.to_le_bytes();
+        let result = unsafe { page.update_data_at_link(link, link.length - 4, &new_bytes) };
+        assert!(matches!(result, Err(ExecutionError::InvalidUpdateLength)));
+    }
+
+    #[test]
+
     fn data_page_full() {
         let page = Data::<TestRow, 16>::new(1.into());
         let row = TestRow { a: 10, b: 20 };

@@ -86,7 +86,8 @@ where
                     }
                     DataExecutionError::PageIsFull { .. }
                     | DataExecutionError::SerializeError
-                    | DataExecutionError::DeserializeError => Err(e.into()),
+                    | DataExecutionError::DeserializeError
+                    | DataExecutionError::InvalidUpdateLength => Err(e.into()),
                 }
             } else {
                 Ok(link)
