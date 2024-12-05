@@ -9,7 +9,7 @@ pub struct WorktableNameGenerator {
 impl WorktableNameGenerator {
     pub fn from_struct_ident(struct_ident: &Ident) -> Self {
         Self {
-            name: struct_ident.to_string().replace("WorkTable", "")
+            name: struct_ident.to_string().strip_suffix("WorkTable").expect("table type nae should end on `WorkTable`").to_string()
         }
     }
 
@@ -21,6 +21,13 @@ impl WorktableNameGenerator {
 
     pub fn literal_name(&self) -> Literal {
         Literal::string(self.name.as_str())
+    }
+
+    pub fn get_row_type_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}Row", self.name).as_str(),
+            Span::mixed_site(),
+        )
     }
 
     pub fn get_work_table_ident(&self) -> Ident {

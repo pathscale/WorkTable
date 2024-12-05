@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
+use crate::name_generator::WorktableNameGenerator;
 use crate::worktable::generator::Generator;
 use crate::worktable::model::{GeneratorType, Index};
 
@@ -11,8 +12,11 @@ impl Generator {
     ///
     /// [`WorkTable`]: worktable::WorkTable
     pub fn gen_table_def(&mut self) -> TokenStream {
-        let name = &self.name;
-        let ident = Ident::new(format!("{}WorkTable", name).as_str(), Span::mixed_site());
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
+        let page_const_name = name_generator.get_page_size_const_ident();
+        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+
         self.table_name = Some(ident.clone());
 
         let row_type = self.row_name.as_ref().unwrap();
@@ -37,14 +41,6 @@ impl Generator {
         let select_executor = self.gen_select_executor();
         let select_result_executor = self.gen_select_result_executor();
         let table_name_lit = Literal::string(self.name.to_string().as_str());
-        let page_const_name = Ident::new(
-            format!("{}_PAGE_SIZE", name.to_string().to_uppercase()).as_str(),
-            Span::mixed_site(),
-        );
-        let inner_const_name = Ident::new(
-            format!("{}_INNER_SIZE", name.to_string().to_uppercase()).as_str(),
-            Span::mixed_site(),
-        );
         let persist_type_part = if self.is_persist {
             quote! {
                 , std::sync::Arc<DatabaseManager>
@@ -169,8 +165,8 @@ impl Generator {
 
     pub fn gen_select_result_executor(&self) -> TokenStream {
         let row_type = self.row_name.as_ref().unwrap();
-        let name = &self.name;
-        let ident = Ident::new(format!("{}WorkTable", name).as_str(), Span::mixed_site());
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
 
         let columns = self
             .columns
@@ -232,8 +228,8 @@ impl Generator {
 
     pub fn gen_select_executor(&self) -> TokenStream {
         let row_type = self.row_name.as_ref().unwrap();
-        let name = &self.name;
-        let ident = Ident::new(format!("{}WorkTable", name).as_str(), Span::mixed_site());
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
 
         let columns = self.columns.columns_map.iter().map(|(name, _)| {
             let lit = Literal::string(name.to_string().as_str());

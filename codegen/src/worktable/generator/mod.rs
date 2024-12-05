@@ -12,10 +12,6 @@ use crate::worktable::model::{Columns, Config, PrimaryKey, Queries};
 pub struct Generator {
     pub name: Ident,
     pub is_persist: bool,
-    pub table_name: Option<Ident>,
-    pub row_name: Option<Ident>,
-    pub wrapper_name: Option<Ident>,
-    pub index_name: Option<Ident>,
     pub pk: Option<PrimaryKey>,
     pub queries: Option<Queries>,
     pub config: Option<Config>,
@@ -28,10 +24,6 @@ impl Generator {
         Self {
             name,
             is_persist,
-            table_name: None,
-            row_name: None,
-            wrapper_name: None,
-            index_name: None,
             pk: None,
             queries: None,
             config: None,

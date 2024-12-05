@@ -2,14 +2,15 @@ use std::collections::HashMap;
 
 use crate::worktable::generator::Generator;
 use crate::worktable::model::{GeneratorType, PrimaryKey};
+use crate::name_generator::WorktableNameGenerator;
 
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 impl Generator {
     pub fn gen_pk_def(&mut self) -> syn::Result<TokenStream> {
-        let name = &self.name;
-        let ident = Ident::new(format!("{name}PrimaryKey").as_str(), Span::mixed_site());
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_primary_key_type_ident();
         let vals = self
             .columns
             .primary_keys

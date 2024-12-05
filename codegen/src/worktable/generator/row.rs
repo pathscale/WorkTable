@@ -1,13 +1,12 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-
+use crate::name_generator::WorktableNameGenerator;
 use crate::worktable::generator::Generator;
 
 impl Generator {
     pub fn gen_row_def(&mut self) -> TokenStream {
-        let name = &self.name;
-
-        let ident = Ident::new(format!("{name}Row").as_str(), Span::mixed_site());
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_row_type_ident();
         let struct_def = quote! {pub struct #ident};
 
         let pk = self.pk.clone().unwrap();

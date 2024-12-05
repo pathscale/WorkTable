@@ -1,6 +1,4 @@
-use convert_case::{Case, Casing};
-use proc_macro2::{Ident, Literal, TokenStream};
-use quote::__private::Span;
+use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::name_generator::WorktableNameGenerator;
@@ -219,7 +217,7 @@ impl Generator {
                     let prefix = &self.path;
                     std::fs::create_dir_all(prefix).unwrap();
 
-                    let mut file = std::fs::File::create(format!("{}/{}", &self.path , file_name))?;
+                    let mut file = std::fs::File::create(format!("{}/{}.wt", &self.path , file_name))?;
                     persist_page(&mut self.info, &mut file)?;
 
                     for mut primary_index_page in &mut self.primary_index {
