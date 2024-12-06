@@ -1,7 +1,7 @@
-use proc_macro2::{Ident, Span, TokenStream};
-use quote::quote;
 use crate::name_generator::WorktableNameGenerator;
 use crate::worktable::generator::Generator;
+use proc_macro2::{Ident, Span, TokenStream};
+use quote::quote;
 
 impl Generator {
     /// Generates index type and it's impls.
@@ -141,7 +141,6 @@ impl Generator {
             }
         }
     }
-
 }
 
 // TODO: tests...

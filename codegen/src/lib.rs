@@ -1,7 +1,7 @@
+mod name_generator;
 mod persist_index;
 mod persist_table;
 mod worktable;
-mod name_generator;
 
 use proc_macro::TokenStream;
 

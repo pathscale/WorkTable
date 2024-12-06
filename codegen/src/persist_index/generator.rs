@@ -15,7 +15,11 @@ pub struct Generator {
 impl WorktableNameGenerator {
     pub fn from_index_ident(index_ident: &Ident) -> Self {
         Self {
-            name: index_ident.to_string().strip_suffix("Index").expect("index type nae should end on `Index`").to_string()
+            name: index_ident
+                .to_string()
+                .strip_suffix("Index")
+                .expect("index type nae should end on `Index`")
+                .to_string(),
         }
     }
 

@@ -9,14 +9,16 @@ pub struct WorktableNameGenerator {
 impl WorktableNameGenerator {
     pub fn from_struct_ident(struct_ident: &Ident) -> Self {
         Self {
-            name: struct_ident.to_string().strip_suffix("WorkTable").expect("table type nae should end on `WorkTable`").to_string()
+            name: struct_ident
+                .to_string()
+                .strip_suffix("WorkTable")
+                .expect("table type nae should end on `WorkTable`")
+                .to_string(),
         }
     }
 
     pub fn from_table_name(name: String) -> Self {
-        Self {
-            name
-        }
+        Self { name }
     }
 
     pub fn literal_name(&self) -> Literal {
@@ -24,10 +26,7 @@ impl WorktableNameGenerator {
     }
 
     pub fn get_row_type_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}Row", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}Row", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_work_table_ident(&self) -> Ident {
@@ -45,10 +44,7 @@ impl WorktableNameGenerator {
     }
 
     pub fn get_index_type_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}Index", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}Index", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_page_size_const_ident(&self) -> Ident {

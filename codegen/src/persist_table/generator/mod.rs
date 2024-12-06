@@ -15,10 +15,7 @@ pub struct Generator {
 
 impl WorktableNameGenerator {
     pub fn get_space_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}Space", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}Space", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_filename(&self) -> String {
