@@ -47,6 +47,18 @@ impl SizeMeasurable for String {
     }
 }
 
+impl SizeMeasurable for [u8; 32] {
+    fn approx_size(&self) -> usize {
+        mem::size_of::<[u8; 32]>()
+    }
+}
+
+impl SizeMeasurable for [u8; 20] {
+    fn approx_size(&self) -> usize {
+        mem::size_of::<[u8; 20]>()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::util::sized::SizeMeasurable;
@@ -58,5 +70,11 @@ mod test {
             let s = String::from_utf8(vec![b'a'; i]).unwrap();
             assert_eq!(s.approx_size(), rkyv::to_bytes::<_, 0>(&s).unwrap().len())
         }
+    }
+
+    #[test]
+    fn test_size_measurable_for_u8_array() {
+        let array = [0u8; 32];
+        assert_eq!(array.approx_size(), 32);
     }
 }
