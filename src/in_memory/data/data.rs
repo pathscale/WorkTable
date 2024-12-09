@@ -6,6 +6,9 @@ use derive_more::{Display, Error};
 use rkyv::bytecheck::CheckBytes;
 use rkyv::rancor::Strategy;
 use rkyv::seal::Seal;
+use rkyv::ser::allocator::ArenaHandle;
+use rkyv::ser::sharing::Share;
+use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::validation::archive::ArchiveValidator;
 use rkyv::validation::shared::SharedValidator;
@@ -90,7 +93,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Self {
             id: page.header.page_id,
             free_offset: AtomicU32::from(page.header.data_length),
-            inner_data: UnsafeCell::new(AlignedBytes(page.inner.data)),
+            inner_data: UnsafeCell::new(AlignedVec::<DATA_LENGTH>::new(page.inner.data)),
             _phantom: PhantomData,
         }
     }
@@ -101,9 +104,9 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     )]
     pub fn save_row<const N: usize>(&self, row: &Row) -> Result<Link, ExecutionError>
     where
-        Row: Archive
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>
     {
-        let bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(row).map_err(|_| ExecutionError::SerializeError)?;
         let length = bytes.len() as u32;
         let offset = self.free_offset.fetch_add(length, Ordering::SeqCst);
         if offset > DATA_LENGTH as u32 - length {
