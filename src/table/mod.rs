@@ -4,7 +4,7 @@ use data_bucket::{Link, INNER_PAGE_SIZE};
 use derive_more::{Display, Error, From};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
-use rkyv::ser::serializers::AllocSerializer;
+use rkyv::rancor::Strategy;
 use rkyv::{Archive, Deserialize, Serialize};
 use scc::ebr::Guard;
 use scc::tree_index::TreeIndex;
@@ -84,7 +84,7 @@ where
         Row: Archive,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Deserialize<
             <Row as StorableRow>::WrappedRow,
-            rkyv::de::deserializers::SharedDeserializeMap,
+            Strategy<Row, rkyv::rancor::Error>
         >,
     {
         let guard = Guard::new();
@@ -98,8 +98,7 @@ where
     )]
     pub fn insert<const ROW_SIZE_HINT: usize>(&self, row: Row) -> Result<Pk, WorkTableError>
     where
-        Row: Archive + Serialize<AllocSerializer<ROW_SIZE_HINT>> + Clone,
-        <Row as StorableRow>::WrappedRow: Archive + Serialize<AllocSerializer<ROW_SIZE_HINT>>,
+        Row: Archive + Clone,
         Pk: Clone,
         I: TableIndex<Row>,
     {

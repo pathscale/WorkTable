@@ -159,11 +159,7 @@ where
     )]
     pub fn select(&self, link: Link) -> Result<Row, ExecutionError>
     where
-        Row: Archive,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Deserialize<
-            <Row as StorableRow>::WrappedRow,
-            rkyv::de::deserializers::SharedDeserializeMap,
-        >,
+        Row: Archive
     {
         let pages = self.pages.read().unwrap();
         let page = pages
@@ -294,8 +290,7 @@ mod tests {
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
     )]
-    #[archive(compare(PartialEq))]
-    #[archive_attr(derive(Debug))]
+
     struct TestRow {
         a: u64,
         b: u64,
