@@ -21,3 +21,5 @@ quote = "1.0.36"
 proc-macro2 = "1.0.86"
 regex = "1.10.6"
 convert_case = "0.6.0"
+# data_bucket = "0.1.0"
+data_bucket = { path = "../../DataBucket", version = "0.1.0" }

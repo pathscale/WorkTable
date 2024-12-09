@@ -155,6 +155,7 @@ impl Generator {
                 info.inner.pk_gen_state = self.0.pk_gen.get_state();
                 info.inner.empty_links_list = self.0.data.get_empty_links();
                 info.inner.page_count = 1;
+                info.inner.row_schema = self.get_columns();
                 let mut header = &mut info.header;
 
                 let mut primary_index = map_index_pages_to_general(
