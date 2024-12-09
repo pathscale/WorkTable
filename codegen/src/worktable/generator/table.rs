@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
+use syn::token::Token;
 
 use crate::worktable::generator::Generator;
 use crate::worktable::model::{GeneratorType, Index};
@@ -118,6 +119,8 @@ impl Generator {
             }
         };
 
+        let get_columns = self.gen_get_columns();
+
         quote! {
             #table
 
@@ -159,6 +162,8 @@ impl Generator {
                 #iter_with
 
                 #iter_with_async
+
+                #get_columns
             }
 
             #select_executor
@@ -510,6 +515,25 @@ impl Generator {
                 }
 
                 core::result::Result::Ok(())
+            }
+        }
+    }
+
+    pub fn gen_get_columns(&self) -> TokenStream {
+        let row_columns: Vec<TokenStream> = {
+            let mut columns: Vec<TokenStream> = Default::default();
+            for (key, value) in self.columns.columns_map.iter() {
+                let data_type_string = value.clone().into_iter().next().unwrap().to_string();
+                let stream: proc_macro2::TokenStream = (
+                    "(\"".to_string() + key.to_string().as_str() + "\".to_string(), \"" +
+                    data_type_string.as_str() + "\".to_string()), ").parse().unwrap();
+                columns.push(stream);
+            }
+            columns
+        };
+        quote! {
+            pub fn get_columns(&self) -> Vec<(String, String)> {
+                vec![#(#row_columns)*]
             }
         }
     }
