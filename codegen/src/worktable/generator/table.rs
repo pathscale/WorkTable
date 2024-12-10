@@ -120,6 +120,7 @@ impl Generator {
         };
 
         let get_columns = self.gen_get_columns();
+        let get_secondary_indexes = self.gen_get_secondary_indexes();
 
         quote! {
             #table
@@ -164,6 +165,8 @@ impl Generator {
                 #iter_with_async
 
                 #get_columns
+
+                #get_secondary_indexes
             }
 
             #select_executor
@@ -534,6 +537,32 @@ impl Generator {
         quote! {
             pub fn get_columns(&self) -> Vec<(String, String)> {
                 vec![#(#row_columns)*]
+            }
+        }
+    }
+
+    pub fn gen_get_secondary_indexes(&self) -> TokenStream {
+        let indexes: Vec<TokenStream> = {
+            let mut indexes: Vec<TokenStream> = Default::default();
+            for (key, index) in  self.columns.indexes.iter() {
+                let data_type_string = self.columns.columns_map.get(&index.field)
+                    .expect("Index must be on an existing field")
+                    .clone()
+                    .into_iter()
+                    .next()
+                    .unwrap()
+                    .to_string();
+                let stream: proc_macro2::TokenStream = (
+                    "(\"".to_string() + key.to_string().as_str() + "\".to_string(), \"" +
+                    data_type_string.as_str() + "\".to_string()), ").parse().unwrap();
+                indexes.push(stream);
+            }
+            indexes
+        };
+
+        quote! {
+            pub fn get_secondary_indexes(&self) -> Vec<(String, String)> {
+                vec![#(#indexes)*]
             }
         }
     }

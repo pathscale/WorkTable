@@ -104,7 +104,7 @@ impl Generator {
                     data_intervals: vec![],
                     pk_gen_state: <<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State::default(),
                     empty_links_list: vec![],
-                    secondary_index_map: std::collections::HashMap::new(),
+                    secondary_index_types: vec![],
                 };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,
@@ -156,6 +156,7 @@ impl Generator {
                 info.inner.empty_links_list = self.0.data.get_empty_links();
                 info.inner.page_count = 1;
                 info.inner.row_schema = self.get_columns();
+                info.inner.secondary_index_types = self.get_secondary_indexes();
                 let mut header = &mut info.header;
 
                 let mut primary_index = map_index_pages_to_general(
