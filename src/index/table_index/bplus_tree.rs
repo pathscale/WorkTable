@@ -2,8 +2,8 @@ use std::fmt::Debug;
 use std::mem::transmute;
 use std::ops::RangeBounds;
 
-use bplustree::BPlusTree;
 use bplustree::iter::RawSharedIter;
+use bplustree::BPlusTree;
 use data_bucket::Link;
 
 use crate::TableIndex;
@@ -11,8 +11,9 @@ use crate::TableIndex;
 pub struct BPlusTreeIter<'a, K, V>(pub RawSharedIter<'a, K, V, 128, 256>);
 
 impl<'a, K, V> Iterator for BPlusTreeIter<'a, K, V>
-where K: 'a + Clone + Ord,
-      V: 'a
+where
+    K: 'a + Clone + Ord,
+    V: 'a,
 {
     type Item = (&'a K, &'a V);
 

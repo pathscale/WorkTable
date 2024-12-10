@@ -1,12 +1,12 @@
 pub mod select;
 
-use std::marker::PhantomData;
 use data_bucket::{Link, INNER_PAGE_SIZE};
 use derive_more::{Display, Error, From};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::ser::serializers::AllocSerializer;
 use rkyv::{Archive, Deserialize, Serialize};
+use std::marker::PhantomData;
 
 use crate::in_memory::{DataPages, RowWrapper, StorableRow};
 use crate::lock::LockMap;
@@ -24,7 +24,7 @@ pub struct WorkTable<
 > where
     PrimaryKey: Clone + Ord + 'static,
     Row: StorableRow,
-    IndexType: TableIndex<PrimaryKey, Link>
+    IndexType: TableIndex<PrimaryKey, Link>,
 {
     pub data: DataPages<Row, DATA_LENGTH>,
 
@@ -38,7 +38,7 @@ pub struct WorkTable<
 
     pub table_name: &'static str,
 
-    pub pk_phantom: PhantomData<PrimaryKey>
+    pub pk_phantom: PhantomData<PrimaryKey>,
 }
 
 // Manual implementations to avoid unneeded trait bounds.
@@ -60,7 +60,7 @@ where
             pk_gen: Default::default(),
             lock_map: LockMap::new(),
             table_name: "",
-            pk_phantom: PhantomData
+            pk_phantom: PhantomData,
         }
     }
 }

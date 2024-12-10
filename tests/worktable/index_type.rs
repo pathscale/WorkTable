@@ -1,5 +1,5 @@
-use worktable_codegen::worktable;
 use worktable::prelude::*;
+use worktable_codegen::worktable;
 
 worktable! (
     name: Test,

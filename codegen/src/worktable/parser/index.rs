@@ -89,7 +89,7 @@ impl Parser {
                 false
             }
         } else {
-           false
+            false
         };
 
         let index_type = if let Some(TokenTree::Ident(index_type)) = self.input_iter.peek() {
@@ -108,7 +108,7 @@ impl Parser {
                 name: ident,
                 field: row_name,
                 is_unique,
-                index_type
+                index_type,
             },
         ))
     }

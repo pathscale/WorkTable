@@ -45,7 +45,9 @@ impl Generator {
     }
 
     fn gen_impl_def(&mut self) -> TokenStream {
-        let save_rows = self.columns.indexes
+        let save_rows = self
+            .columns
+            .indexes
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
@@ -67,7 +69,8 @@ impl Generator {
                         }
                     }
                 }
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
         let delete_rows = self
             .columns

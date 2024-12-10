@@ -130,7 +130,7 @@ impl Parser {
             is_primary_key,
             gen_type,
             optional,
-            index_type
+            index_type,
         })
     }
 }

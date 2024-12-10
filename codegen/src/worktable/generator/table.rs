@@ -32,7 +32,7 @@ impl Generator {
             }
         };
 
-        let primary_index_type =  &self.columns.primary_keys.1;
+        let primary_index_type = &self.columns.primary_keys.1;
         let iter_with = Self::gen_iter_with(row_type);
         let iter_with_async = Self::gen_iter_with_async(row_type);
         let select_executor = self.gen_select_executor();
