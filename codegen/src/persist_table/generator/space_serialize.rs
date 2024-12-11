@@ -1,3 +1,4 @@
+use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::__private::Span;
 use quote::quote;
@@ -69,9 +70,17 @@ impl Generator {
     fn gen_from_file_fn(&self) -> syn::Result<TokenStream> {
         let name = self.struct_def.ident.to_string().replace("WorkTable", "");
         let space_ident = Ident::new(format!("{}Space", name).as_str(), Span::mixed_site());
+        let wt_ident = self.struct_def.ident.clone();
+        let name_underscore = name.from_case(Case::Pascal).to_case(Case::Snake);
+
         Ok(quote! {
-            pub fn load_from_file(file: &mut std::fs::File, manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
-                let space = #space_ident::parse_file(file)?;
+            pub fn load_from_file(manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
+                let filename = format!("{}/{}.wt", manager.database_files_dir.as_str(), #name_underscore);
+                let filename = std::path::Path::new(filename.as_str());
+                let Ok(mut file) = std::fs::File::open(filename) else {
+                    return Ok(#wt_ident::new(manager));
+                };
+                let space = #space_ident::parse_file(&mut file)?;
                 let table = space.into_worktable(manager);
                 Ok(table)
             }
@@ -93,7 +102,8 @@ impl Generator {
                     secondary_index_intervals: std::collections::HashMap::new(),
                     data_intervals: vec![],
                     pk_gen_state: <<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State::default(),
-                    empty_links_list: vec![]
+                    empty_links_list: vec![],
+                    secondary_index_map: std::collections::HashMap::default()
                 };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,
@@ -122,7 +132,7 @@ impl Generator {
 
         Ok(quote! {
             pub fn get_peristed_primary_key(&self) -> Vec<IndexData<#pk_type>> {
-                map_unique_tree_index::<_, #const_name>(&self.0.pk_map)
+                map_unique_tree_index::<_, #const_name>(TableIndex::iter(&self.0.pk_map))
             }
         })
     }
@@ -146,27 +156,54 @@ impl Generator {
                 info.inner.page_count = 1;
                 let mut header = &mut info.header;
 
-                let mut primary_index = map_index_pages_to_general(self.get_peristed_primary_key(), &mut header);
+                let mut primary_index = map_index_pages_to_general(
+                    self.get_peristed_primary_key(),
+                    &mut header
+                );
                 let interval = Interval(
-                    primary_index.first().unwrap().header.page_id.into(),
-                    primary_index.last().unwrap().header.page_id.into()
+                    primary_index.first()
+                        .expect("Primary index page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into(),
+                    primary_index.last()
+                        .expect("Primary index page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into()
                 );
                 info.inner.page_count += primary_index.len() as u32;
 
                 info.inner.primary_key_intervals = vec![interval];
-                let previous_header = &mut primary_index.last_mut().unwrap().header;
+                let previous_header = &mut primary_index
+                    .last_mut()
+                    .expect("Primary index page always exists, even if empty")
+                    .header;
                 let mut indexes = self.0.indexes.get_persisted_index(previous_header);
                 let secondary_intevals = indexes.get_intervals();
                 info.inner.secondary_index_intervals = secondary_intevals;
 
-                let previous_header = indexes.get_last_header_mut();
+                let previous_header = match indexes.get_last_header_mut() {
+                    Some(previous_header) => previous_header,
+                    None => previous_header,
+                };
                 let data = map_data_pages_to_general(self.0.data.get_bytes().into_iter().map(|(b, offset)| DataPage {
                     data: b,
                     length: offset,
                 }).collect::<Vec<_>>(), previous_header);
                 let interval = Interval(
-                    data.first().unwrap().header.page_id.into(),
-                    data.last().unwrap().header.page_id.into()
+                    data
+                        .first()
+                        .expect("Data page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into(),
+                    data
+                        .last()
+                        .expect("Data page always exists, even if empty")
+                        .header
+                        .page_id
+                        .into()
                 );
                 info.inner.data_intervals = vec![interval];
 
@@ -184,7 +221,9 @@ impl Generator {
     fn gen_space_persist_fn(&self) -> syn::Result<TokenStream> {
         let name = self.struct_def.ident.to_string().replace("WorkTable", "");
         let space_ident = Ident::new(format!("{}Space", name).as_str(), Span::mixed_site());
-        let file_name = Literal::string(format!("{}.wt", name.to_lowercase()).as_str());
+        let file_name = Literal::string(
+            format!("{}.wt", name.from_case(Case::Pascal).to_case(Case::Snake)).as_str(),
+        );
 
         Ok(quote! {
             impl<const DATA_LENGTH: usize> #space_ident<DATA_LENGTH> {

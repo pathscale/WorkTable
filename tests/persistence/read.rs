@@ -3,23 +3,28 @@ use std::sync::Arc;
 
 use worktable::prelude::*;
 
-use crate::persistence::{get_test_wt, TestWorkTable, TEST_INNER_SIZE, TEST_PAGE_SIZE};
+// TODO: Fix naming.
+use crate::persistence::{
+    get_empty_test_wt, get_test_wt, TestPersistRow, TestPersistWorkTable, TESTPERSIST_INNER_SIZE,
+    TESTPERSIST_PAGE_SIZE, TEST_ROW_COUNT,
+};
 
 #[test]
 fn test_info_parse() {
     let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
-    let info = parse_page::<SpaceInfoData, { TEST_PAGE_SIZE as u32 }>(&mut file, 0).unwrap();
+    let info =
+        parse_page::<SpaceInfoData, { TESTPERSIST_INNER_SIZE as u32 }>(&mut file, 0).unwrap();
 
     assert_eq!(info.header.space_id, 0.into());
     assert_eq!(info.header.page_id, 0.into());
     assert_eq!(info.header.previous_id, 0.into());
     assert_eq!(info.header.next_id, 1.into());
     assert_eq!(info.header.page_type, PageType::SpaceInfo);
-    assert_eq!(info.header.data_length, 108);
+    assert_eq!(info.header.data_length, 132);
 
     assert_eq!(info.inner.id, 0.into());
     assert_eq!(info.inner.page_count, 2);
-    assert_eq!(info.inner.name, "Test");
+    assert_eq!(info.inner.name, "TestPersist");
     assert_eq!(info.inner.primary_key_intervals, vec![Interval(1, 1)]);
     assert!(info
         .inner
@@ -36,7 +41,8 @@ fn test_info_parse() {
 #[test]
 fn test_index_parse() {
     let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
-    let index = parse_page::<IndexData<u128>, { TEST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
+    let index =
+        parse_page::<IndexData<u128>, { TESTPERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 1.into());
@@ -69,7 +75,9 @@ fn test_index_parse() {
 #[test]
 fn test_data_parse() {
     let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
-    let data = parse_data_page::<{ TEST_PAGE_SIZE }, { TEST_INNER_SIZE }>(&mut file, 3).unwrap();
+    let data =
+        parse_data_page::<{ TESTPERSIST_PAGE_SIZE }, { TESTPERSIST_INNER_SIZE }>(&mut file, 3)
+            .unwrap();
 
     assert_eq!(data.header.space_id, 0.into());
     assert_eq!(data.header.page_id, 3.into());
@@ -81,12 +89,72 @@ fn test_data_parse() {
 
 #[test]
 fn test_space_parse() {
-    let mut file = File::open("tests/data/expected/test_persist.wt").unwrap();
     let manager = Arc::new(DatabaseManager {
         config_path: "tests/data".to_string(),
+        database_files_dir: "tests/data/expected".to_string(),
     });
-    let table = TestWorkTable::load_from_file(&mut file, manager).unwrap();
+    let table = TestPersistWorkTable::load_from_file(manager).unwrap();
     let expected = get_test_wt();
+
+    assert_eq!(
+        table.select_all().execute().unwrap(),
+        expected.select_all().execute().unwrap()
+    );
+}
+
+#[test]
+fn test_space_parse_no_file() {
+    let manager = Arc::new(DatabaseManager {
+        config_path: "tests/data".to_string(),
+        database_files_dir: "tests/data/non-existent".to_string(),
+    });
+    let table = TestPersistWorkTable::load_from_file(manager).unwrap();
+    let expected = get_empty_test_wt();
+    assert_eq!(
+        table.select_all().execute().unwrap(),
+        expected.select_all().execute().unwrap()
+    );
+}
+
+#[test]
+fn test_space_insert_after_read() {
+    let manager = Arc::new(DatabaseManager {
+        config_path: "tests/data".to_string(),
+        database_files_dir: "tests/data/expected".to_string(),
+    });
+    let table = TestPersistWorkTable::load_from_file(manager).unwrap();
+
+    let row = TestPersistRow {
+        another: TEST_ROW_COUNT as u64,
+        id: TEST_ROW_COUNT as u128,
+    };
+    table.insert(row.clone()).unwrap();
+    let expected = get_test_wt();
+    expected.insert(row).unwrap();
+
+    assert_eq!(
+        table.select_all().execute().unwrap(),
+        expected.select_all().execute().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn test_space_delete_after_read() {
+    let manager = Arc::new(DatabaseManager {
+        config_path: "tests/data".to_string(),
+        database_files_dir: "tests/data/expected".to_string(),
+    });
+    let table = TestPersistWorkTable::load_from_file(manager).unwrap();
+
+    table
+        .delete((TEST_ROW_COUNT as u128 - 1).into())
+        .await
+        .unwrap();
+    let expected = get_test_wt();
+    expected
+        .delete((TEST_ROW_COUNT as u128 - 1).into())
+        .await
+        .unwrap();
 
     assert_eq!(
         table.select_all().execute().unwrap(),

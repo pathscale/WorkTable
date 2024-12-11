@@ -27,7 +27,16 @@ impl Generator {
 
         Ok(quote! {
             pub fn into_worktable(self, db_manager: std::sync::Arc<DatabaseManager>) -> #wt_ident {
-                let data = DataPages::from_data(self.data.into_iter().map(|p| std::sync::Arc::new(Data::from_data_page(p))).collect())
+                let mut page_id = 0;
+                let data = self.data.into_iter().map(|p| {
+                    let mut data = Data::from_data_page(p);
+                    data.set_page_id(page_id.into());
+                    page_id += 1;
+
+                    std::sync::Arc::new(data)
+                })
+                    .collect();
+                let data = DataPages::from_data(data)
                     .with_empty_links(self.info.inner.empty_links_list);
                 let indexes = #index_ident::from_persisted(self.indexes);
 
@@ -43,6 +52,7 @@ impl Generator {
                     pk_gen: PrimaryKeyGeneratorState::from_state(self.info.inner.pk_gen_state),
                     lock_map: LockMap::new(),
                     table_name: "",
+                    pk_phantom: std::marker::PhantomData
                 };
 
                 #wt_ident(
