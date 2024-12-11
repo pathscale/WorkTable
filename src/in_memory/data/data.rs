@@ -134,9 +134,10 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     pub unsafe fn get_mut_row_ref(
         &self,
         link: Link,
-    ) -> Result<Seal<Row>, ExecutionError>
+    ) -> Result<Seal<<Row as Archive>::Archived>, ExecutionError>
     where
-        Row: Archive + Portable
+        Row: Archive,
+        <Row as Archive>::Archived: Portable
     {
         if link.offset > self.free_offset.load(Ordering::Relaxed) {
             return Err(ExecutionError::DeserializeError);
@@ -144,7 +145,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
         let bytes = &mut inner_data[link.offset as usize..(link.offset + link.length) as usize];
-        Ok(unsafe { rkyv::access_unchecked_mut::<Row>(&mut bytes[..]) })
+        Ok(unsafe { rkyv::access_unchecked_mut::<<Row as Archive>::Archived>(&mut bytes[..]) })
     }
 
     #[cfg_attr(

@@ -7,7 +7,11 @@ use performance_measurement_codegen::performance_measurement;
 use rkyv::rancor::Strategy;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::marker::PhantomData;
-
+use rkyv::api::high::HighDeserializer;
+use rkyv::ser::allocator::ArenaHandle;
+use rkyv::ser::Serializer;
+use rkyv::ser::sharing::Share;
+use rkyv::util::AlignedVec;
 use crate::in_memory::{DataPages, RowWrapper, StorableRow};
 use crate::lock::LockMap;
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
@@ -88,10 +92,10 @@ where
     )]
     pub fn select(&self, pk: PrimaryKey) -> Option<Row>
     where
-        Row: Archive,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Deserialize<
             <Row as StorableRow>::WrappedRow,
-            Strategy<Row, rkyv::rancor::Error>
+            HighDeserializer<rkyv::rancor::Error>
         >,
     {
         let link = self.pk_map.peek(&pk)?;
@@ -104,8 +108,8 @@ where
     )]
     pub fn insert<const ROW_SIZE_HINT: usize>(&self, row: Row) -> Result<PrimaryKey, WorkTableError>
     where
-        Row: Archive +  Clone,
-        <Row as StorableRow>::WrappedRow: Archive,
+        Row: Archive + Clone + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row>,
     {

@@ -183,7 +183,6 @@ where
     pub fn with_ref<Op, Res>(&self, link: Link, op: Op) -> Result<Res, ExecutionError>
     where
         Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <Row as StorableRow>::WrappedRow: Portable,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
         let pages = self.pages.read().unwrap();
@@ -208,8 +207,8 @@ where
     ) -> Result<Res, ExecutionError>
     where
         Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <Row as StorableRow>::WrappedRow: Portable + NoUndef + Unpin,
-        Op: FnMut(&mut <Row as StorableRow>::WrappedRow) -> Res,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable + Unpin,
+        Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
         let pages = self.pages.read().unwrap();
         let page = pages
@@ -218,7 +217,7 @@ where
         let gen_row = page
             .get_mut_row_ref(link)
             .map_err(ExecutionError::DataPageError)?
-            .unseal();
+            .unseal_unchecked();
         let res = op(gen_row);
         Ok(res)
     }
