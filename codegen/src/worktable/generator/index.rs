@@ -27,23 +27,20 @@ impl Generator {
             .indexes
             .iter()
             .map(|(i, idx)| {
-                (
-                    idx.is_unique,
-                    &idx.name,
-                    self.columns.columns_map.get(&i).clone(),
-                )
-            })
-            .map(|(unique, i, t)| {
-                if unique {
-                    quote! {#i: TreeIndex<#t, Link>}
+                let index_type = &idx.index_type;
+                let t = self.columns.columns_map.get(&i);
+                let i = &idx.name;
+
+                if idx.is_unique {
+                    quote! {#i: #index_type<#t, Link>}
                 } else {
-                    quote! {#i: TreeIndex<#t, std::sync::Arc<LockFreeSet<Link>>>}
+                    quote! {#i: #index_type<#t, std::sync::Arc<LockFreeSet<Link>>>}
                 }
             })
             .collect::<Vec<_>>();
 
         quote! {
-            #[derive(Debug, Default, Clone, PersistIndex)]
+            #[derive(Debug, Default, PersistIndex)]
             pub struct #ident {
                 #(#index_rows),*
             }
@@ -60,7 +57,7 @@ impl Generator {
         let delete_row_fn = self.gen_save_row_index_fn();
 
         quote! {
-            impl TableIndex<#row_type_ident> for #index_type_ident {
+            impl TableSecondaryIndex<#row_type_ident> for #index_type_ident {
                 #save_row_fn
                 #delete_row_fn
             }
@@ -80,13 +77,13 @@ impl Generator {
                 let index_field_name = &idx.name;
                 if idx.is_unique {
                     quote! {
-                        self.#index_field_name.insert(row.#i, link).map_err(|_| WorkTableError::AlreadyExists)?;
+                        TableIndex::insert(&self.#index_field_name, row.#i, link)
+                            .map_err(|_| WorkTableError::AlreadyExists)?;
                     }
                 } else {
                     quote! {
-                        let guard = Guard::new();
-                        if let Some(set) = self.#index_field_name.peek(&row.#i, &guard) {
-                            set.insert(link).expect("`Link` should not be already in set");
+                        if let Some(set) = TableIndex::peek(&self.#index_field_name, &row.#i) {
+                            set.insert(link).expect("is ok");
                         } else {
                             let set = LockFreeSet::new();
                             set.insert(link).expect("`Link` should not be already in set");
@@ -96,7 +93,8 @@ impl Generator {
                         }
                     }
                 }
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
         quote! {
             fn save_row(&self, row: #row_type_ident, link: Link) -> core::result::Result<(), WorkTableError> {
@@ -121,12 +119,11 @@ impl Generator {
                 let index_field_name = &idx.name;
                 if idx.is_unique {
                     quote! {
-                        self.#index_field_name.remove(&row.#i);
+                        TableIndex::remove(&self.#index_field_name, &row.#i);
                     }
                 } else {
                     quote! {
-                        let guard = Guard::new();
-                        if let Some(set) = self.#index_field_name.peek(&row.#i, &guard) {
+                        if let Some(set) = TableIndex::peek(&self.#index_field_name, &row.#i) {
                             set.remove(&link);
                         }
                     }

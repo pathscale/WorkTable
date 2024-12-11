@@ -95,7 +95,8 @@ impl Generator {
                     secondary_index_intervals: std::collections::HashMap::new(),
                     data_intervals: vec![],
                     pk_gen_state: <<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State::default(),
-                    empty_links_list: vec![]
+                    empty_links_list: vec![],
+                    secondary_index_map: std::collections::HashMap::default()
                 };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,
@@ -121,7 +122,7 @@ impl Generator {
 
         Ok(quote! {
             pub fn get_peristed_primary_key(&self) -> Vec<IndexData<#pk_type>> {
-                map_unique_tree_index::<_, #const_name>(&self.0.pk_map)
+                map_unique_tree_index::<_, #const_name>(TableIndex::iter(&self.0.pk_map))
             }
         })
     }

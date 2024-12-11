@@ -65,7 +65,7 @@ impl Generator {
 
         quote! {
             #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq)]
-            #[archive_attr(derive(Debug))]
+            #[rkyv(derive(Debug))]
             #[repr(C)]
             pub struct #ident {
                 #(#rows)*

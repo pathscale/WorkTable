@@ -372,7 +372,7 @@ impl Generator {
                 if is_unique {
                     quote! {
                         let mut #i = map_index_pages_to_general(
-                            map_unique_tree_index::<#ty, #const_name>(&self.#i),
+                            map_unique_tree_index::<#ty, #const_name>(TableIndex::iter(&self.#i)),
                             previous_header
                         );
                         previous_header = &mut #i.last_mut()
@@ -382,7 +382,7 @@ impl Generator {
                 } else {
                     quote! {
                         let mut #i =  map_index_pages_to_general(
-                            map_tree_index::<#ty, #const_name>(&self.#i),
+                            map_tree_index::<#ty, #const_name>(TableIndex::iter(&self.#i)),
                             previous_header
                         );
                         previous_header = &mut #i.last_mut()
@@ -426,6 +426,10 @@ impl Generator {
                     .ident
                     .as_ref()
                     .expect("index fields should always be named fields");
+                let index_type = f.ty.to_token_stream().to_string();
+                let mut split = index_type.split("<");
+                let t = Ident::new(split.next().expect("index type should always have generics").trim(), Span::mixed_site());
+
                 let is_unique = !f
                     .ty
                     .to_token_stream()
@@ -434,16 +438,28 @@ impl Generator {
                     .contains("lockfree");
                 if is_unique {
                     quote! {
-                        let #i = TreeIndex::new();
+                        let #i: #t<_, Link> = #t::new();
                         for page in persisted.#i {
-                            page.inner.append_to_unique_tree_index(&#i);
+                            for val in page.inner.index_values {
+                                TableIndex::insert(&#i, val.key, val.link)
+                                    .expect("index is unique");
+                            }
                         }
                     }
                 } else {
                     quote! {
-                        let #i = TreeIndex::new();
+                        let #i: #t<_, std::sync::Arc<lockfree::set::Set<Link>>> = #t::new();
                         for page in persisted.#i {
-                            page.inner.append_to_tree_index(&#i);
+                            for val in page.inner.index_values {
+                                if let Some(set) = TableIndex::peek(&#i, &val.key) {
+                                    set.insert(val.link).expect("is ok");
+                                } else {
+                                    let set = lockfree::set::Set::new();
+                                    set.insert(val.link).expect("is ok");
+                                    TableIndex::insert(&#i, val.key, std::sync::Arc::new(set))
+                                        .expect("index is unique");
+                                }
+                            }
                         }
                     }
                 }
