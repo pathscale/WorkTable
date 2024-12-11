@@ -47,7 +47,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     generator.queries = queries;
     generator.config = config;
 
-    let pk_def = generator.gen_pk_def()?;
+    let pk_def = generator.gen_primary_key_def()?;
     let row_def = generator.gen_row_def();
     let wrapper_def = generator.gen_wrapper_def();
     let wrapper_impl = generator.gen_wrapper_impl();

@@ -8,21 +8,31 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 impl Generator {
-    pub fn gen_pk_def(&mut self) -> syn::Result<TokenStream> {
+    /// Generates primary key type and it's impls.
+    pub fn gen_primary_key_def(&mut self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_primary_key_type_ident();
-        let vals = self
+        let values = self
             .columns
             .primary_keys
             .0
             .iter()
-            .map(|i| (i.clone(), self.columns.columns_map.get(i).unwrap().clone()))
+            .map(|i| {
+                (
+                    i.clone(),
+                    self.columns
+                        .columns_map
+                        .get(i)
+                        .expect("should exist as got from definition")
+                        .clone(),
+                )
+            })
             .collect::<HashMap<_, _>>();
 
-        let def = self.gen_pk_type();
-        let impl_ = self.gen_pk_type();
+        let def = self.gen_primary_key_type();
+        let impl_ = self.gen_table_primary_key_impl();
 
-        self.pk = Some(PrimaryKey { ident, vals });
+        self.pk = Some(PrimaryKey { ident, values });
 
         Ok(quote! {
             #def
@@ -30,7 +40,9 @@ impl Generator {
         })
     }
 
-    fn gen_pk_type(&self) -> TokenStream {
+    /// Generates table's primary key struct definition. It's newtype for type that was chosen as primary key column in
+    /// definition.
+    fn gen_primary_key_type(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_primary_key_type_ident();
 
@@ -38,13 +50,26 @@ impl Generator {
 
         quote! {
             quote! {
-                #[derive(Clone, rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, From, Eq, Into, PartialEq, PartialOrd, Ord)]
+                #[derive(
+                    Clone,
+                    rkyv::Archive,
+                    Debug,
+                    rkyv::Deserialize,
+                    rkyv::Serialize,
+                    From,
+                    Eq,
+                    Into,
+                    PartialEq,
+                    PartialOrd,
+                    Ord
+                )]
                 pub struct #ident(#(#types),*);
             }
         }
     }
 
-    fn gen_pk_impl(&self) -> syn::Result<TokenStream> {
+    /// Generates `TablePrimaryKey` trait implementation for primary key. It depends on generator type.
+    fn gen_table_primary_key_impl(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_primary_key_type_ident();
 
@@ -60,6 +85,7 @@ impl Generator {
                 let i = self
                     .columns
                     .primary_keys
+                    .0
                     .first()
                     .expect("at least one primary key should exist if autoincrement");
                 let type_ = self
@@ -69,7 +95,7 @@ impl Generator {
                     .as_ref()
                     .expect("primary key column name always exists if in primary keys list");
 
-                let gen = Self::gen_from_type(type_, i)?;
+                let gen = Self::get_generator_from_type(type_, i)?;
                 quote! {
                     impl TablePrimaryKey for #ident {
                         type Generator = #gen;
@@ -82,7 +108,9 @@ impl Generator {
         })
     }
 
-    fn gen_from_type(type_: &TokenStream, i: &Ident) -> syn::Result<TokenStream> {
+    /// Generates primary key generator type depending on primitive type that was used as key. For now it just returns
+    /// atomic of primitive.
+    fn get_generator_from_type(type_: &TokenStream, i: &Ident) -> syn::Result<TokenStream> {
         Ok(match type_.to_string().as_str() {
             "u8" => quote! { std::sync::atomic::AtomicU8 },
             "u16" => quote! { std::sync::atomic::AtomicU16 },
