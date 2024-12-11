@@ -2,19 +2,19 @@ use std::fmt::Debug;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-#[cfg(feature = "perf_measurements")]
-use performance_measurement_codegen::performance_measurement;
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
 use lockfree::stack::Stack;
-use rkyv::{Archive, Deserialize, Portable, Serialize};
-use rkyv::api::high::HighDeserializer;
-use rkyv::rancor::Strategy;
-use rkyv::ser::allocator::ArenaHandle;
-use rkyv::ser::Serializer;
-use rkyv::ser::sharing::Share;
-use rkyv::traits::NoUndef;
-use rkyv::util::AlignedVec;
+#[cfg(feature = "perf_measurements")]
+use performance_measurement_codegen::performance_measurement;
+use rkyv::{
+    api::high::HighDeserializer,
+    rancor::Strategy,
+    ser::{allocator::ArenaHandle, sharing::Share, Serializer},
+    util::AlignedVec,
+    Archive, Deserialize, Portable, Serialize,
+};
+
 use crate::in_memory::data;
 use crate::in_memory::data::{DataExecutionError, DATA_INNER_LENGTH};
 use crate::in_memory::row::{RowWrapper, StorableRow};
@@ -74,8 +74,14 @@ where
     )]
     pub fn insert<const N: usize>(&self, row: Row) -> Result<Link, ExecutionError>
     where
-        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <Row as StorableRow>::WrappedRow: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
     {
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
@@ -131,8 +137,14 @@ where
         general_row: <Row as StorableRow>::WrappedRow,
     ) -> Result<Link, ExecutionError>
     where
-        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <Row as StorableRow>::WrappedRow: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
     {
         let pages = self.pages.read().unwrap();
         let current_page = self.current_page_index.load(Ordering::Relaxed);
@@ -165,8 +177,12 @@ where
     )]
     pub fn select(&self, link: Link) -> Result<Row, ExecutionError>
     where
-        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let pages = self.pages.read().unwrap();
         let page = pages
@@ -182,7 +198,10 @@ where
     )]
     pub fn with_ref<Op, Res>(&self, link: Link, op: Op) -> Result<Res, ExecutionError>
     where
-        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
         let pages = self.pages.read().unwrap();
@@ -206,8 +225,11 @@ where
         mut op: Op,
     ) -> Result<Res, ExecutionError>
     where
-        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable + Unpin,
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
         let pages = self.pages.read().unwrap();
@@ -229,7 +251,10 @@ where
     ) -> Result<Link, ExecutionError>
     where
         Row: Archive,
-        <Row as StorableRow>::WrappedRow: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
     {
         let pages = self.pages.read().unwrap();
         let page = pages

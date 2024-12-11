@@ -55,6 +55,7 @@ impl Generator {
         self.row_name = Some(ident);
         quote! {
             #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq)]
+            #[rkyv(derive(Debug))]
             #[repr(C)]
             #struct_def {
                 #(#rows)*
