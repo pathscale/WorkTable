@@ -412,8 +412,7 @@ mod tests {
         use crate::primary_key::TablePrimaryKey;
 
         #[derive(Archive, Clone, Copy, Debug, Deserialize, Serialize, PartialEq, PartialOrd)]
-        #[archive(compare(PartialEq))]
-        #[archive_attr(derive(Debug))]
+        #[rkyv(compare(PartialEq), derive(Debug))]
         pub enum SomeEnum {
             First,
             Second,
@@ -551,8 +550,7 @@ mod tests {
             Serialize,
             SizeMeasure,
         )]
-        #[archive(compare(PartialEq))]
-        #[archive_attr(derive(Debug))]
+        #[rkyv(compare(PartialEq), derive(Debug))]
         struct CustomId(u64);
 
         #[derive(Debug, Default)]

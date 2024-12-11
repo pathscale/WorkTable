@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, fmt::Debug};
+use std::fmt::Debug;
 use std::sync::atomic::AtomicBool;
 
 use rkyv::with::{AtomicLoad, Relaxed};
