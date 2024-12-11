@@ -428,7 +428,13 @@ impl Generator {
                     .expect("index fields should always be named fields");
                 let index_type = f.ty.to_token_stream().to_string();
                 let mut split = index_type.split("<");
-                let t = Ident::new(split.next().expect("index type should always have generics").trim(), Span::mixed_site());
+                let t = Ident::new(
+                    split
+                        .next()
+                        .expect("index type should always have generics")
+                        .trim(),
+                    Span::mixed_site(),
+                );
 
                 let is_unique = !f
                     .ty

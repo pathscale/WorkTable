@@ -71,7 +71,9 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type_ident = name_generator.get_row_type_ident();
 
-        let save_rows = self.columns.indexes
+        let save_rows = self
+            .columns
+            .indexes
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
