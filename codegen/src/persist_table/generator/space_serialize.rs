@@ -133,7 +133,7 @@ impl Generator {
 
         Ok(quote! {
             pub fn get_peristed_primary_key(&self) -> Vec<IndexData<#pk_type>> {
-                map_unique_tree_index::<_, #const_name>(&self.0.pk_map)
+                map_unique_tree_index::<_, #const_name>(TableIndex::iter(&self.0.pk_map))
             }
         })
     }
