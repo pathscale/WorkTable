@@ -7,6 +7,7 @@ use crate::prelude::LockFreeSet;
 
 mod table_index;
 mod table_secondary_index;
+mod measured_index;
 
 pub use table_index::{IndexSet, KeyValue, TableIndex};
 pub use table_secondary_index::TableSecondaryIndex;

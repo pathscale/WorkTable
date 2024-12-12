@@ -4,9 +4,11 @@ pub mod lock;
 mod primary_key;
 mod row;
 mod table;
-pub use data_bucket as persistence;
+pub use data_bucket;
 mod database;
 pub mod util;
+mod persistence;
+
 
 // mod ty;
 // mod value;

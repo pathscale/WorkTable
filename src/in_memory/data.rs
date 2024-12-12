@@ -20,8 +20,8 @@ use rkyv::{
     with::{Skip, Unsafe},
     Archive, Deserialize, Portable, Serialize,
 };
+use data_bucket::page::INNER_PAGE_SIZE;
 
-use crate::persistence::page::INNER_PAGE_SIZE;
 use crate::prelude::Link;
 
 /// Length of the [`Data`] page header.
