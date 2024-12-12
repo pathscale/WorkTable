@@ -1,7 +1,10 @@
+use std::marker::PhantomData;
 use std::ops::RangeBounds;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use data_bucket::{SizeMeasurable, PAGE_SIZE};
+
 use crate::TableIndex;
-use crate::util::SizeMeasurable;
 
 /// A wrapper around TreeIndex that provides size measurement capabilities
 pub struct MeasuredTreeIndex<I, K, V>
@@ -44,8 +47,8 @@ where
 impl<I, K, V> TableIndex<K, V> for MeasuredTreeIndex<I, K, V>
 where
     I: TableIndex<K, V>,
-    K: Clone + Ord + Send + Sync + 'static + SizeMeasurable,
-    V: Clone + Send + Sync + 'static + SizeMeasurable,
+    K: Clone + Ord + Send + Sync + SizeMeasurable + 'static,
+    V: Clone + Send + Sync + SizeMeasurable + 'static ,
 {
     fn insert(&self, key: K, value: V) -> Result<(), (K, V)> {
         let key_size = key.approx_size();

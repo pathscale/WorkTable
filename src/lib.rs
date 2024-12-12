@@ -6,7 +6,6 @@ mod row;
 mod table;
 pub use data_bucket;
 mod database;
-pub mod util;
 mod persistence;
 
 
