@@ -2,6 +2,7 @@ use crate::persistence::operation::Operation;
 
 mod operation;
 mod space;
+mod space_index;
 
 pub struct PersistenceEngine<Space> {
     pub space: Space
