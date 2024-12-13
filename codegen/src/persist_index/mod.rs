@@ -30,6 +30,7 @@ mod tests {
     use scc::TreeIndex;
 
     use crate::persist_index::expand;
+    use crate::table_index::MeasuredTreeIndex;
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -41,8 +42,8 @@ mod tests {
     }
 
     pub struct TestIndex {
-        test_idx: TreeIndex<i64, Link>,
-        exchange_idx: TreeIndex<String, std::sync::Arc<lockfree::set::Set<Link>>>,
+        test_idx: MeasuredTreeIndex<TreeIndex<i64, Link>, i64, Link>,
+        exchange_idx: MeasuredTreeIndex<TreeIndex<String, std::sync::Arc<lockfree::set::Set<Link>>>, String, std::sync::Arc<lockfree::set::Set<Link>>>,
     }
 
     #[test]
@@ -50,8 +51,8 @@ mod tests {
         let input = quote! {
             #[derive(Debug, Default, Clone)]
             pub struct TestIndex {
-                test_idx: TreeIndex<i64, Link>,
-                exchnage_idx: TreeIndex<String, std::sync::Arc<LockFreeSet<Link>>>
+                test_idx: MeasuredTreeIndex<TreeIndex<i64, Link>, i64, Link>,
+                exchnage_idx: MeasuredTreeIndex<TreeIndex<String, std::sync::Arc<LockFreeSet<Link>>>, String, std::sync::Arc<LockFreeSet<Link>>>
             }
         };
 

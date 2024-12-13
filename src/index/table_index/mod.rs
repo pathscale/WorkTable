@@ -5,6 +5,7 @@ mod index_set;
 mod tree_index;
 
 pub use index_set::{IndexSet, KeyValue};
+pub use tree_index::MeasuredTreeIndex;
 
 pub trait TableIndex<K, V> {
     fn insert(&self, key: K, value: V) -> Result<(), (K, V)>;

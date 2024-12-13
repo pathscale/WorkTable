@@ -97,7 +97,7 @@ impl Parser {
             self.input_iter.next();
             t
         } else {
-            Ident::new("TreeIndex", Span::mixed_site())
+            Ident::new("MeasuredTreeIndex", Span::mixed_site())
         };
 
         self.try_parse_comma()?;
@@ -131,6 +131,14 @@ mod tests {
         let columns = parser.parse_configs();
 
         assert!(columns.is_ok());
-        let columns = columns.unwrap();
+        let _ = columns.unwrap();
+
+        let indexes = parser.parse_indexes();
+        assert!(indexes.is_ok());
+        let indexes = indexes.unwrap();
+
+        for (_, index) in indexes {
+            assert_eq!(index.index_type.to_string(), "MeasuredTreeIndex");
+        }
     }
 }

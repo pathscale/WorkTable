@@ -23,12 +23,25 @@ impl Generator {
             quote! {
                 #[derive(Clone, rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, From, Eq, Into, PartialEq, PartialOrd, Ord)]
                 pub struct #ident(#type_);
+
+                impl SizeMeasurable for #ident {
+                    fn approx_size(&self) -> usize {
+                        self.0.approx_size()
+                    }
+                }
             }
         } else {
-            let types = vals.values();
+            let types = vals.values().collect::<Vec<_>>();
+            let indices = (0..types.len()).collect::<Vec<_>>();
             quote! {
                 #[derive(Clone, rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, From, Eq, Into, PartialEq, PartialOrd, Ord)]
                 pub struct #ident(#(#types),*);
+
+                impl SizeMeasurable for #ident {
+                    fn approx_size(&self) -> usize {
+                        #(self.#indices.approx_size() +)* 0
+                    }
+                }
             }
         };
 

@@ -26,9 +26,9 @@ impl Generator {
                 let i = &idx.name;
 
                 if idx.is_unique {
-                    quote! {#i: #index_type<#t, Link>}
+                    quote! {#i: #index_type<TreeIndex<#t, Link>, #t, Link>}
                 } else {
-                    quote! {#i: #index_type<#t, std::sync::Arc<LockFreeSet<Link>>>}
+                    quote! {#i: #index_type<TreeIndex<#t, std::sync::Arc<LockFreeSet<Link>>>, #t, std::sync::Arc<LockFreeSet<Link>>>>}
                 }
             })
             .collect::<Vec<_>>();
@@ -147,7 +147,7 @@ mod tests {
             generator.index_name.unwrap().to_string(),
             "TestIndex".to_string()
         );
-        assert_eq!(res.to_string(), "# [derive (Debug , Default , Clone)] pub struct TestIndex { test_idx : TreeIndex < u64 , Link > }")
+        assert_eq!(res.to_string(), "# [derive (Debug , Default , Clone)] pub struct TestIndex { test_idx : MeasuredTreeIndex < TreeIndex < u64 , Link > , u64 , Link > }")
     }
 
     #[test]
