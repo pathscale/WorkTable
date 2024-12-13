@@ -27,7 +27,7 @@ pub mod prelude {
         Order, SelectQueryBuilder, SelectQueryExecutor, SelectResult, SelectResultExecutor,
     };
     pub use crate::{
-        lock::Lock, IndexSet, KeyValue, TableIndex, TableRow, TableSecondaryIndex, WorkTable,
+        lock::Lock, IndexSet, KeyValue, MeasuredTreeIndex, TableIndex, TableRow, TableSecondaryIndex, WorkTable,
         WorkTableError,
     };
     pub use data_bucket::{

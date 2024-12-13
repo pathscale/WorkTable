@@ -9,6 +9,7 @@ use crate::util::SizeMeasurable;
 use crate::TableIndex;
 
 /// A wrapper around TreeIndex that provides size measurement capabilities
+#[derive(Debug)]
 pub struct MeasuredTreeIndex<I, K, V>
 where
     I: TableIndex<K, V>,
@@ -16,6 +17,19 @@ where
     inner: I,
     total_size: AtomicUsize,
     _phantom: PhantomData<(K, V)>,
+}
+
+impl<I, K, V> Default for MeasuredTreeIndex<I, K, V>
+where
+    I: TableIndex<K, V> + Default,
+{
+    fn default() -> Self {
+        Self {
+            inner: I::default(),
+            total_size: AtomicUsize::new(0),
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<I, K, V> MeasuredTreeIndex<I, K, V>

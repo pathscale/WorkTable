@@ -1,10 +1,11 @@
 use worktable::prelude::*;
+use worktable::util::SizeMeasurable;
 use worktable_codegen::worktable;
 
 worktable! (
     name: Test,
     columns: {
-        id: u64 primary_key autoincrement TreeIndex,
+        id: u64 primary_key autoincrement MeasuredTreeIndex,
         test: u64,
         another: u64,
         exchange: i32,
