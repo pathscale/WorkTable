@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use data_bucket::Link;
+use data_bucket::{Link, SizeMeasurable};
 use scc::TreeIndex;
 
 use crate::prelude::LockFreeSet;
-use crate::util::SizeMeasurable;
 
 mod table_index;
 mod table_secondary_index;
@@ -17,5 +16,7 @@ where
     T: Clone + Ord + Send + Sync + 'static + SizeMeasurable,
 {
     Unique(&'a MeasuredTreeIndex<TreeIndex<T, Link>, T, Link>),
-    NonUnique(&'a MeasuredTreeIndex<TreeIndex<T, Arc<LockFreeSet<Link>>>, T, Arc<LockFreeSet<Link>>>),
+    NonUnique(
+        &'a MeasuredTreeIndex<TreeIndex<T, Arc<LockFreeSet<Link>>>, T, Arc<LockFreeSet<Link>>>,
+    ),
 }

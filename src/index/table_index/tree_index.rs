@@ -1,11 +1,10 @@
+use data_bucket::{SizeMeasurable, PAGE_SIZE};
+use scc::ebr::Guard;
 use std::intrinsics::transmute;
 use std::marker::PhantomData;
 use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use scc::ebr::Guard;
-
-use crate::util::SizeMeasurable;
 use crate::TableIndex;
 
 /// A wrapper around TreeIndex that provides size measurement capabilities
@@ -67,8 +66,8 @@ where
     V: Clone + Send + Sync + 'static + SizeMeasurable,
 {
     fn insert(&self, key: K, value: V) -> Result<(), (K, V)> {
-        let key_size = key.approx_size();
-        let value_size = value.approx_size();
+        let key_size = key.aligned_size();
+        let value_size = value.aligned_size();
 
         match self.inner.insert(key, value) {
             Ok(()) => {
@@ -87,7 +86,7 @@ where
     fn remove(&self, key: &K) -> bool {
         if let Some(value) = self.peek(key) {
             if self.inner.remove(key) {
-                let size_reduction = key.approx_size() + value.approx_size();
+                let size_reduction = key.aligned_size() + value.aligned_size();
                 self.total_size.fetch_sub(size_reduction, Ordering::Relaxed);
                 return true;
             }
