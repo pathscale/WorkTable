@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use data_bucket::page::PageId;
+use data_bucket::page::INNER_PAGE_SIZE;
 use data_bucket::{DataPage, GeneralPage};
 use derive_more::{Display, Error};
 #[cfg(feature = "perf_measurements")]
@@ -20,7 +21,6 @@ use rkyv::{
     with::{Skip, Unsafe},
     Archive, Deserialize, Portable, Serialize,
 };
-use data_bucket::page::INNER_PAGE_SIZE;
 
 use crate::prelude::Link;
 

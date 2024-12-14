@@ -1,18 +1,19 @@
-use std::sync::Arc;
+use std::marker::PhantomData;
 
-use data_bucket::Link;
-use scc::TreeIndex;
-
-use crate::prelude::LockFreeSet;
+use derive_more::From;
 
 mod table_index;
 mod table_secondary_index;
-mod measured_index;
 
 pub use table_index::{IndexSet, KeyValue, TableIndex};
 pub use table_secondary_index::TableSecondaryIndex;
 
-pub enum IndexType<'a, T> {
-    Unique(&'a TreeIndex<T, Link>),
-    NonUnique(&'a TreeIndex<T, Arc<LockFreeSet<Link>>>),
+#[derive(Debug, From)]
+pub enum IndexType<'a, Index, K, V>
+where
+    Index: TableIndex<K, V>,
+{
+    Primary(&'a Index),
+    Secondary(&'a Index, String),
+    Phantom(PhantomData<(K, V)>),
 }

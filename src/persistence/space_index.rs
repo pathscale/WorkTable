@@ -7,7 +7,7 @@ use data_bucket::{SizeMeasurable, PAGE_SIZE};
 use crate::TableIndex;
 
 /// A wrapper around TreeIndex that provides size measurement capabilities
-pub struct MeasuredTreeIndex<I, K, V>
+pub struct SpaceTreeIndex<I, K, V>
 where
     I: TableIndex<K, V>,
 {
@@ -16,7 +16,7 @@ where
     _phantom: PhantomData<(K, V)>,
 }
 
-impl<I, K, V> MeasuredTreeIndex<I, K, V>
+impl<I, K, V> SpaceTreeIndex<I, K, V>
 where
     I: TableIndex<K, V>,
     K: Clone + Ord + Send + Sync + 'static,
@@ -44,15 +44,15 @@ where
     }
 }
 
-impl<I, K, V> TableIndex<K, V> for MeasuredTreeIndex<I, K, V>
+impl<I, K, V> TableIndex<K, V> for SpaceTreeIndex<I, K, V>
 where
     I: TableIndex<K, V>,
     K: Clone + Ord + Send + Sync + SizeMeasurable + 'static,
-    V: Clone + Send + Sync + SizeMeasurable + 'static ,
+    V: Clone + Send + Sync + SizeMeasurable + 'static,
 {
     fn insert(&self, key: K, value: V) -> Result<(), (K, V)> {
-        let key_size = key.approx_size();
-        let value_size = value.approx_size();
+        let key_size = key.aligned_size();
+        let value_size = value.aligned_size();
 
         match self.inner.insert(key, value) {
             Ok(()) => {
@@ -71,7 +71,7 @@ where
     fn remove(&self, key: &K) -> bool {
         if let Some(value) = self.peek(key) {
             if self.inner.remove(key) {
-                let size_reduction = key.approx_size() + value.approx_size();
+                let size_reduction = key.aligned_size() + value.aligned_size();
                 self.total_size.fetch_sub(size_reduction, Ordering::Relaxed);
                 return true;
             }

@@ -25,7 +25,7 @@ pub struct OperationId(u32);
 
 pub enum Operation<PrimaryKey, SecondaryKeys> {
     Insert(InsertOperation<PrimaryKey, SecondaryKeys>),
-    Update(UpdateOperation<SecondaryKeys>)
+    Update(UpdateOperation<SecondaryKeys>),
 }
 
 pub struct InsertOperation<PrimaryKey, SecondaryKeys> {

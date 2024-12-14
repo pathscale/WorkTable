@@ -27,7 +27,30 @@ worktable! (
     },
 );
 
+worktable!(
+    name: SizeTest,
+    columns: {
+        id: u32 primary_key,
+        number: u64,
+    }
+);
+
 pub const TEST_ROW_COUNT: usize = 100;
+
+#[test]
+fn test_rkyv() {
+    let row = SizeTestRow { number: 1, id: 1 };
+    let w =  SizeTestWrapper {
+        inner: row,
+        is_deleted: false,
+        lock: 1,
+        id_lock: 1,
+        number_lock: 1,
+    };
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&w).unwrap();
+
+    println!("{:?}", bytes.len())
+}
 
 pub fn get_empty_test_wt() -> TestPersistWorkTable {
     let manager = Arc::new(DatabaseManager {
