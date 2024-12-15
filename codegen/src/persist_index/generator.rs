@@ -294,25 +294,25 @@ impl Generator {
                     .contains("lockfree");
                 if is_unique {
                     quote! {
-                        let tree_index: #t<_, Link> = #t::new();
+                        let #i: #t<_, Link> = #t::new();
                         for page in persisted.#i {
                             for val in page.inner.index_values {
-                                TableIndex::insert(&tree_index, val.key, val.link)
+                                TableIndex::insert(&#i, val.key, val.link)
                                     .expect("index is unique");
                             }
                         }
                     }
                 } else {
-                    quote! {
-                        let tree_index: #t<_, std::sync::Arc<lockfree::set::Set<Link>>> = #t::new();
+                    quote! {0
+                        let #i: #t<_, std::sync::Arc<lockfree::set::Set<Link>>> = #t::new();
                         for page in persisted.#i {
                             for val in page.inner.index_values {
-                                if let Some(set) = TableIndex::peek(&tree_index, &val.key) {
+                                if let Some(set) = TableIndex::peek(&#i, &val.key) {
                                     set.insert(val.link).expect("is ok");
                                 } else {
                                     let set = lockfree::set::Set::new();
                                     set.insert(val.link).expect("is ok");
-                                    TableIndex::insert(&tree_index, val.key, std::sync::Arc::new(set))
+                                    TableIndex::insert(&#i, val.key, std::sync::Arc::new(set))
                                         .expect("index is unique");
                                 }
                             }

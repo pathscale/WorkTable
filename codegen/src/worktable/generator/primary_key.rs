@@ -21,14 +21,8 @@ impl Generator {
         let def = if vals.len() == 1 {
             let type_ = vals.values().next().unwrap();
             quote! {
-                #[derive(Clone, rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, From, Eq, Into, PartialEq, PartialOrd, Ord)]
+                #[derive(Clone, rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, From, Eq, Into, PartialEq, PartialOrd, Ord, SizeMeasurable)]
                 pub struct #ident(#type_);
-
-                impl SizeMeasurable for #ident {
-                    fn approx_size(&self) -> usize {
-                        self.0.approx_size()
-                    }
-                }
             }
         } else {
             let types = vals.values().collect::<Vec<_>>();

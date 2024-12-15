@@ -30,7 +30,6 @@ mod tests {
     use scc::TreeIndex;
 
     use crate::persist_index::expand;
-    use crate::table_index::MeasuredTreeIndex;
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,

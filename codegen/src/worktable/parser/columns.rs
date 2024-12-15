@@ -119,7 +119,7 @@ impl Parser {
             self.input_iter.next();
             t
         } else {
-            Ident::new("MeasuredTreeIndex", Span::mixed_site())
+            Ident::new("TreeIndex", Span::mixed_site())
         };
 
         self.try_parse_comma()?;

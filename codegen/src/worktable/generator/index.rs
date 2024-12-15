@@ -26,9 +26,9 @@ impl Generator {
                 let i = &idx.name;
 
                 if idx.is_unique {
-                    quote! {#i: #index_type<TreeIndex<#t, Link>, #t, Link>}
+                    quote! {#i: MeasuredTreeIndex<#index_type, #t, Link>}
                 } else {
-                    quote! {#i: #index_type<TreeIndex<#t, std::sync::Arc<LockFreeSet<Link>>>, #t, std::sync::Arc<LockFreeSet<Link>>>>}
+                    quote! {#i: MeasuredTreeIndex<#index_type, #t, std::sync::Arc<LockFreeSet<Link>>>>}
                 }
             })
             .collect::<Vec<_>>();
