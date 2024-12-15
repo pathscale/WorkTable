@@ -87,7 +87,7 @@ where
         indexset::concurrent2::set::BTreeSet::remove(
             self,
             key,
-        )
+        ).is_some()
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>

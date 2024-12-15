@@ -4,9 +4,11 @@ mod bplus_tree;
 mod index_set;
 mod tree_index;
 mod lockfree_map;
+mod hash_map;
 
 pub use index_set::{IndexSet, KeyValue};
 pub use lockfree::map::Map as LockFreeMap;
+pub use hash_map::LockedHashMap;
 
 pub trait TableIndex<K, V> {
     fn insert(&self, key: K, value: V) -> Result<(), (K, V)>;
