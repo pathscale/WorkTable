@@ -28,7 +28,7 @@ pub mod prelude {
     };
     pub use crate::{
         lock::Lock, IndexSet, KeyValue, TableIndex, TableRow, TableSecondaryIndex, WorkTable,
-        WorkTableError,
+        WorkTableError, LockFreeMap
     };
     pub use data_bucket::{
         align, map_data_pages_to_general, map_index_pages_to_general, map_tree_index,
