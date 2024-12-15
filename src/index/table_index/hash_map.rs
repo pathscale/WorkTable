@@ -9,10 +9,8 @@ use crate::TableIndex;
 pub type LockedHashMap<K, V> = RwLock<HashMap<K, V>>;
 
 pub struct LockedHashMapIter<'a, K, V> {
-    lock: RwLockReadGuard<'a, HashMap<K, V>>
+    lock: RwLockReadGuard<'a, HashMap<K, V>>,
 }
-
-
 
 impl<K, V> TableIndex<K, V> for LockedHashMap<K, V>
 where

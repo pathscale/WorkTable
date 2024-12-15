@@ -30,7 +30,9 @@ where
         K: 'a,
         V: 'a,
     {
-        lockfree::map::Map::iter(self).map(|r| r.clone()).map(|(k, v)| (unsafe {transmute(&k) }, unsafe {transmute(&v) }))
+        lockfree::map::Map::iter(self)
+            .map(|r| r.clone())
+            .map(|(k, v)| (unsafe { transmute(&k) }, unsafe { transmute(&v) }))
     }
 
     fn range<'a, R: RangeBounds<K>>(&'a self, _: R) -> impl Iterator<Item = (&'a K, &'a V)>
@@ -38,6 +40,6 @@ where
         K: 'a,
         V: 'a,
     {
-       TableIndex::iter(self)
+        TableIndex::iter(self)
     }
 }
