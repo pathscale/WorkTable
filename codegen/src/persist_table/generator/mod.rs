@@ -2,8 +2,8 @@ use proc_macro2::Ident;
 use syn::ItemStruct;
 
 mod size_measurable;
-mod space_deserialize;
-mod space_serialize;
+mod space_file_deserialize;
+mod space_file_serialize;
 
 pub struct Generator {
     pub struct_def: ItemStruct,
