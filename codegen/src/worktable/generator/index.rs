@@ -89,8 +89,7 @@ impl Generator {
                         } else {
                             let set = LockFreeSet::new();
                             set.insert(link).expect("`Link` should not be already in set");
-                            self.#index_field_name
-                                .insert(row.#i, std::sync::Arc::new(set))
+                            TableIndex::insert(&self.#index_field_name, row.#i, std::sync::Arc::new(set))
                                 .map_err(|_| WorkTableError::AlreadyExists)?;
                         }
                     }

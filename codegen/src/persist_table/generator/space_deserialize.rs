@@ -24,6 +24,7 @@ impl Generator {
         let wt_ident = &self.struct_def.ident;
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_ident = name_generator.get_index_type_ident();
+        let index_type_ident = &self.index_type_ident;
 
         Ok(quote! {
             pub fn into_worktable(self, db_manager: std::sync::Arc<DatabaseManager>) -> #wt_ident {
@@ -40,9 +41,12 @@ impl Generator {
                     .with_empty_links(self.info.inner.empty_links_list);
                 let indexes = #index_ident::from_persisted(self.indexes);
 
-                let pk_map = TreeIndex::new();
+                let pk_map = #index_type_ident::new();
                 for page in self.primary_index {
-                    page.inner.append_to_unique_tree_index(&pk_map);
+                    for val in page.inner.index_values {
+                        TableIndex::insert(&pk_map, val.key, val.link)
+                            .expect("index is unique");
+                    }
                 }
 
                 let table = WorkTable {
