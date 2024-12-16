@@ -5,15 +5,47 @@ use crate::name_generator::WorktableNameGenerator;
 use crate::worktable::generator::Generator;
 
 mod impls;
+mod select_executor;
+mod index_fns;
 
 impl Generator {
-    pub fn gen_table_def(&mut self) -> TokenStream {
+    pub fn gen_table_def(&mut self) -> syn::Result<TokenStream> {
         let page_size_consts = self.gen_page_size_consts();
         let type_ = self.gen_table_type();
+        let default = self.gen_table_default();
+        let impl_ = self.gen_table_impl();
+        let index_fns = self.gen_table_index_fns()?;
+        let select_executor_impl = self.gen_table_select_result_executor_impl();
+        let select_result_executor_impl = self.gen_table_select_result_executor_impl();
 
-        quote! {
+        Ok(quote! {
             #page_size_consts
             #type_
+            #default
+            #impl_
+            #index_fns
+            #select_executor_impl
+            #select_result_executor_impl
+        })
+    }
+
+    fn gen_table_default(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
+        let table_name = name_generator.get_work_table_literal_name();
+
+        if self.is_persist {
+            quote! {}
+        } else {
+            quote! {
+                 impl Default for #ident {
+                    fn default() -> Self {
+                        let mut inner = WorkTable::default();
+                        inner.table_name = #table_name;
+                        Self(inner)
+                    }
+                }
+            }
         }
     }
 

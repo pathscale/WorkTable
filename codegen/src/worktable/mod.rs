@@ -52,8 +52,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let wrapper_def = generator.gen_wrapper_def();
     let wrapper_impl = generator.gen_wrapper_impl();
     let index_def = generator.gen_index_def();
-    let table_def = generator.gen_table_def();
-    let table_index_impl = generator.gen_table_index_impl()?;
+    let table_def = generator.gen_table_def()?;
     let query_types_def = generator.gen_result_types_def()?;
     let query_locks_impls = generator.gen_query_locks_impl()?;
     let select_impls = generator.gen_query_select_impl()?;
@@ -67,7 +66,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         #wrapper_impl
         #index_def
         #table_def
-        #table_index_impl
         #query_types_def
         #query_locks_impls
         #select_impls

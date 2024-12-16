@@ -30,7 +30,7 @@ impl Generator {
             .collect::<HashMap<_, _>>();
 
         let def = self.gen_primary_key_type();
-        let impl_ = self.gen_table_primary_key_impl();
+        let impl_ = self.gen_table_primary_key_impl()?;
 
         self.pk = Some(PrimaryKey { ident, values });
 
@@ -46,25 +46,23 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_primary_key_type_ident();
 
-        let types = &self.columns.primary_keys;
+        let types = &self.columns.primary_keys.0;
 
         quote! {
-            quote! {
-                #[derive(
-                    Clone,
-                    rkyv::Archive,
-                    Debug,
-                    rkyv::Deserialize,
-                    rkyv::Serialize,
-                    From,
-                    Eq,
-                    Into,
-                    PartialEq,
-                    PartialOrd,
-                    Ord
-                )]
-                pub struct #ident(#(#types),*);
-            }
+            #[derive(
+                Clone,
+                rkyv::Archive,
+                Debug,
+                rkyv::Deserialize,
+                rkyv::Serialize,
+                From,
+                Eq,
+                Into,
+                PartialEq,
+                PartialOrd,
+                Ord
+            )]
+            pub struct #ident(#(#types),*);
         }
     }
 

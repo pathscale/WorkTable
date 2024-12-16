@@ -21,7 +21,7 @@ impl WorktableNameGenerator {
         Self { name }
     }
 
-    pub fn literal_name(&self) -> Literal {
+    pub fn get_work_table_literal_name(&self) -> Literal {
         Literal::string(self.name.as_str())
     }
 

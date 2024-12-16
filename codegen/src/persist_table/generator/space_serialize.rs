@@ -83,7 +83,7 @@ impl Generator {
     fn gen_space_info_fn(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk = name_generator.get_primary_key_type_ident();
-        let literal_name = name_generator.literal_name();
+        let literal_name = name_generator.get_work_table_literal_name();
 
         Ok(quote! {
             pub fn space_info_default() -> GeneralPage<SpaceInfoData<<<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>> {

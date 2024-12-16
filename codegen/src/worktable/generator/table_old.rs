@@ -11,7 +11,7 @@ impl Generator {
     /// Generates type alias for new [`WorkTable`].
     ///
     /// [`WorkTable`]: worktable::WorkTable
-    pub fn gen_table_def(&mut self) -> TokenStream {
+    pub fn gen_table_def_old(&mut self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_work_table_ident();
         let page_const_name = name_generator.get_page_size_const_ident();
@@ -152,7 +152,6 @@ impl Generator {
                     }
                     core::result::Result::Ok(())
                 }
-
                 #get_next
 
                 #iter_with
@@ -207,7 +206,6 @@ impl Generator {
                 fn execute(mut q: SelectResult<#row_type, Self>) -> Vec<#row_type> {
                     let mut sort: Box<dyn Fn(&#row_type, &#row_type) ->  std::cmp::Ordering> = Box::new(|left: &#row_type, right: &#row_type| { std::cmp::Ordering::Equal });
                     while let Some((q, col)) = q.params.orders.pop_front() {
-                        println!("{:?} {:?}", q, col);
                         match col.as_str() {
                             #(#columns)*
                             _ => unreachable!()
@@ -223,7 +221,6 @@ impl Generator {
                     } else {
                         vals
                     }
-
                 }
             }
         }
