@@ -6,7 +6,6 @@ mod row;
 mod table;
 pub use data_bucket as persistence;
 mod database;
-pub mod util;
 
 // mod ty;
 // mod value;
@@ -28,8 +27,8 @@ pub mod prelude {
         Order, SelectQueryBuilder, SelectQueryExecutor, SelectResult, SelectResultExecutor,
     };
     pub use crate::{
-        lock::Lock, IndexSet, KeyValue, TableIndex, TableRow, TableSecondaryIndex, WorkTable,
-        WorkTableError,
+        lock::Lock, IndexSet, KeyValue, LockFreeMap, LockedHashMap, TableIndex, TableRow,
+        TableSecondaryIndex, WorkTable, WorkTableError,
     };
     pub use data_bucket::{
         align, map_data_pages_to_general, map_index_pages_to_general, map_tree_index,
