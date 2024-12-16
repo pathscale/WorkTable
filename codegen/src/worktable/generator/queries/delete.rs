@@ -11,7 +11,7 @@ use crate::worktable::model::Operation;
 impl Generator {
     pub fn gen_query_delete_impl(&mut self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
-        let table_ident = name_generator.get_row_type_ident();
+        let table_ident = name_generator.get_work_table_ident();
 
         let custom_deletes = if let Some(q) = &self.queries {
             let custom_deletes = self.gen_custom_deletes(q.deletes.clone());

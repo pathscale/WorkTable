@@ -15,7 +15,7 @@ impl Generator {
         let default = self.gen_table_default();
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
-        let select_executor_impl = self.gen_table_select_result_executor_impl();
+        let select_executor_impl = self.gen_table_select_executor_impl();
         let select_result_executor_impl = self.gen_table_select_result_executor_impl();
 
         Ok(quote! {

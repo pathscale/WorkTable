@@ -46,7 +46,11 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_primary_key_type_ident();
 
-        let types = &self.columns.primary_keys.0;
+        let types = &self.columns.primary_keys.0.iter().map(|i| self.columns
+            .columns_map
+            .get(i)
+            .expect("should exist as got from definition"))
+            .collect::<Vec<_>>();
 
         quote! {
             #[derive(
