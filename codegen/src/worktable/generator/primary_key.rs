@@ -90,7 +90,6 @@ impl Generator {
                     .columns
                     .columns_map
                     .get(i)
-                    .as_ref()
                     .expect("primary key column name always exists if in primary keys list");
 
                 let gen = Self::get_generator_from_type(type_, i)?;

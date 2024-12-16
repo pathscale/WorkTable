@@ -54,7 +54,7 @@ impl Generator {
         let index_type_ident = name_generator.get_index_type_ident();
 
         let save_row_fn = self.gen_save_row_index_fn();
-        let delete_row_fn = self.gen_save_row_index_fn();
+        let delete_row_fn = self.gen_delete_row_index_fn();
 
         quote! {
             impl TableSecondaryIndex<#row_type_ident> for #index_type_ident {

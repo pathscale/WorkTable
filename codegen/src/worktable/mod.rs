@@ -50,7 +50,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let pk_def = generator.gen_primary_key_def()?;
     let row_def = generator.gen_row_def();
     let wrapper_def = generator.gen_wrapper_def();
-    let wrapper_impl = generator.gen_wrapper_impl();
     let index_def = generator.gen_index_def();
     let table_def = generator.gen_table_def()?;
     let query_types_def = generator.gen_result_types_def()?;
@@ -63,7 +62,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         #pk_def
         #row_def
         #wrapper_def
-        #wrapper_impl
         #index_def
         #table_def
         #query_types_def
