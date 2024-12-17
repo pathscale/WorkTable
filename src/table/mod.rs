@@ -1,9 +1,7 @@
 pub mod select;
 
-use crate::in_memory::{DataPages, RowWrapper, StorableRow};
-use crate::lock::LockMap;
-use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
-use crate::{in_memory, TableIndex, TableRow, TableSecondaryIndex};
+use std::marker::PhantomData;
+
 use data_bucket::{Link, INNER_PAGE_SIZE};
 use derive_more::{Display, Error, From};
 #[cfg(feature = "perf_measurements")]
@@ -15,7 +13,11 @@ use rkyv::ser::sharing::Share;
 use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
-use std::marker::PhantomData;
+
+use crate::in_memory::{DataPages, RowWrapper, StorableRow};
+use crate::lock::LockMap;
+use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
+use crate::{in_memory, TableIndex, TableRow, TableSecondaryIndex};
 
 #[derive(Debug)]
 pub struct WorkTable<

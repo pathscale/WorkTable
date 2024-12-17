@@ -1,3 +1,5 @@
+mod worktable_impls;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -5,28 +7,91 @@ use crate::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 
 impl Generator {
-    pub fn gen_space_deserialize_impls(&self) -> syn::Result<TokenStream> {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
-        let space_ident = name_generator.get_space_ident();
+    pub fn gen_space_file_def(&self) -> TokenStream {
+        let type_ = self.gen_space_file_type();
+        let impls = self.gen_space_file_impls();
+        let worktable_impl = self.gen_space_file_worktable_impl();
+        let space_persist_impl = self.gen_space_persist_impl();
 
-        let space_into_table = self.gen_space_into_table()?;
-        let parse_space = self.gen_parse_space()?;
-
-        Ok(quote! {
-            impl #space_ident {
-                #space_into_table
-                #parse_space
-            }
-        })
+        quote! {
+            #type_
+            #impls
+            #worktable_impl
+            #space_persist_impl
+        }
     }
 
-    fn gen_space_into_table(&self) -> syn::Result<TokenStream> {
+    fn gen_space_file_type(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let index_persisted_ident = name_generator.get_persisted_index_ident();
+        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let pk_type = name_generator.get_primary_key_type_ident();
+        let space_ident = name_generator.get_space_file_ident();
+
+        quote! {
+            #[derive(Debug)]
+            pub struct #space_ident<const DATA_LENGTH: usize = #inner_const_name > {
+                pub path: String,
+                pub info: GeneralPage<SpaceInfoData>,
+                pub primary_index: Vec<GeneralPage<IndexData<#pk_type>>>,
+                pub indexes: #index_persisted_ident,
+                pub data: Vec<GeneralPage<DataPage<DATA_LENGTH>>>,
+            }
+        }
+    }
+
+    fn gen_space_persist_impl(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let space_ident = name_generator.get_space_file_ident();
+        let file_name = name_generator.get_filename();
+
+        quote! {
+            impl<const DATA_LENGTH: usize> #space_ident<DATA_LENGTH> {
+                pub fn persist(&mut self) -> eyre::Result<()> {
+                    let file_name = #file_name;
+                    let path = std::path::Path::new(format!("{}/{}.wt", &self.path , file_name).as_str());
+                    let prefix = &self.path;
+                    std::fs::create_dir_all(prefix).unwrap();
+
+                    let mut file = std::fs::File::create(format!("{}/{}.wt", &self.path , file_name))?;
+                    persist_page(&mut self.info, &mut file)?;
+
+                    for mut primary_index_page in &mut self.primary_index {
+                        persist_page(&mut primary_index_page, &mut file)?;
+                    }
+                    self.indexes.persist(&mut file)?;
+                    for mut data_page in &mut self.data {
+                        persist_page(&mut data_page, &mut file)?;
+                    }
+
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    pub fn gen_space_file_impls(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let space_ident = name_generator.get_space_file_ident();
+
+        let into_worktable_fn = self.gen_space_file_into_worktable_fn();
+        let parse_file_fn = self.gen_space_file_parse_file_fn();
+
+        quote! {
+            impl #space_ident {
+                #into_worktable_fn
+                #parse_file_fn
+            }
+        }
+    }
+
+    fn gen_space_file_into_worktable_fn(&self) -> TokenStream {
         let wt_ident = &self.struct_def.ident;
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_ident = name_generator.get_index_type_ident();
         let index_type_ident = &self.index_type_ident;
 
-        Ok(quote! {
+        quote! {
             pub fn into_worktable(self, db_manager: std::sync::Arc<DatabaseManager>) -> #wt_ident {
                 let mut page_id = 0;
                 let data = self.data.into_iter().map(|p| {
@@ -64,17 +129,17 @@ impl Generator {
                     db_manager
                 )
             }
-        })
+        }
     }
 
-    fn gen_parse_space(&self) -> syn::Result<TokenStream> {
+    fn gen_space_file_parse_file_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk_type = name_generator.get_primary_key_type_ident();
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let persisted_index_name = name_generator.get_persisted_index_ident();
 
-        Ok(quote! {
+        quote! {
             pub fn parse_file(file: &mut std::fs::File) -> eyre::Result<Self> {
                 let info = parse_page::<SpaceInfoData<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(file, 0)?;
 
@@ -106,6 +171,6 @@ impl Generator {
                     data
                 })
             }
-        })
+        }
     }
 }
