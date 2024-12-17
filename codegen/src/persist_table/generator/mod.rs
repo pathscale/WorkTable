@@ -5,6 +5,7 @@ use syn::ItemStruct;
 use crate::name_generator::WorktableNameGenerator;
 
 mod size_measurable;
+mod space;
 mod space_file;
 
 pub struct Generator {
@@ -19,6 +20,10 @@ impl WorktableNameGenerator {
             format!("{}SpaceFile", self.name).as_str(),
             Span::mixed_site(),
         )
+    }
+
+    pub fn get_space_ident(&self) -> Ident {
+        Ident::new(format!("{}Space", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_filename(&self) -> String {

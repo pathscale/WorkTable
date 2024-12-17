@@ -26,11 +26,11 @@ impl Generator {
         let index_persisted_ident = name_generator.get_persisted_index_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
-        let space_ident = name_generator.get_space_file_ident();
+        let space_file_ident = name_generator.get_space_file_ident();
 
         quote! {
             #[derive(Debug)]
-            pub struct #space_ident<const DATA_LENGTH: usize = #inner_const_name > {
+            pub struct #space_file_ident<const DATA_LENGTH: usize = #inner_const_name > {
                 pub path: String,
                 pub info: GeneralPage<SpaceInfoData>,
                 pub primary_index: Vec<GeneralPage<IndexData<#pk_type>>>,
