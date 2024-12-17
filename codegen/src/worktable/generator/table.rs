@@ -4,7 +4,7 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 use syn::token::Token;
 
-use crate::worktable::generator::Generator;
+use crate::worktable::generator::{primary_key, Generator};
 use crate::worktable::model::{GeneratorType, Index};
 
 impl Generator {
@@ -124,6 +124,7 @@ impl Generator {
 
         let get_columns = self.gen_get_columns();
         let get_secondary_indexes = self.gen_get_secondary_indexes();
+        let get_primary_key_fields = self.gen_get_primary_key_fields();
 
         quote! {
             #table
@@ -170,6 +171,8 @@ impl Generator {
                 #get_columns
 
                 #get_secondary_indexes
+
+                #get_primary_key_fields
             }
 
             #select_executor
@@ -562,6 +565,17 @@ impl Generator {
         quote! {
             pub fn get_secondary_indexes(&self) -> Vec<(String, String)> {
                 vec![#(#indexes)*]
+            }
+        }
+    }
+
+    pub fn gen_get_primary_key_fields(&self) -> TokenStream {
+        let primary_key_fields: Vec<TokenStream> = self.columns.primary_keys.0.iter()
+            .map(|field| ("\"".to_string() + field.to_string().as_str() + "\".to_string(), ").parse().unwrap())
+            .collect();
+        quote! {
+            pub fn get_primary_key_fields(&self) -> Vec<String> {
+                vec![#(#primary_key_fields)*]
             }
         }
     }

@@ -99,6 +99,7 @@ impl Generator {
                     page_count: 0,
                     name: #literal_name.to_string(),
                     row_schema: vec![],
+                    primary_key_fields: vec![],
                     primary_key_intervals: vec![],
                     secondary_index_intervals: std::collections::HashMap::new(),
                     data_intervals: vec![],
@@ -156,6 +157,7 @@ impl Generator {
                 info.inner.empty_links_list = self.0.data.get_empty_links();
                 info.inner.page_count = 1;
                 info.inner.row_schema = self.get_columns();
+                info.inner.primary_key_fields = self.get_primary_key_fields();
                 info.inner.secondary_index_types = self.get_secondary_indexes();
                 let mut header = &mut info.header;
 

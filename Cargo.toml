@@ -14,6 +14,7 @@ description = "WorkTable is in-memory storage"
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
 tree_index = ["worktable_codegen/tree_index"]
 index_set = ["worktable_codegen/index_set"]
+default = ["index_set"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
