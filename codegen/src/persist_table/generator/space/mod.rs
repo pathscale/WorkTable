@@ -18,23 +18,4 @@ impl Generator {
             }
         }
     }
-
-    fn gen_space_impl(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
-        let space_ident = name_generator.get_space_ident();
-
-        quote! {
-            impl #space_ident {
-
-            }
-        }
-    }
-
-    fn gen_space_seek_to_page_start_fn(&self) -> TokenStream {
-        quote! {
-            fn seek_to_page_start(&self) -> eyre::Result<()> {
-
-            }
-        }
-    }
 }
