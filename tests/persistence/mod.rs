@@ -4,6 +4,7 @@ use worktable::prelude::*;
 use worktable::worktable;
 
 mod read;
+mod space;
 mod write;
 
 worktable! (
@@ -40,7 +41,7 @@ pub const TEST_ROW_COUNT: usize = 100;
 #[test]
 fn test_rkyv() {
     let row = SizeTestRow { number: 1, id: 1 };
-    let w =  SizeTestWrapper {
+    let w = SizeTestWrapper {
         inner: row,
         is_deleted: false,
         lock: 1,

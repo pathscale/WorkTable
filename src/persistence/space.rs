@@ -1,6 +1,6 @@
-use std::ops::RangeBounds;
-use data_bucket::Link;
 use crate::{IndexType, TableIndex};
+use data_bucket::Link;
+use std::ops::RangeBounds;
 
 pub trait SpaceIndex<Index, K, V>
 where
@@ -21,5 +21,5 @@ where
 }
 
 pub trait SpaceData {
-    fn save_data(&self, link: Link, bytes: &[u8]);
+    fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()>;
 }

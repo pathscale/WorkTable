@@ -23,6 +23,7 @@ pub mod prelude {
     pub use crate::database::DatabaseManager;
     pub use crate::in_memory::{ArchivedRow, Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
+    pub use crate::persistence::SpaceData;
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{
         Order, SelectQueryBuilder, SelectQueryExecutor, SelectResult, SelectResultExecutor,
@@ -33,10 +34,10 @@ pub mod prelude {
     };
     pub use data_bucket::{
         align, map_data_pages_to_general, map_index_pages_to_general, map_tree_index,
-        map_unique_tree_index, parse_data_page, parse_page, persist_page, DataPage, GeneralHeader,
-        GeneralPage, IndexData, Interval, Link, PageType, Persistable, PersistableIndex,
-        SizeMeasurable, SizeMeasure, SpaceInfoData, DATA_VERSION, GENERAL_HEADER_SIZE,
-        INNER_PAGE_SIZE, PAGE_SIZE,
+        map_unique_tree_index, parse_data_page, parse_page, persist_page, seek_by_link,
+        seek_to_page_start, update_at, DataPage, GeneralHeader, GeneralPage, IndexData, Interval,
+        Link, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoData,
+        DATA_VERSION, GENERAL_HEADER_SIZE, INNER_PAGE_SIZE, PAGE_SIZE,
     };
 
     pub use derive_more::{From, Into};
