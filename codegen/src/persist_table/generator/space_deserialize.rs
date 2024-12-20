@@ -24,14 +24,13 @@ impl Generator {
         let wt_ident = &self.struct_def.ident;
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_ident = name_generator.get_index_type_ident();
-        let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let index_type_ident = &self.index_type_ident;
 
         Ok(quote! {
             pub fn into_worktable(self, db_manager: std::sync::Arc<DatabaseManager>) -> #wt_ident {
                 let mut page_id = 0;
                 let data = self.data.into_iter().map(|p| {
-                    let mut data = Data::<_, #inner_const_name>::from_data_page(p);
+                    let mut data = Data::from_data_page(p);
                     data.set_page_id(page_id.into());
                     page_id += 1;
 
