@@ -26,12 +26,12 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct DataPages<Row>
+pub struct DataPages<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
 where
     Row: StorableRow,
 {
     /// Pages vector. Currently, not lock free.
-    pages: RwLock<Vec<Arc<Data<<Row as StorableRow>::WrappedRow>>>>,
+    pages: RwLock<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
 
     /// Stack with empty [`Link`]s. It stores [`Link`]s of rows that was deleted.
     empty_links: Stack<Link>,
@@ -44,7 +44,7 @@ where
     current_page_index: AtomicU32,
 }
 
-impl<Row> DataPages<Row>
+impl<Row, const DATA_LENGTH: usize> DataPages<Row, DATA_LENGTH>
 where
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
@@ -60,7 +60,7 @@ where
     }
 
     pub fn from_data(
-        vec: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_INNER_LENGTH>>>,
+        vec: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>,
     ) -> Self {
         // TODO: Add row_count persistence.
         let last_page_id = vec.len() - 1;
@@ -275,13 +275,13 @@ where
         Ok(())
     }
 
-    pub fn get_bytes(&self) -> Vec<(Vec<u8>, u32)> {
+    pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
         let pages = self.pages.read().unwrap();
         pages
             .iter()
             .map(|p| {
                 (
-                    p.get_bytes().to_vec(),
+                    p.get_bytes(),
                     p.free_offset.load(Ordering::Relaxed),
                 )
             })

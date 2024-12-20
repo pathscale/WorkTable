@@ -30,7 +30,7 @@ pub struct WorkTable<
     Row: StorableRow,
     IndexType: TableIndex<PrimaryKey, Link>,
 {
-    pub data: DataPages<Row>,
+    pub data: DataPages<Row, DATA_LENGTH>,
 
     pub pk_map: IndexType,
 
