@@ -529,9 +529,13 @@ impl Generator {
             let mut columns: Vec<TokenStream> = Default::default();
             for (key, value) in self.columns.columns_map.iter() {
                 let data_type_string = value.clone().into_iter().next().unwrap().to_string();
-                let stream: proc_macro2::TokenStream = (
-                    "(\"".to_string() + key.to_string().as_str() + "\".to_string(), \"" +
-                    data_type_string.as_str() + "\".to_string()), ").parse().unwrap();
+                let stream: proc_macro2::TokenStream = ("(\"".to_string()
+                    + key.to_string().as_str()
+                    + "\".to_string(), \""
+                    + data_type_string.as_str()
+                    + "\".to_string()), ")
+                    .parse()
+                    .unwrap();
                 columns.push(stream);
             }
             columns
@@ -546,17 +550,24 @@ impl Generator {
     pub fn gen_get_secondary_indexes(&self) -> TokenStream {
         let indexes: Vec<TokenStream> = {
             let mut indexes: Vec<TokenStream> = Default::default();
-            for (key, index) in  self.columns.indexes.iter() {
-                let data_type_string = self.columns.columns_map.get(&index.field)
+            for (key, index) in self.columns.indexes.iter() {
+                let data_type_string = self
+                    .columns
+                    .columns_map
+                    .get(&index.field)
                     .expect("Index must be on an existing field")
                     .clone()
                     .into_iter()
                     .next()
                     .unwrap()
                     .to_string();
-                let stream: proc_macro2::TokenStream = (
-                    "(\"".to_string() + key.to_string().as_str() + "\".to_string(), \"" +
-                    data_type_string.as_str() + "\".to_string()), ").parse().unwrap();
+                let stream: proc_macro2::TokenStream = ("(\"".to_string()
+                    + key.to_string().as_str()
+                    + "\".to_string(), \""
+                    + data_type_string.as_str()
+                    + "\".to_string()), ")
+                    .parse()
+                    .unwrap();
                 indexes.push(stream);
             }
             indexes
@@ -570,8 +581,16 @@ impl Generator {
     }
 
     pub fn gen_get_primary_key_fields(&self) -> TokenStream {
-        let primary_key_fields: Vec<TokenStream> = self.columns.primary_keys.0.iter()
-            .map(|field| ("\"".to_string() + field.to_string().as_str() + "\".to_string(), ").parse().unwrap())
+        let primary_key_fields: Vec<TokenStream> = self
+            .columns
+            .primary_keys
+            .0
+            .iter()
+            .map(|field| {
+                ("\"".to_string() + field.to_string().as_str() + "\".to_string(), ")
+                    .parse()
+                    .unwrap()
+            })
             .collect();
         quote! {
             pub fn get_primary_key_fields(&self) -> Vec<String> {

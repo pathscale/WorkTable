@@ -15,7 +15,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let gen = Generator {
         struct_def: input_fn,
         pk_ident,
-        index_type_ident
+        index_type_ident,
     };
 
     let space_type = gen.gen_space_type()?;
