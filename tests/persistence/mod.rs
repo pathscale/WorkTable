@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use worktable::prelude::*;
 use worktable::worktable;
+use data_bucket::parse_data_page;
 
 mod read;
 mod write;

@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::sync::Arc;
 
+use data_bucket::parse_data_page;
 use worktable::prelude::*;
 
 // TODO: Fix naming.
