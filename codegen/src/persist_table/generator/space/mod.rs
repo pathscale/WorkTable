@@ -1,4 +1,5 @@
 mod space_data_impl;
+mod worktable_impls;
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -10,10 +11,12 @@ impl Generator {
     pub fn gen_space_def(&self) -> TokenStream {
         let type_ = self.gen_space_type();
         let space_data_impl = self.gen_space_data_impl();
+        let worktable_impl = self.gen_space_worktable_impl();
 
         quote! {
             #type_
             #space_data_impl
+            #worktable_impl
         }
     }
 
@@ -25,7 +28,7 @@ impl Generator {
         quote! {
             #[derive(Debug)]
             pub struct #space_ident<const DATA_LENGTH: usize = #page_size_const> {
-                pub file: std::fs::File,
+                pub data_file: std::fs::File,
             }
         }
     }

@@ -109,7 +109,7 @@ impl Generator {
 
         quote! {
             pub fn into_space(&self) -> #space_ident<#const_name> {
-                let path = format!("{}/{}", self.1.config_path.clone(), #dir_name);
+                let path = format!("{}/{}", self.1.config_path, #dir_name);
 
                 let mut info = #ident::space_info_default();
                 info.inner.pk_gen_state = self.0.pk_gen.get_state();

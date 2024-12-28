@@ -11,7 +11,7 @@ impl Generator {
         quote! {
             impl<const DATA_LENGTH: usize> SpaceData for #space_ident<DATA_LENGTH> {
                 fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
-                    update_at::<{ DATA_LENGTH} >(&mut self.file, link, bytes)
+                    update_at::<{ DATA_LENGTH} >(&mut self.data_file, link, bytes)
                 }
             }
         }
