@@ -1,10 +1,14 @@
 mod worktable_impls;
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use crate::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
+
+pub const WT_INFO_EXTENSION: &str = ".wt.info";
+pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
+pub const WT_DATA_EXTENSION: &str = ".wt.data";
 
 impl Generator {
     pub fn gen_space_file_def(&self) -> TokenStream {
@@ -43,25 +47,34 @@ impl Generator {
     fn gen_space_persist_impl(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let space_ident = name_generator.get_space_file_ident();
-        let file_name = name_generator.get_filename();
+        let info_extension = Literal::string(WT_INFO_EXTENSION);
+        let index_extension = Literal::string(WT_INDEX_EXTENSION);
+        let data_extension = Literal::string(WT_DATA_EXTENSION);
 
         quote! {
             impl<const DATA_LENGTH: usize> #space_ident<DATA_LENGTH> {
                 pub fn persist(&mut self) -> eyre::Result<()> {
-                    let file_name = #file_name;
-                    let path = std::path::Path::new(format!("{}/{}.wt", &self.path , file_name).as_str());
                     let prefix = &self.path;
-                    std::fs::create_dir_all(prefix).unwrap();
+                    std::fs::create_dir_all(prefix)?;
 
-                    let mut file = std::fs::File::create(format!("{}/{}.wt", &self.path , file_name))?;
-                    persist_page(&mut self.info, &mut file)?;
-
-                    for mut primary_index_page in &mut self.primary_index {
-                        persist_page(&mut primary_index_page, &mut file)?;
+                    {
+                        let mut info_file = std::fs::File::create(format!("{}/{}", &self.path, #info_extension))?;
+                        persist_page(&mut self.info, &mut info_file)?;
                     }
-                    self.indexes.persist(&mut file)?;
-                    for mut data_page in &mut self.data {
-                        persist_page(&mut data_page, &mut file)?;
+                    {
+                        let mut primary_index_file = std::fs::File::create(format!("{}/primary{}", &self.path, #index_extension))?;
+                        for mut primary_index_page in &mut self.primary_index {
+                            persist_page(&mut primary_index_page, &mut primary_index_file)?;
+                        }
+                    }
+
+                    self.indexes.persist(&prefix)?;
+
+                    {
+                        let mut data_file = std::fs::File::create(format!("{}/{}", &self.path, #data_extension))?;
+                        for mut data_page in &mut self.data {
+                            persist_page(&mut data_page, &mut data_file)?;
+                        }
                     }
 
                     Ok(())
@@ -138,30 +151,45 @@ impl Generator {
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let persisted_index_name = name_generator.get_persisted_index_ident();
+        let info_extension = Literal::string(WT_INFO_EXTENSION);
+        let index_extension = Literal::string(WT_INDEX_EXTENSION);
+        let data_extension = Literal::string(WT_DATA_EXTENSION);
 
         quote! {
-            pub fn parse_file(file: &mut std::fs::File) -> eyre::Result<Self> {
-                let info = parse_page::<SpaceInfoData<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(file, 0)?;
+            pub fn parse_file(path: &String) -> eyre::Result<Self> {
+                let info = {
+                    let mut info_file = std::fs::File::open(format!("{}/{}", path, #info_extension))?;
+                    parse_page::<SpaceInfoData<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut info_file, 0)?
+                };
 
-                let mut primary_index = vec![];
-                for interval in &info.inner.primary_key_intervals {
-                    for page_id in interval.0..interval.1 {
-                        let index = parse_page::<IndexData<#pk_type>, { #page_const_name as u32 }>(file, page_id as u32)?;
+                let mut primary_index = {
+                    let mut primary_index = vec![];
+                    let mut primary_file = std::fs::File::open(format!("{}/primary{}", path, #index_extension))?;
+                    for interval in &info.inner.primary_key_intervals {
+                        for page_id in interval.0..interval.1 {
+                            let index = parse_page::<IndexData<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, page_id as u32)?;
+                            primary_index.push(index);
+                        }
+                        let index = parse_page::<IndexData<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, interval.1 as u32)?;
                         primary_index.push(index);
                     }
-                    let index = parse_page::<IndexData<#pk_type>, { #page_const_name as u32 }>(file, interval.1 as u32)?;
-                    primary_index.push(index);
-                }
-                let indexes = #persisted_index_name::parse_from_file(file, &info.inner.secondary_index_intervals)?;
-                let mut data = vec![];
-                for interval in &info.inner.data_intervals {
-                    for page_id in interval.0..interval.1 {
-                        let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(file, page_id as u32)?;
+                    primary_index
+                };
+
+                let indexes = #persisted_index_name::parse_from_file(path, &info.inner.secondary_index_intervals)?;
+                let data = {
+                    let mut data = vec![];
+                    let mut data_file = std::fs::File::open(format!("{}/{}", path, #data_extension))?;
+                    for interval in &info.inner.data_intervals {
+                        for page_id in interval.0..interval.1 {
+                            let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(&mut data_file, page_id as u32)?;
+                            data.push(index);
+                        }
+                        let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(&mut data_file, interval.1 as u32)?;
                         data.push(index);
                     }
-                    let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(file, interval.1 as u32)?;
-                    data.push(index);
-                }
+                    data
+                };
 
                 Ok(Self {
                     path: "".to_string(),

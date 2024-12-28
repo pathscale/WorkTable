@@ -38,16 +38,15 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let space_ident = name_generator.get_space_file_ident();
         let wt_ident = name_generator.get_work_table_ident();
-        let name_underscore = name_generator.get_filename();
+        let dir_name = name_generator.get_dir_name();
 
         quote! {
             pub fn load_from_file(manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
-                let filename = format!("{}/{}.wt", manager.database_files_dir.as_str(), #name_underscore);
-                let filename = std::path::Path::new(filename.as_str());
-                let Ok(mut file) = std::fs::File::open(filename) else {
+                let filename = format!("{}/{}", manager.database_files_dir.as_str(), #dir_name);
+                if !std::path::Path::new(filename.as_str()).exists() {
                     return Ok(#wt_ident::new(manager));
                 };
-                let space = #space_ident::parse_file(&mut file)?;
+                let space = #space_ident::parse_file(&filename)?;
                 let table = space.into_worktable(manager);
                 Ok(table)
             }
@@ -106,10 +105,11 @@ impl Generator {
         let ident = name_generator.get_work_table_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
         let space_ident = name_generator.get_space_file_ident();
+        let dir_name = name_generator.get_dir_name();
 
         quote! {
             pub fn into_space(&self) -> #space_ident<#const_name> {
-                let path = self.1.config_path.clone();
+                let path = format!("{}/{}", self.1.config_path.clone(), #dir_name);
 
                 let mut info = #ident::space_info_default();
                 info.inner.pk_gen_state = self.0.pk_gen.get_state();
@@ -117,10 +117,7 @@ impl Generator {
                 info.inner.page_count = 1;
                 let mut header = &mut info.header;
 
-                let mut primary_index = map_index_pages_to_general(
-                    self.get_peristed_primary_key(),
-                    &mut header
-                );
+                let mut primary_index = map_index_pages_to_general(self.get_peristed_primary_key());
                 let interval = Interval(
                     primary_index.first()
                         .expect("Primary index page always exists, even if empty")
@@ -140,7 +137,7 @@ impl Generator {
                     .last_mut()
                     .expect("Primary index page always exists, even if empty")
                     .header;
-                let mut indexes = self.0.indexes.get_persisted_index(previous_header);
+                let mut indexes = self.0.indexes.get_persisted_index();
                 let secondary_intevals = indexes.get_intervals();
                 info.inner.secondary_index_intervals = secondary_intevals;
 
@@ -151,7 +148,7 @@ impl Generator {
                 let data = map_data_pages_to_general(self.0.data.get_bytes().into_iter().map(|(b, offset)| DataPage {
                     data: b,
                     length: offset,
-                }).collect::<Vec<_>>(), previous_header);
+                }).collect::<Vec<_>>());
                 let interval = Interval(
                     data
                         .first()
