@@ -30,7 +30,7 @@ where
         K: 'a,
         V: 'a,
     {
-        self.iter()
+        indexset::concurrent::map::BTreeMap::iter(self)
     }
 
     fn range<'a, R: RangeBounds<K>>(&'a self, _: R) -> impl Iterator<Item = (&'a K, &'a V)>
@@ -38,6 +38,6 @@ where
         K: 'a,
         V: 'a,
     {
-        self.iter()
+        indexset::concurrent::map::BTreeMap::iter(self)
     }
 }
