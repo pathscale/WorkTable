@@ -2,44 +2,40 @@ use std::marker::PhantomData;
 use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use data_bucket::{SizeMeasurable, PAGE_SIZE};
+use data_bucket::{Link, SizeMeasurable, PAGE_SIZE};
 
 use crate::TableIndex;
 
 /// A wrapper around TreeIndex that provides size measurement capabilities
-pub struct SpaceTreeIndex<I, K, V>
-where
-    I: TableIndex<K, V>,
-{
+#[derive(Default, Debug)]
+pub struct SpaceTreeIndex<I, K, V> {
     inner: I,
-    total_size: AtomicUsize,
     _phantom: PhantomData<(K, V)>,
 }
 
 impl<I, K, V> SpaceTreeIndex<I, K, V>
 where
+    K: Default + SizeMeasurable,
+{
+    pub fn record_size() -> usize {
+        (K::default(), Link::default()).aligned_size()
+    }
+
+    pub fn node_size<const PAGE_SIZE: usize>() -> usize {
+        PAGE_SIZE / Self::record_size()
+    }
+}
+
+impl<I, K, V> SpaceTreeIndex<I, K, V>
+where
     I: TableIndex<K, V>,
-    K: Clone + Ord + Send + Sync + 'static,
+    K: Default + Clone + Ord + Send + Sync + SizeMeasurable + 'static,
     V: Clone + Send + Sync + 'static,
 {
     pub fn new(inner: I) -> Self {
         Self {
             inner,
-            total_size: AtomicUsize::new(0),
             _phantom: PhantomData,
-        }
-    }
-
-    pub fn estimate_size(&self) -> usize {
-        self.total_size.load(Ordering::Relaxed)
-    }
-
-    pub fn pages_count(&self) -> usize {
-        let size = self.total_size.load(Ordering::Relaxed);
-        if size == 0 {
-            0
-        } else {
-            (size + PAGE_SIZE - 1) / PAGE_SIZE
         }
     }
 }
@@ -48,20 +44,10 @@ impl<I, K, V> TableIndex<K, V> for SpaceTreeIndex<I, K, V>
 where
     I: TableIndex<K, V>,
     K: Clone + Ord + Send + Sync + SizeMeasurable + 'static,
-    V: Clone + Send + Sync + SizeMeasurable + 'static,
+    V: Clone + Send + Sync + 'static,
 {
     fn insert(&self, key: K, value: V) -> Result<(), (K, V)> {
-        let key_size = key.aligned_size();
-        let value_size = value.aligned_size();
-
-        match self.inner.insert(key, value) {
-            Ok(()) => {
-                self.total_size
-                    .fetch_add(key_size + value_size, Ordering::Relaxed);
-                Ok(())
-            }
-            Err((k, v)) => Err((k, v)),
-        }
+        self.inner.insert(key, value)
     }
 
     fn peek(&self, key: &K) -> Option<V> {
@@ -69,14 +55,7 @@ where
     }
 
     fn remove(&self, key: &K) -> bool {
-        if let Some(value) = self.peek(key) {
-            if self.inner.remove(key) {
-                let size_reduction = key.aligned_size() + value.aligned_size();
-                self.total_size.fetch_sub(size_reduction, Ordering::Relaxed);
-                return true;
-            }
-        }
-        false
+        self.inner.remove(key)
     }
 
     fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>

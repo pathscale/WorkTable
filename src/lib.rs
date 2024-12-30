@@ -23,7 +23,7 @@ pub mod prelude {
     pub use crate::database::DatabaseManager;
     pub use crate::in_memory::{ArchivedRow, Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
-    pub use crate::persistence::SpaceData;
+    pub use crate::persistence::{SpaceData, SpaceTreeIndex};
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{
         Order, SelectQueryBuilder, SelectQueryExecutor, SelectResult, SelectResultExecutor,

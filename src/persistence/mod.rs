@@ -4,7 +4,8 @@ mod operation;
 mod space;
 mod space_index;
 
-pub use space::SpaceData;
+pub use space::{SpaceData, SpaceIndex};
+pub use space_index::SpaceTreeIndex;
 
 pub struct PersistenceEngine<Space> {
     pub space: Space,

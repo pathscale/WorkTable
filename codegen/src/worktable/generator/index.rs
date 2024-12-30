@@ -31,16 +31,43 @@ impl Generator {
                 let t = self.columns.columns_map.get(&i);
                 let i = &idx.name;
 
-                if idx.is_unique {
-                    quote! {#i: #index_type<#t, Link>}
+                if self.is_persist {
+                    if idx.is_unique {
+                        quote! {#i: SpaceTreeIndex<#index_type<#t, Link>, #t, Link>}
+                    } else {
+                        quote! {
+                            #i: SpaceTreeIndex<
+                                    #index_type<
+                                        #t,
+                                        std::sync::Arc<LockFreeSet<Link>>
+                                    >,
+                                    #t,
+                                    std::sync::Arc<LockFreeSet<Link>>
+                                >
+                        }
+                    }
                 } else {
-                    quote! {#i: #index_type<#t, std::sync::Arc<LockFreeSet<Link>>>}
+                    if idx.is_unique {
+                        quote! {#i: #index_type<#t, Link>}
+                    } else {
+                        quote! {#i: #index_type<#t, std::sync::Arc<LockFreeSet<Link>>>}
+                    }
                 }
             })
             .collect::<Vec<_>>();
 
+        let derive = if self.is_persist {
+            quote! {
+                #[derive(Debug, Default, PersistIndex)]
+            }
+        } else {
+            quote! {
+                #[derive(Debug, Default)]
+            }
+        };
+
         quote! {
-            #[derive(Debug, Default, PersistIndex)]
+            #derive
             pub struct #ident {
                 #(#index_rows),*
             }

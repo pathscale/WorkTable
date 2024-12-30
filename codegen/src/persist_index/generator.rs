@@ -436,6 +436,8 @@ impl Generator {
                     .expect("index fields should always be named fields");
                 let index_type = f.ty.to_token_stream().to_string();
                 let mut split = index_type.split("<");
+                let inner = split.nth(1).expect("space index type should always have generics");
+                let mut split = inner.split("<");
                 let t = Ident::new(
                     split
                         .next()
@@ -452,7 +454,7 @@ impl Generator {
                     .contains("lockfree");
                 if is_unique {
                     quote! {
-                        let #i: #t<_, Link> = #t::new();
+                        let #i: SpaceTreeIndex<#t<_, Link>, _, _> = SpaceTreeIndex::new(#t::new());
                         for page in persisted.#i {
                             for val in page.inner.index_values {
                                 TableIndex::insert(&#i, val.key, val.link)
@@ -462,7 +464,7 @@ impl Generator {
                     }
                 } else {
                     quote! {
-                        let #i: #t<_, std::sync::Arc<lockfree::set::Set<Link>>> = #t::new();
+                        let #i: SpaceTreeIndex<#t<_, std::sync::Arc<lockfree::set::Set<Link>>>, _, _> = SpaceTreeIndex::new(#t::new());
                         for page in persisted.#i {
                             for val in page.inner.index_values {
                                 if let Some(set) = TableIndex::peek(&#i, &val.key) {
