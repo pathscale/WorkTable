@@ -1,5 +1,6 @@
 use crate::persistence::operation::Operation;
 
+mod mappers;
 mod operation;
 mod space;
 mod space_index;

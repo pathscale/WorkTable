@@ -58,6 +58,8 @@ impl Generator {
             );
             let index_type = field.ty.to_token_stream().to_string();
             let mut split = index_type.split("<");
+            // skip `SpaceTreeIndex` ident.
+            split.next();
             // skip `TreeIndex` ident.
             split.next();
             let substr = split
