@@ -5,7 +5,7 @@ mod operation;
 mod space;
 mod space_index;
 
-pub use space::{SpaceData, SpaceIndex};
+pub use space::{SpaceData, SpaceDataOps};
 pub use space_index::SpaceTreeIndex;
 
 pub struct PersistenceEngine<Space> {
@@ -14,7 +14,7 @@ pub struct PersistenceEngine<Space> {
 
 impl<Space> PersistenceEngine<Space>
 where
-    Space: SpaceData,
+    Space: SpaceDataOps,
 {
     pub fn apply_operation<PrimaryKey, SecondaryKeys>(
         &mut self,

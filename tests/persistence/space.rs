@@ -1,5 +1,5 @@
 use data_bucket::Link;
-use worktable::prelude::SpaceData;
+use worktable::prelude::SpaceDataOps;
 
 use crate::persistence::{get_empty_test_wt, TestPersistRow};
 
@@ -14,9 +14,10 @@ fn test_file_write() {
     let mut space = table.get_space().unwrap();
 
     space
+        .data
         .save_data(
             Link {
-                page_id: 0.into(),
+                page_id: 1.into(),
                 length: 32,
                 offset: 0,
             },

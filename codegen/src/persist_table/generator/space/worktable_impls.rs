@@ -1,6 +1,7 @@
 use crate::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 use crate::persist_table::WT_DATA_EXTENSION;
+
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
@@ -25,11 +26,12 @@ impl Generator {
 
         quote! {
             pub fn get_space(&self) -> eyre::Result<#space_ident> {
-                Ok(#space_ident {
-                    data_file: std::fs::OpenOptions::new()
+                Ok(#space_ident::new(
+                    std::fs::OpenOptions::new()
                             .write(true)
                             .open(format!("{}/{}/{}", self.1.config_path, #dir_name, #data_extension))?
-                })
+                    )?
+                )
             }
         }
     }

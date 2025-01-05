@@ -1,4 +1,4 @@
-mod space_data_impl;
+mod space_index_impl;
 mod worktable_impls;
 
 use proc_macro2::TokenStream;
@@ -10,12 +10,12 @@ use crate::persist_table::generator::Generator;
 impl Generator {
     pub fn gen_space_def(&self) -> TokenStream {
         let type_ = self.gen_space_type();
-        let space_data_impl = self.gen_space_data_impl();
+        let impl_ = self.gen_space_impl();
         let worktable_impl = self.gen_space_worktable_impl();
 
         quote! {
             #type_
-            #space_data_impl
+            #impl_
             #worktable_impl
         }
     }
@@ -28,7 +28,24 @@ impl Generator {
         quote! {
             #[derive(Debug)]
             pub struct #space_ident<const DATA_LENGTH: usize = #page_size_const> {
-                pub data_file: std::fs::File,
+                pub data: SpaceData<DATA_LENGTH>,
+            }
+        }
+    }
+
+    fn gen_space_impl(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let space_ident = name_generator.get_space_ident();
+
+        quote! {
+            impl<const DATA_LENGTH: usize> #space_ident<DATA_LENGTH> {
+                pub fn new(data_file: std::fs::File) -> eyre::Result<Self> {
+                    Ok(#space_ident {
+                        data: SpaceData {
+                            data_file
+                        },
+                    })
+                }
             }
         }
     }
