@@ -1,8 +1,12 @@
 use std::fs::File;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use data_bucket::page::PageId;
-use data_bucket::{parse_page, SizeMeasurable, TableOfContentsPage};
+use data_bucket::{
+    parse_page, GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId, TableOfContentsPage,
+};
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
@@ -10,20 +14,30 @@ use rkyv::{rancor, Archive, Deserialize, Serialize};
 #[derive(Debug)]
 pub struct IndexTableOfContents<T, const DATA_LENGTH: u32> {
     current_page: usize,
-    table_of_contents_pages: Vec<TableOfContentsPage<T>>,
-}
-
-impl<T, const DATA_LENGTH: u32> Default for IndexTableOfContents<T, DATA_LENGTH> {
-    fn default() -> Self {
-        Self {
-            current_page: 0,
-            table_of_contents_pages: vec![TableOfContentsPage::default()],
-        }
-    }
+    next_page_id: Arc<AtomicU32>,
+    table_of_contents_pages: Vec<GeneralPage<TableOfContentsPage<T>>>,
 }
 
 impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
-    pub fn parse_from_file(file: &mut File) -> eyre::Result<Self>
+    pub fn new(space_id: SpaceId, next_page_id: Arc<AtomicU32>) -> Self {
+        let page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
+        let header = GeneralHeader::new(page_id.into(), PageType::IndexTableOfContents, space_id);
+        let page = GeneralPage {
+            header,
+            inner: TableOfContentsPage::default(),
+        };
+        Self {
+            current_page: 0,
+            next_page_id,
+            table_of_contents_pages: vec![page],
+        }
+    }
+
+    pub fn parse_from_file(
+        file: &mut File,
+        space_id: SpaceId,
+        next_page_id: Arc<AtomicU32>,
+    ) -> eyre::Result<Self>
     where
         T: Archive + Hash + Eq,
         <T as Archive>::Archived: Hash + Eq + Deserialize<T, Strategy<Pool, rancor::Error>>,
@@ -33,31 +47,33 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
             if page.inner.is_last() {
                 Ok(Self {
                     current_page: 0,
-                    table_of_contents_pages: vec![page.inner],
+                    next_page_id,
+                    table_of_contents_pages: vec![page],
                 })
             } else {
-                let mut table_of_contents_pages = vec![page.inner];
+                let mut table_of_contents_pages = vec![page];
                 let mut index = 2;
                 let mut ind = false;
 
                 while !ind {
                     let page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, index)?;
                     ind = page.inner.is_last();
-                    table_of_contents_pages.push(page.inner);
+                    table_of_contents_pages.push(page);
                     index += 1;
                 }
 
                 Ok(Self {
                     current_page: 0,
+                    next_page_id,
                     table_of_contents_pages,
                 })
             }
         } else {
-            Ok(Self::default())
+            Ok(Self::new(space_id, next_page_id))
         }
     }
 
-    fn get_current_page_mut(&mut self) -> &mut TableOfContentsPage<T> {
+    fn get_current_page_mut(&mut self) -> &mut GeneralPage<TableOfContentsPage<T>> {
         &mut self.table_of_contents_pages[self.current_page]
     }
 
@@ -65,20 +81,43 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
     where
         T: Clone + Hash + Eq + SizeMeasurable,
     {
+        let next_page_id = self.next_page_id.clone();
+        
         let page = self.get_current_page_mut();
-        page.insert(node_id.clone(), page_id);
-        if page.estimated_size() > DATA_LENGTH as usize {
-            page.remove(&node_id);
-            if !page.is_last() {
-                page.mark_not_last();
-                self.table_of_contents_pages
-                    .push(TableOfContentsPage::default());
+        page.inner.insert(node_id.clone(), page_id);
+        if page.inner.estimated_size() > DATA_LENGTH as usize {
+            page.inner.remove(&node_id);
+            if !page.inner.is_last() {
+                let next_page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
+                let header = page.header.follow_with_page_id(next_page_id.into());
+                page.inner.mark_not_last(next_page_id.into());
+                self.table_of_contents_pages.push(GeneralPage {
+                    header,
+                    inner: TableOfContentsPage::default(),
+                });
                 self.current_page += 1;
 
                 let page = self.get_current_page_mut();
-                page.insert(node_id.clone(), page_id);
+                page.inner.insert(node_id.clone(), page_id);
             }
         }
+    }
+
+    pub fn get(&self, node_id: &T) -> Option<PageId>
+    where
+        T: Hash + Eq,
+    {
+        for page in &self.table_of_contents_pages {
+            if page.inner.contains(node_id) {
+                return Some(
+                    page.inner
+                        .get(node_id)
+                        .expect("should exist as checked in `contains`"),
+                );
+            }
+        }
+
+        None
     }
 
     pub fn remove(&mut self, node_id: &T)
@@ -89,8 +128,8 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
         let mut i = 0;
         while !removed {
             let mut page = &mut self.table_of_contents_pages[i];
-            if page.contains(node_id) {
-                page.remove(node_id);
+            if page.inner.contains(node_id) {
+                page.inner.remove(node_id);
                 removed = true;
             }
             i += 1;
@@ -104,10 +143,12 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
 #[cfg(test)]
 mod tests {
     use crate::persistence::space::index::table_of_contents::IndexTableOfContents;
+    use std::sync::atomic::AtomicU32;
+    use std::sync::Arc;
 
     #[test]
     fn empty() {
-        let toc = IndexTableOfContents::<u8, 128>::default();
+        let toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(0)));
         assert_eq!(
             toc.current_page, 0,
             "`current_page` is not set to 0, it is {}",
@@ -122,26 +163,26 @@ mod tests {
 
     #[test]
     fn insert_to_empty() {
-        let mut toc = IndexTableOfContents::<u8, 128>::default();
+        let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let key = 1;
         toc.insert(key, 1.into());
 
         let page = toc.table_of_contents_pages[toc.current_page].clone();
         assert!(
-            page.contains(&key),
+            page.inner.contains(&key),
             "`page` not contains value {}, keys are {:?}",
             key,
-            page.into_iter().collect::<Vec<_>>()
+            page.inner.into_iter().collect::<Vec<_>>()
         );
         assert!(
-            page.estimated_size() > 0,
+            page.inner.estimated_size() > 0,
             "`estimated_size` is zero, but it shouldn't"
         );
     }
 
     #[test]
     fn insert_more_than_one_page() {
-        let mut toc = IndexTableOfContents::<u8, 20>::default();
+        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
         for key in 0..10 {
             toc.insert(key, 1.into());
@@ -156,7 +197,7 @@ mod tests {
 
         for i in 0..toc.current_page + 1 {
             let page = toc.table_of_contents_pages[i].clone();
-            for (k, i) in page.into_iter() {
+            for (k, i) in page.inner.into_iter() {
                 let pos = keys.binary_search(&k).expect("value should exist");
                 keys.remove(pos);
             }
