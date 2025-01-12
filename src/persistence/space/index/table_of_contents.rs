@@ -5,10 +5,15 @@ use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    parse_page, GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId, TableOfContentsPage,
+    parse_page, persist_page, GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId,
+    TableOfContentsPage,
 };
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
+use rkyv::ser::allocator::ArenaHandle;
+use rkyv::ser::sharing::Share;
+use rkyv::ser::Serializer;
+use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 
 #[derive(Debug)]
@@ -31,6 +36,23 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
             next_page_id,
             table_of_contents_pages: vec![page],
         }
+    }
+
+    pub fn persist(&mut self, file: &mut File) -> eyre::Result<()>
+    where
+        T: Archive
+            + Hash
+            + Eq
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+        <T as Archive>::Archived: Hash + Eq,
+    {
+        for page in &mut self.table_of_contents_pages {
+            persist_page(page, file)?;
+        }
+
+        Ok(())
     }
 
     pub fn parse_from_file(
@@ -82,7 +104,7 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
         T: Clone + Hash + Eq + SizeMeasurable,
     {
         let next_page_id = self.next_page_id.clone();
-        
+
         let page = self.get_current_page_mut();
         page.inner.insert(node_id.clone(), page_id);
         if page.inner.estimated_size() > DATA_LENGTH as usize {

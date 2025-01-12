@@ -5,7 +5,7 @@ mod operation;
 mod space;
 mod space_index;
 
-pub use space::{SpaceData, SpaceDataOps};
+pub use space::{IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex};
 pub use space_index::SpaceTreeIndex;
 
 pub struct PersistenceEngine<Space> {

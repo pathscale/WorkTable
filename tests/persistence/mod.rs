@@ -5,6 +5,8 @@ use worktable::worktable;
 
 mod read;
 mod space;
+mod space_index;
+mod toc;
 mod write;
 
 worktable! (

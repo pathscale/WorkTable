@@ -19,7 +19,8 @@ use rkyv::ser::sharing::Share;
 use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
-use table_of_contents::IndexTableOfContents;
+
+pub use table_of_contents::IndexTableOfContents;
 
 #[derive(Debug)]
 pub struct SpaceIndex<T, const DATA_LENGTH: u32> {
@@ -35,7 +36,7 @@ where
     <T as Archive>::Archived: Hash + Eq + Deserialize<T, Strategy<Pool, rancor::Error>>,
 {
     pub fn new(mut index_file: File, space_id: SpaceId) -> eyre::Result<Self> {
-        let next_page_id = Arc::new(AtomicU32::new(0));
+        let next_page_id = Arc::new(AtomicU32::new(1));
         let table_of_contents =
             IndexTableOfContents::parse_from_file(&mut index_file, space_id, next_page_id.clone())?;
         Ok(Self {
@@ -180,6 +181,7 @@ where
         let page_id = self.next_page_id.fetch_add(1, Ordering::Relaxed);
         self.table_of_contents
             .insert(node_id.key.clone(), page_id.into());
+        self.table_of_contents.persist(&mut self.index_file)?;
         self.add_index_page(node_id, page_id.into())?;
 
         Ok(())
