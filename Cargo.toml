@@ -35,3 +35,4 @@ performance_measurement = { path = "performance_measurement", version = "0.1.0",
 # indexset = { version = "0.9.0", features = ["concurrent"] }
 indexset = { path = "../indexset", version = "0.9.0", features = ["concurrent"] }
 bplustree = "0.1.0"
+serde = { version = "1.0.215", features = ["derive"] }

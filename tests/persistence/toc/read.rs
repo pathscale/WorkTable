@@ -27,7 +27,7 @@ fn test_index_table_of_contents_read_from_space_index() {
     let mut file = OpenOptions::new()
         .write(true)
         .read(true)
-        .open("tests/data/expected/persist_space_index.wt.idx")
+        .open("tests/data/expected/space_index/process_create_node.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
     let mut toc = IndexTableOfContents::<u8, { INNER_PAGE_SIZE as u32 }>::parse_from_file(

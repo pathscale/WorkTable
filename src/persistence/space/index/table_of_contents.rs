@@ -109,7 +109,7 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
         page.inner.insert(node_id.clone(), page_id);
         if page.inner.estimated_size() > DATA_LENGTH as usize {
             page.inner.remove(&node_id);
-            if !page.inner.is_last() {
+            if page.inner.is_last() {
                 let next_page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
                 let header = page.header.follow_with_page_id(next_page_id.into());
                 page.inner.mark_not_last(next_page_id.into());

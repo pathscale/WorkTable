@@ -1,5 +1,6 @@
 mod table_of_contents;
 
+use std::fmt::Debug;
 use std::fs::File;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -7,9 +8,10 @@ use std::sync::Arc;
 
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    align, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType, SizeMeasurable,
-    SpaceId,
+    align, align8, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType,
+    SizeMeasurable, SpaceId,
 };
+use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
 use indexset::Pair;
 use rkyv::de::Pool;
@@ -21,6 +23,19 @@ use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 
 pub use table_of_contents::IndexTableOfContents;
+
+pub fn get_size_from_data_length<T>(length: usize) -> usize
+where
+    T: Default + SizeMeasurable,
+{
+    let node_id_size = T::default().aligned_size();
+    let slot_size = u16::default().aligned_size();
+    let index_value_size = align8(T::default().aligned_size() + Link::default().aligned_size());
+    let vec_util_size = 8;
+    let size =
+        (length - node_id_size - slot_size - vec_util_size * 2) / (slot_size + index_value_size);
+    size
+}
 
 #[derive(Debug)]
 pub struct SpaceIndex<T, const DATA_LENGTH: u32> {
@@ -47,17 +62,6 @@ where
         })
     }
 
-    fn get_size_from_data_length() -> usize
-    where
-        T: Default + SizeMeasurable,
-    {
-        let node_id_size = T::default().aligned_size();
-        let slot_size = u16::default().aligned_size();
-        let index_value_size = align(T::default().aligned_size() + Link::default().aligned_size());
-        let size = (DATA_LENGTH as usize - node_id_size) / (slot_size + index_value_size);
-        size
-    }
-
     fn add_index_page(&mut self, node_id: Pair<T, Link>, page_id: PageId) -> eyre::Result<()>
     where
         T: Archive
@@ -68,14 +72,14 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
     {
-        let size = Self::get_size_from_data_length();
+        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut page = NewIndexPage::new(node_id.key.clone(), size);
         page.values_count = 1;
         page.slots[0] = 0;
-        page.index_values.push(IndexValue {
+        page.index_values[0] = IndexValue {
             key: node_id.key,
             link: node_id.value,
-        });
+        };
         let header = GeneralHeader::new(page_id.into(), PageType::Index, self.space_id);
         let mut general_page = GeneralPage {
             inner: page,
@@ -91,6 +95,7 @@ where
         T: Archive
             + Clone
             + Default
+            + Debug
             + SizeMeasurable
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
@@ -130,7 +135,7 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
     {
-        let size = Self::get_size_from_data_length();
+        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let (mut slots, values_count) =
             NewIndexPage::<T>::parse_slots_and_values_count(&mut self.index_file, page_id, size)?;
         slots.insert(index, values_count);
@@ -155,9 +160,21 @@ where
         node_id: T,
         value: Pair<T, Link>,
         index: usize,
-    ) -> eyre::Result<()> {
-        let page_id = self.table_of_contents.get(&node_id).expect("should exist");
-
+    ) -> eyre::Result<()>
+    where
+        T: Archive
+            + Default
+            + Debug
+            + SizeMeasurable
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+    {
+        let page_id = self
+            .table_of_contents
+            .get(&node_id)
+            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+        self.insert_on_index_page(page_id, index, value)?;
         Ok(())
     }
     fn process_remove_at(
