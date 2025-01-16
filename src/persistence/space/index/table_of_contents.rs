@@ -43,10 +43,13 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
         T: Archive
             + Hash
             + Eq
+            + Clone
+            + SizeMeasurable
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
         <T as Archive>::Archived: Hash + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
     {
         for page in &mut self.table_of_contents_pages {
             persist_page(page, file)?;
@@ -61,8 +64,16 @@ impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
         next_page_id: Arc<AtomicU32>,
     ) -> eyre::Result<Self>
     where
-        T: Archive + Hash + Eq,
-        <T as Archive>::Archived: Hash + Eq + Deserialize<T, Strategy<Pool, rancor::Error>>,
+        T: Archive
+            + Hash
+            + Eq
+            + Clone
+            + SizeMeasurable
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+        <T as Archive>::Archived: Hash + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
     {
         let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1);
         if let Ok(page) = first_page {

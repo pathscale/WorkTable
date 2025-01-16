@@ -47,8 +47,14 @@ pub struct SpaceIndex<T, const DATA_LENGTH: u32> {
 
 impl<T, const DATA_LENGTH: u32> SpaceIndex<T, DATA_LENGTH>
 where
-    T: Archive + Hash + Eq + Ord,
-    <T as Archive>::Archived: Hash + Eq + Deserialize<T, Strategy<Pool, rancor::Error>>,
+    T: Archive
+        + Hash
+        + Eq
+        + Clone
+        + SizeMeasurable
+        + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
+    <T as Archive>::Archived: Hash + Eq,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
 {
     pub fn new(mut index_file: File, space_id: SpaceId) -> eyre::Result<Self> {
         let next_page_id = Arc::new(AtomicU32::new(1));
@@ -68,6 +74,7 @@ where
             + Clone
             + Default
             + SizeMeasurable
+            + Ord
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
@@ -97,6 +104,7 @@ where
             + Default
             + Debug
             + SizeMeasurable
+            + Ord
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
@@ -131,6 +139,7 @@ where
         T: Archive
             + Default
             + SizeMeasurable
+            + Ord
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
@@ -139,6 +148,7 @@ where
         let (mut slots, values_count) =
             NewIndexPage::<T>::parse_slots_and_values_count(&mut self.index_file, page_id, size)?;
         slots.insert(index, values_count);
+        slots.remove(size);
         NewIndexPage::<T>::persist_slots(&mut self.index_file, page_id, slots, values_count + 1)?;
         let index_value = IndexValue {
             key: value.key,
@@ -166,6 +176,7 @@ where
             + Default
             + Debug
             + SizeMeasurable
+            + Ord
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
@@ -182,7 +193,10 @@ where
         node_id: T,
         value: Pair<T, Link>,
         index: usize,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<()>
+    where
+        T: Ord,
+    {
         todo!()
     }
     fn process_create_node(&mut self, node_id: Pair<T, Link>) -> eyre::Result<()>
@@ -191,6 +205,7 @@ where
             + Clone
             + Default
             + SizeMeasurable
+            + Ord
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,

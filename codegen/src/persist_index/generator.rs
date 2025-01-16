@@ -199,6 +199,8 @@ impl Generator {
                                 rkyv::rancor::Error
                             >,
                         >,
+                <T as rkyv::Archive>::Archived:
+                    rkyv::Deserialize<T, rkyv::api::high::HighDeserializer<rkyv::rancor::Error>>,
             {
                 #(#persist_logic)*
                 Ok(())
