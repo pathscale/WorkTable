@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    align, align8, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType,
-    SizeMeasurable, SpaceId,
+    align8, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType, SizeMeasurable,
+    SpaceId,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -132,35 +132,76 @@ where
     fn insert_on_index_page(
         &mut self,
         page_id: PageId,
+        node_id: T,
         index: usize,
         value: Pair<T, Link>,
+    ) -> eyre::Result<()>
+    where
+        T: Archive
+            + Clone
+            + Default
+            + SizeMeasurable
+            + Ord
+            + Eq
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
+    {
+        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let mut utility =
+            NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
+        utility.slots.insert(index, utility.values_count);
+        utility.slots.remove(size);
+        let index_value = IndexValue {
+            key: value.key.clone(),
+            link: value.value,
+        };
+        utility.values_count = NewIndexPage::<T>::persist_value(
+            &mut self.index_file,
+            page_id,
+            size,
+            index_value,
+            utility.values_count,
+        )?;
+
+        if &node_id < &value.key {
+            utility.node_id = value.key
+        }
+
+        NewIndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
+
+        Ok(())
+    }
+
+    fn remove_from_index_page(
+        &mut self,
+        page_id: PageId,
+        index: usize,
+        _: Pair<T, Link>,
     ) -> eyre::Result<()>
     where
         T: Archive
             + Default
             + SizeMeasurable
             + Ord
+            + Eq
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
     {
         let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
-        let (mut slots, values_count) =
-            NewIndexPage::<T>::parse_slots_and_values_count(&mut self.index_file, page_id, size)?;
-        slots.insert(index, values_count);
-        slots.remove(size);
-        NewIndexPage::<T>::persist_slots(&mut self.index_file, page_id, slots, values_count + 1)?;
-        let index_value = IndexValue {
-            key: value.key,
-            link: value.value,
-        };
-        NewIndexPage::<T>::persist_value(
-            &mut self.index_file,
-            page_id,
-            size,
-            index_value,
-            values_count,
-        )?;
+        let mut utility =
+            NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
+        utility.values_count = *utility
+            .slots
+            .get(index)
+            .expect("Slots should exist for every index within `size`");
+        utility.slots.remove(index);
+        utility.slots.push(0);
+        NewIndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.values_count)?;
+        NewIndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
 
         Ok(())
     }
@@ -185,7 +226,7 @@ where
             .table_of_contents
             .get(&node_id)
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
-        self.insert_on_index_page(page_id, index, value)?;
+        self.insert_on_index_page(page_id, node_id, index, value)?;
         Ok(())
     }
     fn process_remove_at(
@@ -195,9 +236,21 @@ where
         index: usize,
     ) -> eyre::Result<()>
     where
-        T: Ord,
+        T: Archive
+            + Default
+            + Debug
+            + SizeMeasurable
+            + Ord
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
     {
-        todo!()
+        let page_id = self
+            .table_of_contents
+            .get(&node_id)
+            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+        self.remove_from_index_page(page_id, index, value)?;
+        Ok(())
     }
     fn process_create_node(&mut self, node_id: Pair<T, Link>) -> eyre::Result<()>
     where

@@ -40,46 +40,22 @@ fn test_index_page_read_after_insert_at_in_space_index() {
     assert_eq!(page.inner.index_values.get(1).unwrap().link.offset, 24);
 }
 
-#[derive(Archive, Serialize)]
-struct XD {
-    a: u64,
-    b: u8,
-    c: Vec<IndexValue<u8>>,
-}
-
 #[test]
-fn test() {
-    let xd = XD {
-        a: 1,
-        b: 2,
-        c: vec![
-            IndexValue {
-                key: 3,
-                link: Link {
-                    page_id: 0.into(),
-                    offset: 0,
-                    length: 24,
-                },
-            },
-            IndexValue {
-                key: 4,
-                link: Link {
-                    page_id: 0.into(),
-                    offset: 0,
-                    length: 24,
-                },
-            },
-            IndexValue {
-                key: 7,
-                link: Link {
-                    page_id: 0.into(),
-                    offset: 0,
-                    length: 24,
-                },
-            },
-        ],
-    };
+fn test_index_page_read_after_insert_at_with_node_id_update_in_space_index() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index/process_insert_at_with_node_id_update.wt.idx")
+        .unwrap();
 
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&xd).unwrap();
-    println!("{:?}", bytes);
+    let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
+    assert_eq!(page.inner.node_id, 7);
+    assert_eq!(page.inner.values_count, 2);
+    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
+    assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
+    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.slots.get(1).unwrap(), &1);
+    assert_eq!(page.inner.index_values.get(1).unwrap().key, 7);
+    assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);
+    assert_eq!(page.inner.index_values.get(1).unwrap().link.offset, 24);
 }
