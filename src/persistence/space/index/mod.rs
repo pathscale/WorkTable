@@ -177,8 +177,9 @@ where
     fn remove_from_index_page(
         &mut self,
         page_id: PageId,
+        node_id: T,
         index: usize,
-        _: Pair<T, Link>,
+        value: Pair<T, Link>,
     ) -> eyre::Result<()>
     where
         T: Archive
@@ -201,6 +202,21 @@ where
         utility.slots.remove(index);
         utility.slots.push(0);
         NewIndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.values_count)?;
+
+        if &node_id == &value.key {
+            let index = *utility
+                .slots
+                .get(index - 1)
+                .expect("slots always should exist in `size` bounds");
+            utility.node_id = NewIndexPage::<T>::read_value_with_index(
+                &mut self.index_file,
+                page_id,
+                size,
+                index as usize,
+            )?
+            .key;
+        }
+
         NewIndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
 
         Ok(())
@@ -249,7 +265,7 @@ where
             .table_of_contents
             .get(&node_id)
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
-        self.remove_from_index_page(page_id, index, value)?;
+        self.remove_from_index_page(page_id, node_id, index, value)?;
         Ok(())
     }
     fn process_create_node(&mut self, node_id: Pair<T, Link>) -> eyre::Result<()>
