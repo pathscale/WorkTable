@@ -11,7 +11,7 @@ fn test_index_page_read_after_create_node_in_space_index() {
 
     let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
     assert_eq!(page.inner.node_id, 5);
-    assert_eq!(page.inner.values_count, 1);
+    assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.slots.get(0).unwrap(), &0);
     assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
     assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
@@ -27,7 +27,7 @@ fn test_index_page_read_after_insert_at_in_space_index() {
 
     let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
     assert_eq!(page.inner.node_id, 5);
-    assert_eq!(page.inner.values_count, 2);
+    assert_eq!(page.inner.current_index, 2);
     assert_eq!(page.inner.slots.get(0).unwrap(), &1);
     assert_eq!(page.inner.index_values.get(1).unwrap().key, 3);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);
@@ -47,7 +47,7 @@ fn test_index_page_read_after_insert_at_with_node_id_update_in_space_index() {
 
     let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
     assert_eq!(page.inner.node_id, 7);
-    assert_eq!(page.inner.values_count, 2);
+    assert_eq!(page.inner.current_index, 2);
     assert_eq!(page.inner.slots.get(0).unwrap(), &0);
     assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
     assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
@@ -67,7 +67,7 @@ fn test_index_page_read_after_remove_at_node_id_in_space_index() {
 
     let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
     assert_eq!(page.inner.node_id, 3);
-    assert_eq!(page.inner.values_count, 0);
+    assert_eq!(page.inner.current_index, 0);
     assert_eq!(page.inner.slots.get(0).unwrap(), &1);
     assert_eq!(page.inner.index_values.get(1).unwrap().key, 3);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);
@@ -84,7 +84,7 @@ fn test_index_page_read_after_insert_at_removed_place_in_space_index() {
 
     let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
     assert_eq!(page.inner.node_id, 7);
-    assert_eq!(page.inner.values_count, 3);
+    assert_eq!(page.inner.current_index, 3);
     assert_eq!(page.inner.slots.get(0).unwrap(), &1);
     assert_eq!(page.inner.index_values.get(1).unwrap().key, 3);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);

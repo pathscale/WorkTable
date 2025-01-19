@@ -81,7 +81,7 @@ where
     {
         let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut page = NewIndexPage::new(node_id.key.clone(), size);
-        page.values_count = 1;
+        page.current_index = 1;
         page.slots[0] = 0;
         page.index_values[0] = IndexValue {
             key: node_id.key,
@@ -153,18 +153,18 @@ where
         let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut utility =
             NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
-        utility.slots.insert(index, utility.values_count);
+        utility.slots.insert(index, utility.current_index);
         utility.slots.remove(size);
         let index_value = IndexValue {
             key: value.key.clone(),
             link: value.value,
         };
-        utility.values_count = NewIndexPage::<T>::persist_value(
+        utility.current_index = NewIndexPage::<T>::persist_value(
             &mut self.index_file,
             page_id,
             size,
             index_value,
-            utility.values_count,
+            utility.current_index,
         )?;
 
         if &node_id < &value.key {
@@ -201,13 +201,18 @@ where
         let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut utility =
             NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
-        utility.values_count = *utility
+        utility.current_index = *utility
             .slots
             .get(index)
             .expect("Slots should exist for every index within `size`");
         utility.slots.remove(index);
         utility.slots.push(0);
-        NewIndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.values_count)?;
+        NewIndexPage::<T>::remove_value(
+            &mut self.index_file,
+            page_id,
+            size,
+            utility.current_index,
+        )?;
 
         if &node_id == &value.key {
             let index = *utility
