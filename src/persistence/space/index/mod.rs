@@ -135,7 +135,7 @@ where
         node_id: T,
         index: usize,
         value: Pair<T, Link>,
-    ) -> eyre::Result<()>
+    ) -> eyre::Result<Option<T>>
     where
         T: Archive
             + Clone
@@ -148,6 +148,8 @@ where
             >,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
     {
+        let mut new_node_id = None;
+
         let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut utility =
             NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
@@ -166,12 +168,13 @@ where
         )?;
 
         if &node_id < &value.key {
-            utility.node_id = value.key
+            utility.node_id = value.key.clone();
+            new_node_id = Some(value.key);
         }
 
         NewIndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
 
-        Ok(())
+        Ok(new_node_id)
     }
 
     fn remove_from_index_page(
@@ -180,10 +183,11 @@ where
         node_id: T,
         index: usize,
         value: Pair<T, Link>,
-    ) -> eyre::Result<()>
+    ) -> eyre::Result<Option<T>>
     where
         T: Archive
             + Default
+            + Clone
             + SizeMeasurable
             + Ord
             + Eq
@@ -192,6 +196,8 @@ where
             >,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
     {
+        let mut new_node_id = None;
+
         let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut utility =
             NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
@@ -215,11 +221,12 @@ where
                 index as usize,
             )?
             .key;
+            new_node_id = Some(utility.node_id.clone())
         }
 
         NewIndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
 
-        Ok(())
+        Ok(new_node_id)
     }
 
     fn process_insert_at(
@@ -242,7 +249,13 @@ where
             .table_of_contents
             .get(&node_id)
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
-        self.insert_on_index_page(page_id, node_id, index, value)?;
+        if let Some(new_node_id) =
+            self.insert_on_index_page(page_id, node_id.clone(), index, value)?
+        {
+            self.table_of_contents.remove(&node_id);
+            self.table_of_contents.insert(new_node_id, page_id);
+            self.table_of_contents.persist(&mut self.index_file)?;
+        }
         Ok(())
     }
     fn process_remove_at(
@@ -265,7 +278,13 @@ where
             .table_of_contents
             .get(&node_id)
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
-        self.remove_from_index_page(page_id, node_id, index, value)?;
+        if let Some(new_node_id) =
+            self.remove_from_index_page(page_id, node_id.clone(), index, value)?
+        {
+            self.table_of_contents.remove(&node_id);
+            self.table_of_contents.insert(new_node_id, page_id);
+            self.table_of_contents.persist(&mut self.index_file)?;
+        }
         Ok(())
     }
     fn process_create_node(&mut self, node_id: Pair<T, Link>) -> eyre::Result<()>

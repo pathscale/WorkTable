@@ -23,7 +23,10 @@ pub struct IndexTableOfContents<T, const DATA_LENGTH: u32> {
     table_of_contents_pages: Vec<GeneralPage<TableOfContentsPage<T>>>,
 }
 
-impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH> {
+impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH>
+where
+    T: SizeMeasurable,
+{
     pub fn new(space_id: SpaceId, next_page_id: Arc<AtomicU32>) -> Self {
         let page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
         let header = GeneralHeader::new(page_id.into(), PageType::IndexTableOfContents, space_id);
