@@ -71,7 +71,7 @@ where
         let page = self.get_current_page_mut();
         page.inner.insert(node_id.clone(), page_id);
         if page.inner.estimated_size() > DATA_LENGTH as usize {
-            page.inner.remove(&node_id);
+            page.inner.remove_without_record(&node_id);
             if page.header.next_id.is_empty() {
                 let next_page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
                 let header = page.header.follow_with_page_id(next_page_id.into());
@@ -260,5 +260,57 @@ mod tests {
         }
 
         assert!(keys.is_empty(), "Some keys was not inserted: {:?}", keys)
+    }
+
+    #[test]
+    fn reinsert_on_empty_space() {
+        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        let mut keys = vec![];
+        for key in 0..10 {
+            toc.insert(key, 1.into());
+            keys.push(key);
+        }
+
+        assert!(
+            toc.current_page > 0,
+            "`current_page` not moved forward and is {}",
+            toc.current_page,
+        );
+        let before_remove_current_page = toc.current_page;
+
+        let key_to_remove = keys[5];
+        toc.remove(&key_to_remove);
+        assert!(
+            before_remove_current_page > toc.current_page,
+            "`current_page` not moved backwards on remove and is still {}",
+            toc.current_page,
+        );
+        assert_eq!(
+            toc.get_current_page_mut().inner.clone().pop_empty_page(),
+            Some(1.into()),
+            "Current page not contains any empty page",
+        );
+        let after_remove_current_page = toc.current_page;
+
+        let new_key = keys.last().unwrap() + 1;
+        let id = toc.pop_empty_page_id().unwrap();
+        toc.insert(new_key, id);
+        assert_eq!(
+            before_remove_current_page, toc.current_page,
+            "`current_page` not moved back to before remove state and is {}",
+            toc.current_page,
+        );
+        assert_eq!(
+            toc.table_of_contents_pages[after_remove_current_page]
+                .inner
+                .clone()
+                .pop_empty_page(),
+            None,
+            "After insertion page contains empty page {:?}, but shouldn't",
+            toc.table_of_contents_pages[after_remove_current_page]
+                .inner
+                .clone()
+                .pop_empty_page(),
+        );
     }
 }
