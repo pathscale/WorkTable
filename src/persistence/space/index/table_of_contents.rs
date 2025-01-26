@@ -41,72 +41,21 @@ where
         }
     }
 
-    pub fn persist(&mut self, file: &mut File) -> eyre::Result<()>
+    pub fn get(&self, node_id: &T) -> Option<PageId>
     where
-        T: Archive
-            + Hash
-            + Eq
-            + Clone
-            + SizeMeasurable
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
-            >,
-        <T as Archive>::Archived: Hash + Eq,
-        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
+        T: Hash + Eq,
     {
-        for page in &mut self.table_of_contents_pages {
-            persist_page(page, file)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn parse_from_file(
-        file: &mut File,
-        space_id: SpaceId,
-        next_page_id: Arc<AtomicU32>,
-    ) -> eyre::Result<Self>
-    where
-        T: Archive
-            + Hash
-            + Eq
-            + Clone
-            + SizeMeasurable
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
-            >,
-        <T as Archive>::Archived: Hash + Eq,
-        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
-    {
-        let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1);
-        if let Ok(page) = first_page {
-            if page.header.next_id.is_empty() {
-                Ok(Self {
-                    current_page: 0,
-                    next_page_id,
-                    table_of_contents_pages: vec![page],
-                })
-            } else {
-                let mut table_of_contents_pages = vec![page];
-                let mut index = 2;
-                let mut ind = false;
-
-                while !ind {
-                    let page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, index)?;
-                    ind = page.header.next_id.is_empty();
-                    table_of_contents_pages.push(page);
-                    index += 1;
-                }
-
-                Ok(Self {
-                    current_page: 0,
-                    next_page_id,
-                    table_of_contents_pages,
-                })
+        for page in &self.table_of_contents_pages {
+            if page.inner.contains(node_id) {
+                return Some(
+                    page.inner
+                        .get(node_id)
+                        .expect("should exist as checked in `contains`"),
+                );
             }
-        } else {
-            Ok(Self::new(space_id, next_page_id))
         }
+
+        None
     }
 
     fn get_current_page_mut(&mut self) -> &mut GeneralPage<TableOfContentsPage<T>> {
@@ -145,36 +94,6 @@ where
         }
     }
 
-    pub fn get(&self, node_id: &T) -> Option<PageId>
-    where
-        T: Hash + Eq,
-    {
-        for page in &self.table_of_contents_pages {
-            if page.inner.contains(node_id) {
-                return Some(
-                    page.inner
-                        .get(node_id)
-                        .expect("should exist as checked in `contains`"),
-                );
-            }
-        }
-
-        None
-    }
-
-    pub fn update_key(&mut self, old_key: &T, new_key: T)
-    where
-        T: Hash + Eq,
-    {
-        let page = self.get_current_page_mut();
-        page.inner.update_key(old_key, new_key);
-    }
-
-    pub fn pop_empty_page_id(&mut self) -> Option<PageId> {
-        let page = self.get_current_page_mut();
-        page.inner.pop_empty_page()
-    }
-
     pub fn remove(&mut self, node_id: &T)
     where
         T: Clone + Hash + Eq + SizeMeasurable,
@@ -192,6 +111,87 @@ where
             if self.table_of_contents_pages.len() == i {
                 removed = true;
             }
+        }
+    }
+
+    pub fn update_key(&mut self, old_key: &T, new_key: T)
+    where
+        T: Hash + Eq,
+    {
+        let page = self.get_current_page_mut();
+        page.inner.update_key(old_key, new_key);
+    }
+
+    pub fn pop_empty_page_id(&mut self) -> Option<PageId> {
+        let page = self.get_current_page_mut();
+        page.inner.pop_empty_page()
+    }
+
+    pub fn persist(&mut self, file: &mut File) -> eyre::Result<()>
+    where
+        T: Archive
+        + Hash
+        + Eq
+        + Clone
+        + SizeMeasurable
+        + for<'a> Serialize<
+            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+        >,
+        <T as Archive>::Archived: Hash + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
+    {
+        for page in &mut self.table_of_contents_pages {
+            persist_page(page, file)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn parse_from_file(
+        file: &mut File,
+        space_id: SpaceId,
+        next_page_id: Arc<AtomicU32>,
+    ) -> eyre::Result<Self>
+    where
+        T: Archive
+        + Hash
+        + Eq
+        + Clone
+        + SizeMeasurable
+        + for<'a> Serialize<
+            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+        >,
+        <T as Archive>::Archived: Hash + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
+    {
+        let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1);
+        if let Ok(page) = first_page {
+            if page.header.next_id.is_empty() {
+                Ok(Self {
+                    current_page: 0,
+                    next_page_id,
+                    table_of_contents_pages: vec![page],
+                })
+            } else {
+                let mut table_of_contents_pages = vec![page];
+                let mut index = 2;
+                let mut ind = false;
+
+                while !ind {
+                    let page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, index)?;
+                    ind = page.header.next_id.is_empty();
+                    table_of_contents_pages.push(page);
+                    index += 1;
+                }
+
+                Ok(Self {
+                    current_page: 0,
+                    next_page_id,
+                    table_of_contents_pages,
+                })
+            }
+        } else {
+            Ok(Self::new(space_id, next_page_id))
         }
     }
 }
