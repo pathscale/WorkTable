@@ -80,7 +80,7 @@ where
     {
         let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1);
         if let Ok(page) = first_page {
-            if page.inner.is_last() {
+            if page.header.next_id.is_empty() {
                 Ok(Self {
                     current_page: 0,
                     next_page_id,
@@ -93,7 +93,7 @@ where
 
                 while !ind {
                     let page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, index)?;
-                    ind = page.inner.is_last();
+                    ind = page.header.next_id.is_empty();
                     table_of_contents_pages.push(page);
                     index += 1;
                 }
@@ -123,10 +123,10 @@ where
         page.inner.insert(node_id.clone(), page_id);
         if page.inner.estimated_size() > DATA_LENGTH as usize {
             page.inner.remove(&node_id);
-            if page.inner.is_last() {
+            if page.header.next_id.is_empty() {
                 let next_page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
                 let header = page.header.follow_with_page_id(next_page_id.into());
-                page.inner.mark_not_last(next_page_id.into());
+                page.header.next_id = next_page_id.into();
                 self.table_of_contents_pages.push(GeneralPage {
                     header,
                     inner: TableOfContentsPage::default(),

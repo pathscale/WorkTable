@@ -311,8 +311,20 @@ where
 
         Ok(())
     }
-    fn process_remove_node(&mut self, node_id: T) -> eyre::Result<()> {
-        todo!()
+    fn process_remove_node(&mut self, node_id: T) -> eyre::Result<()>
+    where
+        T: Archive
+            + Clone
+            + Default
+            + SizeMeasurable
+            + Ord
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+    {
+        self.table_of_contents.remove(&node_id);
+        self.table_of_contents.persist(&mut self.index_file)?;
+        Ok(())
     }
     fn process_split_node(&mut self, node_id: T, split_index: usize) -> eyre::Result<()> {
         todo!()
