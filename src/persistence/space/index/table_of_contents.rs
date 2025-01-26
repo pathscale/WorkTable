@@ -130,13 +130,13 @@ where
     pub fn persist(&mut self, file: &mut File) -> eyre::Result<()>
     where
         T: Archive
-        + Hash
-        + Eq
-        + Clone
-        + SizeMeasurable
-        + for<'a> Serialize<
-            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
-        >,
+            + Hash
+            + Eq
+            + Clone
+            + SizeMeasurable
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
         <T as Archive>::Archived: Hash + Eq,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
     {
@@ -154,13 +154,13 @@ where
     ) -> eyre::Result<Self>
     where
         T: Archive
-        + Hash
-        + Eq
-        + Clone
-        + SizeMeasurable
-        + for<'a> Serialize<
-            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
-        >,
+            + Hash
+            + Eq
+            + Clone
+            + SizeMeasurable
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
         <T as Archive>::Archived: Hash + Eq,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
     {
