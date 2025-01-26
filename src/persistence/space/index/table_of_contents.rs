@@ -135,6 +135,12 @@ where
 
                 let page = self.get_current_page_mut();
                 page.inner.insert(node_id.clone(), page_id);
+            } else {
+                let mut i = self.current_page;
+                while !self.table_of_contents_pages[i].header.next_id.is_empty() {
+                    i += 1;
+                }
+                self.current_page = i;
             }
         }
     }
@@ -156,6 +162,19 @@ where
         None
     }
 
+    pub fn update_key(&mut self, old_key: &T, new_key: T)
+    where
+        T: Hash + Eq,
+    {
+        let page = self.get_current_page_mut();
+        page.inner.update_key(old_key, new_key);
+    }
+
+    pub fn pop_empty_page_id(&mut self) -> Option<PageId> {
+        let page = self.get_current_page_mut();
+        page.inner.pop_empty_page()
+    }
+
     pub fn remove(&mut self, node_id: &T)
     where
         T: Clone + Hash + Eq + SizeMeasurable,
@@ -166,6 +185,7 @@ where
             let mut page = &mut self.table_of_contents_pages[i];
             if page.inner.contains(node_id) {
                 page.inner.remove(node_id);
+                self.current_page = i;
                 removed = true;
             }
             i += 1;

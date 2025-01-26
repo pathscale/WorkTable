@@ -257,8 +257,7 @@ where
         if let Some(new_node_id) =
             self.insert_on_index_page(page_id, node_id.clone(), index, value)?
         {
-            self.table_of_contents.remove(&node_id);
-            self.table_of_contents.insert(new_node_id, page_id);
+            self.table_of_contents.update_key(&node_id, new_node_id);
             self.table_of_contents.persist(&mut self.index_file)?;
         }
         Ok(())
@@ -286,8 +285,7 @@ where
         if let Some(new_node_id) =
             self.remove_from_index_page(page_id, node_id.clone(), index, value)?
         {
-            self.table_of_contents.remove(&node_id);
-            self.table_of_contents.insert(new_node_id, page_id);
+            self.table_of_contents.update_key(&node_id, new_node_id);
             self.table_of_contents.persist(&mut self.index_file)?;
         }
         Ok(())
@@ -303,11 +301,14 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
     {
-        let page_id = self.next_page_id.fetch_add(1, Ordering::Relaxed);
-        self.table_of_contents
-            .insert(node_id.key.clone(), page_id.into());
+        let page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
+            id
+        } else {
+            self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
+        };
+        self.table_of_contents.insert(node_id.key.clone(), page_id);
         self.table_of_contents.persist(&mut self.index_file)?;
-        self.add_index_page(node_id, page_id.into())?;
+        self.add_index_page(node_id, page_id)?;
 
         Ok(())
     }
