@@ -9,7 +9,7 @@ use std::sync::Arc;
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
     align8, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType, SizeMeasurable,
-    SpaceId,
+    SpaceId, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -57,7 +57,9 @@ where
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
 {
     pub fn new(mut index_file: File, space_id: SpaceId) -> eyre::Result<Self> {
-        let next_page_id = Arc::new(AtomicU32::new(1));
+        let file_length = index_file.metadata()?.len();
+        let page_id = file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) + 1;
+        let next_page_id = Arc::new(AtomicU32::new(page_id as u32));
         let table_of_contents =
             IndexTableOfContents::parse_from_file(&mut index_file, space_id, next_page_id.clone())?;
         Ok(Self {
