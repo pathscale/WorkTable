@@ -121,3 +121,26 @@ fn test_index_pages_read_after_creation_of_second_node_in_space_index() {
     assert_eq!(page.inner.index_values.get(0).unwrap().key, 15);
     assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
 }
+
+#[test]
+fn test_index_pages_read_after_creation_of_node_after_remove_node_in_space_index() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index/process_create_node_after_remove.wt.idx")
+        .unwrap();
+
+    let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
+    assert_eq!(page.inner.node_id, 10);
+    assert_eq!(page.inner.current_index, 1);
+    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
+    assert_eq!(page.inner.index_values.get(0).unwrap().key, 10);
+    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+
+    let page = parse_page::<NewIndexPage<u8>, { INNER_PAGE_SIZE as u32 }>(&mut file, 3).unwrap();
+    assert_eq!(page.inner.node_id, 15);
+    assert_eq!(page.inner.current_index, 1);
+    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
+    assert_eq!(page.inner.index_values.get(0).unwrap().key, 15);
+    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+}

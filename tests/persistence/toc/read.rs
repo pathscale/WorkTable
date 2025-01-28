@@ -93,3 +93,41 @@ fn test_index_table_of_contents_read_from_space_index_with_remove_at_node_id() {
 
     assert_eq!(toc.get(&3), Some(2.into()));
 }
+
+#[test]
+fn test_index_table_of_contents_read_from_space_index_with_remove_node() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index/process_remove_node.wt.idx")
+        .unwrap();
+    let next_id_gen = Arc::new(AtomicU32::new(2));
+    let mut toc = IndexTableOfContents::<u8, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+        &mut file,
+        0.into(),
+        next_id_gen,
+    )
+    .unwrap();
+
+    assert_eq!(toc.get(&5), None);
+    assert_eq!(toc.get(&15), Some(3.into()));
+}
+
+#[test]
+fn test_index_table_of_contents_read_from_space_index_with_create_node_after_remove_node() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index/process_create_node_after_remove.wt.idx")
+        .unwrap();
+    let next_id_gen = Arc::new(AtomicU32::new(2));
+    let mut toc = IndexTableOfContents::<u8, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+        &mut file,
+        0.into(),
+        next_id_gen,
+    )
+    .unwrap();
+
+    assert_eq!(toc.get(&10), Some(2.into()));
+    assert_eq!(toc.get(&15), Some(3.into()));
+}
