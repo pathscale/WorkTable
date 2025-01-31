@@ -43,7 +43,7 @@ where
 
     pub fn get(&self, node_id: &T) -> Option<PageId>
     where
-        T: Hash + Eq,
+        T: Ord + Eq,
     {
         for page in &self.table_of_contents_pages {
             if page.inner.contains(node_id) {
@@ -64,7 +64,7 @@ where
 
     pub fn insert(&mut self, node_id: T, page_id: PageId)
     where
-        T: Clone + Hash + Eq + SizeMeasurable,
+        T: Clone + Ord + Eq + SizeMeasurable,
     {
         let next_page_id = self.next_page_id.clone();
 
@@ -96,7 +96,7 @@ where
 
     pub fn remove(&mut self, node_id: &T)
     where
-        T: Clone + Hash + Eq + SizeMeasurable,
+        T: Clone + Ord + Eq + SizeMeasurable,
     {
         let mut removed = false;
         let mut i = 0;
@@ -116,7 +116,7 @@ where
 
     pub fn update_key(&mut self, old_key: &T, new_key: T)
     where
-        T: Hash + Eq,
+        T: Ord + Eq,
     {
         let page = self.get_current_page_mut();
         page.inner.update_key(old_key, new_key);
@@ -130,15 +130,14 @@ where
     pub fn persist(&mut self, file: &mut File) -> eyre::Result<()>
     where
         T: Archive
-            + Hash
+            + Ord
             + Eq
             + Clone
             + SizeMeasurable
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
-        <T as Archive>::Archived: Hash + Eq,
-        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
     {
         for page in &mut self.table_of_contents_pages {
             persist_page(page, file)?;
@@ -154,15 +153,14 @@ where
     ) -> eyre::Result<Self>
     where
         T: Archive
-            + Hash
+            + Ord
             + Eq
             + Clone
             + SizeMeasurable
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
-        <T as Archive>::Archived: Hash + Eq,
-        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
     {
         let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1);
         if let Ok(page) = first_page {

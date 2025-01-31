@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    align8, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType, SizeMeasurable,
-    SpaceId, GENERAL_HEADER_SIZE,
+    align8, parse_page, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType,
+    SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -48,13 +48,12 @@ pub struct SpaceIndex<T, const DATA_LENGTH: u32> {
 impl<T, const DATA_LENGTH: u32> SpaceIndex<T, DATA_LENGTH>
 where
     T: Archive
-        + Hash
+        + Ord
         + Eq
         + Clone
         + SizeMeasurable
         + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
-    <T as Archive>::Archived: Hash + Eq,
-    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Hash + Eq,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
 {
     pub fn new(mut index_file: File, space_id: SpaceId) -> eyre::Result<Self> {
         let file_length = index_file.metadata()?.len();
@@ -70,7 +69,7 @@ where
         })
     }
 
-    fn add_index_page(&mut self, node_id: Pair<T, Link>, page_id: PageId) -> eyre::Result<()>
+    fn add_new_index_page(&mut self, node_id: Pair<T, Link>, page_id: PageId) -> eyre::Result<()>
     where
         T: Archive
             + Clone
@@ -89,13 +88,26 @@ where
             key: node_id.key,
             link: node_id.value,
         };
+        self.add_index_page(page, page_id)
+    }
+
+    fn add_index_page(&mut self, node: NewIndexPage<T>, page_id: PageId) -> eyre::Result<()>
+    where
+        T: Archive
+            + Clone
+            + Default
+            + SizeMeasurable
+            + Ord
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+    {
         let header = GeneralHeader::new(page_id.into(), PageType::Index, self.space_id);
         let mut general_page = GeneralPage {
-            inner: page,
+            inner: node,
             header,
         };
         persist_page(&mut general_page, &mut self.index_file)?;
-
         Ok(())
     }
 
@@ -310,10 +322,11 @@ where
         };
         self.table_of_contents.insert(node_id.key.clone(), page_id);
         self.table_of_contents.persist(&mut self.index_file)?;
-        self.add_index_page(node_id, page_id)?;
+        self.add_new_index_page(node_id, page_id)?;
 
         Ok(())
     }
+
     fn process_remove_node(&mut self, node_id: T) -> eyre::Result<()>
     where
         T: Archive
@@ -329,7 +342,36 @@ where
         self.table_of_contents.persist(&mut self.index_file)?;
         Ok(())
     }
-    fn process_split_node(&mut self, node_id: T, split_index: usize) -> eyre::Result<()> {
-        todo!()
+
+    fn process_split_node(&mut self, node_id: T, split_index: usize) -> eyre::Result<()>
+    where
+        T: Archive
+            + Clone
+            + Default
+            + Debug
+            + SizeMeasurable
+            + Ord
+            + Eq
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
+    {
+        let page_id = self
+            .table_of_contents
+            .get(&node_id)
+            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+        let mut page =
+            parse_page::<NewIndexPage<T>, DATA_LENGTH>(&mut self.index_file, page_id.into())?;
+        let splitted_page = page.inner.split(split_index);
+        let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
+            id
+        } else {
+            self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
+        };
+        self.add_index_page(splitted_page, new_page_id)?;
+        persist_page(&mut page, &mut self.index_file)?;
+
+        Ok(())
     }
 }
