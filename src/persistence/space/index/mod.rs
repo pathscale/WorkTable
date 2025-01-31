@@ -369,6 +369,13 @@ where
         } else {
             self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
         };
+
+        self.table_of_contents
+            .update_key(&node_id, page.inner.node_id.clone());
+        self.table_of_contents
+            .insert(splitted_page.node_id.clone(), new_page_id);
+        self.table_of_contents.persist(&mut self.index_file)?;
+
         self.add_index_page(splitted_page, new_page_id)?;
         persist_page(&mut page, &mut self.index_file)?;
 
