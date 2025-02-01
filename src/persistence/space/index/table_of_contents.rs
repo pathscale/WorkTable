@@ -114,6 +114,13 @@ where
         }
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&T, &PageId)> {
+        self.table_of_contents_pages
+            .iter()
+            .map(|v| v.inner.iter())
+            .flatten()
+    }
+
     pub fn update_key(&mut self, old_key: &T, new_key: T)
     where
         T: Ord + Eq,

@@ -13,7 +13,9 @@ use data_bucket::{
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
-use indexset::Pair;
+use indexset::concurrent::map::BTreeMap;
+use indexset::core::pair::Pair;
+use parking_lot::Mutex;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
 use rkyv::ser::allocator::ArenaHandle;
@@ -32,8 +34,8 @@ where
     let slot_size = u16::default().aligned_size();
     let index_value_size = align8(T::default().aligned_size() + Link::default().aligned_size());
     let vec_util_size = 8;
-    let size =
-        (length - node_id_size - slot_size - vec_util_size * 2) / (slot_size + index_value_size);
+    let size = (length - node_id_size - slot_size * 3 - vec_util_size * 2)
+        / (slot_size + index_value_size);
     size
 }
 
@@ -83,6 +85,7 @@ where
         let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut page = NewIndexPage::new(node_id.key.clone(), size);
         page.current_index = 1;
+        page.current_length = 1;
         page.slots[0] = 0;
         page.index_values[0] = IndexValue {
             key: node_id.key,
@@ -169,6 +172,7 @@ where
             NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
         utility.slots.insert(index, utility.current_index);
         utility.slots.remove(size);
+        utility.current_length += 1;
         let index_value = IndexValue {
             key: value.key.clone(),
             link: value.value,
@@ -221,6 +225,7 @@ where
             .expect("Slots should exist for every index within `size`");
         utility.slots.remove(index);
         utility.slots.push(0);
+        utility.current_length -= 1;
         NewIndexPage::<T>::remove_value(
             &mut self.index_file,
             page_id,
@@ -380,5 +385,47 @@ where
         persist_page(&mut page, &mut self.index_file)?;
 
         Ok(())
+    }
+
+    pub fn parse_indexset(&mut self) -> eyre::Result<BTreeMap<T, Link>>
+    where
+        T: Archive
+            + Clone
+            + Default
+            + Debug
+            + SizeMeasurable
+            + Ord
+            + Eq
+            + Send
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
+            >,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
+    {
+        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let mut indexset = BTreeMap::with_maximum_node_size(size);
+        for (_, page_id) in self.table_of_contents.iter() {
+            let page = parse_page::<NewIndexPage<T>, DATA_LENGTH>(
+                &mut self.index_file,
+                (*page_id).into(),
+            )?;
+            let node = Arc::new(Mutex::new(page.inner.get_node()));
+            indexset.attach_node(node)
+        }
+
+        Ok(indexset)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::persistence::space::index::get_size_from_data_length;
+    use data_bucket::{NewIndexPage, Persistable, INNER_PAGE_SIZE};
+
+    #[test]
+    fn test_size_measure() {
+        let size = get_size_from_data_length::<u32>(INNER_PAGE_SIZE);
+        let page = NewIndexPage::new(0, size);
+        assert!(page.as_bytes().as_ref().len() <= INNER_PAGE_SIZE)
     }
 }
