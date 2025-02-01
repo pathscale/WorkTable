@@ -66,3 +66,56 @@ fn test_space_index_process_insert_at() {
         "tests/data/expected/space_index/process_insert_at.wt.idx".to_string()
     ))
 }
+
+#[test]
+fn test_space_index_process_insert_at_big_amount() {
+    remove_file_if_exists(
+        "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string(),
+    );
+    copy(
+        "tests/data/expected/space_index/process_create_node.wt.idx",
+        "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx",
+    )
+    .unwrap();
+
+    let file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx")
+        .unwrap();
+    let mut space_index =
+        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let indexset = space_index.parse_indexset().unwrap();
+
+    let (_, cdc) = indexset.insert_cdc(
+        1000,
+        Link {
+            page_id: 0.into(),
+            offset: 24,
+            length: 24,
+        },
+    );
+    for event in cdc {
+        space_index.process_change_event(event).unwrap();
+    }
+
+    for i in (6..911).rev() {
+        let (_, cdc) = indexset.insert_cdc(
+            i,
+            Link {
+                page_id: 0.into(),
+                offset: i * 24,
+                length: 24,
+            },
+        );
+        for event in cdc {
+            println!("{:?}", event);
+            space_index.process_change_event(event).unwrap();
+        }
+    }
+
+    assert!(check_if_files_are_same(
+        "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string(),
+        "tests/data/expected/space_index/process_insert_at_big_amount.wt.idx".to_string()
+    ))
+}

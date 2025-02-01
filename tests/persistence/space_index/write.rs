@@ -161,7 +161,7 @@ mod run_first {
             })
             .unwrap();
 
-        for i in (0..905).rev() {
+        for i in (6..911).rev() {
             space_index
                 .process_change_event(ChangeEvent::InsertAt {
                     max_value: Pair {

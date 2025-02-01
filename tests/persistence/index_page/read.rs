@@ -180,10 +180,10 @@ fn test_index_pages_read_after_node_split() {
     let page = parse_page::<NewIndexPage<u32>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
     assert_eq!(page.inner.node_id, 451);
     assert_eq!(page.inner.current_index, 1);
-    assert_eq!(page.inner.current_length, 1);
+    assert_eq!(page.inner.current_length, 453);
 
     let page = parse_page::<NewIndexPage<u32>, { INNER_PAGE_SIZE as u32 }>(&mut file, 3).unwrap();
     assert_eq!(page.inner.node_id, 1000);
     assert_eq!(page.inner.current_index, 454);
-    assert_eq!(page.inner.current_length, 1);
+    assert_eq!(page.inner.current_length, 454);
 }
