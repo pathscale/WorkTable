@@ -1,6 +1,6 @@
 use crate::worktable::model::Index;
 use crate::worktable::Parser;
-use proc_macro2::{Delimiter, Ident, Span, TokenTree};
+use proc_macro2::{Delimiter, Ident, TokenTree};
 use std::collections::HashMap;
 use syn::spanned::Spanned;
 

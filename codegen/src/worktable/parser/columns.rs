@@ -1,4 +1,4 @@
-use proc_macro2::{Delimiter, Ident, Span, TokenTree};
+use proc_macro2::{Delimiter, TokenTree};
 use syn::spanned::Spanned as _;
 
 use crate::worktable::model::{Columns, GeneratorType, Row};

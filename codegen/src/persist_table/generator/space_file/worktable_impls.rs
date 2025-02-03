@@ -69,7 +69,9 @@ impl Generator {
                     data_intervals: vec![],
                     pk_gen_state: <<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State::default(),
                     empty_links_list: vec![],
-                    secondary_index_map: std::collections::HashMap::default()
+                    primary_key_fields: vec![],
+                    row_schema: vec![],
+                    secondary_index_types: vec![],
                 };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,

@@ -383,18 +383,11 @@ impl Generator {
             .fields
             .iter()
             .map(|f| {
-                (
-                    f.ident
-                        .as_ref()
-                        .expect("index fields should always be named fields"),
-                    !f.ty
-                        .to_token_stream()
-                        .to_string()
-                        .to_lowercase()
-                        .contains("lockfree"),
-                )
+                f.ident
+                    .as_ref()
+                    .expect("index fields should always be named fields")
             })
-            .map(|(i, is_unique)| {
+            .map(|i| {
                 let ty = self
                     .field_types
                     .get(i)
