@@ -58,9 +58,7 @@ impl Generator {
             );
             let index_type = field.ty.to_token_stream().to_string();
             let mut split = index_type.split("<");
-            // skip `SpaceTreeIndex` ident.
-            split.next();
-            // skip `TreeIndex` ident.
+            // skip `IndexMap` ident.
             split.next();
             let substr = split
                 .next()
@@ -387,34 +385,19 @@ impl Generator {
             .fields
             .iter()
             .map(|f| {
-                (
-                    f.ident
-                        .as_ref()
-                        .expect("index fields should always be named fields"),
-                    !f.ty
-                        .to_token_stream()
-                        .to_string()
-                        .to_lowercase()
-                        .contains("lockfree"),
-                )
+                f.ident
+                    .as_ref()
+                    .expect("index fields should always be named fields")
             })
-            .map(|(i, is_unique)| {
+            .map(|i| {
                 let ty = self
                     .field_types
                     .get(i)
                     .expect("should be available as constructed from same values");
-                if is_unique {
-                    quote! {
-                        let mut #i = map_index_pages_to_general(
-                            map_unique_tree_index::<#ty, #const_name>(TableIndex::iter(&self.#i)),
-                        );
-                    }
-                } else {
-                    quote! {
-                        let mut #i =  map_index_pages_to_general(
-                            map_tree_index::<#ty, #const_name>(TableIndex::iter(&self.#i)),
-                        );
-                    }
+                quote! {
+                    let mut #i = map_index_pages_to_general(
+                        map_tree_index::<#ty, #const_name>(self.#i.iter()),
+                    );
                 }
             })
             .collect();
@@ -453,8 +436,6 @@ impl Generator {
                     .expect("index fields should always be named fields");
                 let index_type = f.ty.to_token_stream().to_string();
                 let mut split = index_type.split("<");
-                let inner = split.nth(1).expect("space index type should always have generics");
-                let mut split = inner.split("<");
                 let t = Ident::new(
                     split
                         .next()
@@ -463,36 +444,11 @@ impl Generator {
                     Span::mixed_site(),
                 );
 
-                let is_unique = !f
-                    .ty
-                    .to_token_stream()
-                    .to_string()
-                    .to_lowercase()
-                    .contains("lockfree");
-                if is_unique {
-                    quote! {
-                        let #i: SpaceTreeIndex<#t<_, Link>, _, _> = SpaceTreeIndex::new(#t::new());
-                        for page in persisted.#i {
-                            for val in page.inner.index_values {
-                                TableIndex::insert(&#i, val.key, val.link)
-                                    .expect("index is unique");
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        let #i: SpaceTreeIndex<#t<_, std::sync::Arc<lockfree::set::Set<Link>>>, _, _> = SpaceTreeIndex::new(#t::new());
-                        for page in persisted.#i {
-                            for val in page.inner.index_values {
-                                if let Some(set) = TableIndex::peek(&#i, &val.key) {
-                                    set.insert(val.link).expect("is ok");
-                                } else {
-                                    let set = lockfree::set::Set::new();
-                                    set.insert(val.link).expect("is ok");
-                                    TableIndex::insert(&#i, val.key, std::sync::Arc::new(set))
-                                        .expect("index is unique");
-                                }
-                            }
+                quote! {
+                    let #i: #t<_, Link> = #t::new();
+                    for page in persisted.#i {
+                        for val in page.inner.index_values {
+                            #i.insert(val.key, val.link);
                         }
                     }
                 }

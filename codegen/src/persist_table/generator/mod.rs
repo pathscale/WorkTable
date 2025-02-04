@@ -13,7 +13,6 @@ mod space_file;
 pub struct Generator {
     pub struct_def: ItemStruct,
     pub pk_ident: Ident,
-    pub index_type_ident: Ident,
 }
 
 impl WorktableNameGenerator {

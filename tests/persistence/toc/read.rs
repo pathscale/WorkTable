@@ -148,5 +148,5 @@ fn test_index_table_of_contents_read_from_space_index_after_split_node() {
     .unwrap();
 
     assert_eq!(toc.get(&1000), Some(3.into()));
-    assert_eq!(toc.get(&451), Some(2.into()));
+    assert_eq!(toc.get(&457), Some(2.into()));
 }

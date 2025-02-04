@@ -3,10 +3,8 @@ use crate::persistence::operation::Operation;
 mod mappers;
 mod operation;
 mod space;
-mod space_index;
 
 pub use space::{IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex};
-pub use space_index::SpaceTreeIndex;
 
 pub struct PersistenceEngine<Space> {
     pub space: Space,

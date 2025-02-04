@@ -178,7 +178,7 @@ fn test_index_pages_read_after_node_split() {
         .unwrap();
 
     let page = parse_page::<NewIndexPage<u32>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
-    assert_eq!(page.inner.node_id, 451);
+    assert_eq!(page.inner.node_id, 457);
     assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.current_length, 453);
 
