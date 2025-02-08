@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    align8, parse_page, persist_page, GeneralHeader, GeneralPage, Link, NewIndexPage, PageType,
-    SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
+    align8, get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader,
+    GeneralPage, Link, NewIndexPage, PageType, SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -25,19 +25,6 @@ use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 
 pub use table_of_contents::IndexTableOfContents;
-
-pub fn get_size_from_data_length<T>(length: usize) -> usize
-where
-    T: Default + SizeMeasurable,
-{
-    let node_id_size = T::default().aligned_size();
-    let slot_size = u16::default().aligned_size();
-    let index_value_size = align8(T::default().aligned_size() + Link::default().aligned_size());
-    let vec_util_size = 8;
-    let size = (length - node_id_size - slot_size * 3 - vec_util_size * 2)
-        / (slot_size + index_value_size);
-    size
-}
 
 #[derive(Debug)]
 pub struct SpaceIndex<T, const DATA_LENGTH: u32> {
@@ -82,7 +69,7 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
     {
-        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut page = NewIndexPage::new(node_id.key.clone(), size);
         page.current_index = 1;
         page.current_length = 1;
@@ -167,7 +154,7 @@ where
     {
         let mut new_node_id = None;
 
-        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut utility =
             NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
         utility.slots.insert(index, utility.current_index);
@@ -216,7 +203,7 @@ where
     {
         let mut new_node_id = None;
 
-        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut utility =
             NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
         utility.current_index = *utility
@@ -402,14 +389,14 @@ where
             >,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
     {
-        let size = get_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut indexset = BTreeMap::with_maximum_node_size(size);
         for (_, page_id) in self.table_of_contents.iter() {
             let page = parse_page::<NewIndexPage<T>, DATA_LENGTH>(
                 &mut self.index_file,
                 (*page_id).into(),
             )?;
-            let node = Arc::new(Mutex::new(page.inner.get_node()));
+            let node = page.inner.get_node();
             indexset.attach_node(node)
         }
 
@@ -419,12 +406,13 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::persistence::space::index::get_size_from_data_length;
-    use data_bucket::{NewIndexPage, Persistable, INNER_PAGE_SIZE};
+    use data_bucket::{
+        get_index_page_size_from_data_length, NewIndexPage, Persistable, INNER_PAGE_SIZE,
+    };
 
     #[test]
     fn test_size_measure() {
-        let size = get_size_from_data_length::<u32>(INNER_PAGE_SIZE);
+        let size = get_index_page_size_from_data_length::<u32>(INNER_PAGE_SIZE);
         let page = NewIndexPage::new(0, size);
         assert!(page.as_bytes().as_ref().len() <= INNER_PAGE_SIZE)
     }

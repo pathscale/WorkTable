@@ -19,12 +19,10 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     };
 
     let space_file_def = gen.gen_space_file_def();
-    let space_def = gen.gen_space_def();
     let size_measurable_impl = gen.gen_size_measurable_impl()?;
 
     Ok(quote! {
         #size_measurable_impl
         #space_file_def
-        #space_def
     })
 }

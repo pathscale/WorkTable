@@ -7,7 +7,6 @@ use crate::name_generator::WorktableNameGenerator;
 pub use space_file::{WT_DATA_EXTENSION, WT_INDEX_EXTENSION};
 
 mod size_measurable;
-mod space;
 mod space_file;
 
 pub struct Generator {

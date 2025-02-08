@@ -62,6 +62,7 @@ impl Generator {
                 Clone,
                 rkyv::Archive,
                 Debug,
+                Default,
                 rkyv::Deserialize,
                 rkyv::Serialize,
                 From,

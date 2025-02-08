@@ -114,7 +114,6 @@ impl Generator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
-                let lit = Literal::string(index_field_name.to_string().as_str());
                 if idx.is_unique {
                     quote! {
                         self.#index_field_name.remove(&row.#i);

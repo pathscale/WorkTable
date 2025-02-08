@@ -1,6 +1,6 @@
+use indexset::concurrent::map::BTreeMap;
 use std::fs::File;
 use std::sync::Arc;
-
 use worktable::prelude::*;
 
 // TODO: Fix naming.
@@ -20,21 +20,11 @@ fn test_info_parse() {
     assert_eq!(info.header.previous_id, 0.into());
     assert_eq!(info.header.next_id, 0.into());
     assert_eq!(info.header.page_type, PageType::SpaceInfo);
-    assert_eq!(info.header.data_length, 188);
+    assert_eq!(info.header.data_length, 60);
 
     assert_eq!(info.inner.id, 0.into());
-    assert_eq!(info.inner.page_count, 2);
+    assert_eq!(info.inner.page_count, 1);
     assert_eq!(info.inner.name, "TestPersist");
-    assert_eq!(info.inner.primary_key_intervals, vec![Interval(1, 1)]);
-    assert!(info
-        .inner
-        .secondary_index_intervals
-        .contains_key("another_idx"));
-    assert_eq!(
-        info.inner.secondary_index_intervals.get("another_idx"),
-        Some(&vec![Interval(1, 1)])
-    );
-    assert_eq!(info.inner.data_intervals, vec![Interval(1, 1)]);
     assert_eq!(info.inner.empty_links_list, vec![]);
 }
 
@@ -42,21 +32,21 @@ fn test_info_parse() {
 fn test_primary_index_parse() {
     let mut file = File::open("tests/data/expected/test_persist/primary.wt.idx").unwrap();
     let index =
-        parse_page::<IndexData<u128>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
+        parse_page::<NewIndexPage<u128>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 1.into());
     assert_eq!(index.header.previous_id, 0.into());
     assert_eq!(index.header.next_id, 0.into());
     assert_eq!(index.header.page_type, PageType::Index);
-    assert_eq!(index.header.data_length, 3176);
+    assert_eq!(index.header.data_length, 16326);
 
     let mut key = 1;
     let length = 48;
     let mut offset = 0;
     let page_id = 1.into();
 
-    for val in index.inner.index_values {
+    for val in &index.inner.index_values[..index.inner.current_length as usize] {
         assert_eq!(val.key, key);
         assert_eq!(
             val.link,
@@ -76,21 +66,21 @@ fn test_primary_index_parse() {
 fn test_another_idx_index_parse() {
     let mut file = File::open("tests/data/expected/test_persist/another_idx.wt.idx").unwrap();
     let index =
-        parse_page::<IndexData<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
+        parse_page::<NewIndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 1.into());
     assert_eq!(index.header.previous_id, 0.into());
     assert_eq!(index.header.next_id, 0.into());
     assert_eq!(index.header.page_type, PageType::Index);
-    assert_eq!(index.header.data_length, 2384);
+    assert_eq!(index.header.data_length, 16386);
 
     let mut key = 1;
     let length = 48;
     let mut offset = 0;
     let page_id = 1.into();
 
-    for val in index.inner.index_values {
+    for val in &index.inner.index_values[..index.inner.current_length as usize] {
         assert_eq!(val.key, key);
         assert_eq!(
             val.link,
@@ -129,6 +119,11 @@ fn test_space_parse() {
     });
     let table = TestPersistWorkTable::load_from_file(manager).unwrap();
     let expected = get_test_wt();
+
+    let v = table.0.pk_map.iter().collect::<Vec<_>>();
+    println!("{:?}", v);
+    let d = expected.0.pk_map.iter().collect::<Vec<_>>();
+    println!("{:?}", d);
 
     assert_eq!(
         table.select_all().execute().unwrap(),
