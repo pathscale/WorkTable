@@ -8,14 +8,13 @@ use std::sync::Arc;
 
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    align8, get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader,
-    GeneralPage, IndexPage, Link, PageType, SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
+    get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader, GeneralPage,
+    IndexPage, Link, PageType, SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
 use indexset::core::pair::Pair;
-use parking_lot::Mutex;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
 use rkyv::ser::allocator::ArenaHandle;

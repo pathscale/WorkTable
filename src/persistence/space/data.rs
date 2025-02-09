@@ -1,11 +1,8 @@
-use crate::persistence::space::open_or_create_file;
-use data_bucket::{update_at, Link};
-use std::fs::{File, OpenOptions};
-use std::path::Path;
+use std::fs::File;
 
-pub trait SpaceDataOps {
-    fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()>;
-}
+use data_bucket::{update_at, Link};
+
+use crate::persistence::space::open_or_create_file;
 
 #[derive(Debug)]
 pub struct SpaceData<const DATA_LENGTH: usize> {

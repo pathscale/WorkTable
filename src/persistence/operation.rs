@@ -31,16 +31,15 @@ pub enum Operation<PrimaryKey, SecondaryKeys> {
 
 pub struct InsertOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
-    pub primary_key: ChangeEvent<PrimaryKey>,
-    pub secondary_keys: SecondaryKeys,
+    pub primary_key_event: ChangeEvent<PrimaryKey>,
+    pub secondary_keys_events: SecondaryKeys,
     pub bytes: Vec<u8>,
     pub link: Link,
 }
 
 pub struct UpdateOperation<SecondaryKeys> {
     pub id: OperationId,
-    pub old_secondary_keys: SecondaryKeys,
-    pub new_secondary_keys: SecondaryKeys,
+    pub secondary_keys_events: SecondaryKeys,
     pub bytes: Vec<u8>,
     pub link: Link,
 }
