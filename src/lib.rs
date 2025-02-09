@@ -5,7 +5,6 @@ mod primary_key;
 mod row;
 mod table;
 pub use data_bucket;
-mod database;
 mod persistence;
 
 // mod ty;
@@ -20,10 +19,11 @@ pub use table::*;
 pub use worktable_codegen::worktable;
 
 pub mod prelude {
-    pub use crate::database::DatabaseManager;
     pub use crate::in_memory::{ArchivedRow, Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
-    pub use crate::persistence::{IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex};
+    pub use crate::persistence::{
+        IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps,
+    };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{
         Order, SelectQueryBuilder, SelectQueryExecutor, SelectResult, SelectResultExecutor,

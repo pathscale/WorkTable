@@ -120,11 +120,6 @@ fn test_space_parse() {
     let table = TestPersistWorkTable::load_from_file(manager).unwrap();
     let expected = get_test_wt();
 
-    let v = table.0.pk_map.iter().collect::<Vec<_>>();
-    println!("{:?}", v);
-    let d = expected.0.pk_map.iter().collect::<Vec<_>>();
-    println!("{:?}", d);
-
     assert_eq!(
         table.select_all().execute().unwrap(),
         expected.select_all().execute().unwrap()

@@ -24,6 +24,7 @@ use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 
 use crate::persistence::space::open_or_create_file;
+use crate::persistence::SpaceIndexOps;
 pub use table_of_contents::IndexTableOfContents;
 
 #[derive(Debug)]
@@ -100,38 +101,6 @@ where
         };
         persist_page(&mut general_page, &mut self.index_file)?;
         Ok(())
-    }
-
-    pub fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()>
-    where
-        T: Archive
-            + Clone
-            + Default
-            + Debug
-            + SizeMeasurable
-            + Ord
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
-            >,
-    {
-        match event {
-            ChangeEvent::InsertAt {
-                max_value: node_id,
-                value,
-                index,
-            } => self.process_insert_at(node_id.key, value, index),
-            ChangeEvent::RemoveAt {
-                max_value: node_id,
-                value,
-                index,
-            } => self.process_remove_at(node_id.key, value, index),
-            ChangeEvent::CreateNode { max_value: node_id } => self.process_create_node(node_id),
-            ChangeEvent::RemoveNode { max_value: node_id } => self.process_remove_node(node_id.key),
-            ChangeEvent::SplitNode {
-                max_value: node_id,
-                split_index,
-            } => self.process_split_node(node_id.key, split_index),
-        }
     }
 
     fn insert_on_index_page(
@@ -393,6 +362,44 @@ where
         }
 
         Ok(indexset)
+    }
+}
+
+impl<T, const DATA_LENGTH: u32> SpaceIndexOps<T> for SpaceIndex<T, DATA_LENGTH>
+where
+    T: Archive
+        + Ord
+        + Eq
+        + Clone
+        + Default
+        + Debug
+        + SizeMeasurable
+        + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
+{
+    fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self> {
+        Self::new(path, 0.into())
+    }
+
+    fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
+        match event {
+            ChangeEvent::InsertAt {
+                max_value: node_id,
+                value,
+                index,
+            } => self.process_insert_at(node_id.key, value, index),
+            ChangeEvent::RemoveAt {
+                max_value: node_id,
+                value,
+                index,
+            } => self.process_remove_at(node_id.key, value, index),
+            ChangeEvent::CreateNode { max_value: node_id } => self.process_create_node(node_id),
+            ChangeEvent::RemoveNode { max_value: node_id } => self.process_remove_node(node_id.key),
+            ChangeEvent::SplitNode {
+                max_value: node_id,
+                split_index,
+            } => self.process_split_node(node_id.key, split_index),
+        }
     }
 }
 

@@ -1,9 +1,9 @@
-use std::fs::{copy, File, OpenOptions};
+use std::fs::copy;
 
 use data_bucket::{Link, INNER_PAGE_SIZE};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
-use worktable::prelude::SpaceIndex;
+use worktable::prelude::{SpaceIndex, SpaceIndexOps};
 
 use crate::{check_if_files_are_same, remove_file_if_exists};
 

@@ -1,6 +1,7 @@
 use data_bucket::Link;
 use derive_more::Display;
 use indexset::cdc::change::ChangeEvent;
+use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::prelude::From;
@@ -31,7 +32,7 @@ pub enum Operation<PrimaryKey, SecondaryKeys> {
 
 pub struct InsertOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
-    pub primary_key_event: ChangeEvent<PrimaryKey>,
+    pub primary_key_event: ChangeEvent<Pair<PrimaryKey, Link>>,
     pub secondary_keys_events: SecondaryKeys,
     pub bytes: Vec<u8>,
     pub link: Link,

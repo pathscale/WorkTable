@@ -10,14 +10,26 @@ use std::fs::{File, OpenOptions};
 use std::path::Path;
 
 pub trait SpaceDataOps {
+    fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
+    where
+        Self: Sized;
     fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()>;
 }
 
-pub trait SpaceIndexOps<T> {
+pub trait SpaceIndexOps<T>
+where
+    T: Ord,
+{
+    fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
+    where
+        Self: Sized;
     fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()>;
 }
 
 pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
+    fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
+    where
+        Self: Sized;
     fn process_change_events(&mut self, events: SecondaryIndexEvents) -> eyre::Result<()>;
 }
 
