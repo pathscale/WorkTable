@@ -1,13 +1,14 @@
 mod data;
 mod index;
 
-pub use data::SpaceData;
 use data_bucket::Link;
-pub use index::{IndexTableOfContents, SpaceIndex};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
+
+pub use data::SpaceData;
+pub use index::{IndexTableOfContents, SpaceIndex};
 
 pub trait SpaceDataOps {
     fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>

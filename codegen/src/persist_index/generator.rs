@@ -9,8 +9,8 @@ use crate::name_generator::WorktableNameGenerator;
 use crate::persist_table::WT_INDEX_EXTENSION;
 
 pub struct Generator {
-    struct_def: ItemStruct,
-    field_types: HashMap<Ident, TokenStream>,
+    pub struct_def: ItemStruct,
+    pub field_types: HashMap<Ident, TokenStream>,
 }
 
 impl WorktableNameGenerator {
@@ -30,27 +30,28 @@ impl WorktableNameGenerator {
             Span::mixed_site(),
         )
     }
+
+    pub fn get_space_secondary_index_events_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}SpaceSecondaryIndexEvents", self.name).as_str(),
+            Span::mixed_site(),
+        )
+    }
+
+    pub fn get_space_secondary_index_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}SpaceSecondaryIndex", self.name).as_str(),
+            Span::mixed_site(),
+        )
+    }
 }
 
 impl Generator {
     pub fn new(struct_def: ItemStruct) -> Self {
-        Self {
-            struct_def,
-            field_types: HashMap::new(),
-        }
-    }
-
-    /// Generates persisted index type. This type has same name as index, but with `Persisted` postfix. Field names of
-    /// this type are same to index type, and values are `Vec<GeneralPage<IndexPage<T>>>`, where `T` is index key
-    /// type.
-    pub fn gen_persist_type(&mut self) -> syn::Result<TokenStream> {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let name_ident = name_generator.get_persisted_index_ident();
-
         let mut fields = vec![];
         let mut types = vec![];
 
-        for field in &self.struct_def.fields {
+        for field in &struct_def.fields {
             fields.push(
                 field
                     .ident
@@ -70,18 +71,30 @@ impl Generator {
                     .split(",")
                     .next()
                     .expect("index type should always contain key and value generics")
-                    .to_string(),
+                    .to_string()
+                    .parse()
+                    .expect("should be valid because parsed from declaration"),
             );
         }
+        let map = fields.into_iter().zip(types).collect::<HashMap<_, _>>();
 
-        let fields: Vec<_> = fields
-            .into_iter()
-            .zip(types)
+        Self {
+            struct_def,
+            field_types: map,
+        }
+    }
+
+    /// Generates persisted index type. This type has same name as index, but with `Persisted` postfix. Field names of
+    /// this type are same to index type, and values are `Vec<GeneralPage<IndexPage<T>>>`, where `T` is index key
+    /// type.
+    pub fn gen_persist_type(&mut self) -> syn::Result<TokenStream> {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let name_ident = name_generator.get_persisted_index_ident();
+
+        let fields: Vec<_> = self
+            .field_types
+            .iter()
             .map(|(i, t)| {
-                let t: TokenStream = t
-                    .parse()
-                    .expect("should be valid because parsed from declaration");
-                self.field_types.insert(i.clone(), t.clone());
                 quote! {
                     #i: Vec<GeneralPage<IndexPage<#t>>>,
                 }

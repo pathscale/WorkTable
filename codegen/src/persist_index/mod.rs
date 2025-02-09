@@ -6,6 +6,7 @@ use crate::persist_index::parser::Parser;
 
 mod generator;
 mod parser;
+mod space;
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let input_struct = Parser::parse_struct(input)?;
@@ -14,11 +15,13 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let type_def = gen.gen_persist_type()?;
     let persistable_def = gen.gen_persistable_impl()?;
     let impl_def = gen.gen_persist_impl()?;
+    let space_index = gen.gen_space_index();
 
     Ok(quote! {
         #type_def
         #impl_def
         #persistable_def
+        #space_index
     })
 }
 

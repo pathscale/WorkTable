@@ -4,7 +4,7 @@ use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
 use indexset::core::pair::Pair;
 use std::fs::{copy, File, OpenOptions};
-use worktable::prelude::SpaceIndex;
+use worktable::prelude::{SpaceIndex, SpaceIndexOps};
 
 #[test]
 fn test_indexset_node_creation() {
