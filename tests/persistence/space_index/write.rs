@@ -14,9 +14,11 @@ mod run_first {
     fn test_space_index_process_create_node() {
         remove_file_if_exists("tests/data/space_index/process_create_node.wt.idx".to_string());
 
-        let file = File::create("tests/data/space_index/process_create_node.wt.idx").unwrap();
-        let mut space_index =
-            SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+            "tests/data/space_index/process_create_node.wt.idx",
+            0.into(),
+        )
+        .unwrap();
 
         space_index
             .process_change_event(ChangeEvent::CreateNode {
@@ -48,13 +50,11 @@ mod run_first {
         )
         .unwrap();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .open("tests/data/space_index/process_create_second_node.wt.idx")
-            .unwrap();
-        let mut space_index =
-            SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+            "tests/data/space_index/process_create_second_node.wt.idx",
+            0.into(),
+        )
+        .unwrap();
 
         space_index
             .process_change_event(ChangeEvent::CreateNode {
@@ -84,13 +84,11 @@ mod run_first {
         )
         .unwrap();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .open("tests/data/space_index/process_insert_at.wt.idx")
-            .unwrap();
-        let mut space_index =
-            SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+            "tests/data/space_index/process_insert_at.wt.idx",
+            0.into(),
+        )
+        .unwrap();
 
         space_index
             .process_change_event(ChangeEvent::InsertAt {
@@ -131,13 +129,11 @@ mod run_first {
         )
         .unwrap();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .open("tests/data/space_index/process_insert_at_big_amount.wt.idx")
-            .unwrap();
-        let mut space_index =
-            SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+            "tests/data/space_index/process_insert_at_big_amount.wt.idx",
+            0.into(),
+        )
+        .unwrap();
 
         space_index
             .process_change_event(ChangeEvent::InsertAt {
@@ -200,13 +196,11 @@ mod run_first {
         )
         .unwrap();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .open("tests/data/space_index/process_remove_node.wt.idx")
-            .unwrap();
-        let mut space_index =
-            SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+            "tests/data/space_index/process_remove_node.wt.idx",
+            0.into(),
+        )
+        .unwrap();
 
         space_index
             .process_change_event(ChangeEvent::RemoveNode {
@@ -239,13 +233,11 @@ fn test_space_index_process_insert_at_with_node_id_update() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/process_insert_at_with_node_id_update.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/process_insert_at_with_node_id_update.wt.idx",
+        0.into(),
+    )
+    .unwrap();
 
     space_index
         .process_change_event(ChangeEvent::InsertAt {
@@ -284,13 +276,11 @@ fn test_space_index_process_remove_at() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/process_remove_at.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/process_remove_at.wt.idx",
+        0.into(),
+    )
+    .unwrap();
 
     space_index
         .process_change_event(ChangeEvent::RemoveAt {
@@ -329,13 +319,11 @@ fn test_space_index_process_remove_at_node_id() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/process_remove_at_node_id.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/process_remove_at_node_id.wt.idx",
+        0.into(),
+    )
+    .unwrap();
 
     space_index
         .process_change_event(ChangeEvent::RemoveAt {
@@ -376,13 +364,11 @@ fn test_space_index_process_insert_at_removed_place() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/process_insert_at_removed_place.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/process_insert_at_removed_place.wt.idx",
+        0.into(),
+    )
+    .unwrap();
 
     space_index
         .process_change_event(ChangeEvent::InsertAt {
@@ -465,13 +451,11 @@ fn test_space_index_process_create_node_after_remove() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/process_create_node_after_remove.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/process_create_node_after_remove.wt.idx",
+        0.into(),
+    )
+    .unwrap();
 
     space_index
         .process_change_event(ChangeEvent::CreateNode {
@@ -501,13 +485,11 @@ fn test_space_index_process_split_node() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/process_split_node.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/process_split_node.wt.idx",
+        0.into(),
+    )
+    .unwrap();
 
     space_index
         .process_change_event(ChangeEvent::SplitNode {

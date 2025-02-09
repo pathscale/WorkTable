@@ -10,9 +10,11 @@ use worktable::prelude::SpaceIndex;
 fn test_indexset_node_creation() {
     remove_file_if_exists("tests/data/space_index/indexset/process_create_node.wt.idx".to_string());
 
-    let file = File::create("tests/data/space_index/indexset/process_create_node.wt.idx").unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/indexset/process_create_node.wt.idx",
+        0.into(),
+    )
+    .unwrap();
     let indexset = BTreeMap::<u32, Link>::new();
     let (_, cdc) = indexset.insert_cdc(
         5,
@@ -41,13 +43,11 @@ fn test_space_index_process_insert_at() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/indexset/process_insert_at.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/indexset/process_insert_at.wt.idx",
+        0.into(),
+    )
+    .unwrap();
     let indexset = space_index.parse_indexset().unwrap();
     let (_, cdc) = indexset.insert_cdc(
         3,
@@ -78,13 +78,11 @@ fn test_space_index_process_insert_at_big_amount() {
     )
     .unwrap();
 
-    let file = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .open("tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx")
-        .unwrap();
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(file, 0.into()).unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx",
+        0.into(),
+    )
+    .unwrap();
     let indexset = space_index.parse_indexset().unwrap();
 
     let (_, cdc) = indexset.insert_cdc(

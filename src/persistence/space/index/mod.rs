@@ -24,6 +24,7 @@ use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 
+use crate::persistence::space::open_or_create_file;
 pub use table_of_contents::IndexTableOfContents;
 
 #[derive(Debug)]
@@ -44,7 +45,8 @@ where
         + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
 {
-    pub fn new(mut index_file: File, space_id: SpaceId) -> eyre::Result<Self> {
+    pub fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId) -> eyre::Result<Self> {
+        let mut index_file = open_or_create_file(index_file_path)?;
         let file_length = index_file.metadata()?.len();
         let page_id = file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) + 1;
         let next_page_id = Arc::new(AtomicU32::new(page_id as u32));
