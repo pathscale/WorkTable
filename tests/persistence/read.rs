@@ -13,7 +13,7 @@ use crate::persistence::{
 fn test_info_parse() {
     let mut file = File::open("tests/data/expected/test_persist/.wt.data").unwrap();
     let info =
-        parse_page::<SpaceInfoData, { TEST_PERSIST_INNER_SIZE as u32 }>(&mut file, 0).unwrap();
+        parse_page::<SpaceInfoPage, { TEST_PERSIST_INNER_SIZE as u32 }>(&mut file, 0).unwrap();
 
     assert_eq!(info.header.space_id, 0.into());
     assert_eq!(info.header.page_id, 0.into());
@@ -32,7 +32,7 @@ fn test_info_parse() {
 fn test_primary_index_parse() {
     let mut file = File::open("tests/data/expected/test_persist/primary.wt.idx").unwrap();
     let index =
-        parse_page::<NewIndexPage<u128>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
+        parse_page::<IndexPage<u128>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 1.into());
@@ -66,7 +66,7 @@ fn test_primary_index_parse() {
 fn test_another_idx_index_parse() {
     let mut file = File::open("tests/data/expected/test_persist/another_idx.wt.idx").unwrap();
     let index =
-        parse_page::<NewIndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
+        parse_page::<IndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 1).unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 1.into());

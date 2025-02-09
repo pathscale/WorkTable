@@ -35,10 +35,10 @@ impl Generator {
             #[derive(Debug)]
             pub struct #space_file_ident {
                 pub path: String,
-                pub primary_index: Vec<GeneralPage<NewIndexPage<#pk_type>>>,
+                pub primary_index: Vec<GeneralPage<IndexPage<#pk_type>>>,
                 pub indexes: #index_persisted_ident,
                 pub data: Vec<GeneralPage<DataPage<#inner_const_name>>>,
-                pub data_info: GeneralPage<SpaceInfoData>,
+                pub data_info: GeneralPage<SpaceInfoPage>,
             }
         }
     }
@@ -49,7 +49,7 @@ impl Generator {
         let pk_type = name_generator.get_primary_key_type_ident();
 
         quote! {
-            fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoData<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>>> {
+            fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>>> {
                 let mut info = #ident::space_info_default();
                 info.inner.page_count = self.primary_index.len() as u32;
                 Ok(info)
@@ -169,9 +169,9 @@ impl Generator {
                 let mut primary_index = {
                     let mut primary_index = vec![];
                     let mut primary_file = std::fs::File::open(format!("{}/primary{}", path, #index_extension))?;
-                    let info = parse_page::<SpaceInfoData<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut primary_file, 0)?;
+                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut primary_file, 0)?;
                     for page_id in 1..=info.inner.page_count {
-                        let index = parse_page::<NewIndexPage<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, page_id as u32)?;
+                        let index = parse_page::<IndexPage<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, page_id as u32)?;
                         primary_index.push(index);
                     }
                     primary_index
@@ -181,7 +181,7 @@ impl Generator {
                 let (data, data_info) = {
                     let mut data = vec![];
                     let mut data_file = std::fs::File::open(format!("{}/{}", path, #data_extension))?;
-                    let info = parse_page::<SpaceInfoData<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut data_file, 0)?;
+                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut data_file, 0)?;
                     for page_id in 1..=info.inner.page_count {
                         let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(&mut data_file, page_id as u32)?;
                         data.push(index);

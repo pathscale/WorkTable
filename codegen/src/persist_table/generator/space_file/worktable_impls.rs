@@ -59,8 +59,8 @@ impl Generator {
         let literal_name = name_generator.get_work_table_literal_name();
 
         quote! {
-            pub fn space_info_default() -> GeneralPage<SpaceInfoData<<<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>> {
-                let inner = SpaceInfoData {
+            pub fn space_info_default() -> GeneralPage<SpaceInfoPage<<<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>> {
+                let inner = SpaceInfoPage {
                     id: 0.into(),
                     page_count: 0,
                     name: #literal_name.to_string(),
@@ -93,11 +93,11 @@ impl Generator {
         let const_name = name_generator.get_page_inner_size_const_ident();
 
         quote! {
-            pub fn get_peristed_primary_key(&self) -> Vec<NewIndexPage<#pk_type>> {
+            pub fn get_peristed_primary_key(&self) -> Vec<IndexPage<#pk_type>> {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                 let mut pages = vec![];
                 for node in self.0.pk_map.iter_nodes() {
-                    let page = NewIndexPage::from_node(node.lock_arc().as_ref(), size);
+                    let page = IndexPage::from_node(node.lock_arc().as_ref(), size);
                     pages.push(page);
                 }
                 pages

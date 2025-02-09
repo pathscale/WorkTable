@@ -9,7 +9,7 @@ use std::sync::Arc;
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
     align8, get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader,
-    GeneralPage, Link, NewIndexPage, PageType, SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
+    GeneralPage, IndexPage, Link, PageType, SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -70,7 +70,7 @@ where
             >,
     {
         let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
-        let mut page = NewIndexPage::new(node_id.key.clone(), size);
+        let mut page = IndexPage::new(node_id.key.clone(), size);
         page.current_index = 1;
         page.current_length = 1;
         page.slots[0] = 0;
@@ -81,7 +81,7 @@ where
         self.add_index_page(page, page_id)
     }
 
-    fn add_index_page(&mut self, node: NewIndexPage<T>, page_id: PageId) -> eyre::Result<()>
+    fn add_index_page(&mut self, node: IndexPage<T>, page_id: PageId) -> eyre::Result<()>
     where
         T: Archive
             + Clone
@@ -155,8 +155,7 @@ where
         let mut new_node_id = None;
 
         let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
-        let mut utility =
-            NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
+        let mut utility = IndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
         utility.slots.insert(index, utility.current_index);
         utility.slots.remove(size);
         utility.current_length += 1;
@@ -164,7 +163,7 @@ where
             key: value.key.clone(),
             link: value.value,
         };
-        utility.current_index = NewIndexPage::<T>::persist_value(
+        utility.current_index = IndexPage::<T>::persist_value(
             &mut self.index_file,
             page_id,
             size,
@@ -177,7 +176,7 @@ where
             new_node_id = Some(value.key);
         }
 
-        NewIndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
+        IndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
 
         Ok(new_node_id)
     }
@@ -204,8 +203,7 @@ where
         let mut new_node_id = None;
 
         let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
-        let mut utility =
-            NewIndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
+        let mut utility = IndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id)?;
         utility.current_index = *utility
             .slots
             .get(index)
@@ -213,19 +211,14 @@ where
         utility.slots.remove(index);
         utility.slots.push(0);
         utility.current_length -= 1;
-        NewIndexPage::<T>::remove_value(
-            &mut self.index_file,
-            page_id,
-            size,
-            utility.current_index,
-        )?;
+        IndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.current_index)?;
 
         if &node_id == &value.key {
             let index = *utility
                 .slots
                 .get(index - 1)
                 .expect("slots always should exist in `size` bounds");
-            utility.node_id = NewIndexPage::<T>::read_value_with_index(
+            utility.node_id = IndexPage::<T>::read_value_with_index(
                 &mut self.index_file,
                 page_id,
                 size,
@@ -235,7 +228,7 @@ where
             new_node_id = Some(utility.node_id.clone())
         }
 
-        NewIndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
+        IndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility)?;
 
         Ok(new_node_id)
     }
@@ -354,7 +347,7 @@ where
             .get(&node_id)
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
         let mut page =
-            parse_page::<NewIndexPage<T>, DATA_LENGTH>(&mut self.index_file, page_id.into())?;
+            parse_page::<IndexPage<T>, DATA_LENGTH>(&mut self.index_file, page_id.into())?;
         let splitted_page = page.inner.split(split_index);
         let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
             id
@@ -392,10 +385,8 @@ where
         let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut indexset = BTreeMap::with_maximum_node_size(size);
         for (_, page_id) in self.table_of_contents.iter() {
-            let page = parse_page::<NewIndexPage<T>, DATA_LENGTH>(
-                &mut self.index_file,
-                (*page_id).into(),
-            )?;
+            let page =
+                parse_page::<IndexPage<T>, DATA_LENGTH>(&mut self.index_file, (*page_id).into())?;
             let node = page.inner.get_node();
             indexset.attach_node(node)
         }
@@ -407,13 +398,13 @@ where
 #[cfg(test)]
 mod test {
     use data_bucket::{
-        get_index_page_size_from_data_length, NewIndexPage, Persistable, INNER_PAGE_SIZE,
+        get_index_page_size_from_data_length, IndexPage, Persistable, INNER_PAGE_SIZE,
     };
 
     #[test]
     fn test_size_measure() {
         let size = get_index_page_size_from_data_length::<u32>(INNER_PAGE_SIZE);
-        let page = NewIndexPage::new(0, size);
+        let page = IndexPage::new(0, size);
         assert!(page.as_bytes().as_ref().len() <= INNER_PAGE_SIZE)
     }
 }

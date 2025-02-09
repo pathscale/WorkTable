@@ -41,7 +41,7 @@ impl Generator {
     }
 
     /// Generates persisted index type. This type has same name as index, but with `Persisted` postfix. Field names of
-    /// this type are same to index type, and values are `Vec<GeneralPage<NewIndexPage<T>>>`, where `T` is index key
+    /// this type are same to index type, and values are `Vec<GeneralPage<IndexPage<T>>>`, where `T` is index key
     /// type.
     pub fn gen_persist_type(&mut self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
@@ -83,7 +83,7 @@ impl Generator {
                     .expect("should be valid because parsed from declaration");
                 self.field_types.insert(i.clone(), t.clone());
                 quote! {
-                    #i: Vec<GeneralPage<NewIndexPage<#t>>>,
+                    #i: Vec<GeneralPage<IndexPage<#t>>>,
                 }
             })
             .collect();
@@ -179,9 +179,9 @@ impl Generator {
                 let #i = {
                     let mut #i = vec![];
                     let mut file = std::fs::File::open(format!("{}/{}{}", path, #l, #index_extension))?;
-                    let info = parse_page::<SpaceInfoData<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut file, 0)?;
+                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut file, 0)?;
                     for page_id in 1..=info.inner.page_count {
-                        let index = parse_page::<NewIndexPage<_>, { #page_const_name as u32 }>(&mut file, page_id as u32)?;
+                        let index = parse_page::<IndexPage<_>, { #page_const_name as u32 }>(&mut file, page_id as u32)?;
                         #i.push(index);
                     }
                     #i
@@ -231,7 +231,7 @@ impl Generator {
     }
 
     /// Generates `get_persisted_index` function of `PersistableIndex` trait for persisted index. It maps every
-    /// `TreeIndex` into `Vec` of `IndexPage`s using `map_tree_index`/`map_unique_tree_index` functions.
+    /// `TreeIndex` into `Vec` of `IndexPage`s using `IndexPage::from_nod` function.
     fn gen_get_persisted_index_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let const_name = name_generator.get_page_size_const_ident();
@@ -263,7 +263,7 @@ impl Generator {
                     let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                     let mut pages = vec![];
                     for node in self.#i.iter_nodes() {
-                        let page = NewIndexPage::from_node(node.lock_arc().as_ref(), size);
+                        let page = IndexPage::from_node(node.lock_arc().as_ref(), size);
                         pages.push(page);
                     }
                     let mut #i = map_index_pages_to_general(pages);

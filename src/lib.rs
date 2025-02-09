@@ -34,10 +34,10 @@ pub mod prelude {
     };
     pub use data_bucket::{
         align, get_index_page_size_from_data_length, map_data_pages_to_general,
-        map_index_pages_to_general, map_tree_index, parse_data_page, parse_page, persist_page,
-        seek_to_page_start, update_at, DataPage, GeneralHeader, GeneralPage, IndexData, Interval,
-        Link, NewIndexPage, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure,
-        SpaceInfoData, DATA_VERSION, GENERAL_HEADER_SIZE, INNER_PAGE_SIZE, PAGE_SIZE,
+        map_index_pages_to_general, parse_data_page, parse_page, persist_page, seek_to_page_start,
+        update_at, DataPage, GeneralHeader, GeneralPage, IndexPage, Interval, Link, PageType,
+        Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoPage, DATA_VERSION,
+        GENERAL_HEADER_SIZE, INNER_PAGE_SIZE, PAGE_SIZE,
     };
 
     pub use derive_more::{From, Into};
