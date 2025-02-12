@@ -25,6 +25,7 @@ use rkyv::{rancor, Archive, Deserialize, Serialize};
 
 use crate::persistence::space::open_or_create_file;
 use crate::persistence::SpaceIndexOps;
+use crate::prelude::WT_INDEX_EXTENSION;
 pub use table_of_contents::IndexTableOfContents;
 
 #[derive(Debug)]
@@ -377,7 +378,19 @@ where
         + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
 {
-    fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self> {
+    fn primary_from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self> {
+        let path = format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION);
+        Self::new(path, 0.into())
+    }
+
+    fn secondary_from_table_files_path<S1: AsRef<str>, S2: AsRef<str>>(
+        path: S1,
+        name: S2,
+    ) -> eyre::Result<Self>
+    where
+        Self: Sized,
+    {
+        let path = format!("{}/{}{}", path.as_ref(), name.as_ref(), WT_INDEX_EXTENSION);
         Self::new(path, 0.into())
     }
 

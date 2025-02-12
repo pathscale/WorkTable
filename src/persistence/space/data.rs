@@ -4,6 +4,7 @@ use data_bucket::{update_at, Link};
 
 use crate::persistence::space::open_or_create_file;
 use crate::persistence::SpaceDataOps;
+use crate::prelude::WT_DATA_EXTENSION;
 
 #[derive(Debug)]
 pub struct SpaceData<const DATA_LENGTH: usize> {
@@ -12,6 +13,7 @@ pub struct SpaceData<const DATA_LENGTH: usize> {
 
 impl<const DATA_LENGTH: usize> SpaceDataOps for SpaceData<DATA_LENGTH> {
     fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self> {
+        let path = format!("{}/{}", path.as_ref(), WT_DATA_EXTENSION);
         let data_file = open_or_create_file(path)?;
         Ok(Self { data_file })
     }

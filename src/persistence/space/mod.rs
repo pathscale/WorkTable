@@ -1,11 +1,12 @@
 mod data;
 mod index;
 
+use std::fs::{File, OpenOptions};
+use std::path::Path;
+
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
-use std::fs::{File, OpenOptions};
-use std::path::Path;
 
 pub use data::SpaceData;
 pub use index::{IndexTableOfContents, SpaceIndex};
@@ -21,7 +22,13 @@ pub trait SpaceIndexOps<T>
 where
     T: Ord,
 {
-    fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
+    fn primary_from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
+    where
+        Self: Sized;
+    fn secondary_from_table_files_path<S1: AsRef<str>, S2: AsRef<str>>(
+        path: S1,
+        name: S2,
+    ) -> eyre::Result<Self>
     where
         Self: Sized;
     fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()>;

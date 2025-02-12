@@ -33,7 +33,7 @@ where
     pub fn from_table_files_path<S: AsRef<str> + Clone>(path: S) -> eyre::Result<Self> {
         Ok(Self {
             data: SpaceData::from_table_files_path(path.clone())?,
-            primary_index: SpacePrimaryIndex::from_table_files_path(path.clone())?,
+            primary_index: SpacePrimaryIndex::primary_from_table_files_path(path.clone())?,
             secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(path)?,
             phantom_data: PhantomData,
         })

@@ -44,4 +44,7 @@ pub mod prelude {
     pub use lockfree::set::Set as LockFreeSet;
     pub use scc::{ebr::Guard, tree_index::TreeIndex};
     pub use worktable_codegen::{PersistIndex, PersistTable};
+
+    pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
+    pub const WT_DATA_EXTENSION: &str = ".wt.data";
 }
