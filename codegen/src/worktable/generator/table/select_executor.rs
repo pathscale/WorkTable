@@ -81,6 +81,7 @@ impl Generator {
                             #(#columns)*
                             _ => unreachable!()
                         };
+                        #[allow(unreachable_code)]
                         core::result::Result::Ok(SelectResult::<_, Self>::new(rows).with_params(q.params).execute())
                     }
                 }
