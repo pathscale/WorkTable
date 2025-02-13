@@ -75,7 +75,7 @@ impl Generator {
             quote! {}
         };
 
-        if let Some(_) = &self.config.as_ref().and_then(|c| c.page_size) {
+        if self.config.as_ref().and_then(|c| c.page_size).is_some() {
             quote! {
                 #derive
                 pub struct #ident(
