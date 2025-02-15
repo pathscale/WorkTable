@@ -96,7 +96,7 @@ impl Generator {
             .iter()
             .map(|(i, t)| {
                 quote! {
-                    #i: Vec<GeneralPage<IndexPage<#t>>>,
+                    #i: (Vec<GeneralPage<TableOfContentsPage<#t>>>, Vec<GeneralPage<IndexPage<#t>>>),
                 }
             })
             .collect();
@@ -145,9 +145,12 @@ impl Generator {
                     {
                         let mut file = std::fs::File::create(format!("{}/{}{}", path, #index_name_literal, #index_extension))?;
                         let mut info = #ident::space_info_default();
-                        info.inner.page_count = self.#i.len() as u32;
+                        info.inner.page_count = self.#i.1.len() as u32 + self.#i.0.len() as u32;;
                         persist_page(&mut info, &mut file)?;
-                        for mut page in &mut self.#i {
+                        for mut page in &mut self.#i.0 {
+                            persist_page(&mut page, &mut file)?;
+                        }
+                        for mut page in &mut self.#i.1 {
                             persist_page(&mut page, &mut file)?;
                         }
                     }
@@ -193,11 +196,17 @@ impl Generator {
                     let mut #i = vec![];
                     let mut file = std::fs::File::open(format!("{}/{}{}", path, #l, #index_extension))?;
                     let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut file, 0)?;
-                    for page_id in 1..=info.inner.page_count {
+                    let file_length = file.metadata()?.len();
+                    let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
+                    let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
+                    let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone())?;
+                    println!("{:?}", toc);
+                    println!("{:?}", toc.pages.len() as u32 + 1);
+                    for page_id in (toc.pages.len() as u32 + 1)..=info.inner.page_count {
                         let index = parse_page::<IndexPage<_>, { #page_const_name as u32 }>(&mut file, page_id as u32)?;
                         #i.push(index);
                     }
-                    #i
+                    (toc.pages, #i)
                 };
             })
             .collect();
@@ -248,6 +257,7 @@ impl Generator {
     fn gen_get_persisted_index_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let const_name = name_generator.get_page_size_const_ident();
+
         let idents = self
             .struct_def
             .fields
@@ -279,7 +289,8 @@ impl Generator {
                         let page = IndexPage::from_node(node.lock_arc().as_ref(), size);
                         pages.push(page);
                     }
-                    let mut #i = map_index_pages_to_general(pages);
+                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                    let #i = (toc.pages, pages);
                 }
             })
             .collect();
@@ -328,7 +339,7 @@ impl Generator {
 
                 quote! {
                     let #i: #t<_, Link> = #t::new();
-                    for page in persisted.#i {
+                    for page in persisted.#i.1 {
                         let node = page.inner.get_node();
                         #i.attach_node(node);
                     }

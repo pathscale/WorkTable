@@ -41,13 +41,14 @@ impl Generator {
         let dir_name = name_generator.get_dir_name();
 
         quote! {
-            pub fn load_from_file(manager: std::sync::Arc<DatabaseManager>) -> eyre::Result<Self> {
-                let filename = format!("{}/{}", manager.database_files_dir.as_str(), #dir_name);
+            pub fn load_from_file(config: PersistenceConfig) -> eyre::Result<Self> {
+                let filename = format!("{}/{}", config.tables_path.as_str(), #dir_name);
                 if !std::path::Path::new(filename.as_str()).exists() {
-                    return Ok(#wt_ident::new(manager));
+                    return #wt_ident::new(config);
                 };
                 let space = #space_ident::parse_file(&filename)?;
-                let table = space.into_worktable(manager);
+                println!("parsed ccccc");
+                let table = space.into_worktable(config);
                 Ok(table)
             }
         }
@@ -93,14 +94,15 @@ impl Generator {
         let const_name = name_generator.get_page_inner_size_const_ident();
 
         quote! {
-            pub fn get_peristed_primary_key(&self) -> Vec<IndexPage<#pk_type>> {
+            pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<#pk_type>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                 let mut pages = vec![];
                 for node in self.0.pk_map.iter_nodes() {
                     let page = IndexPage::from_node(node.lock_arc().as_ref(), size);
                     pages.push(page);
                 }
-                pages
+                let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                (toc.pages, pages)
             }
         }
     }
@@ -121,13 +123,13 @@ impl Generator {
                 info.inner.page_count = 1;
                 let mut header = &mut info.header;
 
-                let mut primary_index = map_index_pages_to_general(self.get_peristed_primary_key());
-                info.inner.page_count = primary_index.len() as u32;
+                let mut primary_index = self.get_peristed_primary_key_with_toc();
                 let mut indexes = self.0.indexes.get_persisted_index();
                 let data = map_data_pages_to_general(self.0.data.get_bytes().into_iter().map(|(b, offset)| DataPage {
                     data: b,
                     length: offset,
                 }).collect::<Vec<_>>());
+                info.inner.page_count = data.len() as u32;
 
                 #space_ident {
                     path,

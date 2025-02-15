@@ -30,4 +30,11 @@ impl WorktableNameGenerator {
     pub fn get_dir_name(&self) -> String {
         self.name.from_case(Case::Pascal).to_case(Case::Snake)
     }
+
+    pub fn get_persistence_engine_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}PersistenceEngine", self.name).as_str(),
+            Span::mixed_site(),
+        )
+    }
 }

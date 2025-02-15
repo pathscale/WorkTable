@@ -51,7 +51,5 @@ pub fn remove_file_if_exists(path: String) {
 }
 
 pub fn remove_dir_if_exists(path: String) {
-    if Path::new(path.as_str()).exists() {
-        fs::read_dir(path).unwrap();
-    }
+    fs::remove_dir_all(path).unwrap()
 }

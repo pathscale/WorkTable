@@ -72,6 +72,7 @@ impl Generator {
                 PartialOrd,
                 Ord
             )]
+            #[rkyv(derive(PartialEq, Eq, PartialOrd, Ord))]
             pub struct #ident(#(#types),*);
         }
     }

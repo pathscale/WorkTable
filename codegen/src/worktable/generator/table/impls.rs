@@ -36,13 +36,24 @@ impl Generator {
     fn gen_table_new_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let table_name = name_generator.get_work_table_literal_name();
+        let dir_name = name_generator.get_dir_name();
 
         if self.is_persist {
             quote! {
-                pub fn new(manager:  std::sync::Arc<DatabaseManager>) -> Self {
+                pub fn new(config: PersistenceConfig) -> eyre::Result<Self> {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
-                    Self(inner, manager)
+                    let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
+                    let engine = PersistenceEngine::from_table_files_path(table_files_path)?;
+                    core::result::Result::Ok(Self(
+                        inner,
+                        config,
+                        std::sync::Arc::new(
+                            std::sync::RwLock::new(
+                                engine
+                            )
+                        )
+                    ))
                 }
             }
         } else {

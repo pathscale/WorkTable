@@ -88,7 +88,7 @@ impl Generator {
             .map(|(i, t)| {
                 let literal_name = Literal::string(i.to_string().as_str());
                 quote! {
-                    #i: SpaceIndex::secondary_from_table_files_path(path, #literal_name),
+                    #i: SpaceIndex::secondary_from_table_files_path(path, #literal_name)?,
                 }
             })
             .collect();
@@ -113,7 +113,7 @@ impl Generator {
             .map(|(i, t)| {
                 quote! {
                     for event in events.#i {
-                        self.#i.process_change_events(event)?;
+                        self.#i.process_change_event(event)?;
                     }
                 }
             })
@@ -122,6 +122,7 @@ impl Generator {
         quote! {
             fn process_change_events(&mut self, events: #events_ident) -> eyre::Result<()> {
                 #(#process)*
+                core::result::Result::Ok(())
             }
         }
     }

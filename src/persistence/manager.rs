@@ -1,44 +1,17 @@
-use crate::persistence::engine::PersistenceEngine;
-use crate::persistence::{SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
-
 #[derive(Debug)]
-pub struct PersistenceManager<
-    SpaceData,
-    SpacePrimaryIndex,
-    SpaceSecondaryIndexes,
-    PrimaryKey,
-    SecondaryIndexEvents,
-> {
+pub struct PersistenceConfig {
     pub config_path: String,
-    pub table_files_dir: String,
-    pub engine: PersistenceEngine<
-        SpaceData,
-        SpacePrimaryIndex,
-        SpaceSecondaryIndexes,
-        PrimaryKey,
-        SecondaryIndexEvents,
-    >,
+    pub tables_path: String,
 }
 
-impl<SpaceData, SpacePrimaryIndex, SpaceSecondaryIndexes, PrimaryKey, SecondaryIndexEvents>
-    PersistenceManager<
-        SpaceData,
-        SpacePrimaryIndex,
-        SpaceSecondaryIndexes,
-        PrimaryKey,
-        SecondaryIndexEvents,
-    >
-where
-    PrimaryKey: Ord,
-    SpaceData: SpaceDataOps,
-    SpacePrimaryIndex: SpaceIndexOps<PrimaryKey>,
-    SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
-{
-    pub fn new(config_path: String, table_files_dir: String) -> eyre::Result<Self> {
+impl PersistenceConfig {
+    pub fn new<S1: Into<String>, S2: Into<String>>(
+        config_path: S1,
+        table_files_dir: S2,
+    ) -> eyre::Result<Self> {
         Ok(Self {
-            config_path,
-            table_files_dir: table_files_dir.clone(),
-            engine: PersistenceEngine::from_table_files_path(table_files_dir)?,
+            config_path: config_path.into(),
+            tables_path: table_files_dir.into(),
         })
     }
 }

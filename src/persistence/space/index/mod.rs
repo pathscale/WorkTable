@@ -1,4 +1,5 @@
 mod table_of_contents;
+mod util;
 
 use std::fmt::Debug;
 use std::fs::File;
@@ -26,7 +27,9 @@ use rkyv::{rancor, Archive, Deserialize, Serialize};
 use crate::persistence::space::open_or_create_file;
 use crate::persistence::SpaceIndexOps;
 use crate::prelude::WT_INDEX_EXTENSION;
+
 pub use table_of_contents::IndexTableOfContents;
+pub use util::map_index_pages_to_toc_and_general;
 
 #[derive(Debug)]
 pub struct SpaceIndex<T, const DATA_LENGTH: u32> {

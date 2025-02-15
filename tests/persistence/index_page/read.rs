@@ -2,6 +2,20 @@ use data_bucket::{parse_page, IndexPage, INNER_PAGE_SIZE};
 use std::fs::OpenOptions;
 
 #[test]
+fn test_index_page_read_in_space() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/test_persist/primary.wt.idx")
+        .unwrap();
+
+    let page = parse_page::<IndexPage<u128>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
+    assert_eq!(page.inner.node_id, 99);
+    assert_eq!(page.inner.current_index, 99);
+    assert_eq!(page.inner.current_length, 99);
+}
+
+#[test]
 fn test_index_page_read_after_create_node_in_space_index() {
     let mut file = OpenOptions::new()
         .write(true)

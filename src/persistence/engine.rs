@@ -1,6 +1,8 @@
 use crate::persistence::operation::Operation;
 use crate::persistence::{SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
+use std::fs;
 use std::marker::PhantomData;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct PersistenceEngine<
@@ -31,6 +33,11 @@ where
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
 {
     pub fn from_table_files_path<S: AsRef<str> + Clone>(path: S) -> eyre::Result<Self> {
+        let table_path = Path::new(path.as_ref());
+        if !table_path.exists() {
+            fs::create_dir_all(table_path)?;
+        }
+
         Ok(Self {
             data: SpaceData::from_table_files_path(path.clone())?,
             primary_index: SpacePrimaryIndex::primary_from_table_files_path(path.clone())?,

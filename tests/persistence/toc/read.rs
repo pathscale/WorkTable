@@ -23,6 +23,24 @@ fn test_index_table_of_contents_read() {
 }
 
 #[test]
+fn test_index_table_of_contents_read_from_space() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/test_persist/primary.wt.idx")
+        .unwrap();
+    let next_id_gen = Arc::new(AtomicU32::new(1));
+    let mut toc = IndexTableOfContents::<u128, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+        &mut file,
+        0.into(),
+        next_id_gen,
+    )
+    .unwrap();
+
+    assert_eq!(toc.get(&99), Some(2.into()))
+}
+
+#[test]
 fn test_index_table_of_contents_read_from_space_index() {
     let mut file = OpenOptions::new()
         .write(true)

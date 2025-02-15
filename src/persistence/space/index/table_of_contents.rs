@@ -1,12 +1,13 @@
 use std::fs::File;
 use std::hash::Hash;
+use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    parse_page, persist_page, GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId,
-    TableOfContentsPage,
+    parse_page, persist_page, GeneralHeader, GeneralPage, IndexPage, PageType, SizeMeasurable,
+    SpaceId, TableOfContentsPage,
 };
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
@@ -20,7 +21,7 @@ use rkyv::{rancor, Archive, Deserialize, Serialize};
 pub struct IndexTableOfContents<T, const DATA_LENGTH: u32> {
     current_page: usize,
     next_page_id: Arc<AtomicU32>,
-    table_of_contents_pages: Vec<GeneralPage<TableOfContentsPage<T>>>,
+    pub pages: Vec<GeneralPage<TableOfContentsPage<T>>>,
 }
 
 impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH>
@@ -37,7 +38,7 @@ where
         Self {
             current_page: 0,
             next_page_id,
-            table_of_contents_pages: vec![page],
+            pages: vec![page],
         }
     }
 
@@ -45,7 +46,7 @@ where
     where
         T: Ord + Eq,
     {
-        for page in &self.table_of_contents_pages {
+        for page in &self.pages {
             if page.inner.contains(node_id) {
                 return Some(
                     page.inner
@@ -59,7 +60,7 @@ where
     }
 
     fn get_current_page_mut(&mut self) -> &mut GeneralPage<TableOfContentsPage<T>> {
-        &mut self.table_of_contents_pages[self.current_page]
+        &mut self.pages[self.current_page]
     }
 
     pub fn insert(&mut self, node_id: T, page_id: PageId)
@@ -76,7 +77,7 @@ where
                 let next_page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
                 let header = page.header.follow_with_page_id(next_page_id.into());
                 page.header.next_id = next_page_id.into();
-                self.table_of_contents_pages.push(GeneralPage {
+                self.pages.push(GeneralPage {
                     header,
                     inner: TableOfContentsPage::default(),
                 });
@@ -86,7 +87,7 @@ where
                 page.inner.insert(node_id.clone(), page_id);
             } else {
                 let mut i = self.current_page;
-                while !self.table_of_contents_pages[i].header.next_id.is_empty() {
+                while !self.pages[i].header.next_id.is_empty() {
                     i += 1;
                 }
                 self.current_page = i;
@@ -101,24 +102,21 @@ where
         let mut removed = false;
         let mut i = 0;
         while !removed {
-            let mut page = &mut self.table_of_contents_pages[i];
+            let mut page = &mut self.pages[i];
             if page.inner.contains(node_id) {
                 page.inner.remove(node_id);
                 self.current_page = i;
                 removed = true;
             }
             i += 1;
-            if self.table_of_contents_pages.len() == i {
+            if self.pages.len() == i {
                 removed = true;
             }
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&T, &PageId)> {
-        self.table_of_contents_pages
-            .iter()
-            .map(|v| v.inner.iter())
-            .flatten()
+        self.pages.iter().map(|v| v.inner.iter()).flatten()
     }
 
     pub fn update_key(&mut self, old_key: &T, new_key: T)
@@ -146,7 +144,7 @@ where
             >,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
     {
-        for page in &mut self.table_of_contents_pages {
+        for page in &mut self.pages {
             persist_page(page, file)?;
         }
 
@@ -175,7 +173,7 @@ where
                 Ok(Self {
                     current_page: 0,
                     next_page_id,
-                    table_of_contents_pages: vec![page],
+                    pages: vec![page],
                 })
             } else {
                 let mut table_of_contents_pages = vec![page];
@@ -192,7 +190,7 @@ where
                 Ok(Self {
                     current_page: 0,
                     next_page_id,
-                    table_of_contents_pages,
+                    pages: table_of_contents_pages,
                 })
             }
         } else {
@@ -215,11 +213,7 @@ mod tests {
             "`current_page` is not set to 0, it is {}",
             toc.current_page
         );
-        assert_eq!(
-            toc.table_of_contents_pages.len(),
-            1,
-            "`table_of_contents_pages` is empty"
-        )
+        assert_eq!(toc.pages.len(), 1, "`table_of_contents_pages` is empty")
     }
 
     #[test]
@@ -228,7 +222,7 @@ mod tests {
         let key = 1;
         toc.insert(key, 1.into());
 
-        let page = toc.table_of_contents_pages[toc.current_page].clone();
+        let page = toc.pages[toc.current_page].clone();
         assert!(
             page.inner.contains(&key),
             "`page` not contains value {}, keys are {:?}",
@@ -257,7 +251,7 @@ mod tests {
         );
 
         for i in 0..toc.current_page + 1 {
-            let page = toc.table_of_contents_pages[i].clone();
+            let page = toc.pages[i].clone();
             for (k, i) in page.inner.into_iter() {
                 let pos = keys.binary_search(&k).expect("value should exist");
                 keys.remove(pos);
@@ -306,13 +300,13 @@ mod tests {
             toc.current_page,
         );
         assert_eq!(
-            toc.table_of_contents_pages[after_remove_current_page]
+            toc.pages[after_remove_current_page]
                 .inner
                 .clone()
                 .pop_empty_page(),
             None,
             "After insertion page contains empty page {:?}, but shouldn't",
-            toc.table_of_contents_pages[after_remove_current_page]
+            toc.pages[after_remove_current_page]
                 .inner
                 .clone()
                 .pop_empty_page(),

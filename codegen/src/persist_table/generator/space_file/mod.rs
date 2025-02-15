@@ -35,7 +35,7 @@ impl Generator {
             #[derive(Debug)]
             pub struct #space_file_ident {
                 pub path: String,
-                pub primary_index: Vec<GeneralPage<IndexPage<#pk_type>>>,
+                pub primary_index: (Vec<GeneralPage<TableOfContentsPage<#pk_type>>>, Vec<GeneralPage<IndexPage<#pk_type>>>),
                 pub indexes: #index_persisted_ident,
                 pub data: Vec<GeneralPage<DataPage<#inner_const_name>>>,
                 pub data_info: GeneralPage<SpaceInfoPage>,
@@ -51,7 +51,7 @@ impl Generator {
         quote! {
             fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>>> {
                 let mut info = #ident::space_info_default();
-                info.inner.page_count = self.primary_index.len() as u32;
+                info.inner.page_count = self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32;
                 Ok(info)
             }
         }
@@ -73,7 +73,10 @@ impl Generator {
                         let mut primary_index_file = std::fs::File::create(format!("{}/primary{}", &self.path, #index_extension))?;
                         let mut info = self.get_primary_index_info()?;
                         persist_page(&mut info, &mut primary_index_file)?;
-                        for mut primary_index_page in &mut self.primary_index {
+                        for mut toc_page in &mut self.primary_index.0 {
+                            persist_page(&mut toc_page, &mut primary_index_file)?;
+                        }
+                        for mut primary_index_page in &mut self.primary_index.1 {
                             persist_page(&mut primary_index_page, &mut primary_index_file)?;
                         }
                     }
@@ -115,9 +118,10 @@ impl Generator {
         let wt_ident = &self.struct_def.ident;
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_ident = name_generator.get_index_type_ident();
+        let dir_name = name_generator.get_dir_name();
 
         quote! {
-            pub fn into_worktable(self, db_manager: std::sync::Arc<DatabaseManager>) -> #wt_ident {
+            pub fn into_worktable(self, config: PersistenceConfig) -> #wt_ident {
                 let mut page_id = 1;
                 let data = self.data.into_iter().map(|p| {
                     let mut data = Data::from_data_page(p);
@@ -132,7 +136,7 @@ impl Generator {
                 let indexes = #index_ident::from_persisted(self.indexes);
 
                 let pk_map = IndexMap::new();
-                for page in self.primary_index {
+                for page in self.primary_index.1 {
                     let node = page.inner.get_node();
                     pk_map.attach_node(node);
                 }
@@ -148,9 +152,16 @@ impl Generator {
                     types_phantom: std::marker::PhantomData,
                 };
 
+                let path = format!("{}/{}", config.tables_path.as_str(), #dir_name);
+                println!("all is ok except engine");
                 #wt_ident(
                     table,
-                    db_manager
+                    config,
+                    std::sync::Arc::new(
+                        std::sync::RwLock::new(
+                            PersistenceEngine::from_table_files_path(path).expect("should not panic as SpaceFile is ok")
+                        )
+                    )
                 )
             }
         }
@@ -171,11 +182,15 @@ impl Generator {
                     let mut primary_index = vec![];
                     let mut primary_file = std::fs::File::open(format!("{}/primary{}", path, #index_extension))?;
                     let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut primary_file, 0)?;
-                    for page_id in 1..=info.inner.page_count {
+                    let file_length = primary_file.metadata()?.len();
+                    let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
+                    let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
+                    let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut primary_file, 0.into(), next_page_id.clone())?;
+                    for page_id in (toc.pages.len() as u32 + 1)..=info.inner.page_count {
                         let index = parse_page::<IndexPage<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, page_id as u32)?;
                         primary_index.push(index);
                     }
-                    primary_index
+                    (toc.pages, primary_index)
                 };
 
                 let indexes = #persisted_index_name::parse_from_file(path)?;

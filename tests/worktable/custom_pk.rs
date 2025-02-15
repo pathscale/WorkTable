@@ -18,7 +18,7 @@ use worktable::worktable;
     Serialize,
     SizeMeasure,
 )]
-#[rkyv(compare(PartialEq), derive(Debug))]
+#[rkyv(compare(PartialEq), derive(Debug, PartialOrd, PartialEq, Eq, Ord))]
 struct CustomId(u64);
 
 #[derive(Debug, Default)]

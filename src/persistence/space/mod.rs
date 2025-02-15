@@ -9,7 +9,7 @@ use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 
 pub use data::SpaceData;
-pub use index::{IndexTableOfContents, SpaceIndex};
+pub use index::{map_index_pages_to_toc_and_general, IndexTableOfContents, SpaceIndex};
 
 pub trait SpaceDataOps {
     fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
