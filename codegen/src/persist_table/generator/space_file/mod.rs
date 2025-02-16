@@ -45,12 +45,35 @@ impl Generator {
 
     fn gen_space_file_get_primary_index_info_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
-        let ident = name_generator.get_work_table_ident();
-        let pk_type = name_generator.get_primary_key_type_ident();
+        let literal_name = name_generator.get_work_table_literal_name();
 
         quote! {
-            fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>>> {
-                let mut info = #ident::space_info_default();
+            fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
+                let mut info = {
+                    let inner = SpaceInfoPage {
+                    id: 0.into(),
+                    page_count: 0,
+                    name: #literal_name.to_string(),
+                    pk_gen_state: (),
+                    empty_links_list: vec![],
+                    primary_key_fields: vec![],
+                    row_schema: vec![],
+                    secondary_index_types: vec![],
+                };
+                let header = GeneralHeader {
+                    data_version: DATA_VERSION,
+                    page_id: 0.into(),
+                    previous_id: 0.into(),
+                    next_id: 0.into(),
+                    page_type: PageType::SpaceInfo,
+                    space_id: 0.into(),
+                    data_length: 0,
+                };
+                GeneralPage {
+                    header,
+                    inner
+                }
+                };
                 info.inner.page_count = self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32;
                 Ok(info)
             }
@@ -181,7 +204,7 @@ impl Generator {
                 let mut primary_index = {
                     let mut primary_index = vec![];
                     let mut primary_file = std::fs::File::open(format!("{}/primary{}", path, #index_extension))?;
-                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut primary_file, 0)?;
+                    let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut primary_file, 0)?;
                     let file_length = primary_file.metadata()?.len();
                     let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
                     let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));

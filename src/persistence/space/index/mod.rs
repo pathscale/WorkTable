@@ -1,16 +1,11 @@
 mod table_of_contents;
 mod util;
 
-use std::fmt::Debug;
-use std::fs::File;
-use std::hash::Hash;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-
+use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
     get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader, GeneralPage,
-    IndexPage, Link, PageType, SizeMeasurable, SpaceId, GENERAL_HEADER_SIZE,
+    IndexPage, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -23,6 +18,12 @@ use rkyv::ser::sharing::Share;
 use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
+use std::fmt::Debug;
+use std::fs::File;
+use std::hash::Hash;
+use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use crate::persistence::space::open_or_create_file;
 use crate::persistence::SpaceIndexOps;
@@ -37,6 +38,7 @@ pub struct SpaceIndex<T, const DATA_LENGTH: u32> {
     table_of_contents: IndexTableOfContents<T, DATA_LENGTH>,
     next_page_id: Arc<AtomicU32>,
     index_file: File,
+    info: GeneralPage<SpaceInfoPage<()>>,
 }
 
 impl<T, const DATA_LENGTH: u32> SpaceIndex<T, DATA_LENGTH>
@@ -45,12 +47,33 @@ where
         + Ord
         + Eq
         + Clone
+        + Default
+        + Debug
         + SizeMeasurable
         + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
 {
     pub fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId) -> eyre::Result<Self> {
-        let mut index_file = open_or_create_file(index_file_path)?;
+        let mut index_file = if !Path::new(index_file_path.as_ref()).exists() {
+            let name = index_file_path
+                .as_ref()
+                .split("/")
+                .collect::<Vec<_>>()
+                .iter()
+                .rev()
+                .nth(1)
+                .expect("is not in root...")
+                .to_string()
+                .from_case(Case::Snake)
+                .to_case(Case::Pascal);
+            let mut index_file = open_or_create_file(index_file_path.as_ref())?;
+            Self::bootstrap(&mut index_file, name)?;
+            index_file
+        } else {
+            open_or_create_file(index_file_path)?
+        };
+        let info = parse_page::<_, DATA_LENGTH>(&mut index_file, 0)?;
+
         let file_length = index_file.metadata()?.len();
         let page_id = file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) + 1;
         let next_page_id = Arc::new(AtomicU32::new(page_id as u32));
@@ -61,6 +84,7 @@ where
             table_of_contents,
             next_page_id,
             index_file,
+            info,
         })
     }
 
@@ -381,20 +405,43 @@ where
         + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
 {
-    fn primary_from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self> {
-        let path = format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION);
+    fn primary_from_table_files_path<S: AsRef<str>>(table_path: S) -> eyre::Result<Self> {
+        let path = format!("{}/primary{}", table_path.as_ref(), WT_INDEX_EXTENSION);
         Self::new(path, 0.into())
     }
 
     fn secondary_from_table_files_path<S1: AsRef<str>, S2: AsRef<str>>(
-        path: S1,
+        table_path: S1,
         name: S2,
     ) -> eyre::Result<Self>
     where
         Self: Sized,
     {
-        let path = format!("{}/{}{}", path.as_ref(), name.as_ref(), WT_INDEX_EXTENSION);
+        let path = format!(
+            "{}/{}{}",
+            table_path.as_ref(),
+            name.as_ref(),
+            WT_INDEX_EXTENSION
+        );
         Self::new(path, 0.into())
+    }
+
+    fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()> {
+        let info = SpaceInfoPage {
+            id: 0.into(),
+            page_count: 0,
+            name: table_name,
+            row_schema: vec![],
+            primary_key_fields: vec![],
+            secondary_index_types: vec![],
+            pk_gen_state: (),
+            empty_links_list: vec![],
+        };
+        let mut page = GeneralPage {
+            header: GeneralHeader::new(0.into(), PageType::SpaceInfo, 0.into()),
+            inner: info,
+        };
+        persist_page(&mut page, file)
     }
 
     fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {

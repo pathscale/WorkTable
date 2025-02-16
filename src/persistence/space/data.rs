@@ -50,10 +50,7 @@ where
         } else {
             open_or_create_file(path)?
         };
-        println!("Before info ok");
         let info = parse_page::<_, DATA_LENGTH>(&mut data_file, 0)?;
-
-        println!("Data ok");
         Ok(Self { data_file, info })
     }
 

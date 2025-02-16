@@ -32,6 +32,7 @@ where
     ) -> eyre::Result<Self>
     where
         Self: Sized;
+    fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()>;
     fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()>;
 }
 

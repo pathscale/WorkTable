@@ -195,7 +195,7 @@ impl Generator {
                 let #i = {
                     let mut #i = vec![];
                     let mut file = std::fs::File::open(format!("{}/{}{}", path, #l, #index_extension))?;
-                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut file, 0)?;
+                    let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut file, 0)?;
                     let file_length = file.metadata()?.len();
                     let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
                     let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));

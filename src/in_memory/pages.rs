@@ -66,13 +66,17 @@ where
 
     pub fn from_data(vec: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>) -> Self {
         // TODO: Add row_count persistence.
-        let last_page_id = vec.len();
-        Self {
-            pages: RwLock::new(vec),
-            empty_links: Stack::new(),
-            row_count: AtomicU64::new(0),
-            last_page_id: AtomicU32::new(last_page_id as u32),
-            current_page_id: AtomicU32::new(last_page_id as u32),
+        if vec.is_empty() {
+            Self::new()
+        } else {
+            let last_page_id = vec.len();
+            Self {
+                pages: RwLock::new(vec),
+                empty_links: Stack::new(),
+                row_count: AtomicU64::new(0),
+                last_page_id: AtomicU32::new(last_page_id as u32),
+                current_page_id: AtomicU32::new(last_page_id as u32),
+            }
         }
     }
 
