@@ -1,11 +1,10 @@
-use crate::in_memory::StorableRow;
 use crate::persistence::space::open_or_create_file;
 use crate::persistence::SpaceDataOps;
 use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
 use data_bucket::{
-    parse_page, persist_page, update_at, GeneralHeader, GeneralPage, Link, PageType, Persistable,
-    SpaceInfoPage,
+    parse_page, persist_page, update_at, DataPage, GeneralHeader, GeneralPage, Link, PageType,
+    Persistable, SpaceInfoPage, GENERAL_HEADER_SIZE,
 };
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
@@ -20,6 +19,7 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct SpaceData<PkGenState, const DATA_LENGTH: u32> {
     pub info: GeneralPage<SpaceInfoPage<PkGenState>>,
+    pub last_page_id: u32,
     pub data_file: File,
 }
 
@@ -51,7 +51,14 @@ where
             open_or_create_file(path)?
         };
         let info = parse_page::<_, DATA_LENGTH>(&mut data_file, 0)?;
-        Ok(Self { data_file, info })
+        let file_length = data_file.metadata()?.len();
+        let page_id = file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64);
+
+        Ok(Self {
+            data_file,
+            info,
+            last_page_id: page_id as u32,
+        })
     }
 
     fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()> {
@@ -73,6 +80,16 @@ where
     }
 
     fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
+        if link.page_id > self.last_page_id.into() {
+            let mut page = GeneralPage {
+                header: GeneralHeader::new(link.page_id.into(), PageType::SpaceInfo, 0.into()),
+                inner: DataPage {
+                    length: 0,
+                    data: [0; 1],
+                },
+            };
+            persist_page(&mut page, &mut self.data_file)?
+        }
         update_at::<{ DATA_LENGTH }>(&mut self.data_file, link, bytes)
     }
 }
