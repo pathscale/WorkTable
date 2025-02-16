@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use data_bucket::Link;
 
+use crate::persistence::Operation;
 use crate::Difference;
 use crate::WorkTableError;
 
@@ -18,6 +19,10 @@ where
         link: Link,
         differences: HashMap<&str, Difference<AvailableTypes>>,
     ) -> Result<(), WorkTableError>;
+}
+
+pub trait TableSecondaryIndexCdc<Row, SecondaryEvents> {
+    fn save_row_cdc(&self, row: Row, link: Link) -> Result<SecondaryEvents, WorkTableError>;
 }
 
 impl<Row, AvailableTypes> TableSecondaryIndex<Row, AvailableTypes> for ()

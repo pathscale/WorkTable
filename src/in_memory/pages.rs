@@ -143,6 +143,25 @@ where
         Ok(res)
     }
 
+    pub fn insert_cdc(&self, row: Row) -> Result<(Link, Vec<u8>), ExecutionError>
+    where
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            > + Clone,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+    {
+        let link = self.insert(row.clone())?;
+        let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
+        let bytes = rkyv::to_bytes(&general_row)
+            .expect("should be ok as insert not failed")
+            .into_vec();
+        Ok((link, bytes))
+    }
+
     fn retry_insert(
         &self,
         general_row: <Row as StorableRow>::WrappedRow,

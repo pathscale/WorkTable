@@ -32,7 +32,7 @@ pub enum Operation<PrimaryKey, SecondaryKeys> {
 
 pub struct InsertOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
-    pub primary_key_event: ChangeEvent<Pair<PrimaryKey, Link>>,
+    pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
     pub bytes: Vec<u8>,
     pub link: Link,

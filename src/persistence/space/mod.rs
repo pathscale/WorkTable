@@ -4,7 +4,7 @@ mod index;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
-use data_bucket::Link;
+use data_bucket::{GeneralPage, Link};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 
@@ -15,6 +15,7 @@ pub trait SpaceDataOps {
     fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
     where
         Self: Sized;
+    fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()>;
     fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()>;
 }
 

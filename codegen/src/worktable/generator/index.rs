@@ -9,10 +9,16 @@ impl Generator {
     pub fn gen_index_def(&mut self) -> TokenStream {
         let type_def = self.gen_type_def();
         let impl_def = self.gen_impl_def();
+        let cdc_impl_def = if self.is_persist {
+            self.gen_cdc_impl_def()
+        } else {
+            quote! {}
+        };
 
         quote! {
             #type_def
             #impl_def
+            #cdc_impl_def
         }
     }
 
@@ -72,6 +78,48 @@ impl Generator {
                 #save_row_fn
                 #delete_row_fn
                 #process_difference_fn
+            }
+        }
+    }
+
+    fn gen_cdc_impl_def(&mut self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let index_type_ident = name_generator.get_index_type_ident();
+        let row_type_ident = name_generator.get_row_type_ident();
+        let events_ident = name_generator.get_space_secondary_index_events_ident();
+
+        let save_rows = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(i, idx)| {
+                let index_field_name = &idx.name;
+                quote! {
+                    let (exists, events) = self.#index_field_name.insert_cdc(row.#i, link);
+                    if exists.is_some() {
+                        return Err(WorkTableError::AlreadyExists);
+                    }
+                    let #index_field_name = events.into_iter().map(|ev| ev.into()).collect();
+                }
+            })
+            .collect::<Vec<_>>();
+        let idents = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(i, idx)| &idx.name)
+            .collect::<Vec<_>>();
+
+        quote! {
+            impl TableSecondaryIndexCdc<#row_type_ident, #events_ident> for #index_type_ident {
+                fn save_row_cdc(&self, row: #row_type_ident, link: Link) -> Result<#events_ident, WorkTableError> {
+                    #(#save_rows)*
+                    core::result::Result::Ok(
+                        #events_ident {
+                            #(#idents)*
+                        }
+                    )
+                }
             }
         }
     }

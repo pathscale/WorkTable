@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PersistenceConfig {
     pub config_path: String,
     pub tables_path: String,

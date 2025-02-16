@@ -16,8 +16,9 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{DataPages, RowWrapper, StorableRow};
 use crate::lock::LockMap;
+use crate::persistence::{InsertOperation, Operation};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
-use crate::{in_memory, IndexMap, TableRow, TableSecondaryIndex};
+use crate::{in_memory, IndexMap, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 
 #[derive(Debug)]
 pub struct WorkTable<
@@ -135,6 +136,47 @@ where
         self.indexes.save_row(row, link)?;
 
         Ok(pk)
+    }
+
+    pub fn insert_cdc<SecondaryEvents>(
+        &self,
+        row: Row,
+    ) -> Result<(PrimaryKey, Operation<PrimaryKey, SecondaryEvents>), WorkTableError>
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        SecondaryIndexes:
+            TableSecondaryIndex<Row, AvailableTypes> + TableSecondaryIndexCdc<Row, SecondaryEvents>,
+    {
+        let pk = row.get_primary_key().clone();
+        let (link, bytes) = self
+            .data
+            .insert_cdc(row.clone())
+            .map_err(WorkTableError::PagesError)?;
+        let (exists, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), link);
+        if exists.is_some() {
+            return Err(WorkTableError::AlreadyExists);
+        }
+        let secondary_keys_events = self.indexes.save_row_cdc(row, link)?;
+
+        let op = Operation::Insert(InsertOperation {
+            id: Default::default(),
+            primary_key_events,
+            secondary_keys_events,
+            bytes,
+            link,
+        });
+
+        Ok((pk, op))
     }
 }
 

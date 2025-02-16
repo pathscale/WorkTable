@@ -86,9 +86,22 @@ impl Generator {
         let row_type = name_generator.get_row_type_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
 
+        let insert = if self.is_persist {
+            quote! {
+                let (pk, op) = self.0.insert_cdc(row)?;
+                let mut engine = self.2.write().expect("should be not already held by current thread");
+                engine.apply_operation(op);
+                core::result::Result::Ok(pk)
+            }
+        } else {
+            quote! {
+                self.0.insert(row)
+            }
+        };
+
         quote! {
             pub fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
-                self.0.insert(row)
+                #insert
             }
         }
     }

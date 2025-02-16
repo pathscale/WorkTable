@@ -47,7 +47,6 @@ impl Generator {
                     return #wt_ident::new(config);
                 };
                 let space = #space_ident::parse_file(&filename)?;
-                println!("parsed ccccc");
                 let table = space.into_worktable(config);
                 Ok(table)
             }
@@ -120,7 +119,6 @@ impl Generator {
                 let mut info = #ident::space_info_default();
                 info.inner.pk_gen_state = self.0.pk_gen.get_state();
                 info.inner.empty_links_list = self.0.data.get_empty_links();
-                info.inner.page_count = 1;
                 let mut header = &mut info.header;
 
                 let mut primary_index = self.get_peristed_primary_key_with_toc();

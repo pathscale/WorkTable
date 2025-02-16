@@ -153,13 +153,13 @@ impl Generator {
                 };
 
                 let path = format!("{}/{}", config.tables_path.as_str(), #dir_name);
-                println!("all is ok except engine");
                 #wt_ident(
                     table,
                     config,
                     std::sync::Arc::new(
                         std::sync::RwLock::new(
-                            PersistenceEngine::from_table_files_path(path).expect("should not panic as SpaceFile is ok")
+                            PersistenceEngine::from_table_files_path(path)
+                                .expect("should not panic as SpaceFile is ok")
                         )
                     )
                 )

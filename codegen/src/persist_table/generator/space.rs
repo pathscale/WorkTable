@@ -15,7 +15,10 @@ impl Generator {
 
         quote! {
             pub type #ident = PersistenceEngine<
-                SpaceData<{ #inner_const_name as u32 }>,
+                SpaceData<
+                    <<#primary_key_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                    { #inner_const_name as u32 }
+                >,
                 SpaceIndex<#primary_key_type, { #inner_const_name as u32 }>,
                 #space_secondary_indexes,
                 #primary_key_type,

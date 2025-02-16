@@ -7,6 +7,7 @@ mod index_page;
 mod read;
 mod space;
 mod space_index;
+mod sync;
 mod toc;
 mod write;
 

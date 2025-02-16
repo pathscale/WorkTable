@@ -38,6 +38,8 @@ where
             fs::create_dir_all(table_path)?;
         }
 
+        println!("engine ok");
+
         Ok(Self {
             data: SpaceData::from_table_files_path(path.clone())?,
             primary_index: SpacePrimaryIndex::primary_from_table_files_path(path.clone())?,
@@ -53,8 +55,9 @@ where
         match op {
             Operation::Insert(insert) => {
                 self.data.save_data(insert.link, insert.bytes.as_ref())?;
-                self.primary_index
-                    .process_change_event(insert.primary_key_event)?;
+                for event in insert.primary_key_events {
+                    self.primary_index.process_change_event(event)?;
+                }
                 self.secondary_indexes
                     .process_change_events(insert.secondary_keys_events)
             }

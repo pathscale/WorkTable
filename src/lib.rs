@@ -32,7 +32,7 @@ pub mod prelude {
     };
     pub use crate::{
         lock::Lock, Difference, IndexMap, IndexMultiMap, TableIndex, TableRow, TableSecondaryIndex,
-        WorkTable, WorkTableError,
+        TableSecondaryIndexCdc, WorkTable, WorkTableError,
     };
     pub use data_bucket::{
         align, get_index_page_size_from_data_length, map_data_pages_to_general,
