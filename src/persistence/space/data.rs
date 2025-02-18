@@ -1,10 +1,11 @@
-use crate::persistence::space::open_or_create_file;
-use crate::persistence::SpaceDataOps;
-use crate::prelude::WT_DATA_EXTENSION;
+use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
+use std::path::Path;
+
 use convert_case::{Case, Casing};
 use data_bucket::{
     parse_page, persist_page, update_at, DataPage, GeneralHeader, GeneralPage, Link, PageType,
-    Persistable, SpaceInfoPage, GENERAL_HEADER_SIZE,
+    Persistable, SizeMeasurable, SpaceInfoPage, GENERAL_HEADER_SIZE,
 };
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
@@ -13,8 +14,10 @@ use rkyv::ser::sharing::Share;
 use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
-use std::fs::File;
-use std::path::Path;
+
+use crate::persistence::space::open_or_create_file;
+use crate::persistence::SpaceDataOps;
+use crate::prelude::WT_DATA_EXTENSION;
 
 #[derive(Debug)]
 pub struct SpaceData<PkGenState, const DATA_LENGTH: u32> {
@@ -23,7 +26,8 @@ pub struct SpaceData<PkGenState, const DATA_LENGTH: u32> {
     pub data_file: File,
 }
 
-impl<PkGenState, const DATA_LENGTH: u32> SpaceDataOps for SpaceData<PkGenState, DATA_LENGTH>
+impl<PkGenState, const DATA_LENGTH: u32> SpaceDataOps<PkGenState>
+    for SpaceData<PkGenState, DATA_LENGTH>
 where
     PkGenState: Default
         + for<'a> Serialize<
@@ -91,5 +95,13 @@ where
             persist_page(&mut page, &mut self.data_file)?
         }
         update_at::<{ DATA_LENGTH }>(&mut self.data_file, link, bytes)
+    }
+
+    fn save_pk_gen_state(&mut self, pk_gen_state: PkGenState) -> eyre::Result<()> {
+        let offset = u32::default().aligned_size() * 2;
+        self.data_file.seek(SeekFrom::Start(offset as u64))?;
+        let bytes = rkyv::to_bytes(&pk_gen_state)?;
+        self.data_file.write(bytes.as_ref())?;
+        Ok(())
     }
 }

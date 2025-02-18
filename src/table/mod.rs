@@ -17,6 +17,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::in_memory::{DataPages, RowWrapper, StorableRow};
 use crate::lock::LockMap;
 use crate::persistence::{InsertOperation, Operation};
+use crate::prelude::PrimaryKeyGeneratorState;
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::{in_memory, IndexMap, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 
@@ -141,7 +142,13 @@ where
     pub fn insert_cdc<SecondaryEvents>(
         &self,
         row: Row,
-    ) -> Result<(PrimaryKey, Operation<PrimaryKey, SecondaryEvents>), WorkTableError>
+    ) -> Result<
+        (
+            PrimaryKey,
+            Operation<<PkGen as PrimaryKeyGeneratorState>::State, PrimaryKey, SecondaryEvents>,
+        ),
+        WorkTableError,
+    >
     where
         Row: Archive
             + Clone
@@ -156,6 +163,7 @@ where
         AvailableTypes: 'static,
         SecondaryIndexes:
             TableSecondaryIndex<Row, AvailableTypes> + TableSecondaryIndexCdc<Row, SecondaryEvents>,
+        PkGen: PrimaryKeyGeneratorState,
     {
         let pk = row.get_primary_key().clone();
         let (link, bytes) = self
@@ -170,6 +178,7 @@ where
 
         let op = Operation::Insert(InsertOperation {
             id: Default::default(),
+            pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
             secondary_keys_events,
             bytes,

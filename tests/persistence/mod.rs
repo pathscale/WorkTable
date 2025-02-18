@@ -15,7 +15,7 @@ worktable! (
     name: TestPersist,
     persist: true,
     columns: {
-        id: u128 primary_key,
+        id: u64 primary_key autoincrement,
         another: u64,
     },
     indexes: {
@@ -27,7 +27,7 @@ worktable! (
     name: TestWithoutSecondaryIndexes,
     persist: true,
     columns: {
-        id: u128 primary_key,
+        id: u64 primary_key autoincrement,
         another: u64,
     },
 );
@@ -68,7 +68,7 @@ pub fn get_test_wt_without_secondary_indexes() -> TestWithoutSecondaryIndexesWor
     for i in 1..TEST_ROW_COUNT {
         let row = TestWithoutSecondaryIndexesRow {
             another: i as u64,
-            id: i as u128,
+            id: i as u64,
         };
         table.insert(row).unwrap();
     }

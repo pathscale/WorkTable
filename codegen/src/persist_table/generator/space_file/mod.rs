@@ -38,7 +38,7 @@ impl Generator {
                 pub primary_index: (Vec<GeneralPage<TableOfContentsPage<#pk_type>>>, Vec<GeneralPage<IndexPage<#pk_type>>>),
                 pub indexes: #index_persisted_ident,
                 pub data: Vec<GeneralPage<DataPage<#inner_const_name>>>,
-                pub data_info: GeneralPage<SpaceInfoPage>,
+                pub data_info: GeneralPage<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>>,
             }
         }
     }

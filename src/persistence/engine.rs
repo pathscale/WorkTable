@@ -1,8 +1,10 @@
-use crate::persistence::operation::Operation;
-use crate::persistence::{SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
 use std::fs;
 use std::marker::PhantomData;
 use std::path::Path;
+
+use crate::persistence::operation::Operation;
+use crate::persistence::{SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
+use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 
 #[derive(Debug)]
 pub struct PersistenceEngine<
@@ -11,24 +13,38 @@ pub struct PersistenceEngine<
     SpaceSecondaryIndexes,
     PrimaryKey,
     SecondaryIndexEvents,
-> {
+    PrimaryKeyGenState = <<PrimaryKey as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+>
+where
+    PrimaryKey: TablePrimaryKey,
+    <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState
+{
     pub data: SpaceData,
     pub primary_index: SpacePrimaryIndex,
     pub secondary_indexes: SpaceSecondaryIndexes,
-    phantom_data: PhantomData<(PrimaryKey, SecondaryIndexEvents)>,
+    phantom_data: PhantomData<(PrimaryKey, SecondaryIndexEvents, PrimaryKeyGenState)>,
 }
 
-impl<SpaceData, SpacePrimaryIndex, SpaceSecondaryIndexes, PrimaryKey, SecondaryIndexEvents>
+impl<
+        SpaceData,
+        SpacePrimaryIndex,
+        SpaceSecondaryIndexes,
+        PrimaryKey,
+        SecondaryIndexEvents,
+        PrimaryKeyGenState,
+    >
     PersistenceEngine<
         SpaceData,
         SpacePrimaryIndex,
         SpaceSecondaryIndexes,
         PrimaryKey,
         SecondaryIndexEvents,
+        PrimaryKeyGenState,
     >
 where
-    PrimaryKey: Ord,
-    SpaceData: SpaceDataOps,
+    PrimaryKey: Ord + TablePrimaryKey,
+    <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
+    SpaceData: SpaceDataOps<PrimaryKeyGenState>,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey>,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
 {
@@ -37,8 +53,6 @@ where
         if !table_path.exists() {
             fs::create_dir_all(table_path)?;
         }
-
-        println!("engine ok");
 
         Ok(Self {
             data: SpaceData::from_table_files_path(path.clone())?,
@@ -50,7 +64,7 @@ where
 
     pub fn apply_operation(
         &mut self,
-        op: Operation<PrimaryKey, SecondaryIndexEvents>,
+        op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> eyre::Result<()> {
         match op {
             Operation::Insert(insert) => {
@@ -58,6 +72,7 @@ where
                 for event in insert.primary_key_events {
                     self.primary_index.process_change_event(event)?;
                 }
+                self.data.save_pk_gen_state(insert.pk_gen_state)?;
                 self.secondary_indexes
                     .process_change_events(insert.secondary_keys_events)
             }

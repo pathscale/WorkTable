@@ -14,18 +14,19 @@ use crate::remove_dir_if_exists;
 fn test_info_parse() {
     let mut file = File::open("tests/data/expected/test_persist/.wt.data").unwrap();
     let info =
-        parse_page::<SpaceInfoPage, { TEST_PERSIST_INNER_SIZE as u32 }>(&mut file, 0).unwrap();
+        parse_page::<SpaceInfoPage<u64>, { TEST_PERSIST_INNER_SIZE as u32 }>(&mut file, 0).unwrap();
 
     assert_eq!(info.header.space_id, 0.into());
     assert_eq!(info.header.page_id, 0.into());
     assert_eq!(info.header.previous_id, 0.into());
     assert_eq!(info.header.next_id, 0.into());
     assert_eq!(info.header.page_type, PageType::SpaceInfo);
-    assert_eq!(info.header.data_length, 60);
+    assert_eq!(info.header.data_length, 72);
 
     assert_eq!(info.inner.id, 0.into());
     assert_eq!(info.inner.page_count, 1);
     assert_eq!(info.inner.name, "TestPersist");
+    assert_eq!(info.inner.pk_gen_state, 0);
     assert_eq!(info.inner.empty_links_list, vec![]);
 }
 
@@ -144,7 +145,7 @@ fn test_space_insert_after_read() {
 
     let row = TestPersistRow {
         another: TEST_ROW_COUNT as u64,
-        id: TEST_ROW_COUNT as u128,
+        id: TEST_ROW_COUNT as u64,
     };
     table.insert(row.clone()).unwrap();
     let expected = get_test_wt();
@@ -162,12 +163,12 @@ async fn test_space_delete_after_read() {
     let table = TestPersistWorkTable::load_from_file(config).unwrap();
 
     table
-        .delete((TEST_ROW_COUNT as u128 - 1).into())
+        .delete((TEST_ROW_COUNT as u64 - 1).into())
         .await
         .unwrap();
     let expected = get_test_wt();
     expected
-        .delete((TEST_ROW_COUNT as u128 - 1).into())
+        .delete((TEST_ROW_COUNT as u64 - 1).into())
         .await
         .unwrap();
 

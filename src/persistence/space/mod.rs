@@ -11,12 +11,13 @@ use indexset::core::pair::Pair;
 pub use data::SpaceData;
 pub use index::{map_index_pages_to_toc_and_general, IndexTableOfContents, SpaceIndex};
 
-pub trait SpaceDataOps {
+pub trait SpaceDataOps<PkGenState> {
     fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self>
     where
         Self: Sized;
     fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()>;
     fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()>;
+    fn save_pk_gen_state(&mut self, pk_gen_state: PkGenState) -> eyre::Result<()>;
 }
 
 pub trait SpaceIndexOps<T>
