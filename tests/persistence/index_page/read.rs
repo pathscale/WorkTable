@@ -9,7 +9,7 @@ fn test_index_page_read_in_space() {
         .open("tests/data/expected/test_persist/primary.wt.idx")
         .unwrap();
 
-    let page = parse_page::<IndexPage<u128>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
+    let page = parse_page::<IndexPage<u64>, { INNER_PAGE_SIZE as u32 }>(&mut file, 2).unwrap();
     assert_eq!(page.inner.node_id, 99);
     assert_eq!(page.inner.current_index, 99);
     assert_eq!(page.inner.current_length, 99);

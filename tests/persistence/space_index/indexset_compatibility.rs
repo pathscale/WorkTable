@@ -30,7 +30,7 @@ fn test_indexset_node_creation() {
 
     assert!(check_if_files_are_same(
         "tests/data/space_index/indexset/process_create_node.wt.idx".to_string(),
-        "tests/data/expected/space_index/process_create_node.wt.idx".to_string()
+        "tests/data/expected/space_index/indexset/process_create_node.wt.idx".to_string()
     ))
 }
 
@@ -63,7 +63,7 @@ fn test_space_index_process_insert_at() {
 
     assert!(check_if_files_are_same(
         "tests/data/space_index/indexset/process_insert_at.wt.idx".to_string(),
-        "tests/data/expected/space_index/process_insert_at.wt.idx".to_string()
+        "tests/data/expected/space_index/indexset/process_insert_at.wt.idx".to_string()
     ))
 }
 
@@ -114,6 +114,6 @@ fn test_space_index_process_insert_at_big_amount() {
 
     assert!(check_if_files_are_same(
         "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string(),
-        "tests/data/expected/space_index/process_insert_at_big_amount.wt.idx".to_string()
+        "tests/data/expected/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string()
     ))
 }

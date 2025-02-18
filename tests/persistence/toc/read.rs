@@ -30,7 +30,7 @@ fn test_index_table_of_contents_read_from_space() {
         .open("tests/data/expected/test_persist/primary.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(1));
-    let mut toc = IndexTableOfContents::<u128, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let mut toc = IndexTableOfContents::<u64, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
