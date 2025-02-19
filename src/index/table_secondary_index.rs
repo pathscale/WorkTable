@@ -6,10 +6,7 @@ use crate::persistence::Operation;
 use crate::Difference;
 use crate::WorkTableError;
 
-pub trait TableSecondaryIndex<Row, AvailableTypes>
-where
-    AvailableTypes: 'static,
-{
+pub trait TableSecondaryIndex<Row, AvailableTypes> {
     fn save_row(&self, row: Row, link: Link) -> Result<(), WorkTableError>;
 
     fn delete_row(&self, row: Row, link: Link) -> Result<(), WorkTableError>;
@@ -21,8 +18,13 @@ where
     ) -> Result<(), WorkTableError>;
 }
 
-pub trait TableSecondaryIndexCdc<Row, SecondaryEvents> {
+pub trait TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents> {
     fn save_row_cdc(&self, row: Row, link: Link) -> Result<SecondaryEvents, WorkTableError>;
+    fn process_difference_cdc(
+        &self,
+        link: Link,
+        differences: HashMap<&str, Difference<AvailableTypes>>,
+    ) -> Result<SecondaryEvents, WorkTableError>;
 }
 
 impl<Row, AvailableTypes> TableSecondaryIndex<Row, AvailableTypes> for ()

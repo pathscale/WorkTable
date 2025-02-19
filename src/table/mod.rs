@@ -160,9 +160,8 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
         PrimaryKey: Clone,
-        AvailableTypes: 'static,
-        SecondaryIndexes:
-            TableSecondaryIndex<Row, AvailableTypes> + TableSecondaryIndexCdc<Row, SecondaryEvents>,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes>
+            + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents>,
         PkGen: PrimaryKeyGeneratorState,
     {
         let pk = row.get_primary_key().clone();

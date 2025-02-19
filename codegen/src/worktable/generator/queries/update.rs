@@ -181,9 +181,25 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
+        let process_difference = if self.is_persist {
+            quote! {
+                let secondary_keys_events = self.0.indexes.process_difference_cdc(link, diffs)?;
+                let op = Operation::Insert(UpdateOperation {
+                    id: Default::default(),
+                    secondary_keys_events,
+                    bytes,
+                    link,
+                });
+            }
+        } else {
+            quote! {
+                self.0.indexes.process_difference(link, diffs)?;
+            }
+        };
+
         quote! {
             #(#diff)*
-            self.0.indexes.process_difference(link, diffs)?;
+            #process_difference
         }
     }
 

@@ -22,17 +22,17 @@ pub mod prelude {
     pub use crate::in_memory::{ArchivedRow, Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
     pub use crate::persistence::{
-        map_index_pages_to_toc_and_general, IndexTableOfContents, PersistenceConfig,
-        PersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps,
-        SpaceSecondaryIndexOps,
+        map_index_pages_to_toc_and_general, IndexTableOfContents, InsertOperation, Operation,
+        PersistenceConfig, PersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps,
+        SpaceSecondaryIndexOps, UpdateOperation,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{
         Order, SelectQueryBuilder, SelectQueryExecutor, SelectResult, SelectResultExecutor,
     };
     pub use crate::{
-        lock::Lock, Difference, IndexMap, IndexMultiMap, TableIndex, TableRow, TableSecondaryIndex,
-        TableSecondaryIndexCdc, WorkTable, WorkTableError,
+        lock::Lock, Difference, IndexMap, IndexMultiMap, TableIndex, TableIndexCdc, TableRow,
+        TableSecondaryIndex, TableSecondaryIndexCdc, WorkTable, WorkTableError,
     };
     pub use data_bucket::{
         align, get_index_page_size_from_data_length, map_data_pages_to_general,
