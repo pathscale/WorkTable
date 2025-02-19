@@ -34,6 +34,7 @@ impl Generator {
     fn gen_full_row_update(&mut self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_ident = name_generator.get_row_type_ident();
+        let avt_type_ident = name_generator.get_available_type_ident();
 
         let row_updates = self
             .columns
@@ -41,10 +42,23 @@ impl Generator {
             .keys()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut row.#i);
+                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
+
+        let idents: Vec<_> = self
+            .columns
+            .indexes
+            .values()
+            .map(|idx| idx.field.clone())
+            .collect();
+        let diff_container = quote! {
+            let row_old = self.select(pk.clone()).unwrap();
+            let row_new = row.clone();
+            let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
+        };
+        let diff_process = self.gen_process_diffs_on_index(idents.as_slice(), idents.as_slice());
 
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
@@ -54,12 +68,15 @@ impl Generator {
                 self.0.lock_map.insert(op_id.into(), lock.clone());
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                let mut row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
                 let link = self.0
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
+
+                #diff_container
+                #diff_process
 
                 let id = self.0.data.with_ref(link, |archived| {
                     archived.is_locked()
@@ -95,11 +112,7 @@ impl Generator {
                     .to_string()
                     .from_case(Case::Pascal)
                     .to_case(Case::Snake);
-                let index = self
-                    .columns
-                    .indexes
-                    .values()
-                    .find(|idx| idx.field.to_string() == op.by.to_string());
+                let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
 
                 let indexes_columns: Option<Vec<_>> = {
                     let columns: Vec<_> = self
@@ -126,23 +139,14 @@ impl Generator {
                     } else {
                         self.gen_non_unique_update(snake_case_name, name, index_name, idents)
                     }
-                } else {
-                    if self.columns.primary_keys.len() == 1 {
-                        if self.columns.primary_keys.first().unwrap().to_string()
-                            == op.by.to_string()
-                        {
-                            self.gen_pk_update(
-                                snake_case_name,
-                                name,
-                                idents,
-                                indexes_columns.as_ref(),
-                            )
-                        } else {
-                            todo!()
-                        }
+                } else if self.columns.primary_keys.len() == 1 {
+                    if *self.columns.primary_keys.first().unwrap() == op.by {
+                        self.gen_pk_update(snake_case_name, name, idents, indexes_columns.as_ref())
                     } else {
                         todo!()
                     }
+                } else {
+                    todo!()
                 }
             })
             .collect::<Vec<_>>();
@@ -152,11 +156,42 @@ impl Generator {
         }
     }
 
+    fn gen_process_diffs_on_index(&self, idents: &[Ident], idx_idents: &[Ident]) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let avt_type_ident = name_generator.get_available_type_ident();
+
+        let diff = idents
+            .iter()
+            .filter(|i| idx_idents.contains(i))
+            .map(|i| {
+                let diff_key = Literal::string(i.to_string().as_str());
+                quote! {
+                    let old = &row_old.#i;
+                    let new = &row_new.#i;
+
+                    if old != new {
+                        let diff = Difference::<#avt_type_ident> {
+                            old: old.clone().into(),
+                            new: new.clone().into(),
+                        };
+
+                        diffs.insert(#diff_key, diff);
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        quote! {
+            #(#diff)*
+            self.0.indexes.process_difference(link, diffs)?;
+        }
+    }
+
     fn gen_pk_update(
         &self,
         snake_case_name: String,
         name: &Ident,
-        idents: &Vec<Ident>,
+        idents: &[Ident],
         idx_idents: Option<&Vec<Ident>>,
     ) -> TokenStream {
         let pk_ident = &self.pk.as_ref().unwrap().ident;
@@ -184,53 +219,28 @@ impl Generator {
             Span::mixed_site(),
         );
 
-        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
-        let avt_type_ident = name_generator.get_available_type_ident();
-
         let row_updates = idents
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut row.#i);
+                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
 
-        let diff = idx_idents.map(|columns| {
-            idents
-                .iter()
-                .filter(|i| columns.contains(i))
-                .map(|i| {
-                    let diff_key = Literal::string(i.to_string().as_str());
-                    quote! {
-                        let old: #avt_type_ident = row_old.clone().#i.into();
-                        let new: #avt_type_ident = row_new.#i.into();
-
-                        let diff = Difference {
-                            old: old.clone(),
-                            new: new.clone(),
-                        };
-
-                        diffs.insert(#diff_key, diff);
-                    }
-                })
-                .collect::<Vec<_>>()
-        });
-
-        let diff_container_ident = if let Some(ref diff) = diff {
-            quote! {
+        let diff_process = if let Some(idx_idents) = idx_idents {
+            let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+            let avt_type_ident = name_generator.get_available_type_ident();
+            let diff_container = quote! {
                 let row_old = self.select(by.clone()).unwrap();
                 let row_new = row.clone();
                 let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
-                #(#diff)*
-            }
-        } else {
-            quote! {}
-        };
+            };
 
-        let process_diff_ident = if let Some(_) = diff {
+            let process = self.gen_process_diffs_on_index(idents, idx_idents.as_slice());
             quote! {
-                self.0.indexes.process_difference(link, diffs)?;
+                #diff_container
+                #process
             }
         } else {
             quote! {}
@@ -243,17 +253,15 @@ impl Generator {
 
                 self.0.lock_map.insert(op_id.into(), lock.clone());
 
-                #diff_container_ident
-
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                let mut row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
                 let link = self.0
                         .pk_map
                         .get(&by)
                         .map(|v| v.get().value)
                         .ok_or(WorkTableError::NotFound)?;
 
-                 #process_diff_ident
+                #diff_process
 
                 let id = self.0.data.with_ref(link, |archived| {
                     archived.#check_ident()
@@ -293,7 +301,7 @@ impl Generator {
         snake_case_name: String,
         name: &Ident,
         index: &Ident,
-        idents: &Vec<Ident>,
+        idents: &[Ident],
     ) -> TokenStream {
         let method_ident = Ident::new(
             format!("update_{snake_case_name}").as_str(),
@@ -381,7 +389,7 @@ impl Generator {
         snake_case_name: String,
         name: &Ident,
         index: &Ident,
-        idents: &Vec<Ident>,
+        idents: &[Ident],
     ) -> TokenStream {
         let method_ident = Ident::new(
             format!("update_{snake_case_name}").as_str(),
