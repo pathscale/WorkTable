@@ -230,7 +230,7 @@ impl Generator {
 
         let process_diff_ident = if let Some(_) = diff {
             quote! {
-                    self.0.indexes.process_difference(link, diffs)?;
+                self.0.indexes.process_difference(link, diffs)?;
             }
         } else {
             quote! {}
