@@ -321,6 +321,15 @@ where
         Ok(())
     }
 
+    pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
+        let pages = self.pages.read().unwrap();
+        let page = pages
+            .get(page_id_mapper(link.page_id.into()))
+            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        page.get_raw_row(link)
+            .map_err(ExecutionError::DataPageError)
+    }
+
     pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
         let pages = self.pages.read().unwrap();
         pages
@@ -328,6 +337,7 @@ where
             .map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed)))
             .collect()
     }
+
     pub fn get_page_count(&self) -> usize {
         self.pages.read().unwrap().len()
     }

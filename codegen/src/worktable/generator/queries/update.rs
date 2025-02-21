@@ -53,12 +53,28 @@ impl Generator {
             .values()
             .map(|idx| idx.field.clone())
             .collect();
+
         let diff_container = quote! {
             let row_old = self.select(pk.clone()).unwrap();
             let row_new = row.clone();
+            let updated_bytes: Vec<u8> = vec![];
             let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
         };
         let diff_process = self.gen_process_diffs_on_index(idents.as_slice(), idents.as_slice());
+        let persist_call = if self.is_persist {
+            quote! {
+                if let Operation::Update(op) = &mut op {
+                     op.bytes = self.0.data.select_raw(link)?;
+                } else {
+                    unreachable!("")
+                };
+
+                let mut engine = self.2.write().expect("should be not already held by current thread");
+                engine.apply_operation(op);
+            }
+        } else {
+            quote! {}
+        };
 
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
@@ -99,6 +115,9 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
                 lock.unlock();
                 self.0.lock_map.remove(&op_id.into());
+
+                #persist_call
+
                 core::result::Result::Ok(())
             }
         }
@@ -184,10 +203,10 @@ impl Generator {
         let process_difference = if self.is_persist {
             quote! {
                 let secondary_keys_events = self.0.indexes.process_difference_cdc(link, diffs)?;
-                let op = Operation::Insert(UpdateOperation {
+                let mut op = Operation::Update(UpdateOperation {
                     id: Default::default(),
                     secondary_keys_events,
-                    bytes,
+                    bytes: updated_bytes,
                     link,
                 });
             }

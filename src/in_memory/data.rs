@@ -202,6 +202,16 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             .map_err(|_| ExecutionError::DeserializeError)
     }
 
+    pub fn get_raw_row(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
+        if link.offset > self.free_offset.load(Ordering::Relaxed) {
+            return Err(ExecutionError::DeserializeError);
+        }
+
+        let inner_data = unsafe { &mut *self.inner_data.get() };
+        let bytes = &mut inner_data[link.offset as usize..(link.offset + link.length) as usize];
+        Ok(bytes.iter().cloned().collect::<Vec<_>>())
+    }
+
     pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
         let data = unsafe { &*self.inner_data.get() };
         data.0
