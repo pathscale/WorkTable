@@ -28,6 +28,7 @@ pub struct OperationId(u32);
 pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Insert(InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>),
     Update(UpdateOperation<SecondaryKeys>),
+    Delete(DeleteOperation<PrimaryKey, SecondaryKeys>),
 }
 
 pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
@@ -44,4 +45,10 @@ pub struct UpdateOperation<SecondaryKeys> {
     pub secondary_keys_events: SecondaryKeys,
     pub bytes: Vec<u8>,
     pub link: Link,
+}
+
+pub struct DeleteOperation<PrimaryKey, SecondaryKeys> {
+    pub id: OperationId,
+    pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
+    pub secondary_keys_events: SecondaryKeys,
 }

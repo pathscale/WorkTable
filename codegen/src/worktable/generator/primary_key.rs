@@ -64,6 +64,7 @@ impl Generator {
                 Debug,
                 Default,
                 rkyv::Deserialize,
+                Hash,
                 rkyv::Serialize,
                 From,
                 Eq,

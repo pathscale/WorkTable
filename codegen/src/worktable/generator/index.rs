@@ -90,11 +90,13 @@ impl Generator {
         let available_types_ident = name_generator.get_available_type_ident();
 
         let save_row_cdc = self.gen_save_row_cdc_index_fn();
+        let delete_row_cdc = self.gen_delete_row_cdc_index_fn();
         let process_diff_cdc = self.gen_process_diff_cdc_index_fn();
 
         quote! {
             impl TableSecondaryIndexCdc<#row_type_ident, #available_types_ident, #events_ident> for #index_type_ident {
                 #save_row_cdc
+                #delete_row_cdc
                 #process_diff_cdc
             }
         }
@@ -138,6 +140,43 @@ impl Generator {
             }
         }
     }
+
+    fn gen_delete_row_cdc_index_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type_ident = name_generator.get_row_type_ident();
+        let events_ident = name_generator.get_space_secondary_index_events_ident();
+
+        let delete_rows = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(i, idx)| {
+                let index_field_name = &idx.name;
+                quote! {
+                    let (_, events) = self.#index_field_name.remove_cdc(&row.#i, &link);
+                    let #index_field_name = events.into_iter().map(|ev| ev.into()).collect();
+                }
+            })
+            .collect::<Vec<_>>();
+        let idents = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(i, idx)| &idx.name)
+            .collect::<Vec<_>>();
+
+        quote! {
+            fn delete_row_cdc(&self, row: #row_type_ident, link: Link) -> Result<#events_ident, WorkTableError> {
+                #(#delete_rows)*
+                core::result::Result::Ok(
+                    #events_ident {
+                        #(#idents)*
+                    }
+                )
+            }
+        }
+    }
+
     fn gen_process_diff_cdc_index_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();

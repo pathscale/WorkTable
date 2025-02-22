@@ -80,3 +80,49 @@ async fn test_space_update_query_sync() {
         assert_eq!(table.0.pk_gen.get_state(), pk)
     }
 }
+
+#[tokio::test]
+async fn test_space_delete_sync() {
+    remove_dir_if_exists("tests/data/sync".to_string());
+
+    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+
+    let pk = {
+        let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
+        let row = TestPersistRow {
+            another: 42,
+            id: table.get_next_pk().0,
+        };
+        table.insert(row.clone()).unwrap();
+        table.delete(row.id.into()).await.unwrap();
+        row.id
+    };
+    {
+        let table = TestPersistWorkTable::load_from_file(config).unwrap();
+        assert!(table.select(pk.into()).is_none());
+        assert_eq!(table.0.pk_gen.get_state(), pk)
+    }
+}
+
+#[tokio::test]
+async fn test_space_delete_query_sync() {
+    remove_dir_if_exists("tests/data/sync".to_string());
+
+    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+
+    let pk = {
+        let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
+        let row = TestPersistRow {
+            another: 42,
+            id: table.get_next_pk().0,
+        };
+        table.insert(row.clone()).unwrap();
+        table.delete_by_another(row.another).await.unwrap();
+        row.id
+    };
+    {
+        let table = TestPersistWorkTable::load_from_file(config).unwrap();
+        assert!(table.select(pk.into()).is_none());
+        assert_eq!(table.0.pk_gen.get_state(), pk)
+    }
+}

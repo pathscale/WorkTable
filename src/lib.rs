@@ -22,9 +22,9 @@ pub mod prelude {
     pub use crate::in_memory::{ArchivedRow, Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
     pub use crate::persistence::{
-        map_index_pages_to_toc_and_general, IndexTableOfContents, InsertOperation, Operation,
-        PersistenceConfig, PersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps,
-        SpaceSecondaryIndexOps, UpdateOperation,
+        map_index_pages_to_toc_and_general, DeleteOperation, IndexTableOfContents, InsertOperation,
+        Operation, PersistenceConfig, PersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex,
+        SpaceIndexOps, SpaceSecondaryIndexOps, UpdateOperation,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{

@@ -81,6 +81,13 @@ where
                 self.secondary_indexes
                     .process_change_events(update.secondary_keys_events)
             }
+            Operation::Delete(delete) => {
+                for event in delete.primary_key_events {
+                    self.primary_index.process_change_event(event)?;
+                }
+                self.secondary_indexes
+                    .process_change_events(delete.secondary_keys_events)
+            }
         }
     }
 }

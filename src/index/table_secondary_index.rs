@@ -20,6 +20,7 @@ pub trait TableSecondaryIndex<Row, AvailableTypes> {
 
 pub trait TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents> {
     fn save_row_cdc(&self, row: Row, link: Link) -> Result<SecondaryEvents, WorkTableError>;
+    fn delete_row_cdc(&self, row: Row, link: Link) -> Result<SecondaryEvents, WorkTableError>;
     fn process_difference_cdc(
         &self,
         link: Link,

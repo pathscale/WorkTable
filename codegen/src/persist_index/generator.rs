@@ -173,7 +173,6 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let page_const_name = name_generator.get_page_size_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
-        let pk_type = name_generator.get_primary_key_type_ident();
 
         let field_names_literals: Vec<_> = self
             .struct_def
@@ -200,10 +199,8 @@ impl Generator {
                     let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
                     let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
                     let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone())?;
-                    println!("{:?}", toc);
-                    println!("{:?}", toc.pages.len() as u32 + 1);
-                    for page_id in (toc.pages.len() as u32 + 1)..=info.inner.page_count {
-                        let index = parse_page::<IndexPage<_>, { #page_const_name as u32 }>(&mut file, page_id as u32)?;
+                    for page_id in toc.iter().map(|(_, page_id)| page_id) {
+                        let index = parse_page::<IndexPage<_>, { #page_const_name as u32 }>(&mut file, (*page_id).into())?;
                         #i.push(index);
                     }
                     (toc.pages, #i)

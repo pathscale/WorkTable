@@ -210,8 +210,8 @@ impl Generator {
                     let count = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64);
                     let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(count as u32));
                     let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut primary_file, 0.into(), next_page_id.clone())?;
-                    for page_id in (toc.pages.len() as u32 + 1)..=count as u32 {
-                        let index = parse_page::<IndexPage<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, page_id as u32)?;
+                    for page_id in toc.iter().map(|(_, page_id)| page_id) {
+                        let index = parse_page::<IndexPage<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into())?;
                         primary_index.push(index);
                     }
                     (toc.pages, primary_index)

@@ -12,6 +12,7 @@ use worktable::worktable;
     Clone,
     Eq,
     From,
+    Hash,
     PartialOrd,
     PartialEq,
     Ord,

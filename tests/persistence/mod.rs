@@ -24,6 +24,9 @@ worktable! (
     queries: {
         update: {
             AnotherById(another) by id,
+        },
+        delete: {
+             ByAnother() by another,
         }
     }
 );
