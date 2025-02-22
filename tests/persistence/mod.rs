@@ -21,6 +21,11 @@ worktable! (
     indexes: {
         another_idx: another,
     },
+    queries: {
+        update: {
+            AnotherById(another) by id,
+        }
+    }
 );
 
 worktable! (
