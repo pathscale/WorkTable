@@ -8,9 +8,6 @@ impl Generator {
         let type_ = self.gen_locks_type();
         let impl_ = self.gen_locks_impl();
 
-        println!("!TYPE {}", type_);
-        println!("!IMPL {}", impl_);
-
         quote! {
             #type_
             #impl_

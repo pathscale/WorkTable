@@ -60,9 +60,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let update_impls = generator.gen_query_update_impl()?;
     let delete_impls = generator.gen_query_delete_impl()?;
 
-    println!("Q: {}", query_locks_impls);
-    //println!("LocksDef {}", locks_def);
-
     Ok(quote! {
         #pk_def
         #row_def

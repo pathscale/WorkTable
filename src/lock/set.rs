@@ -3,39 +3,39 @@ use std::sync::Arc;
 use lockfree::map::Map;
 
 #[derive(Debug)]
-pub struct LockMap<LockType, PrimaryKey>
+pub struct LockMap<LockType, PkType>
 where
-    PrimaryKey: std::hash::Hash + std::cmp::Ord,
+    PkType: std::hash::Hash + std::cmp::Ord,
 {
-    set: Map<PrimaryKey, Option<Arc<LockType>>>,
+    set: Map<PkType, Option<Arc<LockType>>>,
 }
 
-impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey>
+impl<LockType, PkType> Default for LockMap<LockType, PkType>
 where
-    PrimaryKey: std::hash::Hash + std::cmp::Ord,
+    PkType: std::hash::Hash + std::cmp::Ord,
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<LockType, PrimaryKey> LockMap<LockType, PrimaryKey>
+impl<LockType, PkType> LockMap<LockType, PkType>
 where
-    PrimaryKey: std::hash::Hash + std::cmp::Ord,
+    PkType: std::hash::Hash + std::cmp::Ord,
 {
     pub fn new() -> Self {
         Self { set: Map::new() }
     }
 
-    pub fn insert(&self, id: PrimaryKey, lock: Arc<LockType>) {
+    pub fn insert(&self, id: PkType, lock: Arc<LockType>) {
         self.set.insert(id, Some(lock));
     }
 
-    pub fn get(&self, id: &PrimaryKey) -> Option<Arc<LockType>> {
+    pub fn get(&self, id: &PkType) -> Option<Arc<LockType>> {
         self.set.get(id).map(|v| v.val().clone())?
     }
 
-    pub fn remove(&self, id: &PrimaryKey) {
+    pub fn remove(&self, id: &PkType) {
         self.set.remove(id);
     }
 }

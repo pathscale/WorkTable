@@ -20,11 +20,9 @@ impl Generator {
             quote! {}
         };
         let full_row_update = self.gen_full_row_update();
-
-        println!("{}", full_row_update);
-
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let table_ident = name_generator.get_work_table_ident();
+
         Ok(quote! {
             impl #table_ident {
                 #full_row_update
@@ -110,25 +108,13 @@ impl Generator {
                     let index_name = &index.name;
 
                     if index.is_unique {
-                        let t = self.gen_unique_update(snake_case_name, name, index_name, idents);
-                        println!("!unique {}", t);
-                        t
+                        self.gen_unique_update(snake_case_name, name, index_name, idents)
                     } else {
-                        let t =
-                            self.gen_non_unique_update(snake_case_name, name, index_name, idents);
-                        println!("!non-unique {}", t);
-                        t
+                        self.gen_non_unique_update(snake_case_name, name, index_name, idents)
                     }
                 } else if self.columns.primary_keys.len() == 1 {
                     if *self.columns.primary_keys.first().unwrap() == op.by {
-                        let t = self.gen_pk_update(
-                            snake_case_name,
-                            name,
-                            idents,
-                            indexes_columns.as_ref(),
-                        );
-                        println!("!gen_pk {}", t);
-                        t
+                        self.gen_pk_update(snake_case_name, name, idents, indexes_columns.as_ref())
                     } else {
                         todo!()
                     }
@@ -232,8 +218,6 @@ impl Generator {
                 let mut lock = #lock_type_ident::new();   //Creates new LockType with None
                 lock.#lock_ident();
 
-                println!("Lock {:?}", lock);
-
                 self.0.lock_map.insert(by.clone(), std::sync::Arc::new(lock.clone()));
 
                 #diff_container_ident
@@ -253,7 +237,6 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 lock.#unlock_ident();
-                println!("Unlock {:?}", lock);
                 self.0.lock_map.remove(&by);
 
                 core::result::Result::Ok(())
@@ -304,33 +287,41 @@ impl Generator {
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
 
-                if let Some(lock) = self.0.lock_map.get(&by) {
-                    lock.#lock_await_ident().await;
+                for (_, link) in self.0.indexes.#index.get(&by) {
+                    let pk = self.0.data.select(*link)?.get_primary_key();
+                    if let Some(lock) = self.0.lock_map.get(&pk) {
+                        lock.#lock_await_ident().await;
+                    }
                 }
 
-                let mut lock = #lock_type_ident::new();
-                lock.#lock_ident();
+                for (_, link) in self.0.indexes.#index.get(&by) {
+                    let pk = self.0.data.select(*link)?.get_primary_key();
+                    let mut lock = #lock_type_ident::new();
+                    lock.#lock_ident();
+                    self.0.lock_map.insert(pk.clone(), std::sync::Arc::new(lock.clone()));
+                }
 
-                self.0.lock_map.insert(by.clone(), std::sync::Arc::new(lock.clone()));
-
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                for (_, link) in self.0.indexes.#index.get(&by) {
+                    let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
 
-                let mut row = unsafe {
+                    let mut row = unsafe {
                     rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
                         .unseal_unchecked()
                 };
-
-                for (_, link) in self.0.indexes.#index.get(&by) {
                     unsafe {
                         self.0.data.with_mut_ref(*link, |archived| {
                             #(#row_updates)*
                         }).map_err(WorkTableError::PagesError)?;
                     }
                 }
-
-                lock.#unlock_ident();
-                self.0.lock_map.remove(&by);
+                for (_, link) in self.0.indexes.#index.get(&by) {
+                    let pk = self.0.data.select(*link)?.get_primary_key();
+                    if let Some(lock) = self.0.lock_map.get(&pk) {
+                        lock.#unlock_ident();
+                        self.0.lock_map.remove(&pk);
+                    }
+                }
 
                 core::result::Result::Ok(())
             }
@@ -380,15 +371,6 @@ impl Generator {
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
 
-                if let Some(lock) = self.0.lock_map.get(&by) {
-                    lock.#lock_await_ident().await;
-                }
-
-                let mut lock = #lock_type_ident::new();
-                lock.#lock_ident();
-
-                self.0.lock_map.insert(by.clone(), std::sync::Arc::new(lock.clone()));
-
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
 
@@ -402,6 +384,15 @@ impl Generator {
                     .map(|kv| kv.get().value)
                     .ok_or(WorkTableError::NotFound)?;
 
+                let pk = self.0.data.select(link)?.get_primary_key();
+
+                if let Some(lock) = self.0.lock_map.get(&pk) {
+                    lock.#lock_await_ident().await;
+                }
+                let mut lock = #lock_type_ident::new();
+                lock.#lock_ident();
+                self.0.lock_map.insert(pk.clone(), std::sync::Arc::new(lock.clone()));
+
                 unsafe {
                     self.0.data.with_mut_ref(link, |archived| {
                         #(#row_updates)*
@@ -409,7 +400,7 @@ impl Generator {
                 }
 
                 lock.#unlock_ident();
-                self.0.lock_map.remove(&by);
+                self.0.lock_map.remove(&pk);
 
                 core::result::Result::Ok(())
             }
