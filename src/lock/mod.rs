@@ -12,7 +12,7 @@ pub use set::LockMap;
 
 #[derive(Debug)]
 pub struct Lock {
-    pub locked: AtomicBool,
+    locked: AtomicBool,
     waker: AtomicWaker,
 }
 
