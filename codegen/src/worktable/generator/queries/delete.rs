@@ -41,13 +41,10 @@ impl Generator {
             pub async fn delete(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
 
                 if let Some(lock) = self.0.lock_map.get(&pk) {
-                    println!("Lock await {:?}", lock );
-                    lock.lock_await();   // Waiting for all locks released
+                    lock.lock_await().await;   // Waiting for all locks released
                 }
 
                 let lock = std::sync::Arc::new(#lock_ident::with_lock());   //Creates new LockType with None
-                println!("Lock.lock {:?}", lock );
-
                 self.0.lock_map.insert(pk.clone(), lock.clone()); // adds LockType to LockMap
 
 
@@ -64,12 +61,7 @@ impl Generator {
                 self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
 
                 lock.unlock();  // Releases locks
-                println!("Lock unlock {:?}", lock );
-
                 self.0.lock_map.remove(&pk); // Removes locks
-
-                println!("Lock remove {:?}", self.0.lock_map );
-
 
                 core::result::Result::Ok(())
             }

@@ -24,7 +24,17 @@ impl Generator {
                         Span::mixed_site(),
                     );
 
-                    let locks_await = q
+                    let lock_ident = Ident::new(
+                        format!("lock_{snake_case_name}").as_str(),
+                        Span::mixed_site(),
+                    );
+
+                    let unlock_ident = Ident::new(
+                        format!("unlock_{snake_case_name}").as_str(),
+                        Span::mixed_site(),
+                    );
+
+                    let rows_lock_await = q
                         .updates
                         .get(name)
                         .expect("exists")
@@ -41,7 +51,55 @@ impl Generator {
                         })
                         .collect::<Vec<_>>();
 
+                    let rows_lock = q
+                        .updates
+                        .get(name)
+                        .expect("exists")
+                        .columns
+                        .iter()
+                        .map(|col| {
+                            let col =
+                                Ident::new(format!("{}_lock", col).as_str(), Span::mixed_site());
+                            quote! {
+                                if self.#col.is_none() {
+                                    self.#col = Some(std::sync::Arc::new(Lock::new()));
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let rows_unlock = q
+                        .updates
+                        .get(name)
+                        .expect("exists")
+                        .columns
+                        .iter()
+                        .map(|col| {
+                            let col =
+                                Ident::new(format!("{}_lock", col).as_str(), Span::mixed_site());
+                            quote! {
+                                if let Some(#col) = &self.#col {
+                                    #col.unlock();
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
                     quote! {
+
+                        pub fn #lock_ident(&mut self) {
+                            if self.lock.is_none() {
+                                self.lock = Some(std::sync::Arc::new(Lock::new()));
+                            }
+                            #(#rows_lock)*
+                        }
+
+                        pub fn #unlock_ident(&self) {
+                            if let Some(lock) = &self.lock {
+                                lock.unlock();
+                            }
+                            #(#rows_unlock)*
+                        }
 
                         pub async fn #lock_await_ident(&self) {
                             let mut futures = Vec::new();
@@ -51,7 +109,7 @@ impl Generator {
                             }
 
 
-                            #(#locks_await)*
+                            #(#rows_lock_await)*
                             futures::future::join_all(futures).await;
                         }
                     }

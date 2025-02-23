@@ -16,12 +16,12 @@ fn main() {
         },
         indexes: {
             idx1: attr,
-            idx2: attr2,
+            idx2: attr2 unique,
         },
         queries: {
             update: {
-               // ValById(val) by id,
-               // AllAttrById(attr, attr2) by id,
+                AttrById(attr) by id,
+                AllById(attr, attr2) by id,
                // UpdateTestByIdx(test) by attr,
             },
 
@@ -51,7 +51,7 @@ fn main() {
     let row3 = MyRow {
         val: 7777,
         attr: "Attribute1".to_string(),
-        attr2: 345,
+        attr2: 3452,
         test: 1,
         id: 1,
     };
@@ -78,8 +78,23 @@ fn main() {
     //println!("Select by idx {:?}", select_by_attr.unwrap().vals);
     //
     //// Update Value query
-    //let update = my_table.update_val_by_id(ValByIdQuery { val: 1337 }, pk.clone());
-    //let _ = block_on(update);
+    let update = my_table.update_attr_by_id(
+        AttrByIdQuery {
+            attr: "1337".to_string(),
+        },
+        pk2.clone(),
+    );
+    let _ = block_on(update);
+
+    let update2 = my_table.update_all_by_id(
+        AllByIdQuery {
+            attr: "TESTTEST".to_string(),
+            attr2: 13375,
+        },
+        pk2,
+    );
+
+    let _ = block_on(update2);
     //
     //let select_all = my_table.select_all().execute();
     //println!("Select after update val {:?}", select_all);

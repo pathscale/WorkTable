@@ -50,6 +50,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let pk_def = generator.gen_primary_key_def()?;
     let row_def = generator.gen_row_def();
     let wrapper_def = generator.gen_wrapper_def();
+    let locks_def = generator.gen_locks_def();
     let index_def = generator.gen_index_def();
     let table_def = generator.gen_table_def()?;
     let query_types_def = generator.gen_result_types_def()?;
@@ -59,14 +60,15 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let update_impls = generator.gen_query_update_impl()?;
     let delete_impls = generator.gen_query_delete_impl()?;
 
-    //println!("{}", table_def);
-    println!("{}", query_locks_impls);
+    println!("Q: {}", query_locks_impls);
+    //println!("LocksDef {}", locks_def);
 
     Ok(quote! {
         #pk_def
         #row_def
         #query_available_def
         #wrapper_def
+        #locks_def
         #index_def
         #table_def
         #query_types_def
