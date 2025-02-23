@@ -48,6 +48,18 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
+        let row_with_lock = self
+            .columns
+            .columns_map
+            .keys()
+            .map(|i| {
+                let col = Ident::new(format!("{i}_lock").as_str(), Span::mixed_site());
+                quote! {
+                    #col: Some(std::sync::Arc::new(Lock::new()))
+                }
+            })
+            .collect::<Vec<_>>();
+
         let lock_await = self
             .columns
             .columns_map
@@ -112,13 +124,21 @@ impl Generator {
                     }
                 }
 
+                pub fn with_lock() -> Self {
+                    Self {
+                        lock:  Some(std::sync::Arc::new(Lock::new())),
+                        #(#row_with_lock),*
+
+                    }
+                }
+
                 pub fn lock(&self) {
                     if let Some(lock) = &self.lock {
                         lock.lock();
                     }
                     #(#row_lock)*
-                }
 
+                }
 
                 pub fn unlock(&self) {
                     if let Some(lock) = &self.lock {

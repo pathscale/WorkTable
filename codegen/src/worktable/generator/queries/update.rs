@@ -57,8 +57,7 @@ impl Generator {
                     lock.lock_await();   // Waiting for all locks released
                 }
 
-                let lock = std::sync::Arc::new(#lock_ident::new());   //Creates new LockType with None
-                lock.lock(); // Locks all fields
+                let lock = std::sync::Arc::new(#lock_ident::with_lock());   //Creates new LockType with None
                 self.0.lock_map.insert(pk.clone(), lock.clone()); // adds LockType to LockMap
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;

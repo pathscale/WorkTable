@@ -48,8 +48,18 @@ fn main() {
         id: 0,
     };
 
+    let row3 = MyRow {
+        val: 7777,
+        attr: "Attribute1".to_string(),
+        attr2: 345,
+        test: 1,
+        id: 1,
+    };
+
     // insert
     let pk: MyPrimaryKey = my_table.insert(row).expect("primary key");
+
+    let pk2: MyPrimaryKey = my_table.insert(row3).expect("primary key");
 
     let upd = my_table.update(row2);
     let _ = block_on(upd);
@@ -74,9 +84,9 @@ fn main() {
     //let select_all = my_table.select_all().execute();
     //println!("Select after update val {:?}", select_all);
     //
-    //let delete = my_table.delete(pk);
-    //let _ = block_on(delete);
+    let delete = my_table.delete(pk);
+    let _ = block_on(delete);
     //
-    //let select_all = my_table.select_all().execute();
-    //println!("Select after delete {:?}", select_all);
+    let select_all = my_table.select_all().execute();
+    println!("Select after delete {:?}", select_all);
 }
