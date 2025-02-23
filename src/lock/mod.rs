@@ -33,10 +33,6 @@ impl Lock {
         self.locked.store(true, Ordering::Relaxed);
         self.waker.wake()
     }
-
-    pub fn is_locked(&self) -> bool {
-        self.locked.load(Ordering::Acquire)
-    }
 }
 
 impl Future for &Lock {
