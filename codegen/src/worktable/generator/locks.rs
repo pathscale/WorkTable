@@ -33,20 +33,14 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let lock_ident = name_generator.get_lock_type_ident();
 
-        let row_new = self.gen_row_new();
+        let new_fn = self.gen_lock_new_fn();
         let row_with_lock = self.gen_row_with_lock();
         let row_lock_await = self.gen_row_lock_await();
         let row_unlock = self.gen_row_unlock();
 
         quote! {
             impl #lock_ident {
-                pub fn new(lock_id: u16) -> Self {
-                    Self {
-                        id: lock_id,
-                        lock: None,
-                        #(#row_new),*
-                    }
-                }
+                #new_fn
 
                 pub fn with_lock(lock_id: u16) -> Self {
                     Self {
@@ -76,6 +70,28 @@ impl Generator {
         }
     }
 
+    fn gen_lock_new_fn(&self) -> TokenStream {
+        let fields = self
+            .columns
+            .columns_map
+            .keys()
+            .map(|i| {
+                let col = Ident::new(format!("{i}_lock").as_str(), Span::mixed_site());
+                quote! { #col: None }
+            })
+            .collect();
+
+        quote! {
+            pub fn new(lock_id: u16) -> Self {
+                Self {
+                    id: lock_id,
+                    lock: None,
+                    #(#fields),*
+                }
+            }
+        }
+    }
+
     fn gen_row_locks(&self) -> Vec<TokenStream> {
         self.columns
             .columns_map
@@ -83,17 +99,6 @@ impl Generator {
             .map(|i| {
                 let name = Ident::new(format!("{i}_lock").as_str(), Span::mixed_site());
                 quote! { #name: Option<std::sync::Arc<Lock>>, }
-            })
-            .collect()
-    }
-
-    fn gen_row_new(&self) -> Vec<TokenStream> {
-        self.columns
-            .columns_map
-            .keys()
-            .map(|i| {
-                let col = Ident::new(format!("{i}_lock").as_str(), Span::mixed_site());
-                quote! { #col: None }
             })
             .collect()
     }

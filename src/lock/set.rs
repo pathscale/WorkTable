@@ -6,7 +6,7 @@ use lockfree::map::Map;
 #[derive(Debug)]
 pub struct LockMap<LockType, PkType>
 where
-    PkType: std::hash::Hash + std::cmp::Ord,
+    PkType: std::hash::Hash + Ord,
 {
     set: Map<PkType, Option<Arc<LockType>>>,
     next_id: AtomicU16,
@@ -14,7 +14,7 @@ where
 
 impl<LockType, PkType> Default for LockMap<LockType, PkType>
 where
-    PkType: std::hash::Hash + std::cmp::Ord,
+    PkType: std::hash::Hash + Ord,
 {
     fn default() -> Self {
         Self::new()
@@ -23,7 +23,7 @@ where
 
 impl<LockType, PkType> LockMap<LockType, PkType>
 where
-    PkType: std::hash::Hash + std::cmp::Ord,
+    PkType: std::hash::Hash + Ord,
 {
     pub fn new() -> Self {
         Self {
