@@ -44,16 +44,15 @@ impl Generator {
                     lock.lock_await().await;   // Waiting for all locks released
                 }
 
-                let lock = std::sync::Arc::new(#lock_ident::with_lock());   //Creates new LockType with None
+                let lock_id = self.0.lock_map.next_id();
+                let lock = std::sync::Arc::new(#lock_ident::with_lock(lock_id.into()));   //Creates new LockType with None
                 self.0.lock_map.insert(pk.clone(), lock.clone()); // adds LockType to LockMap
-
 
                 let link = self.0
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
-
 
                 let row = self.select(pk.clone()).unwrap();
                 self.0.indexes.delete_row(row, link)?;

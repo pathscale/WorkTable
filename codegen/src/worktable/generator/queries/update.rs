@@ -68,7 +68,8 @@ impl Generator {
                     lock.lock_await().await;   // Waiting for all locks released
                 }
 
-                let lock = std::sync::Arc::new(#lock_ident::with_lock());   //Creates new LockType with Locks
+                let lock_id = self.0.lock_map.next_id();
+                let lock = std::sync::Arc::new(#lock_ident::with_lock(lock_id.into()));   //Creates new LockType with Locks
                 self.0.lock_map.insert(pk.clone(), lock.clone()); // adds LockType to LockMap
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
@@ -237,7 +238,8 @@ impl Generator {
                 if let Some(lock) = self.0.lock_map.get(&by) {
                     lock.#lock_await_ident().await;   // Waiting for all locks released
                 }
-                let mut lock = #lock_type_ident::new();   //Creates new LockType with None
+                let lock_id = self.0.lock_map.next_id();
+                let mut lock = #lock_type_ident::new(lock_id.into());   //Creates new LockType with None
                 lock.#lock_ident();
 
                 self.0.lock_map.insert(by.clone(), std::sync::Arc::new(lock.clone()));
@@ -315,7 +317,8 @@ impl Generator {
 
                 for (_, link) in self.0.indexes.#index.get(&by) {
                     let pk = self.0.data.select(*link)?.get_primary_key();
-                    let mut lock = #lock_type_ident::new();
+                    let lock_id = self.0.lock_map.next_id();
+                    let mut lock = #lock_type_ident::new(lock_id.into());
                     lock.#lock_ident();
                     self.0.lock_map.insert(pk.clone(), std::sync::Arc::new(lock.clone()));
                 }
@@ -406,7 +409,8 @@ impl Generator {
                 if let Some(lock) = self.0.lock_map.get(&pk) {
                     lock.#lock_await_ident().await;
                 }
-                let mut lock = #lock_type_ident::new();
+                let lock_id = self.0.lock_map.next_id();
+                let mut lock = #lock_type_ident::new(lock_id.into());
                 lock.#lock_ident();
                 self.0.lock_map.insert(pk.clone(), std::sync::Arc::new(lock.clone()));
 

@@ -88,26 +88,15 @@ impl Generator {
                     quote! {
 
                         pub fn #lock_ident(&mut self) {
-                            if self.lock.is_none() {
-                                self.lock = Some(std::sync::Arc::new(Lock::new()));
-                            }
                             #(#rows_lock)*
                         }
 
                         pub fn #unlock_ident(&self) {
-                            if let Some(lock) = &self.lock {
-                                lock.unlock();
-                            }
                             #(#rows_unlock)*
                         }
 
                         pub async fn #lock_await_ident(&self) {
                             let mut futures = Vec::new();
-
-                            if let Some(lock) = &self.lock {
-                                futures.push(lock.as_ref());
-                            }
-
 
                             #(#rows_lock_await)*
                             futures::future::join_all(futures).await;
