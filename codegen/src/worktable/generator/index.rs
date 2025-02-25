@@ -134,7 +134,7 @@ impl Generator {
                 #(#save_rows)*
                 core::result::Result::Ok(
                     #events_ident {
-                        #(#idents)*
+                        #(#idents,)*
                     }
                 )
             }
@@ -170,7 +170,7 @@ impl Generator {
                 #(#delete_rows)*
                 core::result::Result::Ok(
                     #events_ident {
-                        #(#idents)*
+                        #(#idents,)*
                     }
                 )
             }
@@ -237,7 +237,7 @@ impl Generator {
                 #(#process_difference_rows)*
                 core::result::Result::Ok(
                     #events_ident {
-                        #(#idents)*
+                        #(#idents,)*
                     }
                 )
             }

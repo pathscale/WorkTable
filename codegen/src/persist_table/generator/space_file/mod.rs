@@ -159,7 +159,6 @@ impl Generator {
                 let indexes = #index_ident::from_persisted(self.indexes);
 
                 let pk_map = IndexMap::new();
-                println!("{:?}", self.primary_index);
                 for page in self.primary_index.1 {
                     let node = page.inner.get_node();
                     pk_map.attach_node(node);
@@ -222,10 +221,12 @@ impl Generator {
                     let mut data = vec![];
                     let mut data_file = std::fs::File::open(format!("{}/{}", path, #data_extension))?;
                     let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut data_file, 0)?;
+                    println!("{:?}", info);
                     let file_length = data_file.metadata()?.len();
                     let count = file_length / (#inner_const_name as u64 + GENERAL_HEADER_SIZE as u64);
                     for page_id in 1..=count {
                         let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(&mut data_file, page_id as u32)?;
+                        println!("{:?}", index);
                         data.push(index);
                     }
                     (data, info)

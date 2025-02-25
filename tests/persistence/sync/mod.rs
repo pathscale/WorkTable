@@ -24,6 +24,41 @@ fn test_space_insert_sync() {
     }
 }
 
+#[test]
+fn test_space_insert_many_sync() {
+    remove_dir_if_exists("tests/data/sync".to_string());
+
+    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+
+    let mut pks = vec![];
+    {
+        let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
+        for i in 0..20 {
+            let pk = {
+                let row = TestPersistRow {
+                    another: i,
+                    id: table.get_next_pk().0,
+                };
+                println!("{:?}", row);
+                table.insert(row.clone()).unwrap();
+                row.id
+            };
+            pks.push(pk);
+        }
+    }
+
+    {
+        let table = TestPersistWorkTable::load_from_file(config).unwrap();
+        println!("{:?}", table.0.pk_map.iter().collect::<Vec<_>>());
+        let last = *pks.last().unwrap();
+        for pk in pks {
+            println!("{:?}", pk);
+            assert!(table.select(pk.into()).is_some());
+        }
+        assert_eq!(table.0.pk_gen.get_state(), last)
+    }
+}
+
 #[tokio::test]
 async fn test_space_update_full_sync() {
     remove_dir_if_exists("tests/data/sync".to_string());
