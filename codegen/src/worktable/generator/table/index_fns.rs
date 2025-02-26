@@ -84,4 +84,72 @@ impl Generator {
             }
         })
     }
+
+    pub fn gen_table_index_count_fns(&self) -> syn::Result<TokenStream> {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
+
+        let fn_defs = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(i, idx)| {
+                if idx.is_unique {
+                    Self::gen_unique_index_count_fn(i, idx, &self.columns.columns_map)
+                } else {
+                    Self::gen_non_unique_index_count_fn(i, idx, &self.columns.columns_map)
+                }
+            })
+            .collect::<Result<Vec<_>, syn::Error>>()?;
+
+        Ok(quote! {
+            impl #ident {
+                #(#fn_defs)*
+            }
+        })
+    }
+
+    fn gen_non_unique_index_count_fn(
+        i: &Ident,
+        idx: &Index,
+        columns_map: &HashMap<Ident, TokenStream>,
+    ) -> syn::Result<TokenStream> {
+        let type_ = columns_map
+            .get(i)
+            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let fn_name = Ident::new(format!("count_by_{i}").as_str(), Span::mixed_site());
+        let field_ident = &idx.name;
+
+        Ok(quote! {
+            pub fn #fn_name(&self, by: #type_) -> core::result::Result<usize, WorkTableError> {
+                core::result::Result::Ok(self.0.indexes.#field_ident.get(&by).count())
+
+            }
+        })
+    }
+
+    fn gen_unique_index_count_fn(
+        i: &Ident,
+        idx: &Index,
+        columns_map: &HashMap<Ident, TokenStream>,
+    ) -> syn::Result<TokenStream> {
+        let type_ = columns_map
+            .get(i)
+            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let fn_name = Ident::new(format!("count_by_{i}").as_str(), Span::mixed_site());
+        let field_ident = &idx.name;
+
+        Ok(quote! {
+            pub fn #fn_name(&self, by: #type_) -> core::result::Result<usize, WorkTableError> {
+                 let count = if self.0.indexes.#field_ident.get(&by).is_some() {
+                     1
+                 } else {
+                     0
+                 };
+
+                core::result::Result::Ok(count)
+
+            }
+        })
+    }
 }
