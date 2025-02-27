@@ -72,7 +72,9 @@ where
                 for event in insert.primary_key_events {
                     self.primary_index.process_change_event(event)?;
                 }
-                self.data.save_pk_gen_state(insert.pk_gen_state)?;
+                let info = self.data.get_mut_info();
+                info.inner.pk_gen_state = insert.pk_gen_state;
+                self.data.save_info()?;
                 self.secondary_indexes
                     .process_change_events(insert.secondary_keys_events)
             }

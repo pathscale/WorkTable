@@ -17,7 +17,8 @@ pub trait SpaceDataOps<PkGenState> {
         Self: Sized;
     fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()>;
     fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()>;
-    fn save_pk_gen_state(&mut self, pk_gen_state: PkGenState) -> eyre::Result<()>;
+    fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>>;
+    fn save_info(&mut self) -> eyre::Result<()>;
 }
 
 pub trait SpaceIndexOps<T>

@@ -115,12 +115,11 @@ where
         update_at::<{ DATA_LENGTH }>(&mut self.data_file, link, bytes)
     }
 
-    fn save_pk_gen_state(&mut self, pk_gen_state: PkGenState) -> eyre::Result<()> {
-        let offset = u32::default().aligned_size() * 2;
-        self.data_file
-            .seek(SeekFrom::Start(GENERAL_HEADER_SIZE as u64 + offset as u64))?;
-        let bytes = rkyv::to_bytes(&pk_gen_state)?;
-        self.data_file.write(bytes.as_ref())?;
-        Ok(())
+    fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>> {
+        &mut self.info
+    }
+
+    fn save_info(&mut self) -> eyre::Result<()> {
+        persist_page(&mut self.info, &mut self.data_file)
     }
 }

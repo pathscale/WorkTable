@@ -55,7 +55,7 @@ fn test_space_insert_many_sync() {
         for pk in pks {
             assert!(table.select(pk.into()).is_some());
         }
-        assert_eq!(table.0.pk_gen.get_state(), last)
+        assert_eq!(table.0.pk_gen.get_state(), last + 1)
     }
 }
 
