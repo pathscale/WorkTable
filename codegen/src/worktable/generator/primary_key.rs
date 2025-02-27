@@ -71,7 +71,6 @@ impl Generator {
                 Into,
                 PartialEq,
                 PartialOrd,
-                Hash,
                 Ord,
             )]
             #[rkyv(derive(PartialEq, Eq, PartialOrd, Ord))]

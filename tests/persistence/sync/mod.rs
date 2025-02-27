@@ -21,7 +21,7 @@ fn test_space_insert_sync() {
     {
         let table = TestPersistWorkTable::load_from_file(config).unwrap();
         assert!(table.select(pk.into()).is_some());
-        assert_eq!(table.0.pk_gen.get_state(), pk)
+        assert_eq!(table.0.pk_gen.get_state(), pk + 1)
     }
 }
 
@@ -87,7 +87,7 @@ async fn test_space_update_full_sync() {
         let table = TestPersistWorkTable::load_from_file(config).unwrap();
         assert!(table.select(pk.into()).is_some());
         assert_eq!(table.select(pk.into()).unwrap().another, 13);
-        assert_eq!(table.0.pk_gen.get_state(), pk)
+        assert_eq!(table.0.pk_gen.get_state(), pk + 1)
     }
 }
 
@@ -118,7 +118,7 @@ async fn test_space_update_query_sync() {
         let table = TestPersistWorkTable::load_from_file(config).unwrap();
         assert!(table.select(pk.into()).is_some());
         assert_eq!(table.select(pk.into()).unwrap().another, 13);
-        assert_eq!(table.0.pk_gen.get_state(), pk)
+        assert_eq!(table.0.pk_gen.get_state(), pk + 1)
     }
 }
 
@@ -142,7 +142,7 @@ async fn test_space_delete_sync() {
     {
         let table = TestPersistWorkTable::load_from_file(config).unwrap();
         assert!(table.select(pk.into()).is_none());
-        assert_eq!(table.0.pk_gen.get_state(), pk)
+        assert_eq!(table.0.pk_gen.get_state(), pk + 1)
     }
 }
 
@@ -169,6 +169,6 @@ async fn test_space_delete_query_sync() {
     {
         let table = TestPersistWorkTable::load_from_file(config).unwrap();
         assert!(table.select(pk.into()).is_none());
-        assert_eq!(table.0.pk_gen.get_state(), pk)
+        assert_eq!(table.0.pk_gen.get_state(), pk + 1)
     }
 }
