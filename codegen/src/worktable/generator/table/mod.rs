@@ -58,6 +58,7 @@ impl Generator {
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let avt_type_ident = name_generator.get_available_type_ident();
         let persistence_engine = name_generator.get_persistence_engine_ident();
+        let lock_ident = name_generator.get_lock_type_ident();
 
         let derive = if self.is_persist {
             quote! {
@@ -86,6 +87,7 @@ impl Generator {
                         #primary_key_type,
                         #avt_type_ident,
                         #index_type,
+                        #lock_ident,
                         <#primary_key_type as TablePrimaryKey>::Generator,
                         #inner_const_name
                     >
@@ -100,7 +102,8 @@ impl Generator {
                         #row_type,
                         #primary_key_type,
                         #avt_type_ident,
-                        #index_type
+                        #index_type,
+                        #lock_ident,
                     >
                     #persist_type_part
                 );

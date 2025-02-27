@@ -61,24 +61,31 @@ impl Generator {
             }
         };
 
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let lock_ident = name_generator.get_lock_type_ident();
+
         quote! {
             pub async fn delete(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
+
+                if let Some(lock) = self.0.lock_map.get(&pk) {
+                    lock.lock_await().await;   // Waiting for all locks released
+                }
+
+                let lock_id = self.0.lock_map.next_id();
+                let lock = std::sync::Arc::new(#lock_ident::with_lock(lock_id.into()));   //Creates new LockType with None
+                self.0.lock_map.insert(pk.clone(), lock.clone()); // adds LockType to LockMap
+
                 let link = self.0
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
 
-                let id = self.0.data.with_ref(link, |archived| {
-                    archived.is_locked()
-                }).map_err(WorkTableError::PagesError)?;
-                if let Some(id) = id {
-                    if let Some(lock) = self.0.lock_map.get(&(id.into())) {
-                        lock.as_ref().await
-                    }
-                }
                 let row = self.select(pk.clone()).unwrap();
                 #delete_logic
+
+                lock.unlock();  // Releases locks
+                self.0.lock_map.remove(&pk); // Removes locks
 
                 core::result::Result::Ok(())
             }

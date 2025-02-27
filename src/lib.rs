@@ -19,7 +19,7 @@ pub use table::*;
 pub use worktable_codegen::worktable;
 
 pub mod prelude {
-    pub use crate::in_memory::{ArchivedRow, Data, DataPages, RowWrapper, StorableRow};
+    pub use crate::in_memory::{Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
     pub use crate::persistence::{
         map_index_pages_to_toc_and_general, DeleteOperation, IndexTableOfContents, InsertOperation,
