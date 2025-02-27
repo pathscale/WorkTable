@@ -121,9 +121,9 @@ impl Generator {
         let field_ident = &idx.name;
 
         Ok(quote! {
-            pub fn #fn_name(&self, by: #type_) -> core::result::Result<usize, WorkTableError> {
-                core::result::Result::Ok(self.0.indexes.#field_ident.get(&by).count())
-
+            pub fn #fn_name(&self, by: #type_) -> Option<usize> {
+                let count = self.0.indexes.#field_ident.get(&by).count();
+                (count > 0).then_some(count)
             }
         })
     }
@@ -140,15 +140,8 @@ impl Generator {
         let field_ident = &idx.name;
 
         Ok(quote! {
-            pub fn #fn_name(&self, by: #type_) -> core::result::Result<usize, WorkTableError> {
-                 let count = if self.0.indexes.#field_ident.get(&by).is_some() {
-                     1
-                 } else {
-                     0
-                 };
-
-                core::result::Result::Ok(count)
-
+            pub fn #fn_name(&self, by: #type_) -> Option<usize> {
+                 self.0.indexes.#field_ident.get(&by).is_some().then_some(1)
             }
         })
     }

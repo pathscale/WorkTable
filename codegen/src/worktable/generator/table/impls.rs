@@ -195,8 +195,9 @@ impl Generator {
 
     fn gen_table_count_fn(&self) -> TokenStream {
         quote! {
-            pub fn count(&self) -> core::result::Result<usize, WorkTableError> {
-                Ok(self.0.pk_map.len())
+            pub fn count(&self) -> Option<usize> {
+                let count = self.0.pk_map.len();
+                (count > 0).then_some(count)
             }
         }
     }
