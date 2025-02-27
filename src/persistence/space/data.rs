@@ -23,7 +23,20 @@ use crate::prelude::WT_DATA_EXTENSION;
 pub struct SpaceData<PkGenState, const DATA_LENGTH: u32> {
     pub info: GeneralPage<SpaceInfoPage<PkGenState>>,
     pub last_page_id: u32,
+    pub current_data_length: u32,
     pub data_file: File,
+}
+
+impl<PkGenState, const DATA_LENGTH: u32> SpaceData<PkGenState, DATA_LENGTH> {
+    fn update_data_length(&mut self) -> eyre::Result<()> {
+        let offset = (u32::default().aligned_size() * 6) as u32;
+        self.data_file.seek(SeekFrom::Start(
+            (self.last_page_id * (DATA_LENGTH + GENERAL_HEADER_SIZE as u32) + offset) as u64,
+        ))?;
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&self.current_data_length)?;
+        self.data_file.write(bytes.as_ref())?;
+        Ok(())
+    }
 }
 
 impl<PkGenState, const DATA_LENGTH: u32> SpaceDataOps<PkGenState>
@@ -62,6 +75,7 @@ where
             data_file,
             info,
             last_page_id: page_id as u32,
+            current_data_length: 0,
         })
     }
 
@@ -92,14 +106,19 @@ where
                     data: [0; 1],
                 },
             };
-            persist_page(&mut page, &mut self.data_file)?
+            persist_page(&mut page, &mut self.data_file)?;
+            self.current_data_length = 0;
+            self.last_page_id += 1;
         }
+        self.current_data_length += link.length;
+        self.update_data_length()?;
         update_at::<{ DATA_LENGTH }>(&mut self.data_file, link, bytes)
     }
 
     fn save_pk_gen_state(&mut self, pk_gen_state: PkGenState) -> eyre::Result<()> {
         let offset = u32::default().aligned_size() * 2;
-        self.data_file.seek(SeekFrom::Start(offset as u64))?;
+        self.data_file
+            .seek(SeekFrom::Start(GENERAL_HEADER_SIZE as u64 + offset as u64))?;
         let bytes = rkyv::to_bytes(&pk_gen_state)?;
         self.data_file.write(bytes.as_ref())?;
         Ok(())

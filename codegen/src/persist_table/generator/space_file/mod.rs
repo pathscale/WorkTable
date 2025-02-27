@@ -164,6 +164,8 @@ impl Generator {
                     pk_map.attach_node(node);
                 }
 
+                println!("data info {:?}", self.data_info.inner.pk_gen_state);
+
                 let table = WorkTable {
                     data,
                     pk_map,

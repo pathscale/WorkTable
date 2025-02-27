@@ -4,7 +4,7 @@ mod index;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
-use data_bucket::{GeneralPage, Link};
+use data_bucket::{GeneralPage, Link, SpaceInfoPage};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 

@@ -4,9 +4,10 @@ use worktable::prelude::{PersistenceConfig, PrimaryKeyGeneratorState};
 
 #[test]
 fn test_space_insert_sync() {
-    remove_dir_if_exists("tests/data/sync".to_string());
+    remove_dir_if_exists("tests/data/sync/insert".to_string());
 
-    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+    let config =
+        PersistenceConfig::new("tests/data/sync/insert", "tests/data/sync/insert").unwrap();
 
     let pk = {
         let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
@@ -26,9 +27,11 @@ fn test_space_insert_sync() {
 
 #[test]
 fn test_space_insert_many_sync() {
-    remove_dir_if_exists("tests/data/sync".to_string());
+    remove_dir_if_exists("tests/data/sync/insert_many".to_string());
 
-    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+    let config =
+        PersistenceConfig::new("tests/data/sync/insert_many", "tests/data/sync/insert_many")
+            .unwrap();
 
     let mut pks = vec![];
     {
@@ -39,7 +42,6 @@ fn test_space_insert_many_sync() {
                     another: i,
                     id: table.get_next_pk().0,
                 };
-                println!("{:?}", row);
                 table.insert(row.clone()).unwrap();
                 row.id
             };
@@ -49,10 +51,8 @@ fn test_space_insert_many_sync() {
 
     {
         let table = TestPersistWorkTable::load_from_file(config).unwrap();
-        println!("{:?}", table.0.pk_map.iter().collect::<Vec<_>>());
         let last = *pks.last().unwrap();
         for pk in pks {
-            println!("{:?}", pk);
             assert!(table.select(pk.into()).is_some());
         }
         assert_eq!(table.0.pk_gen.get_state(), last)
@@ -61,9 +61,11 @@ fn test_space_insert_many_sync() {
 
 #[tokio::test]
 async fn test_space_update_full_sync() {
-    remove_dir_if_exists("tests/data/sync".to_string());
+    remove_dir_if_exists("tests/data/sync/update_full".to_string());
 
-    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+    let config =
+        PersistenceConfig::new("tests/data/sync/update_full", "tests/data/sync/update_full")
+            .unwrap();
 
     let pk = {
         let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
@@ -91,9 +93,13 @@ async fn test_space_update_full_sync() {
 
 #[tokio::test]
 async fn test_space_update_query_sync() {
-    remove_dir_if_exists("tests/data/sync".to_string());
+    remove_dir_if_exists("tests/data/sync/update_query".to_string());
 
-    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+    let config = PersistenceConfig::new(
+        "tests/data/sync/update_query",
+        "tests/data/sync/update_query",
+    )
+    .unwrap();
 
     let pk = {
         let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
@@ -118,9 +124,10 @@ async fn test_space_update_query_sync() {
 
 #[tokio::test]
 async fn test_space_delete_sync() {
-    remove_dir_if_exists("tests/data/sync".to_string());
+    remove_dir_if_exists("tests/data/sync/delete".to_string());
 
-    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+    let config =
+        PersistenceConfig::new("tests/data/sync/delete", "tests/data/sync/delete").unwrap();
 
     let pk = {
         let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
@@ -141,9 +148,13 @@ async fn test_space_delete_sync() {
 
 #[tokio::test]
 async fn test_space_delete_query_sync() {
-    remove_dir_if_exists("tests/data/sync".to_string());
+    remove_dir_if_exists("tests/data/sync/delete_query".to_string());
 
-    let config = PersistenceConfig::new("tests/data/sync", "tests/data/sync").unwrap();
+    let config = PersistenceConfig::new(
+        "tests/data/sync/delete_query",
+        "tests/data/sync/delete_query",
+    )
+    .unwrap();
 
     let pk = {
         let table = TestPersistWorkTable::load_from_file(config.clone()).unwrap();
