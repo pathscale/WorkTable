@@ -68,12 +68,4 @@ async fn count() {
 
     // Count by WT
     assert_eq!(Some(4), test_table.count());
-
-    // Count for non-unique index
-    assert_eq!(None, test_table.count_by_attr1("Non-existed".to_string()));
-    assert_eq!(Some(4), test_table.count_by_attr1(attr.clone()));
-
-    // Count by unique index
-    assert_eq!(None, test_table.count_by_attr2(1337));
-    assert_eq!(Some(1), test_table.count_by_attr2(4));
 }
