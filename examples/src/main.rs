@@ -16,7 +16,7 @@ fn main() {
         },
         indexes: {
             idx1: attr,
-            idx2: attr2,
+            idx2: attr2 unique,
         },
         queries: {
             update: {
@@ -70,4 +70,10 @@ fn main() {
 
     let select_all = my_table.select_all().execute();
     println!("Select after delete {:?}", select_all);
+
+    let where1 = my_table.select_where_attr2(0..5);
+    let where2 = my_table.select_where_attr2(..10);
+    let where3 = my_table.select_where_attr2(10..);
+
+    let where4 = my_table.select_where_attr2(4..=10);
 }

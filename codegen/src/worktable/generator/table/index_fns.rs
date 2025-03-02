@@ -84,4 +84,53 @@ impl Generator {
             }
         })
     }
+
+    pub fn gen_select_where_fns(&self) -> syn::Result<TokenStream> {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
+        let row_ident = name_generator.get_row_type_ident();
+
+        let fn_defs = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(i, idx)| {
+                if idx.is_unique {
+                    Self::gen_select_where_fn(i, idx, &self.columns.columns_map, row_ident.clone())
+                } else {
+                    Ok(quote! {})
+                }
+            })
+            .collect::<Result<Vec<_>, syn::Error>>()?;
+
+        Ok(quote! {
+            impl #ident {
+                #(#fn_defs)*
+            }
+        })
+    }
+
+    fn gen_select_where_fn(
+        i: &Ident,
+        idx: &Index,
+        columns_map: &HashMap<Ident, TokenStream>,
+        row_ident: Ident,
+    ) -> syn::Result<TokenStream> {
+        let type_ = columns_map
+            .get(i)
+            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let fn_name = Ident::new(format!("select_where_{i}").as_str(), Span::mixed_site());
+        let _field_ident = &idx.name;
+
+        Ok(quote! {
+            pub fn #fn_name(&self, range: impl std::ops::RangeBounds<#type_>) -> Option<Vec<#row_ident>> {
+                 println!(
+                    "Start bound: {:?}, End bound: {:?}",
+                    range.start_bound(),
+                    range.end_bound()
+                 );
+                None
+            }
+        })
+    }
 }
