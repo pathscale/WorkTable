@@ -107,7 +107,6 @@ fn test_space_index_process_insert_at_big_amount() {
             },
         );
         for event in cdc {
-            println!("{:?}", event);
             space_index.process_change_event(event).unwrap();
         }
     }

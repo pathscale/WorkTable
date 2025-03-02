@@ -57,7 +57,7 @@ impl Generator {
         let index_type = name_generator.get_index_type_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let avt_type_ident = name_generator.get_available_type_ident();
-        let persistence_engine = name_generator.get_persistence_engine_ident();
+        let persistence_task = name_generator.get_persistence_task_ident();
         let lock_ident = name_generator.get_lock_type_ident();
 
         let derive = if self.is_persist {
@@ -72,7 +72,7 @@ impl Generator {
         let persist_type_part = if self.is_persist {
             quote! {
                 , PersistenceConfig
-                , std::sync::Arc<std::sync::RwLock<#persistence_engine>>
+                , #persistence_task
             }
         } else {
             quote! {}

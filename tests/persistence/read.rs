@@ -113,9 +113,9 @@ fn test_data_parse() {
     assert_eq!(data.header.data_length, 2376);
 }
 
-#[test]
-fn test_space_parse() {
-    let config = PersistenceConfig::new("tests/data", "tests/data").unwrap();
+#[tokio::test]
+async fn test_space_parse() {
+    let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected").unwrap();
     let table = TestPersistWorkTable::load_from_file(config).unwrap();
     let expected = get_test_wt();
 
@@ -125,8 +125,8 @@ fn test_space_parse() {
     );
 }
 
-#[test]
-fn test_space_parse_no_file() {
+#[tokio::test]
+async fn test_space_parse_no_file() {
     remove_dir_if_exists("tests/non-existent".to_string());
 
     let config = PersistenceConfig::new("tests/non-existent", "tests/non-existent").unwrap();
@@ -138,9 +138,9 @@ fn test_space_parse_no_file() {
     );
 }
 
-#[test]
-fn test_space_insert_after_read() {
-    let config = PersistenceConfig::new("tests/data", "tests/data").unwrap();
+#[tokio::test]
+async fn test_space_insert_after_read() {
+    let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected").unwrap();
     let table = TestPersistWorkTable::load_from_file(config).unwrap();
 
     let row = TestPersistRow {
@@ -159,7 +159,7 @@ fn test_space_insert_after_read() {
 
 #[tokio::test]
 async fn test_space_delete_after_read() {
-    let config = PersistenceConfig::new("tests/data", "tests/data").unwrap();
+    let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected").unwrap();
     let table = TestPersistWorkTable::load_from_file(config).unwrap();
 
     table

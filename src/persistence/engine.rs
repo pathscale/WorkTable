@@ -3,7 +3,9 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use crate::persistence::operation::Operation;
-use crate::persistence::{SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
+use crate::persistence::{
+    PersistenceEngineOps, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
+};
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 
 #[derive(Debug)]
@@ -61,8 +63,32 @@ where
             phantom_data: PhantomData,
         })
     }
+}
 
-    pub fn apply_operation(
+impl<
+        SpaceData,
+        SpacePrimaryIndex,
+        SpaceSecondaryIndexes,
+        PrimaryKey,
+        SecondaryIndexEvents,
+        PrimaryKeyGenState,
+    > PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>
+    for PersistenceEngine<
+        SpaceData,
+        SpacePrimaryIndex,
+        SpaceSecondaryIndexes,
+        PrimaryKey,
+        SecondaryIndexEvents,
+        PrimaryKeyGenState,
+    >
+where
+    PrimaryKey: Ord + TablePrimaryKey,
+    <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
+    SpaceData: SpaceDataOps<PrimaryKeyGenState>,
+    SpacePrimaryIndex: SpaceIndexOps<PrimaryKey>,
+    SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
+{
+    fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> eyre::Result<()> {

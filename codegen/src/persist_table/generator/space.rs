@@ -4,7 +4,23 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 impl Generator {
-    pub fn get_persistence_manager_type(&self) -> TokenStream {
+    pub fn get_persistence_task_type(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let ident = name_generator.get_persistence_task_ident();
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+        let space_secondary_indexes_events =
+            name_generator.get_space_secondary_index_events_ident();
+
+        quote! {
+            pub type #ident = PersistenceTask<
+                <<#primary_key_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                #primary_key_type,
+                #space_secondary_indexes_events,
+            >;
+        }
+    }
+
+    pub fn get_persistence_engine_type(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let ident = name_generator.get_persistence_engine_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();

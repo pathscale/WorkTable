@@ -23,10 +23,6 @@ impl WorktableNameGenerator {
         )
     }
 
-    //pub fn get_space_ident(&self) -> Ident {
-    //    Ident::new(format!("{}Space", self.name).as_str(), Span::mixed_site())
-    //}
-
     pub fn get_dir_name(&self) -> String {
         self.name.from_case(Case::Pascal).to_case(Case::Snake)
     }
@@ -34,6 +30,13 @@ impl WorktableNameGenerator {
     pub fn get_persistence_engine_ident(&self) -> Ident {
         Ident::new(
             format!("{}PersistenceEngine", self.name).as_str(),
+            Span::mixed_site(),
+        )
+    }
+
+    pub fn get_persistence_task_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}PersistenceTask", self.name).as_str(),
             Span::mixed_site(),
         )
     }

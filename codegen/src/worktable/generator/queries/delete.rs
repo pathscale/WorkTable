@@ -50,8 +50,7 @@ impl Generator {
                     secondary_keys_events,
                     primary_key_events,
                 });
-                let mut engine = self.2.write().expect("should be not already held by current thread");
-                engine.apply_operation(op);
+                self.2.apply_operation(op);
             }
         } else {
             quote! {

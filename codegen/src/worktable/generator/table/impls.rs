@@ -36,6 +36,8 @@ impl Generator {
     fn gen_table_new_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let table_name = name_generator.get_work_table_literal_name();
+        let engine = name_generator.get_persistence_engine_ident();
+        let task = name_generator.get_persistence_task_ident();
         let dir_name = name_generator.get_dir_name();
 
         if self.is_persist {
@@ -44,15 +46,11 @@ impl Generator {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
                     let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
-                    let engine = PersistenceEngine::from_table_files_path(table_files_path)?;
+                    let engine: #engine = PersistenceEngine::from_table_files_path(table_files_path)?;
                     core::result::Result::Ok(Self(
                         inner,
                         config,
-                        std::sync::Arc::new(
-                            std::sync::RwLock::new(
-                                engine
-                            )
-                        )
+                        #task::run_engine(engine)
                     ))
                 }
             }
@@ -89,8 +87,7 @@ impl Generator {
         let insert = if self.is_persist {
             quote! {
                 let (pk, op) = self.0.insert_cdc(row)?;
-                let mut engine = self.2.write().expect("should be not already held by current thread");
-                engine.apply_operation(op);
+                self.2.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {

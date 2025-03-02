@@ -25,12 +25,14 @@ use crate::prelude::From;
 )]
 pub struct OperationId(u32);
 
+#[derive(Debug)]
 pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Insert(InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>),
     Update(UpdateOperation<SecondaryKeys>),
     Delete(DeleteOperation<PrimaryKey, SecondaryKeys>),
 }
 
+#[derive(Debug)]
 pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
@@ -40,6 +42,7 @@ pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub link: Link,
 }
 
+#[derive(Debug)]
 pub struct UpdateOperation<SecondaryKeys> {
     pub id: OperationId,
     pub secondary_keys_events: SecondaryKeys,
@@ -47,6 +50,7 @@ pub struct UpdateOperation<SecondaryKeys> {
     pub link: Link,
 }
 
+#[derive(Debug)]
 pub struct DeleteOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,

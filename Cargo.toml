@@ -19,6 +19,7 @@ perf_measurements = ["dep:performance_measurement", "dep:performance_measurement
 eyre = "0.6.12"
 derive_more = { version = "1.0.0", features = ["from", "error", "display", "into"] }
 tokio = { version = "1", features = ["full"] }
+tracing = "0.1.40"
 rkyv = { version = "0.8.9", features = ["uuid-1"] }
 lockfree = { version = "0.5.1" }
 worktable_codegen = { path = "codegen", version = "0.4.1" }

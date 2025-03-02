@@ -23,8 +23,9 @@ pub mod prelude {
     pub use crate::lock::LockMap;
     pub use crate::persistence::{
         map_index_pages_to_toc_and_general, DeleteOperation, IndexTableOfContents, InsertOperation,
-        Operation, PersistenceConfig, PersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex,
-        SpaceIndexOps, SpaceSecondaryIndexOps, UpdateOperation,
+        Operation, PersistenceConfig, PersistenceEngine, PersistenceEngineOps, PersistenceTask,
+        SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceSecondaryIndexOps,
+        UpdateOperation,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{

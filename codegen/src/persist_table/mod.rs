@@ -19,12 +19,14 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     };
 
     let space_file_def = gen.gen_space_file_def();
-    let persistence_manager = gen.get_persistence_manager_type();
+    let persistence_engine = gen.get_persistence_engine_type();
+    let persistence_task = gen.get_persistence_task_type();
     let size_measurable_impl = gen.gen_size_measurable_impl()?;
 
     Ok(quote! {
         #size_measurable_impl
         #space_file_def
-        #persistence_manager
+        #persistence_engine
+        #persistence_task
     })
 }

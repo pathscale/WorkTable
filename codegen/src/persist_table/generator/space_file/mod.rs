@@ -141,6 +141,8 @@ impl Generator {
         let wt_ident = &self.struct_def.ident;
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_ident = name_generator.get_index_type_ident();
+        let task_ident = name_generator.get_persistence_task_ident();
+        let engine_ident = name_generator.get_persistence_engine_ident();
         let dir_name = name_generator.get_dir_name();
 
         quote! {
@@ -164,8 +166,6 @@ impl Generator {
                     pk_map.attach_node(node);
                 }
 
-                println!("data info {:?}", self.data_info.inner.pk_gen_state);
-
                 let table = WorkTable {
                     data,
                     pk_map,
@@ -178,15 +178,12 @@ impl Generator {
                 };
 
                 let path = format!("{}/{}", config.tables_path.as_str(), #dir_name);
+                let engine: #engine_ident = PersistenceEngine::from_table_files_path(path)
+                                .expect("should not panic as SpaceFile is ok");
                 #wt_ident(
                     table,
                     config,
-                    std::sync::Arc::new(
-                        std::sync::RwLock::new(
-                            PersistenceEngine::from_table_files_path(path)
-                                .expect("should not panic as SpaceFile is ok")
-                        )
-                    )
+                    #task_ident::run_engine(engine)
                 )
             }
         }
@@ -223,12 +220,10 @@ impl Generator {
                     let mut data = vec![];
                     let mut data_file = std::fs::File::open(format!("{}/{}", path, #data_extension))?;
                     let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut data_file, 0)?;
-                    println!("{:?}", info);
                     let file_length = data_file.metadata()?.len();
                     let count = file_length / (#inner_const_name as u64 + GENERAL_HEADER_SIZE as u64);
                     for page_id in 1..=count {
                         let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(&mut data_file, page_id as u32)?;
-                        println!("{:?}", index);
                         data.push(index);
                     }
                     (data, info)
