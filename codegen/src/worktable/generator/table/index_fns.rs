@@ -120,16 +120,49 @@ impl Generator {
             .get(i)
             .ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_where_{i}").as_str(), Span::mixed_site());
-        let _field_ident = &idx.name;
+        let field_ident = &idx.name;
 
         Ok(quote! {
             pub fn #fn_name(&self, range: impl std::ops::RangeBounds<#type_>) -> Option<Vec<#row_ident>> {
-                 println!(
+
+                let mut result = Vec::new();
+
+                let start = match range.start_bound() {
+                    std::ops::Bound::Included(val) => *val,
+                    std::ops::Bound::Excluded(val) => *val + 1,
+                    std::ops::Bound::Unbounded => #type_::MIN,
+                };
+
+                let end = match range.end_bound() {
+                    std::ops::Bound::Included(val) => *val,
+                    std::ops::Bound::Excluded(val) => *val - 1,
+                    std::ops::Bound::Unbounded => #type_::MAX,
+                };
+
+
+                println!(
                     "Start bound: {:?}, End bound: {:?}",
                     range.start_bound(),
-                    range.end_bound()
+                    range.end_bound(),
                  );
-                None
+
+                for val in start..=end {
+
+                    if let Some(link) = self.0.indexes.#field_ident.get(&val).map(|kv| kv.get().value) {
+                       if let Some(row) = self.0.data.select(link).ok() {
+                           result.push(row);
+                       }
+                    }
+                }
+
+                println!("{:?}", result);
+
+                if !result.is_empty() {
+                    Some(result)
+                } else {
+                    None
+                }
+
             }
         })
     }
