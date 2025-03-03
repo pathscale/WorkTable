@@ -16,7 +16,7 @@ fn main() {
         },
         indexes: {
             idx1: attr,
-            idx2: attr2 unique,
+            idx2: attr2,
         },
         queries: {
             update: {
@@ -38,49 +38,13 @@ fn main() {
     let row = MyRow {
         val: 777,
         attr: "Attribute1".to_string(),
-        attr2: 1,
+        attr2: 345,
         test: 1,
         id: 0,
     };
 
-    let row1 = MyRow {
-        val: 777,
-        attr: "Attribute1".to_string(),
-        attr2: 2,
-        test: 1,
-        id: 2,
-    };
-
-    let row2 = MyRow {
-        val: 777,
-        attr: "Attribute1".to_string(),
-        attr2: 3,
-        test: 1,
-        id: 3,
-    };
-
-    let row3 = MyRow {
-        val: 777,
-        attr: "Attribute1".to_string(),
-        attr2: 7,
-        test: 1,
-        id: 4,
-    };
-
-    let row4 = MyRow {
-        val: 777,
-        attr: "Attribute1".to_string(),
-        attr2: 11,
-        test: 1,
-        id: 5,
-    };
-
     // insert
     let pk: MyPrimaryKey = my_table.insert(row).expect("primary key");
-    let _pk: MyPrimaryKey = my_table.insert(row1).expect("primary key");
-    let _pk: MyPrimaryKey = my_table.insert(row2).expect("primary key");
-    let _pk: MyPrimaryKey = my_table.insert(row3).expect("primary key");
-    let _pk: MyPrimaryKey = my_table.insert(row4).expect("primary key");
 
     // Select ALL records from WT
     let select_all = my_table.select_all().execute();
@@ -106,10 +70,4 @@ fn main() {
 
     let select_all = my_table.select_all().execute();
     println!("Select after delete {:?}", select_all);
-
-    let _where1 = my_table.select_where_attr2(0..5);
-    let _where2 = my_table.select_where_attr2(..10);
-    let _where3 = my_table.select_where_attr2(10..);
-
-    let _where4 = my_table.select_where_attr2(4..=10);
 }

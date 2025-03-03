@@ -20,9 +20,6 @@ impl Generator {
 
         let range = self.gen_select_where_fns()?;
 
-        println!("{}", range);
-        println!("{}", index_fns);
-
         Ok(quote! {
             #page_size_consts
             #type_

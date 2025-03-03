@@ -95,10 +95,28 @@ impl Generator {
             .indexes
             .iter()
             .map(|(i, idx)| {
+                let type_ = self
+                    .columns
+                    .columns_map
+                    .get(i)
+                    .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+                if type_.to_string() == "String" {
+                    return Ok(quote! {});
+                }
                 if idx.is_unique {
-                    Self::gen_select_where_fn(i, idx, &self.columns.columns_map, row_ident.clone())
+                    Self::gen_unique_select_where_fn(
+                        i,
+                        idx,
+                        &self.columns.columns_map,
+                        row_ident.clone(),
+                    )
                 } else {
-                    Ok(quote! {})
+                    Self::gen_non_unique_select_where_fn(
+                        i,
+                        idx,
+                        &self.columns.columns_map,
+                        row_ident.clone(),
+                    )
                 }
             })
             .collect::<Result<Vec<_>, syn::Error>>()?;
@@ -110,7 +128,7 @@ impl Generator {
         })
     }
 
-    fn gen_select_where_fn(
+    fn gen_unique_select_where_fn(
         i: &Ident,
         idx: &Index,
         columns_map: &HashMap<Ident, TokenStream>,
@@ -125,7 +143,47 @@ impl Generator {
         Ok(quote! {
             pub fn #fn_name(&self, range: impl std::ops::RangeBounds<#type_>) -> Option<Vec<#row_ident>> {
 
-                let mut result = Vec::new();
+                let start = match range.start_bound() {
+                    std::ops::Bound::Included(val) => *val,
+                    std::ops::Bound::Excluded(val) => *val + 1,
+                    std::ops::Bound::Unbounded => #type_::MIN,
+                };
+
+                let end = match range.end_bound() {
+                    std::ops::Bound::Included(val) => *val,
+                    std::ops::Bound::Excluded(val) => *val - 1,
+                    std::ops::Bound::Unbounded => #type_::MAX,
+                };
+
+                let rows = self.0.indexes.#field_ident
+                     .range::<#type_, _>((std::ops::Bound::Included(&start), std::ops::Bound::Included(&end)))
+                     .map(|(_key, link)| self.0.data.select(*link))
+                     .collect::<Result<Vec<_>, _>>()
+                     .ok()?;
+
+               if !rows.is_empty() {
+                   Some(rows)
+               } else {
+                   None
+               }
+            }
+        })
+    }
+
+    fn gen_non_unique_select_where_fn(
+        i: &Ident,
+        idx: &Index,
+        columns_map: &HashMap<Ident, TokenStream>,
+        row_ident: Ident,
+    ) -> syn::Result<TokenStream> {
+        let type_ = columns_map
+            .get(i)
+            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let fn_name = Ident::new(format!("select_where_{i}").as_str(), Span::mixed_site());
+        let field_ident = &idx.name;
+
+        Ok(quote! {
+            pub fn #fn_name(&self, range: impl std::ops::RangeBounds<#type_>)  -> core::result::Result<SelectResult<#row_ident, Self>, WorkTableError>  {
 
                 let start = match range.start_bound() {
                     std::ops::Bound::Included(val) => *val,
@@ -139,29 +197,12 @@ impl Generator {
                     std::ops::Bound::Unbounded => #type_::MAX,
                 };
 
+                let rows = self.0.indexes.#field_ident
+                    .range((std::ops::Bound::Included(&start), std::ops::Bound::Included(&end)))
+                    .map(|(_key, link)| { self.0.data.select(*link).map_err(WorkTableError::PagesError)
+                        }).collect::<Result<Vec<_>, _>>()?;
 
-                println!(
-                    "Start bound: {:?}, End bound: {:?}",
-                    range.start_bound(),
-                    range.end_bound(),
-                 );
-
-                for val in start..=end {
-
-                    if let Some(link) = self.0.indexes.#field_ident.get(&val).map(|kv| kv.get().value) {
-                       if let Some(row) = self.0.data.select(link).ok() {
-                           result.push(row);
-                       }
-                    }
-                }
-
-                println!("{:?}", result);
-
-                if !result.is_empty() {
-                    Some(result)
-                } else {
-                    None
-                }
+                core::result::Result::Ok(SelectResult::<#row_ident, Self>::new(rows))
 
             }
         })
