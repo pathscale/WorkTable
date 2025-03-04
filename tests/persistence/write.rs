@@ -15,6 +15,7 @@ fn test_persist() {
 
     runtime.block_on(async {
         let table = get_test_wt();
+        table.wait_for_ops().await;
         table.persist().unwrap();
 
         assert!(check_if_dirs_are_same(
@@ -37,6 +38,7 @@ fn test_persist_without_secondary_indexes() {
 
     runtime.block_on(async {
         let table = get_test_wt_without_secondary_indexes();
+        table.wait_for_ops().await;
         table.persist().unwrap();
 
         assert!(check_if_dirs_are_same(
