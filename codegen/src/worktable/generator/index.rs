@@ -126,7 +126,7 @@ impl Generator {
             .columns
             .indexes
             .iter()
-            .map(|(i, idx)| &idx.name)
+            .map(|(_, idx)| &idx.name)
             .collect::<Vec<_>>();
 
         quote! {
@@ -153,7 +153,7 @@ impl Generator {
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
                 quote! {
-                    let (_, events) = self.#index_field_name.remove_cdc(&row.#i, &link);
+                    let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row.#i, link);
                     let #index_field_name = events.into_iter().map(|ev| ev.into()).collect();
                 }
             })
@@ -162,7 +162,7 @@ impl Generator {
             .columns
             .indexes
             .iter()
-            .map(|(i, idx)| &idx.name)
+            .map(|(_, idx)| &idx.name)
             .collect::<Vec<_>>();
 
         quote! {
@@ -225,7 +225,7 @@ impl Generator {
             .columns
             .indexes
             .iter()
-            .map(|(i, idx)| &idx.name)
+            .map(|(_, idx)| &idx.name)
             .collect::<Vec<_>>();
 
         quote! {

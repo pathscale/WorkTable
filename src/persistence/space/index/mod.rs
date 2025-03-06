@@ -1,6 +1,12 @@
 mod table_of_contents;
 mod util;
 
+use std::fmt::Debug;
+use std::fs::File;
+use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+
 use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
@@ -18,12 +24,6 @@ use rkyv::ser::sharing::Share;
 use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
-use std::fmt::Debug;
-use std::fs::File;
-use std::hash::Hash;
-use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
 
 use crate::persistence::space::open_or_create_file;
 use crate::persistence::SpaceIndexOps;
@@ -38,6 +38,7 @@ pub struct SpaceIndex<T, const DATA_LENGTH: u32> {
     table_of_contents: IndexTableOfContents<T, DATA_LENGTH>,
     next_page_id: Arc<AtomicU32>,
     index_file: File,
+    #[allow(dead_code)]
     info: GeneralPage<SpaceInfoPage<()>>,
 }
 
@@ -381,7 +382,7 @@ where
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>,
     {
         let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
-        let mut indexset = BTreeMap::with_maximum_node_size(size);
+        let indexset = BTreeMap::with_maximum_node_size(size);
         for (_, page_id) in self.table_of_contents.iter() {
             let page =
                 parse_page::<IndexPage<T>, DATA_LENGTH>(&mut self.index_file, (*page_id).into())?;

@@ -29,7 +29,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 mod tests {
     use quote::quote;
     use rkyv::{Archive, Deserialize, Serialize};
-    use scc::TreeIndex;
 
     use crate::persist_index::expand;
 
@@ -40,11 +39,6 @@ mod tests {
         pub page_id: u32,
         pub offset: u32,
         pub length: u32,
-    }
-
-    pub struct TestIndex {
-        test_idx: TreeIndex<i64, Link>,
-        exchange_idx: TreeIndex<String, std::sync::Arc<lockfree::set::Set<Link>>>,
     }
 
     #[test]

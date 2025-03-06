@@ -1,10 +1,10 @@
-use crate::{check_if_files_are_same, remove_file_if_exists};
+use std::fs::copy;
+
 use data_bucket::{Link, INNER_PAGE_SIZE};
-use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
-use indexset::core::pair::Pair;
-use std::fs::{copy, File, OpenOptions};
 use worktable::prelude::{SpaceIndex, SpaceIndexOps};
+
+use crate::{check_if_files_are_same, remove_file_if_exists};
 
 #[test]
 fn test_indexset_node_creation() {

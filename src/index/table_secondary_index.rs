@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use data_bucket::Link;
 
-use crate::persistence::Operation;
 use crate::Difference;
 use crate::WorkTableError;
 

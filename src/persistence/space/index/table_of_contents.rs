@@ -1,13 +1,11 @@
 use std::fs::File;
-use std::hash::Hash;
-use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    parse_page, persist_page, GeneralHeader, GeneralPage, IndexPage, PageType, SizeMeasurable,
-    SpaceId, TableOfContentsPage,
+    parse_page, persist_page, GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId,
+    TableOfContentsPage,
 };
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
@@ -102,7 +100,7 @@ where
         let mut removed = false;
         let mut i = 0;
         while !removed {
-            let mut page = &mut self.pages[i];
+            let page = &mut self.pages[i];
             if page.inner.contains(node_id) {
                 page.inner.remove(node_id);
                 self.current_page = i;
@@ -252,7 +250,7 @@ mod tests {
 
         for i in 0..toc.current_page + 1 {
             let page = toc.pages[i].clone();
-            for (k, i) in page.inner.into_iter() {
+            for (k, _) in page.inner.into_iter() {
                 let pos = keys.binary_search(&k).expect("value should exist");
                 keys.remove(pos);
             }

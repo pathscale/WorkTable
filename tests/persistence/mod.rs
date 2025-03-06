@@ -1,11 +1,8 @@
-use std::sync::Arc;
-
 use worktable::prelude::*;
 use worktable::worktable;
 
 mod index_page;
 mod read;
-mod space;
 mod space_index;
 mod sync;
 mod toc;

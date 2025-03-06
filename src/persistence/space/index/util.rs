@@ -1,7 +1,5 @@
 use crate::prelude::IndexTableOfContents;
-use data_bucket::{
-    GeneralHeader, GeneralPage, IndexPage, PageType, SizeMeasurable, TableOfContentsPage,
-};
+use data_bucket::{GeneralHeader, GeneralPage, IndexPage, PageType, SizeMeasurable};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 

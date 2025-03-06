@@ -1,6 +1,5 @@
-use indexset::concurrent::map::BTreeMap;
 use std::fs::File;
-use std::sync::Arc;
+
 use worktable::prelude::*;
 
 // TODO: Fix naming.

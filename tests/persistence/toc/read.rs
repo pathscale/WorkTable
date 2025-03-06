@@ -1,5 +1,5 @@
 use data_bucket::INNER_PAGE_SIZE;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use worktable::prelude::IndexTableOfContents;
@@ -12,7 +12,7 @@ fn test_index_table_of_contents_read() {
         .open("tests/data/expected/persist_index_table_of_contents.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(1));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -30,7 +30,7 @@ fn test_index_table_of_contents_read_from_space() {
         .open("tests/data/expected/test_persist/primary.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(1));
-    let mut toc = IndexTableOfContents::<u64, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u64, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -48,7 +48,7 @@ fn test_index_table_of_contents_read_from_space_index() {
         .open("tests/data/expected/space_index/process_create_node.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -66,7 +66,7 @@ fn test_index_table_of_contents_read_from_space_index_after_insert() {
         .open("tests/data/expected/space_index/process_insert_at.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -84,7 +84,7 @@ fn test_index_table_of_contents_read_from_space_index_with_updated_node_id() {
         .open("tests/data/expected/space_index/process_insert_at_with_node_id_update.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -102,7 +102,7 @@ fn test_index_table_of_contents_read_from_space_index_with_remove_at_node_id() {
         .open("tests/data/expected/space_index/process_remove_at_node_id.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -120,7 +120,7 @@ fn test_index_table_of_contents_read_from_space_index_with_remove_node() {
         .open("tests/data/expected/space_index/process_remove_node.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -139,7 +139,7 @@ fn test_index_table_of_contents_read_from_space_index_with_create_node_after_rem
         .open("tests/data/expected/space_index/process_create_node_after_remove.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -158,7 +158,7 @@ fn test_index_table_of_contents_read_from_space_index_after_split_node() {
         .open("tests/data/expected/space_index/process_split_node.wt.idx")
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(2));
-    let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,

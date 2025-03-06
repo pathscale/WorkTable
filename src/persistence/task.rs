@@ -1,10 +1,10 @@
-use crate::persistence::PersistenceEngineOps;
-use crate::prelude::{Operation, PersistenceEngine};
-use futures::task::AtomicWaker;
 use std::fmt::Debug;
-use std::ptr::addr_eq;
 use std::sync::Arc;
+
 use tokio::sync::Notify;
+
+use crate::persistence::PersistenceEngineOps;
+use crate::prelude::Operation;
 
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
@@ -48,6 +48,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
 
 #[derive(Debug)]
 pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    #[allow(dead_code)]
     engine_task_handle: tokio::task::AbortHandle,
     queue: Arc<Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     progress_notify: Arc<Notify>,
