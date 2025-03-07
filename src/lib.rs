@@ -23,10 +23,7 @@ pub mod prelude {
     pub use crate::in_memory::{Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
-    pub use crate::table::select::{
-        Order, QueryParams2, SelectQueryBuilder, SelectQueryBuilder2, SelectQueryExecutor,
-        SelectQueryExecutor2, SelectResult, SelectResultExecutor,
-    };
+    pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
     pub use crate::{
         lock::Lock, Difference, IndexMap, IndexMultiMap, TableIndex, TableRow, TableSecondaryIndex,
         WorkTable, WorkTableError,

@@ -38,7 +38,7 @@ fn main() {
     let row = MyRow {
         val: 777,
         attr: "Attribute1".to_string(),
-        attr2: 1,
+        attr2: 2,
         test: 1,
         id: 0,
     };
@@ -46,16 +46,16 @@ fn main() {
     let row2 = MyRow {
         val: 777,
         attr: "Attribute2".to_string(),
-        attr2: 3,
-        test: 1,
+        attr2: 2,
+        test: 2,
         id: 2,
     };
 
     let row3 = MyRow {
         val: 777,
         attr: "Attribute3".to_string(),
-        attr2: 8,
-        test: 1,
+        attr2: 2,
+        test: 3,
         id: 3,
     };
 
@@ -63,7 +63,7 @@ fn main() {
         val: 777,
         attr: "Attribute4".to_string(),
         attr2: 2,
-        test: 1,
+        test: 4,
         id: 4,
     };
 
@@ -82,15 +82,28 @@ fn main() {
     // println!("Select All {:?}", select_all);
 
     let select_all2 = my_table
-        .select_all2()
+        .select_all()
         .where_by(0..=3i16, "attr2")
-        .order_by(Order::Asc, "attr2")
+        .order_by(Order::Desc, "attr2")
         .offset(1)
         .limit(10)
-        .execute2();
+        .execute();
 
     for row in select_all2.unwrap() {
-        println!("{:?}", row);
+        println!("SELECT ALL {:?}", row);
+    }
+
+    let select_all2 = my_table
+        .select_by_attr2(2)
+        .expect("msg")
+        .where_by(2..=5u8, "test")
+        .order_by(Order::Asc, "attr2")
+        .offset(0)
+        .limit(10)
+        .execute();
+
+    for row in select_all2.unwrap() {
+        println!("SELECT BY {:?}", row);
     }
 
     // Select by Idx
