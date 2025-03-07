@@ -17,8 +17,11 @@ impl Generator {
         let index_fns = self.gen_table_index_fns()?;
         let select_executor_impl = self.gen_table_select_executor_impl();
         let select_result_executor_impl = self.gen_table_select_result_executor_impl();
-
+        let select_result_executor_impl2 = self.gen_table_select_result_executor_impl2();
         let range = self.gen_select_where_fns()?;
+
+        println!("{}", select_executor_impl);
+        println!("222 {}", select_result_executor_impl2);
 
         Ok(quote! {
             #page_size_consts
@@ -28,6 +31,7 @@ impl Generator {
             #index_fns
             #select_executor_impl
             #select_result_executor_impl
+            #select_result_executor_impl2
 
             #range
         })

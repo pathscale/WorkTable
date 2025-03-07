@@ -24,7 +24,8 @@ pub mod prelude {
     pub use crate::lock::LockMap;
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{
-        Order, SelectQueryBuilder, SelectQueryExecutor, SelectResult, SelectResultExecutor,
+        Order, QueryParams2, SelectQueryBuilder, SelectQueryBuilder2, SelectQueryExecutor,
+        SelectQueryExecutor2, SelectResult, SelectResultExecutor,
     };
     pub use crate::{
         lock::Lock, Difference, IndexMap, IndexMultiMap, TableIndex, TableRow, TableSecondaryIndex,
