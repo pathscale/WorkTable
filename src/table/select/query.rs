@@ -1,27 +1,30 @@
-use std::marker::PhantomData;
+use std::collections::VecDeque;
 
 use crate::select::{Order, QueryParams};
 use crate::WorkTableError;
 
-pub trait SelectQueryExecutor<'a, Row>
+#[derive(Clone)]
+pub struct SelectQueryBuilder<Row, I, ColumnRange>
 where
-    Self: Sized,
+    I: Iterator<Item = Row>,
 {
-    fn execute(&self, q: SelectQueryBuilder<'a, Row, Self>) -> Result<Vec<Row>, WorkTableError>;
+    pub params: QueryParams<ColumnRange>,
+    pub iter: I,
 }
 
-pub struct SelectQueryBuilder<'a, Row, W> {
-    table: &'a W,
-    pub params: QueryParams,
-    phantom_data: PhantomData<Row>,
-}
-
-impl<'a, Row, W> SelectQueryBuilder<'a, Row, W> {
-    pub fn new(table: &'a W) -> Self {
+impl<Row, I, ColumnRange> SelectQueryBuilder<Row, I, ColumnRange>
+where
+    I: Iterator<Item = Row>,
+{
+    pub fn new(iter: I) -> Self {
         Self {
-            table,
-            params: QueryParams::default(),
-            phantom_data: PhantomData,
+            params: QueryParams {
+                limit: None,
+                offset: None,
+                orders: VecDeque::new(),
+                range: None,
+            },
+            iter,
         }
     }
 
@@ -40,10 +43,18 @@ impl<'a, Row, W> SelectQueryBuilder<'a, Row, W> {
         self
     }
 
-    pub fn execute(self) -> Result<Vec<Row>, WorkTableError>
+    pub fn where_by<R>(mut self, range: R, column: impl Into<String>) -> Self
     where
-        W: SelectQueryExecutor<'a, Row>,
+        R: Into<ColumnRange>,
     {
-        self.table.execute(self)
+        self.params.range = Some((range.into(), column.into()));
+        self
     }
+}
+
+pub trait SelectQueryExecutor<Row, I, T>
+where
+    Self: Sized,
+{
+    fn execute(self) -> Result<Vec<Row>, WorkTableError>;
 }
