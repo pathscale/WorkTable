@@ -114,7 +114,7 @@ where
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&T, &PageId)> {
-        self.pages.iter().map(|v| v.inner.iter()).flatten()
+        self.pages.iter().flat_map(|v| v.inner.iter())
     }
 
     pub fn update_key(&mut self, old_key: &T, new_key: T)

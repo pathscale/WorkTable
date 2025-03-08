@@ -157,6 +157,7 @@ where
         Ok(pk)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn insert_cdc<SecondaryEvents>(
         &self,
         row: Row,

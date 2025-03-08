@@ -159,7 +159,7 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            pub fn persist(&mut self, path: &String) -> eyre::Result<()>
+            pub fn persist(&mut self, path: &str) -> eyre::Result<()>
             {
                 #(#persist_logic)*
                 Ok(())
@@ -220,7 +220,7 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            pub fn parse_from_file(path: &String) -> eyre::Result<Self> {
+            pub fn parse_from_file(path: &str) -> eyre::Result<Self> {
                 #(#field_names_literals)*
 
                 Ok(Self {

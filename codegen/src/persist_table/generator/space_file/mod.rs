@@ -199,7 +199,7 @@ impl Generator {
         let data_extension = Literal::string(WT_DATA_EXTENSION);
 
         quote! {
-            pub fn parse_file(path: &String) -> eyre::Result<Self> {
+            pub fn parse_file(path: &str) -> eyre::Result<Self> {
                 let mut primary_index = {
                     let mut primary_index = vec![];
                     let mut primary_file = std::fs::File::open(format!("{}/primary{}", path, #index_extension))?;

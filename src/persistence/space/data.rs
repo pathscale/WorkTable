@@ -34,7 +34,7 @@ impl<PkGenState, const DATA_LENGTH: u32> SpaceData<PkGenState, DATA_LENGTH> {
             (self.last_page_id * (DATA_LENGTH + GENERAL_HEADER_SIZE as u32) + offset) as u64,
         ))?;
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&self.current_data_length)?;
-        self.data_file.write(bytes.as_ref())?;
+        self.data_file.write_all(bytes.as_ref())?;
         Ok(())
     }
 }
@@ -100,7 +100,7 @@ where
     fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
         if link.page_id > self.last_page_id.into() {
             let mut page = GeneralPage {
-                header: GeneralHeader::new(link.page_id.into(), PageType::SpaceInfo, 0.into()),
+                header: GeneralHeader::new(link.page_id, PageType::SpaceInfo, 0.into()),
                 inner: DataPage {
                     length: 0,
                     data: [0; 1],

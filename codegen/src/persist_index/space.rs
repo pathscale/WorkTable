@@ -84,8 +84,8 @@ impl Generator {
     fn gen_space_secondary_index_from_table_files_path_fn(&self) -> TokenStream {
         let fields: Vec<_> = self
             .field_types
-            .iter()
-            .map(|(i, _)| {
+            .keys()
+            .map(|i| {
                 let literal_name = Literal::string(i.to_string().as_str());
                 quote! {
                     #i: SpaceIndex::secondary_from_table_files_path(path, #literal_name)?,
@@ -109,8 +109,8 @@ impl Generator {
 
         let process: Vec<_> = self
             .field_types
-            .iter()
-            .map(|(i, _)| {
+            .keys()
+            .map(|i| {
                 quote! {
                     for event in events.#i {
                         self.#i.process_change_event(event)?;

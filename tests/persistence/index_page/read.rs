@@ -27,9 +27,9 @@ fn test_index_page_read_after_create_node_in_space_index() {
     assert_eq!(page.inner.node_id, 5);
     assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.current_length, 1);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.slots.first().unwrap(), &0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 5);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
 }
 
 #[test]
@@ -44,13 +44,13 @@ fn test_index_page_read_after_insert_at_in_space_index() {
     assert_eq!(page.inner.node_id, 5);
     assert_eq!(page.inner.current_index, 2);
     assert_eq!(page.inner.current_length, 2);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &1);
+    assert_eq!(page.inner.slots.first().unwrap(), &1);
     assert_eq!(page.inner.index_values.get(1).unwrap().key, 3);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.offset, 24);
     assert_eq!(page.inner.slots.get(1).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 5);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
 }
 
 #[test]
@@ -65,9 +65,9 @@ fn test_index_page_read_after_insert_at_with_node_id_update_in_space_index() {
     assert_eq!(page.inner.node_id, 7);
     assert_eq!(page.inner.current_index, 2);
     assert_eq!(page.inner.current_length, 2);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.slots.first().unwrap(), &0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 5);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
     assert_eq!(page.inner.slots.get(1).unwrap(), &1);
     assert_eq!(page.inner.index_values.get(1).unwrap().key, 7);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);
@@ -86,7 +86,7 @@ fn test_index_page_read_after_remove_at_node_id_in_space_index() {
     assert_eq!(page.inner.node_id, 3);
     assert_eq!(page.inner.current_index, 0);
     assert_eq!(page.inner.current_length, 1);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &1);
+    assert_eq!(page.inner.slots.first().unwrap(), &1);
     assert_eq!(page.inner.index_values.get(1).unwrap().key, 3);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.offset, 24);
@@ -104,14 +104,14 @@ fn test_index_page_read_after_insert_at_removed_place_in_space_index() {
     assert_eq!(page.inner.node_id, 7);
     assert_eq!(page.inner.current_index, 3);
     assert_eq!(page.inner.current_length, 3);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &1);
+    assert_eq!(page.inner.slots.first().unwrap(), &1);
     assert_eq!(page.inner.index_values.get(1).unwrap().key, 3);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.length, 48);
     assert_eq!(page.inner.index_values.get(1).unwrap().link.offset, 24);
     assert_eq!(page.inner.slots.get(1).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 6);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.offset, 0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 6);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
+    assert_eq!(page.inner.index_values.first().unwrap().link.offset, 0);
     assert_eq!(page.inner.slots.get(2).unwrap(), &2);
     assert_eq!(page.inner.index_values.get(2).unwrap().key, 7);
     assert_eq!(page.inner.index_values.get(2).unwrap().link.length, 24);
@@ -130,17 +130,17 @@ fn test_index_pages_read_after_creation_of_second_node_in_space_index() {
     assert_eq!(page.inner.node_id, 5);
     assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.current_length, 1);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.slots.first().unwrap(), &0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 5);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
 
     let page = parse_page::<IndexPage<u32>, { INNER_PAGE_SIZE as u32 }>(&mut file, 3).unwrap();
     assert_eq!(page.inner.node_id, 15);
     assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.current_length, 1);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 15);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.slots.first().unwrap(), &0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 15);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
 }
 
 #[test]
@@ -155,17 +155,17 @@ fn test_index_pages_read_after_creation_of_node_after_remove_node_in_space_index
     assert_eq!(page.inner.node_id, 10);
     assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.current_length, 1);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 10);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.slots.first().unwrap(), &0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 10);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
 
     let page = parse_page::<IndexPage<u32>, { INNER_PAGE_SIZE as u32 }>(&mut file, 3).unwrap();
     assert_eq!(page.inner.node_id, 15);
     assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.current_length, 1);
-    assert_eq!(page.inner.slots.get(0).unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 15);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
+    assert_eq!(page.inner.slots.first().unwrap(), &0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 15);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
 }
 
 #[test]

@@ -123,7 +123,7 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
             >,
     {
-        let header = GeneralHeader::new(page_id.into(), PageType::Index, self.space_id);
+        let header = GeneralHeader::new(page_id, PageType::Index, self.space_id);
         let mut general_page = GeneralPage {
             inner: node,
             header,
@@ -170,7 +170,7 @@ where
             utility.current_index,
         )?;
 
-        if &node_id < &value.key {
+        if node_id < value.key {
             utility.node_id = value.key.clone();
             new_node_id = Some(value.key);
         }
@@ -212,7 +212,7 @@ where
         utility.current_length -= 1;
         IndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.current_index)?;
 
-        if &node_id == &value.key {
+        if node_id == value.key {
             let index = *utility
                 .slots
                 .get(index - 1)

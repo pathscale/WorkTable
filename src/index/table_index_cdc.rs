@@ -7,6 +7,7 @@ use indexset::core::pair::Pair;
 
 pub trait TableIndexCdc<T> {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>);
+    #[allow(clippy::type_complexity)]
     fn remove_cdc(
         &self,
         value: T,

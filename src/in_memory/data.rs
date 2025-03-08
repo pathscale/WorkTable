@@ -209,7 +209,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
         let bytes = &mut inner_data[link.offset as usize..(link.offset + link.length) as usize];
-        Ok(bytes.iter().cloned().collect::<Vec<_>>())
+        Ok(bytes.to_vec())
     }
 
     pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {

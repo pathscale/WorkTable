@@ -56,10 +56,7 @@ pub fn get_test_wt() -> TestPersistWorkTable {
     let table = get_empty_test_wt();
 
     for i in 1..100 {
-        let row = TestPersistRow {
-            another: i as u64,
-            id: i,
-        };
+        let row = TestPersistRow { another: i, id: i };
         table.insert(row).unwrap();
     }
 

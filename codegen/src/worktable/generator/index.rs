@@ -125,8 +125,8 @@ impl Generator {
         let idents = self
             .columns
             .indexes
-            .iter()
-            .map(|(_, idx)| &idx.name)
+            .values()
+            .map(|idx| &idx.name)
             .collect::<Vec<_>>();
 
         quote! {
@@ -161,8 +161,8 @@ impl Generator {
         let idents = self
             .columns
             .indexes
-            .iter()
-            .map(|(_, idx)| &idx.name)
+            .values()
+            .map(|idx| &idx.name)
             .collect::<Vec<_>>();
 
         quote! {
@@ -224,8 +224,8 @@ impl Generator {
         let idents = self
             .columns
             .indexes
-            .iter()
-            .map(|(_, idx)| &idx.name)
+            .values()
+            .map(|idx| &idx.name)
             .collect::<Vec<_>>();
 
         quote! {
