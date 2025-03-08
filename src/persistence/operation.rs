@@ -32,10 +32,9 @@ pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Delete(DeleteOperation<PrimaryKey, SecondaryKeys>),
 }
 
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
-    #[debug(skip)]
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
     pub pk_gen_state: PrimaryKeyGenState,
@@ -51,10 +50,9 @@ pub struct UpdateOperation<SecondaryKeys> {
     pub link: Link,
 }
 
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub struct DeleteOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
-    #[debug(skip)]
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
 }

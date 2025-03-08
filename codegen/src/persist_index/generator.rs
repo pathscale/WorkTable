@@ -355,3 +355,42 @@ impl Generator {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::{Ident, Span};
+    use quote::quote;
+
+    use crate::persist_index::generator::Generator;
+    use crate::persist_index::parser::Parser;
+
+    #[test]
+    fn correctly_collects_fields() {
+        let input = quote! {
+            #[derive(Debug, Default, Clone)]
+            pub struct TestIndex {
+                test_idx: TreeIndex<i64, Link>,
+                exchnage_idx: TreeMultiIndex<String, Link>
+            }
+        };
+        let struct_ = Parser::parse_struct(input).unwrap();
+        let gen = Generator::new(struct_);
+
+        assert_eq!(
+            gen.field_types
+                .get(&Ident::new("test_idx", Span::call_site()))
+                .unwrap()
+                .to_string()
+                .as_str(),
+            "i64"
+        );
+        assert_eq!(
+            gen.field_types
+                .get(&Ident::new("exchnage_idx", Span::call_site()))
+                .unwrap()
+                .to_string()
+                .as_str(),
+            "String"
+        );
+    }
+}

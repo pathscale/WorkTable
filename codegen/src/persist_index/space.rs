@@ -26,7 +26,6 @@ impl Generator {
             .iter()
             .map(|(i, t)| {
                 quote! {
-                    #[debug(skip)]
                     #i: Vec<indexset::cdc::change::ChangeEvent<
                         indexset::core::pair::Pair<#t, Link>
                     >>,
@@ -35,7 +34,7 @@ impl Generator {
             .collect();
 
         quote! {
-            #[derive(derive_more::Debug)]
+            #[derive(Debug)]
             pub struct #ident {
                 #(#fields)*
             }
