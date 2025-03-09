@@ -1,12 +1,12 @@
 mod data;
 mod index;
 
-use std::fs::{File, OpenOptions};
 use std::path::Path;
 
 use data_bucket::{GeneralPage, Link, SpaceInfoPage};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
+use tokio::fs::{File, OpenOptions};
 
 pub use data::SpaceData;
 pub use index::{map_index_pages_to_toc_and_general, IndexTableOfContents, SpaceIndex};

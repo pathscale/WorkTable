@@ -1,7 +1,9 @@
-use std::fs::File;
-use std::io::{Seek, SeekFrom, Write};
+use std::io::SeekFrom;
 use std::path::Path;
 
+use crate::persistence::space::open_or_create_file;
+use crate::persistence::SpaceDataOps;
+use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
 use data_bucket::{
     parse_page, persist_page, update_at, DataPage, GeneralHeader, GeneralPage, Link, PageType,
@@ -14,10 +16,8 @@ use rkyv::ser::sharing::Share;
 use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
-
-use crate::persistence::space::open_or_create_file;
-use crate::persistence::SpaceDataOps;
-use crate::prelude::WT_DATA_EXTENSION;
+use tokio::fs::File;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Debug)]
 pub struct SpaceData<PkGenState, const DATA_LENGTH: u32> {
@@ -28,13 +28,15 @@ pub struct SpaceData<PkGenState, const DATA_LENGTH: u32> {
 }
 
 impl<PkGenState, const DATA_LENGTH: u32> SpaceData<PkGenState, DATA_LENGTH> {
-    fn update_data_length(&mut self) -> eyre::Result<()> {
+    async fn update_data_length(&mut self) -> eyre::Result<()> {
         let offset = (u32::default().aligned_size() * 6) as u32;
-        self.data_file.seek(SeekFrom::Start(
-            (self.last_page_id * (DATA_LENGTH + GENERAL_HEADER_SIZE as u32) + offset) as u64,
-        ))?;
+        self.data_file
+            .seek(SeekFrom::Start(
+                (self.last_page_id * (DATA_LENGTH + GENERAL_HEADER_SIZE as u32) + offset) as u64,
+            ))
+            .await?;
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&self.current_data_length)?;
-        self.data_file.write_all(bytes.as_ref())?;
+        self.data_file.write_all(bytes.as_ref()).await?;
         Ok(())
     }
 }
