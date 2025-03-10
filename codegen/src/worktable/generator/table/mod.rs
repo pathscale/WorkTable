@@ -15,10 +15,11 @@ impl Generator {
         let default = self.gen_table_default();
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
-        let select_executor_impl = self.gen_table_select_executor_impl();
-        let select_result_executor_impl = self.gen_table_select_result_executor_impl();
+        let select_query_executor_impl = self.gen_table_select_query_executor_impl();
+        let column_range_type = self.gen_table_column_range_type();
 
-        let range = self.gen_select_where_fns()?;
+        println!("{}", column_range_type);
+        println!("{}", select_query_executor_impl);
 
         Ok(quote! {
             #page_size_consts
@@ -26,10 +27,8 @@ impl Generator {
             #default
             #impl_
             #index_fns
-            #select_executor_impl
-            #select_result_executor_impl
-
-            #range
+            #select_query_executor_impl
+            #column_range_type
         })
     }
 
