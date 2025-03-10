@@ -16,6 +16,10 @@ impl Generator {
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
         let select_query_executor_impl = self.gen_table_select_query_executor_impl();
+        let column_range_type = self.gen_table_column_range_type();
+
+        println!("{}", column_range_type);
+        println!("{}", select_query_executor_impl);
 
         Ok(quote! {
             #page_size_consts
@@ -24,6 +28,7 @@ impl Generator {
             #impl_
             #index_fns
             #select_query_executor_impl
+            #column_range_type
         })
     }
 

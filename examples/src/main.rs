@@ -1,4 +1,4 @@
-use futures::executor::block_on;
+//use futures::executor::block_on;
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -38,7 +38,7 @@ fn main() {
     let row = MyRow {
         val: 777,
         attr: "Attribute1".to_string(),
-        attr2: 2,
+        attr2: 0,
         test: 1,
         id: 0,
     };
@@ -46,7 +46,7 @@ fn main() {
     let row2 = MyRow {
         val: 777,
         attr: "Attribute2".to_string(),
-        attr2: 2,
+        attr2: 1,
         test: 2,
         id: 2,
     };
@@ -62,7 +62,7 @@ fn main() {
     let row4 = MyRow {
         val: 777,
         attr: "Attribute4".to_string(),
-        attr2: 2,
+        attr2: 3,
         test: 4,
         id: 4,
     };
@@ -83,9 +83,10 @@ fn main() {
 
     let select_all2 = my_table
         .select_all()
-        .where_by(0..=3i16, "attr2")
-        .order_by(Order::Desc, "attr2")
-        .offset(1)
+        .where_by(0..3i16, "attr2")
+        .where_by(2..=4u8, "test")
+        .order_by(Order::Asc, "attr2")
+        .offset(0)
         .limit(10)
         .execute();
 
@@ -97,7 +98,7 @@ fn main() {
         .select_by_attr2(2)
         .expect("msg")
         .where_by(2..=5u8, "test")
-        .order_by(Order::Asc, "attr2")
+        .order_by(Order::Desc, "test")
         .offset(0)
         .limit(10)
         .execute();

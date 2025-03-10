@@ -6,7 +6,7 @@ use crate::WorkTableError;
 #[derive(Clone)]
 pub struct SelectQueryBuilder<Row, I, ColumnRange>
 where
-    I: Iterator<Item = Row>,
+    I: DoubleEndedIterator<Item = Row>,
 {
     pub params: QueryParams<ColumnRange>,
     pub iter: I,
@@ -14,15 +14,15 @@ where
 
 impl<Row, I, ColumnRange> SelectQueryBuilder<Row, I, ColumnRange>
 where
-    I: Iterator<Item = Row>,
+    I: DoubleEndedIterator<Item = Row>,
 {
     pub fn new(iter: I) -> Self {
         Self {
             params: QueryParams {
                 limit: None,
                 offset: None,
-                orders: VecDeque::new(),
-                range: None,
+                order: None,
+                range: VecDeque::new(),
             },
             iter,
         }
@@ -39,7 +39,7 @@ where
     }
 
     pub fn order_by<S: Into<String>>(mut self, order: Order, column: S) -> Self {
-        self.params.orders.push_back((order, column.into()));
+        self.params.order = Some((order, column.into()));
         self
     }
 
@@ -47,7 +47,7 @@ where
     where
         R: Into<ColumnRange>,
     {
-        self.params.range = Some((range.into(), column.into()));
+        self.params.range.push_back((range.into(), column.into()));
         self
     }
 }

@@ -74,13 +74,14 @@ impl Generator {
         let field_ident = &idx.name;
 
         Ok(quote! {
-            pub fn #fn_name(&self, by: #type_) -> core::result::Result<SelectQueryBuilder<#row_ident, impl Iterator<Item = #row_ident> + '_, #column_range_type>, WorkTableError> {
-                let iter = self.0.indexes
-                    .#field_ident
+            pub fn #fn_name(&self, by: #type_) -> core::result::Result<SelectQueryBuilder<#row_ident, impl DoubleEndedIterator<Item = #row_ident> + '_, #column_range_type>, WorkTableError> {
+                let rows: Vec<#row_ident> = self.0.indexes.#field_ident
                     .get(&by)
                     .into_iter()
-                    .filter_map(|(ty, link)| self.0.data.select(*link).ok());
-                core::result::Result::Ok(SelectQueryBuilder::new(iter))
+                    .filter_map(|(_, link)| self.0.data.select(*link).ok())
+                    .collect();
+
+                core::result::Result::Ok(SelectQueryBuilder::new(rows.into_iter()))
             }
         })
     }

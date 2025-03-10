@@ -1,9 +1,10 @@
-mod query;
 use std::collections::VecDeque;
+
+mod query;
 
 pub use query::{SelectQueryBuilder, SelectQueryExecutor};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Order {
     Asc,
     Desc,
@@ -15,6 +16,6 @@ type Column = String;
 pub struct QueryParams<ColumnRange> {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
-    pub orders: VecDeque<(Order, Column)>,
-    pub range: Option<(ColumnRange, Column)>,
+    pub order: Option<(Order, Column)>,
+    pub range: VecDeque<(ColumnRange, Column)>,
 }
