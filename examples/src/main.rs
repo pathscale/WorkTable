@@ -37,7 +37,7 @@ fn main() {
     // WT rows (has prefix My because of table name)
     let row = MyRow {
         val: 777,
-        attr: "Attribute1".to_string(),
+        attr: "abn".to_string(),
         attr2: 0,
         test: 1,
         id: 0,
@@ -45,7 +45,7 @@ fn main() {
 
     let row2 = MyRow {
         val: 777,
-        attr: "Attribute2".to_string(),
+        attr: "cvbd".to_string(),
         attr2: 1,
         test: 2,
         id: 2,
@@ -53,7 +53,7 @@ fn main() {
 
     let row3 = MyRow {
         val: 777,
-        attr: "Attribute3".to_string(),
+        attr: "abc".to_string(),
         attr2: 2,
         test: 3,
         id: 3,
@@ -61,7 +61,7 @@ fn main() {
 
     let row4 = MyRow {
         val: 777,
-        attr: "Attribute4".to_string(),
+        attr: "bcd".to_string(),
         attr2: 3,
         test: 4,
         id: 4,
@@ -83,9 +83,9 @@ fn main() {
 
     let select_all2 = my_table
         .select_all()
-        .where_by(0..3i16, "attr2")
-        .where_by(2..=4u8, "test")
-        .order_by(Order::Asc, "attr2")
+        .where_by(0..=3i16, "attr2")
+        .where_by(0..=4u8, "test")
+        .order_by(Order::Desc, "attr")
         .offset(0)
         .limit(10)
         .execute();

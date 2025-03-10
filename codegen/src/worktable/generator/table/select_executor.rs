@@ -67,12 +67,12 @@ impl Generator {
         let column_range_type = name_generator.get_column_range_type_ident();
 
         let order_matches = self.columns.columns_map.iter().map(|(column, _)| {
-            let col_lit = Literal::string(&column.to_string());
-            let col_ident = Ident::new(&column.to_string(), Span::call_site());
-            quote! {
-                #col_lit => |a: &#row_type, b: &#row_type| a.#col_ident.partial_cmp(&b.#col_ident).unwrap(),
-            }
-        });
+        let col_lit = Literal::string(&column.to_string());
+        let col_ident = Ident::new(&column.to_string(), Span::call_site());
+        quote! {
+            #col_lit => |a: &#row_type, b: &#row_type| a.#col_ident.partial_cmp(&b.#col_ident).unwrap(),
+        }
+    });
 
         let range_matches = self
             .columns
@@ -85,11 +85,10 @@ impl Generator {
                 let variant_ident =
                     Ident::new(&column.to_string().to_case(Case::Pascal), Span::call_site());
                 quote! {
-                    (#col_lit, #column_range_type::#variant_ident(range)) => vals
-                        .iter()
-                        .filter(|row| range.contains(&row.#col_ident))
-                        .cloned()
-                        .collect(),
+                    (#col_lit, #column_range_type::#variant_ident(range)) => {
+                        Box::new(iter.filter(move |row| range.contains(&row.#col_ident)))
+                            as Box<dyn DoubleEndedIterator<Item = #row_type>>
+                    },
                 }
             });
 
@@ -97,56 +96,47 @@ impl Generator {
             impl<I> SelectQueryExecutor<#row_type, I, #column_range_type>
             for SelectQueryBuilder<#row_type, I, #column_range_type>
             where
-            I: DoubleEndedIterator<Item = #row_type> + Sized ,
+                I: DoubleEndedIterator<Item = #row_type> + Sized,
             {
-            fn execute(self) -> Result<Vec<#row_type>, WorkTableError> {
-                let mut vals: Vec<#row_type> = self.iter.collect();
-
-
-                if !self.params.range.is_empty() {
-                    for (range, column) in &self.params.range {
-                        vals = match (column.as_str(), range.clone().into()) {
-                            #(#range_matches)*
+                fn execute(self) -> Result<Vec<#row_type>, WorkTableError> {
+                    let mut iter: Box<dyn DoubleEndedIterator<Item = #row_type>> = Box::new(self.iter);
+                    if !self.params.range.is_empty() {
+                        for (range, column) in &self.params.range {
+                            iter = match (column.as_str(), range.clone().into()) {
+                                #(#range_matches)*
+                                _ => unreachable!(),
+                            };
+                        }
+                    }
+                    if let Some((order, col)) = &self.params.order {
+                        let cmp = match col.as_str() {
+                            #(#order_matches)*
                             _ => unreachable!(),
                         };
-                    }
-                }
 
-                if let Some((order, col)) = &self.params.order {
-                    let cmp = match col.as_str() {
-                        #(#order_matches)*
-                        _ => unreachable!(),
+                        // We cannot sort Iterator itself without Vec
+                        let mut items: Vec<#row_type> = iter.collect();
+                        items.sort_by(cmp);
+
+                        iter = Box::new(items.into_iter());
+
+                        if *order == Order::Desc {
+                            iter = Box::new(iter.rev());
+                        }
+                    }
+
+                    let iter_offset: Box<dyn Iterator<Item = #row_type>> = if let Some(offset) = self.params.offset {
+                        Box::new(iter.skip(offset))
+                    } else {
+                        Box::new(iter)
                     };
 
-                    vals.sort_by(cmp);
-                }
-
-                let mut iter = vals.into_iter();
-
-                let iter: either::Either<_, _> = if let Some((order, _)) = &self.params.order {
-                    if *order == Order::Desc {
-                        either::Either::Left(iter.rev())
+                    let iter_limit: Box<dyn Iterator<Item = #row_type>> = if let Some(limit) = self.params.limit {
+                         Box::new(iter_offset.take(limit))
                     } else {
-                        either::Either::Right(iter)
-                    }
-                } else {
-                    either::Either::Right(iter)
-                };
-
-                let iter: either::Either<_, _> = if let Some(offset) = self.params.offset {
-                    either::Either::Left(iter.skip(offset))
-                } else {
-                    either::Either::Right(iter)
-                };
-
-                let iter: either::Either<_, _> = if let Some(limit) = self.params.limit {
-                    either::Either::Left(iter.take(limit))
-                } else {
-                    either::Either::Right(iter)
-                };
-
-
-                core::result::Result::Ok(iter.collect())
+                        Box::new(iter_offset)
+                    };
+                    Ok(iter_limit.collect())
                 }
             }
         }

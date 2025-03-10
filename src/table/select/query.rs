@@ -6,7 +6,7 @@ use crate::WorkTableError;
 #[derive(Clone)]
 pub struct SelectQueryBuilder<Row, I, ColumnRange>
 where
-    I: DoubleEndedIterator<Item = Row>,
+    I: DoubleEndedIterator<Item = Row> + Sized,
 {
     pub params: QueryParams<ColumnRange>,
     pub iter: I,
@@ -14,7 +14,7 @@ where
 
 impl<Row, I, ColumnRange> SelectQueryBuilder<Row, I, ColumnRange>
 where
-    I: DoubleEndedIterator<Item = Row>,
+    I: DoubleEndedIterator<Item = Row> + Sized,
 {
     pub fn new(iter: I) -> Self {
         Self {
@@ -55,6 +55,7 @@ where
 pub trait SelectQueryExecutor<Row, I, T>
 where
     Self: Sized,
+    I: DoubleEndedIterator<Item = Row> + Sized,
 {
     fn execute(self) -> Result<Vec<Row>, WorkTableError>;
 }

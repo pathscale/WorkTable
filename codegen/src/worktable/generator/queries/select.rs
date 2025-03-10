@@ -23,7 +23,7 @@ impl Generator {
         let column_range_type = name_generator.get_column_range_type_ident();
 
         quote! {
-            pub fn select_all(&self) -> SelectQueryBuilder<#row_ident, impl DoubleEndedIterator<Item = #row_ident> + '_, #column_range_type> {
+            pub fn select_all(&self) -> SelectQueryBuilder<#row_ident, impl DoubleEndedIterator<Item = #row_ident> + '_ + Sized, #column_range_type> {
                 let iter = self.0.pk_map
                     .iter()
                     .filter_map(|(_, link)| self.0.data.select(*link).ok());
