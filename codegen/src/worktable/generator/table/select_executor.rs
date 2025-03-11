@@ -125,18 +125,18 @@ impl Generator {
                         }
                     }
 
-                    let iter_offset: Box<dyn Iterator<Item = #row_type>> = if let Some(offset) = self.params.offset {
+                    let iter_result: Box<dyn Iterator<Item = #row_type>> = if let Some(offset) = self.params.offset {
                         Box::new(iter.skip(offset))
                     } else {
                         Box::new(iter)
                     };
 
-                    let iter_limit: Box<dyn Iterator<Item = #row_type>> = if let Some(limit) = self.params.limit {
-                         Box::new(iter_offset.take(limit))
+                    let iter_result: Box<dyn Iterator<Item = #row_type>> = if let Some(limit) = self.params.limit {
+                         Box::new(iter_result.take(limit))
                     } else {
-                        Box::new(iter_offset)
+                        Box::new(iter_result)
                     };
-                    Ok(iter_limit.collect())
+                    Ok(iter_result.collect())
                 }
             }
         }
