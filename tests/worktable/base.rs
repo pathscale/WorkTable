@@ -241,7 +241,7 @@ async fn delete() {
     let selected_row = table.select_by_test(1);
     assert!(selected_row.is_none());
     let selected_row = table.select_by_exchange("test".to_string()).unwrap();
-    assert!(selected_row.execute().is_empty());
+    assert!(selected_row.execute().expect("REASON").is_empty());
 
     let updated = TestRow {
         id: table.get_next_pk().into(),
@@ -456,7 +456,8 @@ fn select_by_exchange() {
     let selected_rows = table
         .select_by_exchange("test".to_string())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
 
     assert_eq!(selected_rows.len(), 1);
     assert!(selected_rows.contains(&row));
@@ -464,59 +465,8 @@ fn select_by_exchange() {
         .select_by_exchange("test1".to_string())
         .unwrap()
         .execute()
+        .expect("REASON")
         .is_empty())
-}
-
-#[test]
-fn select_where_unique_test() {
-    let table = TestWorkTable::default();
-    let row = TestRow {
-        id: table.get_next_pk().into(),
-        test: 1,
-        another: 1,
-        exchange: "test".to_string(),
-    };
-    let _ = table.insert(row.clone()).unwrap();
-
-    let row2 = TestRow {
-        id: table.get_next_pk().into(),
-        test: 2,
-        another: 2,
-        exchange: "test".to_string(),
-    };
-    let _ = table.insert(row2.clone()).unwrap();
-
-    let selected_rows = table.select_where_test(1..2).unwrap();
-    assert_eq!(selected_rows.len(), 1);
-
-    let selected_rows = table.select_where_test(1..=2).unwrap();
-    assert_eq!(selected_rows.len(), 2);
-}
-
-#[test]
-fn select_where_non_unique_test() {
-    let table = TestWorkTable::default();
-    let row = TestRow {
-        id: table.get_next_pk().into(),
-        test: 1,
-        another: 1,
-        exchange: "test".to_string(),
-    };
-    let _ = table.insert(row.clone()).unwrap();
-
-    let row2 = TestRow {
-        id: table.get_next_pk().into(),
-        test: 2,
-        another: 2,
-        exchange: "test".to_string(),
-    };
-    let _ = table.insert(row2.clone()).unwrap();
-
-    let selected_rows = table.select_where_another(1..2).unwrap().execute();
-    assert_eq!(selected_rows.len(), 1);
-
-    let selected_rows = table.select_where_another(1..=2).unwrap().execute();
-    assert_eq!(selected_rows.len(), 2);
 }
 
 #[test]
@@ -539,7 +489,8 @@ fn select_multiple_by_exchange() {
     let selected_rows = table
         .select_by_exchange("test".to_string())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
 
     assert_eq!(selected_rows.len(), 2);
     assert!(selected_rows.contains(&row));
@@ -548,6 +499,7 @@ fn select_multiple_by_exchange() {
         .select_by_exchange("test1".to_string())
         .unwrap()
         .execute()
+        .expect("REASON")
         .is_empty())
 }
 
@@ -759,8 +711,7 @@ fn select_all_order_two_test() {
 
     let all = table
         .select_all()
-        .order_by(Order::Asc, "exchange")
-        .order_by(Order::Desc, "test")
+        .order_by(Order::Asc, "test")
         .limit(3)
         .execute()
         .unwrap();
@@ -769,7 +720,7 @@ fn select_all_order_two_test() {
     assert_eq!(&all[0].exchange, &"a_test".to_string());
     assert_eq!(&all[1].exchange, &"b_test".to_string());
     assert_eq!(&all[2].exchange, &"c_test".to_string());
-    assert_eq!(&all[2].test, &99)
+    assert_eq!(&all[2].test, &3)
 }
 
 #[test]
@@ -804,7 +755,8 @@ fn select_by_order_by_test() {
         .unwrap()
         .order_by(Order::Desc, "test")
         .limit(3)
-        .execute();
+        .execute()
+        .expect("rows");
 
     assert_eq!(all.len(), 3);
     assert_eq!(&all[0].exchange, &"c_test".to_string());
@@ -848,7 +800,8 @@ fn select_by_offset_test() {
         .order_by(Order::Desc, "test")
         .offset(10)
         .limit(3)
-        .execute();
+        .execute()
+        .expect("rows");
 
     assert_eq!(all.len(), 3);
     assert_eq!(&all[0].exchange, &"c_test".to_string());

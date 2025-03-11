@@ -6,50 +6,72 @@ use quote::quote;
 
 use crate::name_generator::WorktableNameGenerator;
 use crate::worktable::generator::Generator;
+use quote::ToTokens;
+use syn::Type;
+
+fn is_numeric_type(ty: &Type) -> bool {
+    matches!(
+        ty.to_token_stream().to_string().as_str(),
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "f32"
+            | "f64"
+    )
+}
 
 impl Generator {
     pub fn gen_table_column_range_type(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let column_range_type = name_generator.get_column_range_type_ident();
 
-        let column_range_variants = self
+        let unique_types: std::collections::HashSet<String> = self
             .columns
             .columns_map
-            .iter()
-            .filter(|(_, ty)| ty.to_string() != "String")
-            .map(|(column, ty)| {
-                let variant_ident =
-                    Ident::new(&column.to_string().to_case(Case::Pascal), Span::call_site());
-                let ty_ident = Ident::new(&ty.to_string(), Span::call_site());
-                quote! {
-                    #variant_ident(std::ops::RangeInclusive<#ty_ident>),
-                }
-            });
+            .values()
+            .map(|ty| ty.to_token_stream().to_string())
+            .filter(|ty| is_numeric_type(&syn::parse_str::<Type>(ty).unwrap()))
+            .map(|ty| ty.to_string())
+            .collect();
 
-        let from_impls = self
-            .columns
-            .columns_map
-            .iter()
-            .filter(|(_, ty)| ty.to_string() != "String")
-            .map(|(column, ty)| {
-                let variant_ident =
-                    Ident::new(&column.to_string().to_case(Case::Pascal), Span::call_site());
-                let type_ident = Ident::new(&ty.to_string(), Span::call_site());
+        let column_range_variants = unique_types.iter().map(|type_name| {
+            let variant_ident = Ident::new(
+                &type_name.to_string().to_case(Case::Pascal),
+                Span::call_site(),
+            );
+            let ty_ident = Ident::new(&type_name.to_string(), Span::call_site());
+            quote! {
+                #variant_ident(std::ops::RangeInclusive<#ty_ident>),
+            }
+        });
 
-                quote! {
-                    impl From<std::ops::RangeInclusive<#type_ident>> for #column_range_type {
-                        fn from(range: std::ops::RangeInclusive<#type_ident>) -> Self {
-                            Self::#variant_ident(range)
-                        }
-                    }
-                    impl From<std::ops::Range<#type_ident>> for #column_range_type {
-                        fn from(range: std::ops::Range<#type_ident>) -> Self {
-                            let end = range.end.saturating_sub(1);
-                            Self::#variant_ident(range.start..=end)
-                        }
+        let from_impls = unique_types.iter().map(|type_name| {
+            let variant_ident = Ident::new(
+                &type_name.to_string().to_case(Case::Pascal),
+                Span::call_site(),
+            );
+            let type_ident = Ident::new(&type_name.to_string(), Span::call_site());
+
+            quote! {
+                impl From<std::ops::RangeInclusive<#type_ident>> for #column_range_type {
+                    fn from(range: std::ops::RangeInclusive<#type_ident>) -> Self {
+                        Self::#variant_ident(range)
                     }
                 }
-            });
+                impl From<std::ops::Range<#type_ident>> for #column_range_type {
+                    fn from(range: std::ops::Range<#type_ident>) -> Self {
+                        let end = range.end.saturating_sub(1);
+                        Self::#variant_ident(range.start..=end)
+                    }
+                }
+            }
+        });
 
         quote! {
             #[derive(Debug, Clone)]
@@ -78,12 +100,14 @@ impl Generator {
             .columns
             .columns_map
             .iter()
-            .filter(|(_, ty)| ty.to_string() != "String")
-            .map(|(column, _)| {
+            .filter(|(_, ty)| {
+                is_numeric_type(&syn::parse_str::<Type>(&ty.to_token_stream().to_string()).unwrap())
+            })
+            .map(|(column, ty)| {
                 let col_lit = Literal::string(column.to_string().as_str());
                 let col_ident = Ident::new(&column.to_string(), Span::call_site());
                 let variant_ident =
-                    Ident::new(&column.to_string().to_case(Case::Pascal), Span::call_site());
+                    Ident::new(&ty.to_string().to_case(Case::Pascal), Span::call_site());
                 quote! {
                     (#col_lit, #column_range_type::#variant_ident(range)) => {
                         Box::new(iter.filter(move |row| range.contains(&row.#col_ident)))

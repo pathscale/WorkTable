@@ -63,22 +63,40 @@ async fn update_3_idx() {
     let updated = test_table
         .select_by_attr1(attr1_new.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr1, attr1_new);
-    let updated = test_table.select_by_attr2(attr2_new).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_new)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr2, attr2_new);
-    let updated = test_table.select_by_attr3(attr3_new).unwrap().execute();
+    let updated = test_table
+        .select_by_attr3(attr3_new)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr3, attr3_new);
 
     // Check old idx removed
     let updated = test_table
         .select_by_attr1(attr1_old.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table.select_by_attr2(attr2_old).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_old)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table.select_by_attr3(attr3_old).unwrap().execute();
+    let updated = test_table
+        .select_by_attr3(attr3_old)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
 }
 
@@ -118,22 +136,40 @@ async fn update_3_idx_full_row() {
     let updated = test_table
         .select_by_attr1(attr1_new.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr1, attr1_new);
-    let updated = test_table.select_by_attr2(attr2_new).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_new)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr2, attr2_new);
-    let updated = test_table.select_by_attr3(attr3_new).unwrap().execute();
+    let updated = test_table
+        .select_by_attr3(attr3_new)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr3, attr3_new);
 
     // Check old idx removed
     let updated = test_table
         .select_by_attr1(attr1_old.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table.select_by_attr2(attr2_old).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_old)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table.select_by_attr3(attr3_old).unwrap().execute();
+    let updated = test_table
+        .select_by_attr3(attr3_old)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
 }
 
@@ -194,18 +230,28 @@ async fn update_2_idx() {
     let updated = test_table
         .select_by_attr1(attr1_new.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr1, attr1_new);
-    let updated = test_table.select_by_attr2(attr2_new).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_new)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr2, attr2_new);
 
     // Check old idx removed
     let updated = test_table
         .select_by_attr1(attr1_old.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table.select_by_attr2(attr2_old).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_old)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
 }
 
@@ -241,18 +287,28 @@ async fn update_2_idx_full_row() {
     let updated = test_table
         .select_by_attr1(attr1_new.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr1, attr1_new);
-    let updated = test_table.select_by_attr2(attr2_new).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_new)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr2, attr2_new);
 
     // Check old idx removed
     let updated = test_table
         .select_by_attr1(attr1_old.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table.select_by_attr2(attr2_old).unwrap().execute();
+    let updated = test_table
+        .select_by_attr2(attr2_old)
+        .unwrap()
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
 }
 
@@ -311,14 +367,16 @@ async fn update_1_idx() {
     let updated = test_table
         .select_by_attr1(attr1_new.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr1, attr1_new);
 
     // Check old idx removed
     let updated = test_table
         .select_by_attr1(attr1_old.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
 }
 
@@ -353,13 +411,15 @@ async fn update_1_idx_full_row() {
     let updated = test_table
         .select_by_attr1(attr1_new.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first().unwrap().attr1, attr1_new);
 
     // Check old idx removed
     let updated = test_table
         .select_by_attr1(attr1_old.clone())
         .unwrap()
-        .execute();
+        .execute()
+        .expect("rows");
     assert_eq!(updated.first(), None);
 }
