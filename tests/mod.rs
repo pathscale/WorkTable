@@ -1,12 +1,12 @@
-use std::fs;
-use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::Path;
+use tokio::fs::File;
+use tokio::io::BufReader;
 
 mod persistence;
 mod worktable;
 
-pub fn check_if_files_are_same(got: String, expected: String) -> bool {
+pub async fn check_if_files_are_same(got: String, expected: String) -> bool {
     let got = File::open(got).unwrap();
     let expected = File::open(expected).unwrap();
 
@@ -44,14 +44,14 @@ pub fn check_if_dirs_are_same(got: String, expected: String) -> bool {
     true
 }
 
-pub fn remove_file_if_exists(path: String) {
+pub async fn remove_file_if_exists(path: String) {
     if Path::new(path.as_str()).exists() {
-        fs::remove_file(path.as_str()).unwrap();
+        tokio::fs::remove_file(path.as_str()).await.unwrap();
     }
 }
 
-pub fn remove_dir_if_exists(path: String) {
+pub async fn remove_dir_if_exists(path: String) {
     if Path::new(path.as_str()).exists() {
-        fs::remove_dir_all(path).unwrap()
+        tokio::fs::remove_dir_all(path).await.unwrap()
     }
 }

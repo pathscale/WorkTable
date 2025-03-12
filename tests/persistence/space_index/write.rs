@@ -10,8 +10,8 @@ use crate::{check_if_files_are_same, remove_file_if_exists};
 mod run_first {
     use super::*;
 
-    #[test]
-    fn test_space_index_process_create_node() {
+    #[tokio::test]
+    async fn test_space_index_process_create_node() {
         remove_file_if_exists("tests/data/space_index/process_create_node.wt.idx".to_string());
 
         let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
@@ -39,8 +39,8 @@ mod run_first {
         ))
     }
 
-    #[test]
-    fn test_space_index_process_create_second_node() {
+    #[tokio::test]
+    async fn test_space_index_process_create_second_node() {
         remove_file_if_exists(
             "tests/data/space_index/process_create_second_node.wt.idx".to_string(),
         );
@@ -75,8 +75,8 @@ mod run_first {
         ))
     }
 
-    #[test]
-    fn test_space_index_process_insert_at() {
+    #[tokio::test]
+    async fn test_space_index_process_insert_at() {
         remove_file_if_exists("tests/data/space_index/process_insert_at.wt.idx".to_string());
         copy(
             "tests/data/expected/space_index/process_create_node.wt.idx",
@@ -118,8 +118,8 @@ mod run_first {
         ))
     }
 
-    #[test]
-    fn test_space_index_process_insert_at_big_amount() {
+    #[tokio::test]
+    async fn test_space_index_process_insert_at_big_amount() {
         remove_file_if_exists(
             "tests/data/space_index/process_insert_at_big_amount.wt.idx".to_string(),
         );
@@ -187,8 +187,8 @@ mod run_first {
         ))
     }
 
-    #[test]
-    fn test_space_index_process_remove_node() {
+    #[tokio::test]
+    async fn test_space_index_process_remove_node() {
         remove_file_if_exists("tests/data/space_index/process_remove_node.wt.idx".to_string());
         copy(
             "tests/data/expected/space_index/process_create_second_node.wt.idx",
@@ -222,8 +222,8 @@ mod run_first {
     }
 }
 
-#[test]
-fn test_space_index_process_insert_at_with_node_id_update() {
+#[tokio::test]
+async fn test_space_index_process_insert_at_with_node_id_update() {
     remove_file_if_exists(
         "tests/data/space_index/process_insert_at_with_node_id_update.wt.idx".to_string(),
     );
@@ -267,8 +267,8 @@ fn test_space_index_process_insert_at_with_node_id_update() {
     ))
 }
 
-#[test]
-fn test_space_index_process_remove_at() {
+#[tokio::test]
+async fn test_space_index_process_remove_at() {
     remove_file_if_exists("tests/data/space_index/process_remove_at.wt.idx".to_string());
     copy(
         "tests/data/expected/space_index/process_insert_at.wt.idx",
@@ -310,8 +310,8 @@ fn test_space_index_process_remove_at() {
     ))
 }
 
-#[test]
-fn test_space_index_process_remove_at_node_id() {
+#[tokio::test]
+async fn test_space_index_process_remove_at_node_id() {
     remove_file_if_exists("tests/data/space_index/process_remove_at_node_id.wt.idx".to_string());
     copy(
         "tests/data/expected/space_index/process_insert_at.wt.idx",
@@ -353,8 +353,8 @@ fn test_space_index_process_remove_at_node_id() {
     ))
 }
 
-#[test]
-fn test_space_index_process_insert_at_removed_place() {
+#[tokio::test]
+async fn test_space_index_process_insert_at_removed_place() {
     remove_file_if_exists(
         "tests/data/space_index/process_insert_at_removed_place.wt.idx".to_string(),
     );
@@ -440,8 +440,8 @@ fn test_space_index_process_insert_at_removed_place() {
     ))
 }
 
-#[test]
-fn test_space_index_process_create_node_after_remove() {
+#[tokio::test]
+async fn test_space_index_process_create_node_after_remove() {
     remove_file_if_exists(
         "tests/data/space_index/process_create_node_after_remove.wt.idx".to_string(),
     );
@@ -476,8 +476,8 @@ fn test_space_index_process_create_node_after_remove() {
     ))
 }
 
-#[test]
-fn test_space_index_process_split_node() {
+#[tokio::test]
+async fn test_space_index_process_split_node() {
     remove_file_if_exists("tests/data/space_index/process_split_node.wt.idx".to_string());
     copy(
         "tests/data/expected/space_index/process_insert_at_big_amount.wt.idx",

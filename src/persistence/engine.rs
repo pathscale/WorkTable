@@ -1,4 +1,5 @@
 use std::fs;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::path::Path;
 
@@ -50,16 +51,18 @@ where
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey>,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
 {
-    pub fn from_table_files_path<S: AsRef<str> + Clone>(path: S) -> eyre::Result<Self> {
+    pub async fn from_table_files_path<S: AsRef<str> + Clone + Send>(
+        path: S,
+    ) -> eyre::Result<Self> {
         let table_path = Path::new(path.as_ref());
         if !table_path.exists() {
             fs::create_dir_all(table_path)?;
         }
 
         Ok(Self {
-            data: SpaceData::from_table_files_path(path.clone())?,
-            primary_index: SpacePrimaryIndex::primary_from_table_files_path(path.clone())?,
-            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(path)?,
+            data: SpaceData::from_table_files_path(path.clone()).await?,
+            primary_index: SpacePrimaryIndex::primary_from_table_files_path(path.clone()).await?,
+            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(path).await?,
             phantom_data: PhantomData,
         })
     }
@@ -82,39 +85,50 @@ impl<
         PrimaryKeyGenState,
     >
 where
-    PrimaryKey: Ord + TablePrimaryKey,
+    PrimaryKey: Ord + TablePrimaryKey + Send,
     <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
-    SpaceData: SpaceDataOps<PrimaryKeyGenState>,
-    SpacePrimaryIndex: SpaceIndexOps<PrimaryKey>,
-    SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
+    SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send,
+    SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send,
+    SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send,
+    SecondaryIndexEvents: Send,
+    PrimaryKeyGenState: Send,
 {
     fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
-    ) -> eyre::Result<()> {
-        match op {
-            Operation::Insert(insert) => {
-                self.data.save_data(insert.link, insert.bytes.as_ref())?;
-                for event in insert.primary_key_events {
-                    self.primary_index.process_change_event(event)?;
+    ) -> impl Future<Output = eyre::Result<()>> + Send {
+        async {
+            match op {
+                Operation::Insert(insert) => {
+                    self.data
+                        .save_data(insert.link, insert.bytes.as_ref())
+                        .await?;
+                    for event in insert.primary_key_events {
+                        self.primary_index.process_change_event(event).await?;
+                    }
+                    let info = self.data.get_mut_info();
+                    info.inner.pk_gen_state = insert.pk_gen_state;
+                    self.data.save_info().await?;
+                    self.secondary_indexes
+                        .process_change_events(insert.secondary_keys_events)
+                        .await
                 }
-                let info = self.data.get_mut_info();
-                info.inner.pk_gen_state = insert.pk_gen_state;
-                self.data.save_info()?;
-                self.secondary_indexes
-                    .process_change_events(insert.secondary_keys_events)
-            }
-            Operation::Update(update) => {
-                self.data.save_data(update.link, update.bytes.as_ref())?;
-                self.secondary_indexes
-                    .process_change_events(update.secondary_keys_events)
-            }
-            Operation::Delete(delete) => {
-                for event in delete.primary_key_events {
-                    self.primary_index.process_change_event(event)?;
+                Operation::Update(update) => {
+                    self.data
+                        .save_data(update.link, update.bytes.as_ref())
+                        .await?;
+                    self.secondary_indexes
+                        .process_change_events(update.secondary_keys_events)
+                        .await
                 }
-                self.secondary_indexes
-                    .process_change_events(delete.secondary_keys_events)
+                Operation::Delete(delete) => {
+                    for event in delete.primary_key_events {
+                        self.primary_index.process_change_event(event).await?;
+                    }
+                    self.secondary_indexes
+                        .process_change_events(delete.secondary_keys_events)
+                        .await
+                }
             }
         }
     }

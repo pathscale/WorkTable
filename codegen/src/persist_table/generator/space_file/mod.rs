@@ -146,7 +146,7 @@ impl Generator {
         let dir_name = name_generator.get_dir_name();
 
         quote! {
-            pub fn into_worktable(self, config: PersistenceConfig) -> #wt_ident {
+            pub async fn into_worktable(self, config: PersistenceConfig) -> #wt_ident {
                 let mut page_id = 1;
                 let data = self.data.into_iter().map(|p| {
                     let mut data = Data::from_data_page(p);
@@ -179,6 +179,7 @@ impl Generator {
 
                 let path = format!("{}/{}", config.tables_path.as_str(), #dir_name);
                 let engine: #engine_ident = PersistenceEngine::from_table_files_path(path)
+                                .await
                                 .expect("should not panic as SpaceFile is ok");
                 #wt_ident(
                     table,
