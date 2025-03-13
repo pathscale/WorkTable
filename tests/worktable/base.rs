@@ -240,7 +240,7 @@ async fn delete() {
     assert!(selected_row.is_none());
     let selected_row = table.select_by_test(1);
     assert!(selected_row.is_none());
-    let selected_row = table.select_by_exchange("test".to_string()).unwrap();
+    let selected_row = table.select_by_exchange("test".to_string());
     assert!(selected_row.execute().expect("REASON").is_empty());
 
     let updated = TestRow {
@@ -455,7 +455,6 @@ fn select_by_exchange() {
     let _ = table.insert(row.clone()).unwrap();
     let selected_rows = table
         .select_by_exchange("test".to_string())
-        .unwrap()
         .execute()
         .expect("rows");
 
@@ -463,7 +462,6 @@ fn select_by_exchange() {
     assert!(selected_rows.contains(&row));
     assert!(table
         .select_by_exchange("test1".to_string())
-        .unwrap()
         .execute()
         .expect("REASON")
         .is_empty())
@@ -488,7 +486,6 @@ fn select_multiple_by_exchange() {
     let _ = table.insert(row_next.clone()).unwrap();
     let selected_rows = table
         .select_by_exchange("test".to_string())
-        .unwrap()
         .execute()
         .expect("rows");
 
@@ -497,7 +494,6 @@ fn select_multiple_by_exchange() {
     assert!(selected_rows.contains(&row_next));
     assert!(table
         .select_by_exchange("test1".to_string())
-        .unwrap()
         .execute()
         .expect("REASON")
         .is_empty())
@@ -752,7 +748,6 @@ fn select_by_order_by_test() {
 
     let all = table
         .select_by_exchange("c_test".to_string())
-        .unwrap()
         .order_by(Order::Desc, "test")
         .limit(3)
         .execute()
@@ -796,7 +791,6 @@ fn select_by_offset_test() {
 
     let all = table
         .select_by_exchange("c_test".to_string())
-        .unwrap()
         .order_by(Order::Desc, "test")
         .offset(10)
         .limit(3)

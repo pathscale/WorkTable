@@ -57,7 +57,6 @@ fn main() {
     // Select by Idx
     let select_by_attr = my_table
         .select_by_attr("Attribute1".to_string())
-        .expect("REASON")
         .execute()
         .unwrap();
 
