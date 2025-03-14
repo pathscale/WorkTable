@@ -1,14 +1,12 @@
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::path::Path;
-use tokio::fs::File;
-use tokio::io::BufReader;
 
 mod persistence;
 mod worktable;
 
-pub async fn check_if_files_are_same(got: String, expected: String) -> bool {
-    let got = File::open(got).unwrap();
-    let expected = File::open(expected).unwrap();
+pub fn check_if_files_are_same(got: String, expected: String) -> bool {
+    let got = std::fs::File::open(got).unwrap();
+    let expected = std::fs::File::open(expected).unwrap();
 
     // Check if file sizes are different
     if got.metadata().unwrap().len() != expected.metadata().unwrap().len() {
@@ -30,7 +28,7 @@ pub async fn check_if_files_are_same(got: String, expected: String) -> bool {
 }
 
 pub fn check_if_dirs_are_same(got: String, expected: String) -> bool {
-    let paths = fs::read_dir(&expected).unwrap();
+    let paths = std::fs::read_dir(&expected).unwrap();
     for file in paths {
         let file_name = file.unwrap().file_name();
         if !check_if_files_are_same(

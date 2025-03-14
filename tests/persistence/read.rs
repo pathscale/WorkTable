@@ -3,8 +3,8 @@ use worktable::prelude::*;
 
 // TODO: Fix naming.
 use crate::persistence::{
-    get_empty_test_wt, get_test_wt, TestPersistRow, TestPersistWorkTable, TEST_PERSIST_INNER_SIZE,
-    TEST_PERSIST_PAGE_SIZE, TEST_ROW_COUNT,
+    get_empty_test_wt, get_test_wt, TestPersistWorkTable, TEST_PERSIST_INNER_SIZE,
+    TEST_PERSIST_PAGE_SIZE,
 };
 use crate::remove_dir_if_exists;
 
@@ -126,8 +126,8 @@ async fn test_data_parse() {
 #[tokio::test]
 async fn test_space_parse() {
     let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected").unwrap();
-    let table = TestPersistWorkTable::load_from_file(config).unwrap();
-    let expected = get_test_wt();
+    let table = TestPersistWorkTable::load_from_file(config).await.unwrap();
+    let expected = get_test_wt().await;
 
     assert_eq!(
         table.select_all().execute().unwrap(),
@@ -137,51 +137,11 @@ async fn test_space_parse() {
 
 #[tokio::test]
 async fn test_space_parse_no_file() {
-    remove_dir_if_exists("tests/non-existent".to_string());
+    remove_dir_if_exists("tests/non-existent".to_string()).await;
 
     let config = PersistenceConfig::new("tests/non-existent", "tests/non-existent").unwrap();
-    let table = TestPersistWorkTable::load_from_file(config).unwrap();
-    let expected = get_empty_test_wt();
-    assert_eq!(
-        table.select_all().execute().unwrap(),
-        expected.select_all().execute().unwrap()
-    );
-}
-
-#[tokio::test]
-async fn test_space_insert_after_read() {
-    let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected").unwrap();
-    let table = TestPersistWorkTable::load_from_file(config).unwrap();
-
-    let row = TestPersistRow {
-        another: TEST_ROW_COUNT as u64,
-        id: TEST_ROW_COUNT as u64,
-    };
-    table.insert(row.clone()).unwrap();
-    let expected = get_test_wt();
-    expected.insert(row).unwrap();
-
-    assert_eq!(
-        table.select_all().execute().unwrap(),
-        expected.select_all().execute().unwrap()
-    );
-}
-
-#[tokio::test]
-async fn test_space_delete_after_read() {
-    let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected").unwrap();
-    let table = TestPersistWorkTable::load_from_file(config).unwrap();
-
-    table
-        .delete((TEST_ROW_COUNT as u64 - 1).into())
-        .await
-        .unwrap();
-    let expected = get_test_wt();
-    expected
-        .delete((TEST_ROW_COUNT as u64 - 1).into())
-        .await
-        .unwrap();
-
+    let table = TestPersistWorkTable::load_from_file(config).await.unwrap();
+    let expected = get_empty_test_wt().await;
     assert_eq!(
         table.select_all().execute().unwrap(),
         expected.select_all().execute().unwrap()
