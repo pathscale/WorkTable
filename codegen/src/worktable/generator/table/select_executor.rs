@@ -88,7 +88,7 @@ impl Generator {
         let row_type = name_generator.get_row_type_ident();
         let column_range_type = name_generator.get_column_range_type_ident();
 
-        let order_matches = self.columns.columns_map.iter().map(|(column, _)| {
+        let order_matches = self.columns.columns_map.keys().map(|column| {
         let col_lit = Literal::string(&column.to_string());
         let col_ident = Ident::new(&column.to_string(), Span::call_site());
         quote! {
