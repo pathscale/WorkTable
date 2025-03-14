@@ -102,28 +102,22 @@ where
         persist_page(&mut page, file).await
     }
 
-    fn save_data(
-        &mut self,
-        link: Link,
-        bytes: &[u8],
-    ) -> impl Future<Output = eyre::Result<()>> + Send {
-        async move {
-            if link.page_id > self.last_page_id.into() {
-                let mut page = GeneralPage {
-                    header: GeneralHeader::new(link.page_id, PageType::SpaceInfo, 0.into()),
-                    inner: DataPage {
-                        length: 0,
-                        data: [0; 1],
-                    },
-                };
-                persist_page(&mut page, &mut self.data_file).await?;
-                self.current_data_length = 0;
-                self.last_page_id += 1;
-            }
-            self.current_data_length += link.length;
-            self.update_data_length().await?;
-            update_at::<{ DATA_LENGTH }>(&mut self.data_file, link, bytes).await
+    async fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
+        if link.page_id > self.last_page_id.into() {
+            let mut page = GeneralPage {
+                header: GeneralHeader::new(link.page_id, PageType::SpaceInfo, 0.into()),
+                inner: DataPage {
+                    length: 0,
+                    data: [0; 1],
+                },
+            };
+            persist_page(&mut page, &mut self.data_file).await?;
+            self.current_data_length = 0;
+            self.last_page_id += 1;
         }
+        self.current_data_length += link.length;
+        self.update_data_length().await?;
+        update_at::<{ DATA_LENGTH }>(&mut self.data_file, link, bytes).await
     }
 
     fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>> {

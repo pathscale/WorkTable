@@ -1,5 +1,4 @@
 use std::fs;
-use std::future::Future;
 use std::marker::PhantomData;
 use std::path::Path;
 
@@ -93,42 +92,40 @@ where
     SecondaryIndexEvents: Send,
     PrimaryKeyGenState: Send,
 {
-    fn apply_operation(
+    async fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
-    ) -> impl Future<Output = eyre::Result<()>> + Send {
-        async {
-            match op {
-                Operation::Insert(insert) => {
-                    self.data
-                        .save_data(insert.link, insert.bytes.as_ref())
-                        .await?;
-                    for event in insert.primary_key_events {
-                        self.primary_index.process_change_event(event).await?;
-                    }
-                    let info = self.data.get_mut_info();
-                    info.inner.pk_gen_state = insert.pk_gen_state;
-                    self.data.save_info().await?;
-                    self.secondary_indexes
-                        .process_change_events(insert.secondary_keys_events)
-                        .await
+    ) -> eyre::Result<()> {
+        match op {
+            Operation::Insert(insert) => {
+                self.data
+                    .save_data(insert.link, insert.bytes.as_ref())
+                    .await?;
+                for event in insert.primary_key_events {
+                    self.primary_index.process_change_event(event).await?;
                 }
-                Operation::Update(update) => {
-                    self.data
-                        .save_data(update.link, update.bytes.as_ref())
-                        .await?;
-                    self.secondary_indexes
-                        .process_change_events(update.secondary_keys_events)
-                        .await
+                let info = self.data.get_mut_info();
+                info.inner.pk_gen_state = insert.pk_gen_state;
+                self.data.save_info().await?;
+                self.secondary_indexes
+                    .process_change_events(insert.secondary_keys_events)
+                    .await
+            }
+            Operation::Update(update) => {
+                self.data
+                    .save_data(update.link, update.bytes.as_ref())
+                    .await?;
+                self.secondary_indexes
+                    .process_change_events(update.secondary_keys_events)
+                    .await
+            }
+            Operation::Delete(delete) => {
+                for event in delete.primary_key_events {
+                    self.primary_index.process_change_event(event).await?;
                 }
-                Operation::Delete(delete) => {
-                    for event in delete.primary_key_events {
-                        self.primary_index.process_change_event(event).await?;
-                    }
-                    self.secondary_indexes
-                        .process_change_events(delete.secondary_keys_events)
-                        .await
-                }
+                self.secondary_indexes
+                    .process_change_events(delete.secondary_keys_events)
+                    .await
             }
         }
     }

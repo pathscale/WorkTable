@@ -2,7 +2,6 @@ mod table_of_contents;
 mod util;
 
 use std::fmt::Debug;
-use std::future::Future;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -466,33 +465,31 @@ where
         persist_page(&mut page, file).await
     }
 
-    fn process_change_event(
+    async fn process_change_event(
         &mut self,
         event: ChangeEvent<Pair<T, Link>>,
-    ) -> impl Future<Output = eyre::Result<()>> + Send {
-        async {
-            match event {
-                ChangeEvent::InsertAt {
-                    max_value: node_id,
-                    value,
-                    index,
-                } => self.process_insert_at(node_id.key, value, index).await,
-                ChangeEvent::RemoveAt {
-                    max_value: node_id,
-                    value,
-                    index,
-                } => self.process_remove_at(node_id.key, value, index).await,
-                ChangeEvent::CreateNode { max_value: node_id } => {
-                    self.process_create_node(node_id).await
-                }
-                ChangeEvent::RemoveNode { max_value: node_id } => {
-                    self.process_remove_node(node_id.key).await
-                }
-                ChangeEvent::SplitNode {
-                    max_value: node_id,
-                    split_index,
-                } => self.process_split_node(node_id.key, split_index).await,
+    ) -> eyre::Result<()> {
+        match event {
+            ChangeEvent::InsertAt {
+                max_value: node_id,
+                value,
+                index,
+            } => self.process_insert_at(node_id.key, value, index).await,
+            ChangeEvent::RemoveAt {
+                max_value: node_id,
+                value,
+                index,
+            } => self.process_remove_at(node_id.key, value, index).await,
+            ChangeEvent::CreateNode { max_value: node_id } => {
+                self.process_create_node(node_id).await
             }
+            ChangeEvent::RemoveNode { max_value: node_id } => {
+                self.process_remove_node(node_id.key).await
+            }
+            ChangeEvent::SplitNode {
+                max_value: node_id,
+                split_index,
+            } => self.process_split_node(node_id.key, split_index).await,
         }
     }
 }
