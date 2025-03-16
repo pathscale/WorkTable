@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
@@ -8,20 +10,26 @@ impl Generator {
     pub fn gen_available_types_def(&mut self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();
+        let mut types_set = HashSet::new();
 
         let rows: Vec<_> = self
             .columns
             .indexes
             .iter()
             .filter_map(|(_, idx)| self.columns.columns_map.get(&idx.field))
-            .map(|s| {
-                let type_ident = Ident::new(s.to_string().as_str(), Span::mixed_site());
-                let type_upper =
-                    Ident::new(s.to_string().to_uppercase().as_str(), Span::mixed_site());
-                Some(quote! {
-                    #[from]
-                    #type_upper(#type_ident),
-                })
+            .filter_map(|s| {
+                if types_set.contains(&s.to_string()) {
+                    None
+                } else {
+                    types_set.insert(s.to_string());
+                    let type_ident = Ident::new(s.to_string().as_str(), Span::mixed_site());
+                    let type_upper =
+                        Ident::new(s.to_string().to_uppercase().as_str(), Span::mixed_site());
+                    Some(quote! {
+                        #[from]
+                        #type_upper(#type_ident),
+                    })
+                }
             })
             .collect();
 
