@@ -1,6 +1,6 @@
 # Absolutely not a Database (WorkTable)
 
-`WorkTable` is in-memory (on-disk persistence is in progress currently) storage.
+`WorkTable` is in-memory storage.
 
 ## Usage
 
@@ -33,6 +33,65 @@ worktable!(
         }
     }
 );
+```
+
+## Persistence 
+
+To enable persistence feature you need just to add flag ```persist: true``` 
+
+```rust
+worktable!(
+    name: Test,
+    persist: true,
+    columns: {
+        id: u64 primary_key autoincrement,
+        test: i64,
+        another: u64 optional,
+        exchange: String
+    },
+    indexes: {
+        test_idx: test unique,
+        exchnage_idx: exchange,
+    }
+    queries: {
+        update: {
+            AnotherByExchange(another) by exchange,
+            AnotherByTest(another) by test,
+            AnotherById(another) by id,
+        },
+        delete: {
+            ByAnother() by another,
+            ByExchange() by exchange,
+            ByTest() by test,
+        }
+    }
+);
+```
+
+After this you need to create PersistenceConfig
+
+```rust 
+let config = PersistenceConfig::new("mydata_dir", "mydata_dir").unwrap();
+let test_table = TestWorkTable::new(config).await.unwrap();
+```
+
+To write data on disk 
+
+```rust 
+let _ = test_table.persist().await;
+
+```
+
+After creating files on disk you will get next File structure
+
+```
+$ find mydata_dir
+mydata_dir
+mydata_dir/test
+mydata_dir/test/test_idx.wt.idx
+mydata_dir/test/primary.wt.idx
+mydata_dir/test/.wt.data
+mydata_dir/test/exchnage_idx.wt.idx
 ```
 
 ## Declaration parts
