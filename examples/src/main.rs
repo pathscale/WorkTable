@@ -74,4 +74,6 @@ async fn main() {
     println!("Select after delete {:?}", select_all);
 
     let _ = my_table.persist().await;
+
+    let _ = my_table.wait_for_ops().await;
 }

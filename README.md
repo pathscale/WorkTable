@@ -75,12 +75,14 @@ let config = PersistenceConfig::new("mydata_dir", "mydata_dir").unwrap();
 let test_table = TestWorkTable::new(config).await.unwrap();
 ```
 
-To write data on disk 
+We have a queue for all operations to sync data with files, the command could help to finish all ops in the queue
 
 ```rust 
-let _ = test_table.persist().await;
+let _ = test_table.wait_for_ops().await;
 
 ```
+
+All operations such as ```insert, upsert, update, delete``` are synced and automatically update files on disk
 
 After creating files on disk you will get next File structure
 
