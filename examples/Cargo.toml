@@ -11,6 +11,8 @@ lockfree = "0.5.1"
 derive_more = { version = "1.0.0", features = ["full"] }
 eyre = "0.6.12"
 futures = "0.3.30"
-async-std = "1.10"
-either = "1.15.0"
+tokio = { version = "1", features = ["full"] }
+indexset = { version = "0.11.2", features = ["concurrent", "cdc", "multimap"] }
+
+
 
