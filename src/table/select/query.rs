@@ -37,16 +37,23 @@ where
         self
     }
 
-    pub fn order_by<S: Into<String>>(mut self, order: Order, column: S) -> Self {
-        self.params.order.push_back((order, column.into()));
+    pub fn order_on<O>(mut self, column: impl Into<&'static str>, order: O) -> Self
+    where
+        O: Into<Order>,
+    {
+        self.params
+            .order
+            .push_back((order.into(), column.into().to_string()));
         self
     }
 
-    pub fn range_by<R>(mut self, range: R, column: impl Into<String>) -> Self
+    pub fn range_on<R>(mut self, column: impl Into<&'static str>, range: R) -> Self
     where
         R: Into<ColumnRange>,
     {
-        self.params.range.push_back((range.into(), column.into()));
+        self.params
+            .range
+            .push_back((range.into(), column.into().to_string()));
         self
     }
 }

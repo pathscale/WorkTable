@@ -583,7 +583,7 @@ fn select_all_range_test() {
 
     let all = table
         .select_all()
-        .range_by(0..2i64, "test")
+        .range_on(TestRowFields::Test, 0..2i64)
         .execute()
         .unwrap();
 
@@ -619,7 +619,7 @@ fn select_all_range_inclusive_test() {
 
     let all = table
         .select_all()
-        .range_by(0..=2i64, "test")
+        .range_on(TestRowFields::Test, 0..=2i64)
         .execute()
         .unwrap();
 
@@ -826,8 +826,8 @@ fn select_all_order_multiple_test() {
 
     let all = table
         .select_all()
-        .order_by(Order::Asc, "another")
-        .order_by(Order::Desc, "test")
+        .order_on(TestRowFields::Another, Order::Asc)
+        .order_on(TestRowFields::Test, Order::Desc)
         .execute()
         .unwrap();
 
@@ -926,7 +926,7 @@ fn select_all_order_by_unique_test() {
 
     let all = table
         .select_all()
-        .order_by(Order::Asc, "test")
+        .order_on(TestRowFields::Test, Order::Asc)
         .limit(2)
         .execute()
         .unwrap();
@@ -965,7 +965,7 @@ fn select_all_order_by_non_unique_test() {
 
     let all = table
         .select_all()
-        .order_by(Order::Asc, "exchange")
+        .order_on(TestRowFields::Exchange, Order::Asc)
         .limit(2)
         .execute()
         .unwrap();
@@ -1004,7 +1004,7 @@ fn select_all_order_two_test() {
 
     let all = table
         .select_all()
-        .order_by(Order::Asc, "test")
+        .order_on(TestRowFields::Test, Order::Asc)
         .limit(3)
         .execute()
         .unwrap();
@@ -1045,7 +1045,7 @@ fn select_by_order_by_test() {
 
     let all = table
         .select_by_exchange("c_test".to_string())
-        .order_by(Order::Desc, "test")
+        .order_on(TestRowFields::Test, Order::Desc)
         .limit(3)
         .execute()
         .expect("rows");
@@ -1088,7 +1088,7 @@ fn select_by_offset_test() {
 
     let all = table
         .select_by_exchange("c_test".to_string())
-        .order_by(Order::Desc, "test")
+        .order_on(TestRowFields::Test, Order::Desc)
         .offset(10)
         .limit(3)
         .execute()

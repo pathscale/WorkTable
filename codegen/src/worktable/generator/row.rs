@@ -1,6 +1,7 @@
 use crate::name_generator::WorktableNameGenerator;
 use crate::worktable::generator::Generator;
-use proc_macro2::TokenStream;
+use convert_case::{Case, Casing};
+use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 impl Generator {
@@ -8,10 +9,14 @@ impl Generator {
     pub fn gen_row_def(&mut self) -> TokenStream {
         let def = self.gen_row_type();
         let table_row_impl = self.gen_row_table_row_impl();
+        let row_enum = self.gen_row_fields_enum();
+        let row_from = self.gen_row_fields_from_impl();
 
         quote! {
             #def
             #table_row_impl
+            #row_enum
+            #row_from
         }
     }
 
@@ -81,6 +86,68 @@ impl Generator {
                 #(#rows)*
             }
         }
+    }
+
+    /// Generates `RowFields` enum for row.
+    fn gen_row_fields_enum(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_row_type_ident();
+
+        let enum_name = Ident::new(format!("{ident}Fields").as_str(), Span::mixed_site());
+
+        let rows: Vec<_> = self
+            .columns
+            .columns_map
+            .keys()
+            .map(|name| {
+                let name_pascal = Ident::new(
+                    name.to_string().to_case(Case::Pascal).as_str(),
+                    Span::mixed_site(),
+                );
+                quote! { #name_pascal, }
+            })
+            .collect();
+
+        quote! {
+            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq)]
+            #[rkyv(derive(Debug))]
+            #[repr(C)]
+            enum #enum_name {
+                #(#rows)*
+            }
+        }
+    }
+
+    /// Generates impl from for `RowFields` enum.
+    fn gen_row_fields_from_impl(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_row_type_ident();
+
+        let enum_name = Ident::new(format!("{ident}Fields").as_str(), Span::mixed_site());
+
+        let rows: Vec<_> = self
+            .columns
+            .columns_map
+            .keys()
+            .map(|name| {
+                let name_pascal = Ident::new(
+                    name.to_string().to_case(Case::Pascal).as_str(),
+                    Span::mixed_site(),
+                );
+                let name_lit = Literal::string(&name.to_string());
+                quote! { #enum_name::#name_pascal => #name_lit, }
+            })
+            .collect();
+
+        quote! {
+                    impl From<#enum_name> for &'static str {
+                        fn from(field: #enum_name) -> &'static str {
+                            match field {
+                               #(#rows)*
+                }
+            }
+        }
+                }
     }
 }
 
