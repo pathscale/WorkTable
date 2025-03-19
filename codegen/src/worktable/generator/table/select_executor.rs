@@ -127,15 +127,26 @@ impl Generator {
                 is_numeric_type(&syn::parse_str::<Type>(&ty.to_token_stream().to_string()).unwrap())
             })
             .map(|(column, ty)| {
-                let col_lit = Literal::string(column.to_string().as_str());
-                let col_ident = Ident::new(&column.to_string(), Span::call_site());
-                let variant_ident =
-                    Ident::new(&ty.to_string().to_case(Case::Pascal), Span::call_site());
+                let variants: Vec<_> = RANGE_VARIANTS
+                    .into_iter()
+                    .map(|v| {
+                        let col_lit = Literal::string(column.to_string().as_str());
+                        let col_ident = Ident::new(&column.to_string(), Span::call_site());
+                        let variant_ident = Ident::new(
+                            &format!("{}{}", ty.to_string().to_case(Case::Pascal), v),
+                            Span::call_site(),
+                        );
+                        quote! {
+                            (#col_lit, #column_range_type::#variant_ident(range)) => {
+                                Box::new(iter.filter(move |row| range.contains(&row.#col_ident)))
+                                    as Box<dyn DoubleEndedIterator<Item = #row_type>>
+                            },
+                        }
+                    })
+                    .collect();
+
                 quote! {
-                    (#col_lit, #column_range_type::#variant_ident(range)) => {
-                        Box::new(iter.filter(move |row| range.contains(&row.#col_ident)))
-                            as Box<dyn DoubleEndedIterator<Item = #row_type>>
-                    },
+                    #(#variants)*
                 }
             });
 
