@@ -45,7 +45,7 @@ impl Generator {
         let column_range_variants = unique_types.iter().map(|type_name| {
             let ty_ident = Ident::new(&type_name.to_string(), Span::call_site());
             let variants: Vec<_> = RANGE_VARIANTS
-                .into_iter()
+                .iter()
                 .map(|v| {
                     let variant_ident = Ident::new(
                         &format!("{}{}", type_name.to_string().to_case(Case::Pascal), v),
@@ -66,7 +66,7 @@ impl Generator {
         let from_impls = unique_types.iter().map(|type_name| {
             let ty_ident = Ident::new(&type_name.to_string(), Span::call_site());
             let variants: Vec<_> = RANGE_VARIANTS
-                .into_iter()
+                .iter()
                 .map(|v| {
                     let variant_ident = Ident::new(
                         &format!("{}{}", type_name.to_string().to_case(Case::Pascal), v),
@@ -128,7 +128,7 @@ impl Generator {
             })
             .map(|(column, ty)| {
                 let variants: Vec<_> = RANGE_VARIANTS
-                    .into_iter()
+                    .iter()
                     .map(|v| {
                         let col_lit = Literal::string(column.to_string().as_str());
                         let col_ident = Ident::new(&column.to_string(), Span::call_site());
