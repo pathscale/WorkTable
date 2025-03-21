@@ -38,7 +38,7 @@ where
     }
 
     pub fn order_on(mut self, column: RowFields, order: Order) -> Self {
-        self.params.order.push_back((order.into(), column));
+        self.params.order.push_back((order, column));
         self
     }
 
