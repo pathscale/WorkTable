@@ -3,15 +3,15 @@ use std::collections::VecDeque;
 use crate::select::{Order, QueryParams};
 use crate::WorkTableError;
 
-pub struct SelectQueryBuilder<Row, I, ColumnRange>
+pub struct SelectQueryBuilder<Row, I, ColumnRange, RowFields>
 where
     I: DoubleEndedIterator<Item = Row> + Sized,
 {
-    pub params: QueryParams<ColumnRange>,
+    pub params: QueryParams<ColumnRange, RowFields>,
     pub iter: I,
 }
 
-impl<Row, I, ColumnRange> SelectQueryBuilder<Row, I, ColumnRange>
+impl<Row, I, ColumnRange, RowFields> SelectQueryBuilder<Row, I, ColumnRange, RowFields>
 where
     I: DoubleEndedIterator<Item = Row> + Sized,
 {
@@ -37,28 +37,24 @@ where
         self
     }
 
-    pub fn order_on<O>(mut self, column: impl Into<&'static str>, order: O) -> Self
+    pub fn order_on<O>(mut self, column: RowFields, order: O) -> Self
     where
         O: Into<Order>,
     {
-        self.params
-            .order
-            .push_back((order.into(), column.into().to_string()));
+        self.params.order.push_back((order.into(), column));
         self
     }
 
-    pub fn range_on<R>(mut self, column: impl Into<&'static str>, range: R) -> Self
+    pub fn range_on<R>(mut self, column: RowFields, range: R) -> Self
     where
         R: Into<ColumnRange>,
     {
-        self.params
-            .range
-            .push_back((range.into(), column.into().to_string()));
+        self.params.range.push_back((range.into(), column));
         self
     }
 }
 
-pub trait SelectQueryExecutor<Row, I, ColumnRange>
+pub trait SelectQueryExecutor<Row, I, ColumnRange, RowFields>
 where
     Self: Sized,
     I: DoubleEndedIterator<Item = Row> + Sized,
@@ -67,7 +63,7 @@ where
     fn where_by<F>(
         self,
         predicate: F,
-    ) -> SelectQueryBuilder<Row, impl DoubleEndedIterator<Item = Row> + Sized, ColumnRange>
+    ) -> SelectQueryBuilder<Row, impl DoubleEndedIterator<Item = Row> + Sized, ColumnRange, RowFields>
     where
         F: FnMut(&Row) -> bool;
 }
