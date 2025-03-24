@@ -203,7 +203,7 @@ impl Generator {
     ) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();
-        let diff_container = if let Some(_) = idx_idents {
+        let diff_container = if idx_idents.is_some() {
             quote! {
                 let row_old = self.select(pk.clone()).unwrap();
                 let row_new = row.clone();
@@ -242,7 +242,7 @@ impl Generator {
         };
 
         let process_difference = if self.is_persist {
-            if let Some(_) = idx_idents {
+            if idx_idents.is_some() {
                 quote! {
                     let secondary_keys_events = self.0.indexes.process_difference_cdc(link, diffs)?;
                 }
@@ -251,14 +251,12 @@ impl Generator {
                     let secondary_keys_events = core::default::Default::default();
                 }
             }
-        } else {
-            if let Some(_) = idx_idents {
-                quote! {
-                    self.0.indexes.process_difference(link, diffs)?;
-                }
-            } else {
-                quote! {}
+        } else if idx_idents.is_some() {
+            quote! {
+                self.0.indexes.process_difference(link, diffs)?;
             }
+        } else {
+            quote! {}
         };
 
         quote! {
