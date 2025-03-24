@@ -2,7 +2,7 @@ use worktable::prelude::SelectQueryExecutor;
 
 use crate::worktable::index::{
     Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable,
-    ThreeAttrByIdQuery, UniqueThreeAttrByIdBy, UniqueThreeAttrByIdQuery,
+    ThreeAttrByIdQuery, UniqueThreeAttrByIdQuery,
 };
 
 #[tokio::test]

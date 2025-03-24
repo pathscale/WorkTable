@@ -54,8 +54,9 @@ impl Generator {
             .map(|idx| idx.field.clone())
             .collect();
 
-        let diff_process = self.gen_process_diffs_on_index(idents.as_slice(), idents.as_slice());
+        let diff_process = self.gen_process_diffs_on_index(idents.as_slice(), Some(&idents));
         let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
 
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
@@ -77,6 +78,7 @@ impl Generator {
                     .ok_or(WorkTableError::NotFound)?;
 
                 #diff_process
+                #persist_op
 
                 unsafe { self.0.data.with_mut_ref(link, move |archived| {
                     #(#row_updates)*
@@ -171,42 +173,13 @@ impl Generator {
         }
     }
 
-    fn gen_process_diffs_on_index(&self, idents: &[Ident], idx_idents: &[Ident]) -> TokenStream {
+    fn gen_persist_op(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
-        let avt_type_ident = name_generator.get_available_type_ident();
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
         let primary_key_ident = name_generator.get_primary_key_type_ident();
-        let diff_container = quote! {
-            let row_old = self.select(pk.clone()).unwrap();
-            let row_new = row.clone();
-            let updated_bytes: Vec<u8> = vec![];
-            let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
-        };
 
-        let diff = idents
-            .iter()
-            .filter(|i| idx_idents.contains(i))
-            .map(|i| {
-                let diff_key = Literal::string(i.to_string().as_str());
-                quote! {
-                    let old = &row_old.#i;
-                    let new = &row_new.#i;
-
-                    if old != new {
-                        let diff = Difference::<#avt_type_ident> {
-                            old: old.clone().into(),
-                            new: new.clone().into(),
-                        };
-
-                        diffs.insert(#diff_key, diff);
-                    }
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let process_difference = if self.is_persist {
+        if self.is_persist {
             quote! {
-                let secondary_keys_events = self.0.indexes.process_difference_cdc(link, diffs)?;
                 let mut op: Operation<
                     <<#primary_key_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                     #primary_key_ident,
@@ -219,8 +192,72 @@ impl Generator {
                 });
             }
         } else {
+            quote! {}
+        }
+    }
+
+    fn gen_process_diffs_on_index(
+        &self,
+        idents: &[Ident],
+        idx_idents: Option<&Vec<Ident>>,
+    ) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let avt_type_ident = name_generator.get_available_type_ident();
+        let diff_container = if let Some(_) = idx_idents {
             quote! {
-                self.0.indexes.process_difference(link, diffs)?;
+                let row_old = self.select(pk.clone()).unwrap();
+                let row_new = row.clone();
+                let updated_bytes: Vec<u8> = vec![];
+                let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
+            }
+        } else {
+            quote! {
+                let updated_bytes: Vec<u8> = vec![];
+            }
+        };
+
+        let diff = if let Some(idx_idents) = idx_idents {
+            idents
+                .iter()
+                .filter(|i| idx_idents.contains(i))
+                .map(|i| {
+                    let diff_key = Literal::string(i.to_string().as_str());
+                    quote! {
+                        let old = &row_old.#i;
+                        let new = &row_new.#i;
+
+                        if old != new {
+                            let diff = Difference::<#avt_type_ident> {
+                                old: old.clone().into(),
+                                new: new.clone().into(),
+                            };
+
+                            diffs.insert(#diff_key, diff);
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+
+        let process_difference = if self.is_persist {
+            if let Some(_) = idx_idents {
+                quote! {
+                    let secondary_keys_events = self.0.indexes.process_difference_cdc(link, diffs)?;
+                }
+            } else {
+                quote! {
+                    let secondary_keys_events = core::default::Default::default();
+                }
+            }
+        } else {
+            if let Some(_) = idx_idents {
+                quote! {
+                    self.0.indexes.process_difference(link, diffs)?;
+                }
+            } else {
+                quote! {}
             }
         };
 
@@ -270,12 +307,9 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
-        let diff_process = if let Some(idx_idents) = idx_idents {
-            self.gen_process_diffs_on_index(idents, idx_idents.as_slice())
-        } else {
-            quote! {}
-        };
+        let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
         let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
@@ -297,6 +331,7 @@ impl Generator {
                         .ok_or(WorkTableError::NotFound)?;
 
                 #diff_process
+                #persist_op
 
                 unsafe { self.0.data.with_mut_ref(link, |archived| {
                     #(#row_updates)*
@@ -436,12 +471,9 @@ impl Generator {
                 }
             })
             .collect::<Vec<_>>();
-        let diff_process = if let Some(idx_idents) = idx_idents {
-            self.gen_process_diffs_on_index(idents, idx_idents.as_slice())
-        } else {
-            quote! {}
-        };
+        let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
         let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -468,6 +500,7 @@ impl Generator {
                 self.0.lock_map.insert(pk.clone(), std::sync::Arc::new(lock.clone()));
 
                 #diff_process
+                #persist_op
 
                 unsafe {
                     self.0.data.with_mut_ref(link, |archived| {
