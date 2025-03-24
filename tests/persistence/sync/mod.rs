@@ -21,7 +21,8 @@ worktable! (
     queries: {
         update: {
             AnotherById(another) by id,
-            FieldByAnother(field) by another
+            FieldByAnother(field) by another,
+            AnotherByNonUnique(another) by non_unique
         },
         delete: {
              ByAnother() by another,
@@ -242,6 +243,50 @@ fn test_space_update_query_unique_sync() {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
             assert!(table.select(pk.into()).is_some());
             assert_eq!(table.select(pk.into()).unwrap().field, 1.0);
+            assert_eq!(table.0.pk_gen.get_state(), pk + 1)
+        }
+    });
+}
+
+#[test]
+fn test_space_update_query_non_unique_sync() {
+    let config = PersistenceConfig::new(
+        "tests/data/sync/update_query_non_unique",
+        "tests/data/sync/update_query_non_unique",
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/sync/update_query_non_unique".to_string()).await;
+
+        let pk = {
+            let table = TestSyncWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            let row = TestSyncRow {
+                another: 42,
+                non_unique: 10,
+                field: 0.0,
+                id: table.get_next_pk().0,
+            };
+            table.insert(row.clone()).unwrap();
+            table
+                .update_another_by_non_unique(AnotherByNonUniqueQuery { another: 13 }, 10)
+                .await
+                .unwrap();
+            table.wait_for_ops().await;
+            row.id
+        };
+        {
+            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            assert!(table.select(pk.into()).is_some());
+            assert_eq!(table.select(pk.into()).unwrap().another, 13);
             assert_eq!(table.0.pk_gen.get_state(), pk + 1)
         }
     });

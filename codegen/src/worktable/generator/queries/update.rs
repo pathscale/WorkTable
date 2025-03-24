@@ -383,10 +383,14 @@ impl Generator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut row.#i);
+                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
+
+        let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
+        let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -406,18 +410,26 @@ impl Generator {
                 }
 
                 for (_, link) in self.0.indexes.#index.get(&by) {
+                    let link = *link;
+                    let pk = self.0.data.select(link)?.get_primary_key().clone();
                     let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
-                    .map_err(|_| WorkTableError::SerializeError)?;
+                        .map_err(|_| WorkTableError::SerializeError)?;
 
-                    let mut row = unsafe {
-                    rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
-                        .unseal_unchecked()
-                };
+                    let mut archived_row = unsafe {
+                        rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                            .unseal_unchecked()
+                    };
+
+                    #diff_process
+                    #persist_op
+
                     unsafe {
-                        self.0.data.with_mut_ref(*link, |archived| {
+                        self.0.data.with_mut_ref(link, |archived| {
                             #(#row_updates)*
                         }).map_err(WorkTableError::PagesError)?;
                     }
+
+                    #persist_call
                 }
                 for (_, link) in self.0.indexes.#index.get(&by) {
                     let pk = self.0.data.select(*link)?.get_primary_key();
