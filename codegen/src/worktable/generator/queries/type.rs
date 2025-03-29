@@ -6,7 +6,7 @@ use quote::quote;
 use crate::name_generator::WorktableNameGenerator;
 use crate::worktable::generator::Generator;
 
-pub fn map_to_uppercase(str: &String) -> String {
+pub fn map_to_uppercase(str: &str) -> String {
     if str.contains("OrderedFloat") {
         let mut split = str.split("<");
         let _ = split.next();

@@ -7,11 +7,7 @@ use quote::quote;
 use syn::spanned::Spanned;
 
 fn is_float(ident: &Ident) -> bool {
-    match ident.to_string().as_str() {
-        "f64" => true,
-        "f32" => true,
-        _ => false,
-    }
+    matches!(ident.to_string().as_str(), "f64" | "f32")
 }
 
 #[derive(Debug, Clone)]
