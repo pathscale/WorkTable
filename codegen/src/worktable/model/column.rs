@@ -6,6 +6,14 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
+fn is_float(ident: &Ident) -> bool {
+    match ident.to_string().as_str() {
+        "f64" => true,
+        "f32" => true,
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Columns {
     pub columns_map: HashMap<Ident, TokenStream>,
@@ -31,6 +39,11 @@ impl Columns {
 
         for row in rows {
             let type_ = &row.type_;
+            let type_ = if is_float(type_) {
+                quote! { ordered_float::OrderedFloat<#type_> }
+            } else {
+                quote! { #type_ }
+            };
             let type_ = if row.optional {
                 quote! { core::option::Option<#type_> }
             } else {
