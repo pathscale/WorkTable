@@ -173,6 +173,7 @@ impl Generator {
                             index_name,
                             idents,
                             indexes_columns.as_ref(),
+                            unsized_columns,
                         )
                     }
                 } else if self.columns.primary_keys.len() == 1 {
@@ -438,6 +439,7 @@ impl Generator {
         index: &Ident,
         idents: &[Ident],
         idx_idents: Option<&Vec<Ident>>,
+        unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let lock_type_ident = name_generator.get_lock_type_ident();
@@ -472,20 +474,63 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
+        let size_check = if let Some(f) = unsized_fields {
+            let fields_check: Vec<_> = f
+                .iter()
+                .map(|f| {
+                    let fn_ident =
+                        Ident::new(format!("get_{}_size", f).as_str(), Span::call_site());
+                    quote! {
+                        if !need_to_reinsert {
+                            need_to_reinsert = archived_row.#fn_ident() > self.#fn_ident(link)?
+                        }
+                    }
+                })
+                .collect();
+            let row_updates = idents
+                .iter()
+                .map(|i| {
+                    quote! {
+                        row_old.#i = row.#i.clone();
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            quote! {
+                let mut need_to_reinsert = false;
+                #(#fields_check)*
+                if need_to_reinsert {
+                    let mut row_old = self.select(pk.clone()).unwrap();
+                    #(#row_updates)*
+                    self.delete_without_lock(pk.clone()).await?;
+                    self.insert(row_old)?;
+
+                    let lock = self.0.lock_map.get(&pk).expect("was inserted before and not deleted");
+                    lock.unlock();  // Releases locks
+                    self.0.lock_map.remove(&pk); // Removes locks
+                } else {
+                    links_to_unlock.push(link)
+                }
+            }
+        } else {
+            quote! {}
+        };
         let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
-                for (_, link) in self.0.indexes.#index.get(&by) {
+                let links: Vec<_> = self.0.indexes.#index.get(&by).map(|(_, l)| *l).collect();
+
+                for link in links.iter() {
                     let pk = self.0.data.select(*link)?.get_primary_key();
                     if let Some(lock) = self.0.lock_map.get(&pk) {
                         lock.#lock_await_ident().await;
                     }
                 }
 
-                for (_, link) in self.0.indexes.#index.get(&by) {
+                for link in links.iter() {
                     let pk = self.0.data.select(*link)?.get_primary_key();
                     let lock_id = self.0.lock_map.next_id();
                     let mut lock = #lock_type_ident::new(lock_id.into());
@@ -493,8 +538,8 @@ impl Generator {
                     self.0.lock_map.insert(pk.clone(), std::sync::Arc::new(lock.clone()));
                 }
 
-                for (_, link) in self.0.indexes.#index.get(&by) {
-                    let link = *link;
+                let mut links_to_unlock = vec![];
+                for link in links.into_iter() {
                     let pk = self.0.data.select(link)?.get_primary_key().clone();
                     let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
                         .map_err(|_| WorkTableError::SerializeError)?;
@@ -504,6 +549,7 @@ impl Generator {
                             .unseal_unchecked()
                     };
 
+                    #size_check
                     #diff_process
                     #persist_op
 
@@ -515,7 +561,7 @@ impl Generator {
 
                     #persist_call
                 }
-                for (_, link) in self.0.indexes.#index.get(&by) {
+                for link in links_to_unlock.iter() {
                     let pk = self.0.data.select(*link)?.get_primary_key();
                     if let Some(lock) = self.0.lock_map.get(&pk) {
                         lock.#unlock_ident();

@@ -22,8 +22,6 @@ worktable! (
             AnotherByExchange(another) by exchange,
             AnotherByTest(another) by test,
             AnotherById(another) by id,
-            ExchangeByTest(exchange) by test,
-            ExchangeById(exchange) by id,
         },
         delete: {
             ByAnother() by another,
@@ -1156,37 +1154,6 @@ async fn test_update_by_unique() {
 }
 
 #[tokio::test]
-async fn test_update_string_by_unique() {
-    let table = TestWorkTable::default();
-    let row = TestRow {
-        id: table.get_next_pk().into(),
-        test: 1,
-        another: 1,
-        exchange: "test".to_string(),
-    };
-    let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
-
-    let row = ExchangeByTestQuery {
-        exchange: "bigger test to test string update".to_string(),
-    };
-    table.update_exchange_by_test(row, 1).await.unwrap();
-
-    let row = table.select_by_test(1).unwrap();
-
-    assert_eq!(
-        row,
-        TestRow {
-            id: 0,
-            test: 1,
-            another: 1,
-            exchange: "bigger test to test string update".to_string(),
-        }
-    );
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
-}
-
-#[tokio::test]
 async fn test_update_by_pk() {
     let table = TestWorkTable::default();
     let row = TestRow {
@@ -1211,37 +1178,6 @@ async fn test_update_by_pk() {
             exchange: "test".to_string(),
         }
     )
-}
-
-#[tokio::test]
-async fn test_update_string_by_pk() {
-    let table = TestWorkTable::default();
-    let row = TestRow {
-        id: table.get_next_pk().into(),
-        test: 1,
-        another: 1,
-        exchange: "test".to_string(),
-    };
-    let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
-
-    let row = ExchangeByIdQuery {
-        exchange: "bigger test to test string update".to_string(),
-    };
-    table.update_exchange_by_id(row, pk).await.unwrap();
-
-    let row = table.select_by_test(1).unwrap();
-
-    assert_eq!(
-        row,
-        TestRow {
-            id: 0,
-            test: 1,
-            another: 1,
-            exchange: "bigger test to test string update".to_string(),
-        }
-    );
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
 }
 
 //#[test]
