@@ -62,7 +62,7 @@ async fn main() {
             attr_string: format!("String_attr{}", i),
         };
 
-        my_table.insert(row).unwrap(); // или ? если ты внутри Result
+        my_table.insert(row).unwrap();
     }
 
     // insert
