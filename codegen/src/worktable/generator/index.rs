@@ -375,6 +375,8 @@ impl Generator {
                         capacity: self.#index_field_name.capacity(),
                         heap_size: self.#index_field_name.heap_size(),
                         used_size: self.#index_field_name.used_size(),
+                        node_count: self.#index_field_name.node_count(),
+
 
                     });
                 }
@@ -387,6 +389,7 @@ impl Generator {
                         capacity: self.#index_field_name.capacity(),
                         heap_size: self.#index_field_name.heap_size(),
                         used_size: self.#index_field_name.used_size(),
+                        node_count: self.#index_field_name.node_count(),
                     });
                 }
             }

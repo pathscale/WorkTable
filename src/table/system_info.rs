@@ -25,6 +25,7 @@ pub struct IndexInfo {
     pub capacity: usize,
     pub heap_size: usize,
     pub used_size: usize,
+    pub node_count: usize,
 }
 
 #[derive(Debug)]
@@ -105,7 +106,15 @@ impl Display for SystemInfo {
 
         let mut table = Table::new();
         table.set_format(*FORMAT_NO_BORDER_LINE_SEPARATOR);
-        table.add_row(row!["Index", "Type", "Keys", "Capacity", "Heap", "Used"]);
+        table.add_row(row![
+            "Index",
+            "Type",
+            "Keys",
+            "Capacity",
+            "Node Count",
+            "Heap",
+            "Used"
+        ]);
 
         for idx in &self.indexes_info {
             table.add_row(row![
@@ -113,6 +122,7 @@ impl Display for SystemInfo {
                 idx.index_type.to_string(),
                 idx.key_count,
                 idx.capacity,
+                idx.node_count,
                 fmt_bytes(idx.heap_size),
                 fmt_bytes(idx.used_size),
             ]);
