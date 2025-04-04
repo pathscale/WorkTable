@@ -2,10 +2,12 @@ use futures::executor::block_on;
 use worktable::prelude::*;
 use worktable::worktable;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // describe WorkTable
     worktable!(
         name: My,
+        persist: true,
         columns: {
             id: u64 primary_key autoincrement,
             val: i64,
@@ -18,7 +20,7 @@ fn main() {
         },
         indexes: {
             idx1: attr,
-            idx2: attr2,
+            idx2: attr2 unique,
             idx3: attr_string,
         },
         queries: {
@@ -35,7 +37,8 @@ fn main() {
     );
 
     // Init Worktable
-    let my_table = MyWorkTable::default();
+    let config = PersistenceConfig::new("data", "data");
+    let my_table = MyWorkTable::new(config).await.unwrap();
 
     // WT rows (has prefix My because of table name)
     let row = MyRow {
@@ -48,7 +51,7 @@ fn main() {
         attr_string: "String_attr0".to_string(),
     };
 
-    for i in 2..100000 as i64 {
+    for i in 2..1000000 as i64 {
         let row = MyRow {
             val: 777,
             attr: format!("Attribute{}", i),
@@ -66,18 +69,18 @@ fn main() {
     let pk: MyPrimaryKey = my_table.insert(row).expect("primary key");
 
     // Select ALL records from WT
-    let select_all = my_table.select_all().execute();
+    let _select_all = my_table.select_all().execute();
     //println!("Select All {:?}", select_all);
 
     // Select All records with attribute TEST
-    let select_all = my_table.select_all().execute();
+    let _select_all = my_table.select_all().execute();
     //println!("Select All {:?}", select_all);
 
     // Select by Idx
-    let select_by_attr = my_table
-        .select_by_attr("Attribute1".to_string())
-        .execute()
-        .unwrap();
+    //let _select_by_attr = my_table
+    //   .select_by_attr("Attribute1".to_string())
+    //    .execute()
+    //r    .unwrap();
 
     //for row in select_by_attr {
     //    println!("Select by idx, row {:?}", row);
@@ -87,16 +90,16 @@ fn main() {
     let update = my_table.update_val_by_id(ValByIdQuery { val: 1337 }, pk.clone());
     let _ = block_on(update);
 
-    let select_all = my_table.select_all().execute();
+    let _select_all = my_table.select_all().execute();
     //println!("Select after update val {:?}", select_all);
 
     let delete = my_table.delete(pk);
     let _ = block_on(delete);
 
-    let select_all = my_table.select_all().execute();
+    let _select_all = my_table.select_all().execute();
     //println!("Select after delete {:?}", select_all);
 
     let info = my_table.system_info();
 
-    println!("{}", info.pretty());
+    println!("{info}");
 }

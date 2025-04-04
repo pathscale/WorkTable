@@ -2,24 +2,39 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Result, Type};
 
-pub fn expand(input: proc_macro2::TokenStream) -> Result<TokenStream> {
-    let input: DeriveInput = syn::parse2(input)?;
-    let name = &input.ident;
+fn gen_heap_size_body(data: &Data) -> Result<TokenStream> {
+    gen_mem_fn_body(
+        data,
+        quote! { heap_size() },
+        quote! { std::mem::size_of::<Self>() },
+    )
+}
 
-    let body = match &input.data {
+fn gen_used_size_body(data: &Data) -> Result<TokenStream> {
+    gen_mem_fn_body(
+        data,
+        quote! { used_size() },
+        quote! { std::mem::size_of::<Self>() },
+    )
+}
+
+fn gen_mem_fn_body(
+    data: &Data,
+    method: TokenStream,
+    default_for_copy: TokenStream,
+) -> Result<TokenStream> {
+    match data {
         Data::Struct(data_struct) => {
             let fields = match &data_struct.fields {
-                Fields::Named(fields_named) => fields_named.named.iter().collect::<Vec<_>>(),
-                Fields::Unnamed(fields_unnamed) => {
-                    fields_unnamed.unnamed.iter().collect::<Vec<_>>()
-                }
+                Fields::Named(named) => named.named.iter().collect::<Vec<_>>(),
+                Fields::Unnamed(unnamed) => unnamed.unnamed.iter().collect::<Vec<_>>(),
                 Fields::Unit => vec![],
             };
 
             if fields.is_empty() {
-                quote! { 0 }
+                Ok(quote! { 0 })
             } else if fields.iter().all(|f| is_copy_primitive(&f.ty)) {
-                quote! { std::mem::size_of::<Self>() }
+                Ok(default_for_copy)
             } else {
                 let field_sizes = fields.iter().enumerate().map(|(i, f)| {
                     let accessor = match &f.ident {
@@ -29,33 +44,40 @@ pub fn expand(input: proc_macro2::TokenStream) -> Result<TokenStream> {
                             quote! { self.#index }
                         }
                     };
-                    quote! { size += #accessor.heap_size(); }
+                    quote! { size += #accessor.#method; }
                 });
 
-                quote! {
+                Ok(quote! {
                     let mut size = 0;
                     #(#field_sizes)*
                     size
-                }
+                })
             }
         }
-        _ => {
-            return Err(syn::Error::new_spanned(
-                name,
-                "#[derive(HeapSize)] only supports structs",
-            ));
-        }
-    };
+        _ => Err(syn::Error::new_spanned(
+            method,
+            "#[derive(MemStat)] only supports structs",
+        )),
+    }
+}
 
-    let t = quote! {
-        impl HeapSize for #name {
+pub fn expand(input: proc_macro2::TokenStream) -> Result<TokenStream> {
+    let input: DeriveInput = syn::parse2(input)?;
+    let name = &input.ident;
+
+    let heap = gen_heap_size_body(&input.data)?;
+    let used = gen_used_size_body(&input.data)?;
+
+    Ok(quote! {
+        impl MemStat for #name {
             fn heap_size(&self) -> usize {
-                #body
+                #heap
+            }
+            fn used_size(&self) -> usize {
+                #used
             }
         }
-    };
-    println!("{}", t);
-    Ok(t)
+    })
 }
 
 fn is_copy_primitive(ty: &Type) -> bool {

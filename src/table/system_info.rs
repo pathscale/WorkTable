@@ -1,10 +1,10 @@
-use data_bucket::Link;
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::fmt::{self, Display, Formatter};
+
+use prettytable::{format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR, row, Table};
 
 use crate::in_memory::{RowWrapper, StorableRow};
-use crate::{IndexMap, IndexMultiMap, WorkTable};
+use crate::mem_stat::MemStat;
+use crate::{TableSecondaryIndex, WorkTable};
 
 #[derive(Debug)]
 pub struct SystemInfo {
@@ -14,158 +14,31 @@ pub struct SystemInfo {
     pub empty_slots: u64,
     pub memory_usage_bytes: u64,
     pub idx_size: usize,
+    pub indexes_info: Vec<IndexInfo>,
 }
 
-pub trait HeapSize {
-    fn heap_size(&self) -> usize;
+#[derive(Debug)]
+pub struct IndexInfo {
+    pub name: String,
+    pub index_type: IndexKind,
+    pub key_count: usize,
+    pub capacity: usize,
+    pub heap_size: usize,
+    pub used_size: usize,
 }
 
-impl<T: HeapSize> HeapSize for Option<T> {
-    fn heap_size(&self) -> usize {
-        self.as_ref().map_or(0, |v| v.heap_size())
-    }
+#[derive(Debug)]
+pub enum IndexKind {
+    Unique,
+    NonUnique,
 }
 
-impl<T: HeapSize> HeapSize for Vec<T> {
-    fn heap_size(&self) -> usize {
-        self.capacity() * std::mem::size_of::<T>()
-            + self.iter().map(|v| v.heap_size()).sum::<usize>()
-    }
-}
-
-impl HeapSize for String {
-    fn heap_size(&self) -> usize {
-        self.capacity()
-    }
-}
-
-impl<T, V> HeapSize for IndexMap<T, V>
-where
-    T: Ord + Clone + 'static + HeapSize + std::marker::Send,
-    V: Ord + Clone + 'static + HeapSize + std::marker::Send,
-{
-    fn heap_size(&self) -> usize {
-        let mut size = std::mem::size_of_val(self);
-
-        for (k, v) in self.iter() {
-            size += k.heap_size();
-            size += v.heap_size();
+impl Display for IndexKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unique => write!(f, "unique"),
+            Self::NonUnique => write!(f, "non unique"),
         }
-
-        size
-    }
-}
-
-impl<T, V> HeapSize for IndexMultiMap<T, V>
-where
-    T: Ord + Clone + 'static + HeapSize + std::marker::Send,
-    V: Ord + Clone + 'static + HeapSize + std::marker::Send,
-{
-    fn heap_size(&self) -> usize {
-        let mut size = std::mem::size_of_val(self);
-
-        for (k, v) in self.iter() {
-            size += k.heap_size();
-            size += v.heap_size();
-        }
-
-        size
-    }
-}
-
-impl HeapSize for Link {
-    fn heap_size(&self) -> usize {
-        std::mem::size_of_val(self)
-    }
-}
-
-impl<T: HeapSize> HeapSize for Box<T> {
-    fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
-    }
-}
-
-impl<T: HeapSize> HeapSize for Arc<T> {
-    fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
-    }
-}
-
-impl<T: HeapSize> HeapSize for Rc<T> {
-    fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
-    }
-}
-
-impl<K: HeapSize + Eq + std::hash::Hash, V: HeapSize> HeapSize for HashMap<K, V> {
-    fn heap_size(&self) -> usize {
-        let mut size = 0;
-        for (k, v) in self.iter() {
-            size += k.heap_size();
-            size += v.heap_size();
-        }
-        size
-    }
-}
-
-impl HeapSize for u8 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for u16 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for u32 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for i32 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for u64 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for i64 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for f64 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for f32 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for usize {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for isize {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for bool {
-    fn heap_size(&self) -> usize {
-        0
-    }
-}
-impl HeapSize for char {
-    fn heap_size(&self) -> usize {
-        0
     }
 }
 
@@ -173,7 +46,7 @@ impl<
         Row,
         PrimaryKey,
         AvailableTypes,
-        SecondaryIndexes: HeapSize,
+        SecondaryIndexes: MemStat + TableSecondaryIndex<Row, AvailableTypes>,
         LockType,
         PkGen,
         const DATA_LENGTH: usize,
@@ -205,28 +78,75 @@ where
             empty_slots: empty_links as u64,
             memory_usage_bytes,
             idx_size,
+            indexes_info: self.indexes.index_info(),
         }
     }
 }
 
-impl SystemInfo {
-    pub fn pretty(&self) -> String {
-        let mem_kb = self.memory_usage_bytes as f64 / 1024.0;
-        let idx_kb = self.idx_size as f64 / 1024.0;
+impl Display for SystemInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mem_fmt = fmt_bytes(self.memory_usage_bytes as usize);
+        let idx_fmt = fmt_bytes(self.idx_size);
+        let total_fmt = fmt_bytes(self.memory_usage_bytes as usize + self.idx_size);
 
-        format!(
-            "\
-|| Table: {}\n\
-|| Rows: {} ({} pages, {} empty slots)\n\
-|| Memory: {:.2} KB (data) + {:.2} KB (indexes)\n\
-|| Total: {:.2} KB",
-            self.table_name,
-            self.row_count,
-            self.page_count,
-            self.empty_slots,
-            mem_kb,
-            idx_kb,
-            mem_kb + idx_kb,
-        )
+        writeln!(f, "┌──────────────────────────────┐")?;
+        writeln!(f, " \t Table Name: {:<5}", self.table_name)?;
+        writeln!(f, "└──────────────────────────────┘")?;
+        writeln!(
+            f,
+            "Rows: {}   Pages: {}   Empty slots: {}",
+            self.row_count, self.page_count, self.empty_slots
+        )?;
+        writeln!(
+            f,
+            "Allocated Memory: {} (data) + {} (indexes) = {} total\n",
+            mem_fmt, idx_fmt, total_fmt
+        )?;
+
+        let mut table = Table::new();
+        table.set_format(*FORMAT_NO_BORDER_LINE_SEPARATOR);
+        table.add_row(row!["Index", "Type", "Keys", "Capacity", "Heap", "Used"]);
+
+        for idx in &self.indexes_info {
+            table.add_row(row![
+                idx.name,
+                idx.index_type.to_string(),
+                idx.key_count,
+                idx.capacity,
+                fmt_bytes(idx.heap_size),
+                fmt_bytes(idx.used_size),
+            ]);
+        }
+
+        let mut buffer = Vec::new();
+        table.print(&mut buffer).unwrap();
+        let table_str = String::from_utf8(buffer).unwrap();
+        writeln!(f, "{}", table_str.trim_end())?;
+
+        Ok(())
+    }
+}
+
+fn fmt_bytes(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * KB;
+    const GB: f64 = 1024.0 * MB;
+
+    let b = bytes as f64;
+
+    let (value, unit) = if b >= GB {
+        (b / GB, "GB")
+    } else if b >= MB {
+        (b / MB, "MB")
+    } else if b >= KB {
+        (b / KB, "KB")
+    } else {
+        return format!("{} B", bytes);
+    };
+
+    if (value.fract() * 100.0).round() == 0.0 {
+        format!("{:.0} {}", value, unit)
+    } else {
+        format!("{:.2} {}", value, unit)
     }
 }
