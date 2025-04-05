@@ -10,7 +10,9 @@ use indexset::core::pair::Pair;
 use tokio::fs::{File, OpenOptions};
 
 pub use data::SpaceData;
-pub use index::{map_index_pages_to_toc_and_general, IndexTableOfContents, SpaceIndex};
+pub use index::{
+    map_index_pages_to_toc_and_general, IndexTableOfContents, SpaceIndex, SpaceIndexUnsized,
+};
 
 pub trait SpaceDataOps<PkGenState> {
     fn from_table_files_path<S: AsRef<str> + Send>(

@@ -9,7 +9,7 @@ pub use manager::PersistenceConfig;
 pub use operation::{DeleteOperation, InsertOperation, Operation, UpdateOperation};
 pub use space::{
     map_index_pages_to_toc_and_general, IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex,
-    SpaceIndexOps, SpaceSecondaryIndexOps,
+    SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps,
 };
 use std::future::Future;
 pub use task::PersistenceTask;
