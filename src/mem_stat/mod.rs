@@ -1,9 +1,13 @@
-use crate::IndexMap;
-use crate::IndexMultiMap;
-use data_bucket::Link;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+
+use data_bucket::Link;
+use ordered_float::OrderedFloat;
+use uuid::Uuid;
+
+use crate::IndexMap;
+use crate::IndexMultiMap;
 
 pub trait MemStat {
     fn heap_size(&self) -> usize;
@@ -150,108 +154,43 @@ impl<K: MemStat + Eq + std::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
     }
 }
 
-impl MemStat for u8 {
+impl<T> MemStat for OrderedFloat<T>
+where
+    T: MemStat,
+{
     fn heap_size(&self) -> usize {
-        0
+        self.0.heap_size()
     }
+
     fn used_size(&self) -> usize {
-        0
+        self.0.used_size()
     }
 }
-impl MemStat for u16 {
+
+impl MemStat for [u8] {
     fn heap_size(&self) -> usize {
         0
     }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for u32 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for i32 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for u64 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for i64 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for f64 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for f32 {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for usize {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for isize {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for bool {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-impl MemStat for char {
-    fn heap_size(&self) -> usize {
-        0
-    }
+
     fn used_size(&self) -> usize {
         0
     }
 }
 
-impl MemStat for Link {
-    fn heap_size(&self) -> usize {
-        0
-    }
-    fn used_size(&self) -> usize {
-        0
-    }
+macro_rules! zero_mem_stat_impl {
+    ($($t:ident),+) => {
+        $(
+            impl MemStat for $t {
+               fn heap_size(&self) -> usize {
+                    0
+                }
+                fn used_size(&self) -> usize {
+                    0
+                }
+            }
+        )+
+    };
 }
+
+zero_mem_stat_impl!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64, bool);
+zero_mem_stat_impl!(Link, Uuid);
