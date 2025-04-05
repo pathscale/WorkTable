@@ -54,9 +54,61 @@ fn gen_mem_fn_body(
                 })
             }
         }
+
+        Data::Enum(enum_data) => {
+            let arms = enum_data.variants.iter().map(|variant| {
+                let name = &variant.ident;
+                match &variant.fields {
+                    Fields::Unit => {
+                        quote! {
+                            Self::#name => 0,
+                        }
+                    }
+                    Fields::Unnamed(fields) => {
+                        let bindings: Vec<_> = (0..fields.unnamed.len())
+                            .map(|i| syn::Ident::new(&format!("f{}", i), variant.ident.span()))
+                            .collect();
+
+                        let calls = bindings
+                            .iter()
+                            .map(|b| quote! { #b.#method })
+                            .collect::<Vec<_>>();
+                        quote! {
+                            Self::#name(#(#bindings),*) => {
+                                0 #(+ #calls)*
+                            },
+                        }
+                    }
+                    Fields::Named(fields) => {
+                        let bindings: Vec<_> = fields
+                            .named
+                            .iter()
+                            .map(|f| f.ident.as_ref().unwrap())
+                            .collect();
+
+                        let calls = bindings
+                            .iter()
+                            .map(|b| quote! { #b.#method })
+                            .collect::<Vec<_>>();
+                        quote! {
+                            Self::#name { #(#bindings),* } => {
+                                0 #(+ #calls)*
+                            },
+                        }
+                    }
+                }
+            });
+
+            Ok(quote! {
+                match self {
+                    #(#arms)*
+                }
+            })
+        }
+
         _ => Err(syn::Error::new_spanned(
             method,
-            "#[derive(MemStat)] only supports structs",
+            "#[derive(MemStat)] only supports structs and enums",
         )),
     }
 }
