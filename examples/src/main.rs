@@ -51,7 +51,7 @@ async fn main() {
         attr_string: "String_attr0".to_string(),
     };
 
-    for i in 2..1000000 as i64 {
+    for i in 2..1000000_i64 {
         let row = MyRow {
             val: 777,
             attr: format!("Attribute{}", i),
