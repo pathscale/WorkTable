@@ -1,5 +1,6 @@
 use super::MemStat;
 
+#[macro_export]
 macro_rules! impl_memstat_zero {
     ($($t:ty),*) => {
         $(

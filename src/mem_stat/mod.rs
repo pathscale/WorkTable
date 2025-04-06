@@ -1,3 +1,5 @@
+mod primitives;
+
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -6,8 +8,8 @@ use data_bucket::Link;
 use ordered_float::OrderedFloat;
 use uuid::Uuid;
 
-use crate::IndexMap;
 use crate::IndexMultiMap;
+use crate::{impl_memstat_zero, IndexMap};
 
 pub trait MemStat {
     fn heap_size(&self) -> usize;
@@ -167,30 +169,4 @@ where
     }
 }
 
-impl MemStat for [u8] {
-    fn heap_size(&self) -> usize {
-        0
-    }
-
-    fn used_size(&self) -> usize {
-        0
-    }
-}
-
-macro_rules! zero_mem_stat_impl {
-    ($($t:ident),+) => {
-        $(
-            impl MemStat for $t {
-               fn heap_size(&self) -> usize {
-                    0
-                }
-                fn used_size(&self) -> usize {
-                    0
-                }
-            }
-        )+
-    };
-}
-
-zero_mem_stat_impl!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64, bool);
-zero_mem_stat_impl!(Link, Uuid);
+impl_memstat_zero!(Link, Uuid, [u8]);
