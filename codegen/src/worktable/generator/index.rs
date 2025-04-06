@@ -361,7 +361,7 @@ impl Generator {
     }
 
     fn gen_index_info_fn(&self) -> TokenStream {
-        let rows = self.columns.indexes.iter().map(|(_, idx)| {
+        let rows = self.columns.indexes.values().map(|idx| {
             let index_field_name = &idx.name;
             let index_name_str = index_field_name.to_string();
 
