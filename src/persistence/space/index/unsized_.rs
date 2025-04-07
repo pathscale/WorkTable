@@ -160,7 +160,7 @@ where
         );
 
         if node_id < value.key {
-            utility.node_id = value.key.clone();
+            utility.update_node_id(value.key.clone())?;
             new_node_id = Some(value.key);
         }
 
