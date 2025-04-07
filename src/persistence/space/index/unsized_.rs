@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    persist_page, GeneralHeader, GeneralPage, IndexValue, Link, PageType, SizeMeasurable, SpaceId,
-    SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
+    get_index_page_size_from_data_length, persist_page, GeneralHeader, GeneralPage, IndexPage,
+    IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
+    UnsizedIndexPage, VariableSizeMeasurable,
 };
+use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use rkyv::de::Pool;
@@ -103,6 +105,74 @@ where
         self.table_of_contents.persist(&mut self.index_file).await?;
         Ok(())
     }
+
+    async fn process_insert_at(
+        &mut self,
+        node_id: T,
+        value: Pair<T, Link>,
+        index: usize,
+    ) -> eyre::Result<()> {
+        let page_id = self
+            .table_of_contents
+            .get(&node_id)
+            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+        if let Some(new_node_id) = self
+            .insert_on_index_page(page_id, node_id.clone(), index, value)
+            .await?
+        {
+            self.table_of_contents.update_key(&node_id, new_node_id);
+            self.table_of_contents.persist(&mut self.index_file).await?;
+        }
+        Ok(())
+    }
+
+    async fn insert_on_index_page(
+        &mut self,
+        page_id: PageId,
+        node_id: T,
+        index: usize,
+        value: Pair<T, Link>,
+    ) -> eyre::Result<Option<T>> {
+        let mut new_node_id = None;
+
+        let mut utility = UnsizedIndexPage::<T, DATA_LENGTH>::parse_index_page_utility(
+            &mut self.index_file,
+            page_id,
+        )
+        .await?;
+        let index_value = IndexValue {
+            key: value.key.clone(),
+            link: value.value,
+        };
+        let previous_offset = utility.last_value_offset;
+        let value_offset = UnsizedIndexPage::<T, DATA_LENGTH>::persist_value(
+            &mut self.index_file,
+            page_id,
+            previous_offset,
+            index_value,
+        )
+        .await?;
+        utility.slots_size += 1;
+        utility.last_value_offset = value_offset;
+        utility.slots.insert(
+            index,
+            (value_offset, (value_offset - previous_offset) as u16),
+        );
+
+        if node_id < value.key {
+            utility.node_id = value.key.clone();
+            new_node_id = Some(value.key);
+        }
+
+        UnsizedIndexPage::<T, DATA_LENGTH>::persist_index_page_utility(
+            &mut self.index_file,
+            page_id,
+            utility,
+        )
+        .await?;
+
+        Ok(new_node_id)
+    }
 }
 
 impl<T, const DATA_LENGTH: u32> SpaceIndexOps<T> for SpaceIndexUnsized<T, DATA_LENGTH>
@@ -153,11 +223,11 @@ where
         event: ChangeEvent<Pair<T, Link>>,
     ) -> eyre::Result<()> {
         match event {
-            // ChangeEvent::InsertAt {
-            //     max_value: node_id,
-            //     value,
-            //     index,
-            // } => self.process_insert_at(node_id.key, value, index).await,
+            ChangeEvent::InsertAt {
+                max_value: node_id,
+                value,
+                index,
+            } => self.process_insert_at(node_id.key, value, index).await,
             // ChangeEvent::RemoveAt {
             //     max_value: node_id,
             //     value,

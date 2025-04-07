@@ -78,3 +78,26 @@ async fn test_index_table_of_contents_read_from_space_index_with_remove_node() {
         Some(3.into())
     );
 }
+
+#[tokio::test]
+async fn test_index_table_of_contents_read_from_space_index_unsized_after_insert_at() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index_unsized/process_insert_at.wt.idx")
+        .await
+        .unwrap();
+    let next_id_gen = Arc::new(AtomicU32::new(2));
+    let toc = IndexTableOfContents::<String, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+        &mut file,
+        0.into(),
+        next_id_gen,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        toc.get(&"Something from someone".to_string()),
+        Some(2.into())
+    )
+}
