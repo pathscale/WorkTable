@@ -1,14 +1,11 @@
 use std::fmt::Debug;
-use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use convert_case::{Case, Casing};
 use data_bucket::page::PageId;
 use data_bucket::{
-    get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader, GeneralPage,
-    IndexPage, IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
-    UnsizedIndexPage, VariableSizeMeasurable, GENERAL_HEADER_SIZE,
+    persist_page, GeneralHeader, GeneralPage, IndexValue, Link, PageType, SizeMeasurable, SpaceId,
+    SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
 };
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
@@ -21,7 +18,6 @@ use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 use tokio::fs::File;
 
-use crate::persistence::space::open_or_create_file;
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
 
@@ -101,6 +97,12 @@ where
 
         Ok(())
     }
+
+    async fn process_remove_node(&mut self, node_id: T) -> eyre::Result<()> {
+        self.table_of_contents.remove(&node_id);
+        self.table_of_contents.persist(&mut self.index_file).await?;
+        Ok(())
+    }
 }
 
 impl<T, const DATA_LENGTH: u32> SpaceIndexOps<T> for SpaceIndexUnsized<T, DATA_LENGTH>
@@ -164,9 +166,9 @@ where
             ChangeEvent::CreateNode { max_value: node_id } => {
                 self.process_create_node(node_id).await
             }
-            // ChangeEvent::RemoveNode { max_value: node_id } => {
-            //     self.process_remove_node(node_id.key).await
-            // }
+            ChangeEvent::RemoveNode { max_value: node_id } => {
+                self.process_remove_node(node_id.key).await
+            }
             // ChangeEvent::SplitNode {
             //     max_value: node_id,
             //     split_index,
