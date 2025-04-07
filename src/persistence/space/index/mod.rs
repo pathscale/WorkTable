@@ -82,7 +82,11 @@ where
         let info = parse_page::<_, DATA_LENGTH>(&mut index_file, 0).await?;
 
         let file_length = index_file.metadata().await?.len();
-        let page_id = file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) + 1;
+        let page_id = if file_length % (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) == 0 {
+            file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64)
+        } else {
+            file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) + 1
+        };
         let next_page_id = Arc::new(AtomicU32::new(page_id as u32));
         let table_of_contents =
             IndexTableOfContents::parse_from_file(&mut index_file, space_id, next_page_id.clone())

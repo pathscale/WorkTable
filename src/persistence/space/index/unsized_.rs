@@ -8,7 +8,7 @@ use data_bucket::page::PageId;
 use data_bucket::{
     get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader, GeneralPage,
     IndexPage, IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
-    UnsizedIndexPage, GENERAL_HEADER_SIZE,
+    UnsizedIndexPage, VariableSizeMeasurable, GENERAL_HEADER_SIZE,
 };
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
@@ -44,6 +44,7 @@ where
         + Default
         + Debug
         + SizeMeasurable
+        + VariableSizeMeasurable
         + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>
         + Send
         + Sync
@@ -111,6 +112,7 @@ where
         + Default
         + Debug
         + SizeMeasurable
+        + VariableSizeMeasurable
         + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>
         + Send
         + Sync
