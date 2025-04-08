@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    get_index_page_size_from_data_length, persist_page, GeneralHeader, GeneralPage, IndexPage,
-    IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
-    UnsizedIndexPage, VariableSizeMeasurable,
+    get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader, GeneralPage,
+    IndexPage, IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable, SpaceId,
+    SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -237,6 +237,35 @@ where
 
         Ok(new_node_id)
     }
+
+    async fn process_split_node(&mut self, node_id: T, split_index: usize) -> eyre::Result<()> {
+        let page_id = self
+            .table_of_contents
+            .get(&node_id)
+            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+        let mut page = parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(
+            &mut self.index_file,
+            page_id.into(),
+        )
+        .await?;
+        let splitted_page = page.inner.split(split_index);
+        let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
+            id
+        } else {
+            self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
+        };
+
+        self.table_of_contents
+            .update_key(&node_id, page.inner.node_id.clone());
+        self.table_of_contents
+            .insert(splitted_page.node_id.clone(), new_page_id);
+        self.table_of_contents.persist(&mut self.index_file).await?;
+
+        self.add_index_page(splitted_page, new_page_id).await?;
+        persist_page(&mut page, &mut self.index_file).await?;
+
+        Ok(())
+    }
 }
 
 impl<T, const DATA_LENGTH: u32> SpaceIndexOps<T> for SpaceIndexUnsized<T, DATA_LENGTH>
@@ -303,11 +332,10 @@ where
             ChangeEvent::RemoveNode { max_value: node_id } => {
                 self.process_remove_node(node_id.key).await
             }
-            // ChangeEvent::SplitNode {
-            //     max_value: node_id,
-            //     split_index,
-            // } => self.process_split_node(node_id.key, split_index).await,
-            _ => todo!(),
+            ChangeEvent::SplitNode {
+                max_value: node_id,
+                split_index,
+            } => self.process_split_node(node_id.key, split_index).await,
         }
     }
 }
