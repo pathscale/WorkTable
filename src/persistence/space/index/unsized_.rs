@@ -173,6 +173,70 @@ where
 
         Ok(new_node_id)
     }
+
+    async fn process_remove_at(
+        &mut self,
+        node_id: T,
+        value: Pair<T, Link>,
+        index: usize,
+    ) -> eyre::Result<()> {
+        let page_id = self
+            .table_of_contents
+            .get(&node_id)
+            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+        if let Some(new_node_id) = self
+            .remove_from_index_page(page_id, node_id.clone(), index, value)
+            .await?
+        {
+            self.table_of_contents.update_key(&node_id, new_node_id);
+            self.table_of_contents.persist(&mut self.index_file).await?;
+        }
+        Ok(())
+    }
+
+    async fn remove_from_index_page(
+        &mut self,
+        page_id: PageId,
+        node_id: T,
+        index: usize,
+        value: Pair<T, Link>,
+    ) -> eyre::Result<Option<T>> {
+        let mut new_node_id = None;
+
+        let mut utility = UnsizedIndexPage::<T, DATA_LENGTH>::parse_index_page_utility(
+            &mut self.index_file,
+            page_id,
+        )
+        .await?;
+        utility.slots.remove(index);
+        utility.slots_size -= 1;
+
+        if node_id == value.key {
+            let (offset, len) = *utility
+                .slots
+                .get(index - 1)
+                .expect("slots always should exist in `size` bounds");
+            let node_id = UnsizedIndexPage::<T, DATA_LENGTH>::read_value_with_offset(
+                &mut self.index_file,
+                page_id,
+                offset,
+                len,
+            )
+            .await?
+            .key;
+            utility.update_node_id(node_id)?;
+            new_node_id = Some(utility.node_id.clone())
+        }
+
+        UnsizedIndexPage::<T, DATA_LENGTH>::persist_index_page_utility(
+            &mut self.index_file,
+            page_id,
+            utility,
+        )
+        .await?;
+
+        Ok(new_node_id)
+    }
 }
 
 impl<T, const DATA_LENGTH: u32> SpaceIndexOps<T> for SpaceIndexUnsized<T, DATA_LENGTH>
@@ -228,11 +292,11 @@ where
                 value,
                 index,
             } => self.process_insert_at(node_id.key, value, index).await,
-            // ChangeEvent::RemoveAt {
-            //     max_value: node_id,
-            //     value,
-            //     index,
-            // } => self.process_remove_at(node_id.key, value, index).await,
+            ChangeEvent::RemoveAt {
+                max_value: node_id,
+                value,
+                index,
+            } => self.process_remove_at(node_id.key, value, index).await,
             ChangeEvent::CreateNode { max_value: node_id } => {
                 self.process_create_node(node_id).await
             }

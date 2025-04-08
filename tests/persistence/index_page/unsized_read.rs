@@ -150,3 +150,63 @@ async fn test_index_pages_read_after_insert_at_in_space_index() {
         }
     );
 }
+
+#[tokio::test]
+async fn test_index_page_read_after_remove_at_in_space_index() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index_unsized/process_remove_at.wt.idx")
+        .await
+        .unwrap();
+
+    let page = parse_page::<
+        UnsizedIndexPage<String, { INNER_PAGE_SIZE as u32 }>,
+        { INNER_PAGE_SIZE as u32 },
+    >(&mut file, 2)
+    .await
+    .unwrap();
+
+    assert_eq!(page.inner.node_id, "Something from someone".to_string());
+    assert_eq!(page.inner.index_values.len(), 1);
+    let value = page.inner.index_values.first().unwrap();
+    assert_eq!(value.key, "Something from someone".to_string());
+    assert_eq!(
+        value.link,
+        Link {
+            page_id: 0.into(),
+            offset: 0,
+            length: 24,
+        }
+    )
+}
+
+#[tokio::test]
+async fn test_index_page_read_after_remove_at_node_id_in_space_index() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index_unsized/process_remove_at_node_id.wt.idx")
+        .await
+        .unwrap();
+
+    let page = parse_page::<
+        UnsizedIndexPage<String, { INNER_PAGE_SIZE as u32 }>,
+        { INNER_PAGE_SIZE as u32 },
+    >(&mut file, 2)
+    .await
+    .unwrap();
+
+    assert_eq!(page.inner.node_id, "Something else".to_string());
+    assert_eq!(page.inner.index_values.len(), 1);
+    let value = page.inner.index_values.first().unwrap();
+    assert_eq!(value.key, "Something else".to_string());
+    assert_eq!(
+        value.link,
+        Link {
+            page_id: 0.into(),
+            offset: 24,
+            length: 48,
+        }
+    )
+}
