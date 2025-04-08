@@ -210,3 +210,95 @@ async fn test_index_page_read_after_remove_at_node_id_in_space_index() {
         }
     )
 }
+
+#[tokio::test]
+async fn test_index_page_read_after_insert_at_with_node_id_update_in_space_index() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open(
+            "tests/data/expected/space_index_unsized/process_insert_at_with_node_id_update.wt.idx",
+        )
+        .await
+        .unwrap();
+
+    let page = parse_page::<
+        UnsizedIndexPage<String, { INNER_PAGE_SIZE as u32 }>,
+        { INNER_PAGE_SIZE as u32 },
+    >(&mut file, 2)
+    .await
+    .unwrap();
+
+    assert_eq!(page.inner.node_id, "Something from someone 1".to_string());
+    assert_eq!(page.inner.index_values.len(), 2);
+    let first_value = &page.inner.index_values[0];
+    assert_eq!(first_value.key, "Something from someone".to_string());
+    assert_eq!(
+        first_value.link,
+        Link {
+            page_id: 0.into(),
+            offset: 0,
+            length: 24,
+        }
+    );
+    let second_value = &page.inner.index_values[1];
+    assert_eq!(second_value.key, "Something from someone 1".to_string());
+    assert_eq!(
+        second_value.link,
+        Link {
+            page_id: 0.into(),
+            offset: 24,
+            length: 48,
+        }
+    )
+}
+
+#[tokio::test]
+async fn test_index_page_read_after_insert_at_removed_place_in_space_index() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/expected/space_index_unsized/process_insert_at_removed_place.wt.idx")
+        .await
+        .unwrap();
+
+    let page = parse_page::<
+        UnsizedIndexPage<String, { INNER_PAGE_SIZE as u32 }>,
+        { INNER_PAGE_SIZE as u32 },
+    >(&mut file, 2)
+    .await
+    .unwrap();
+
+    assert_eq!(page.inner.node_id, "Something from someone 1".to_string());
+    assert_eq!(page.inner.index_values.len(), 3);
+    let first_value = &page.inner.index_values[0];
+    assert_eq!(first_value.key, "Something else".to_string());
+    assert_eq!(
+        first_value.link,
+        Link {
+            page_id: 0.into(),
+            offset: 24,
+            length: 48,
+        }
+    );
+    let second_value = &page.inner.index_values[1];
+    assert_eq!(second_value.key, "Something from someone 0".to_string());
+    assert_eq!(
+        second_value.link,
+        Link {
+            page_id: 0.into(),
+            offset: 0,
+            length: 24,
+        }
+    );
+    let third_value = &page.inner.index_values[2];
+    assert_eq!(third_value.key, "Something from someone 1".to_string());
+    assert_eq!(
+        third_value.link,
+        Link {
+            page_id: 0.into(),
+            offset: 72,
+            length: 24,
+        }
+    )
+}
