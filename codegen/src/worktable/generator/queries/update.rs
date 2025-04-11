@@ -61,7 +61,7 @@ impl Generator {
             quote! {}
         } else {
             quote! {
-                if bytes.len() > link.length as usize {
+                if bytes.len() >= link.length as usize {
                     self.delete_without_lock(pk.clone()).await?;
                     self.insert(row)?;
 

@@ -224,167 +224,185 @@ fn test_space_update_query_pk_sync() {
     });
 }
 
-// #[test]
-// fn test_space_update_query_unique_sync() {
-//     let config = PersistenceConfig::new(
-//         "tests/data/sync/update_query_unique",
-//         "tests/data/sync/update_query_unique",
-//     );
-//
-//     let runtime = tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(2)
-//         .enable_io()
-//         .enable_time()
-//         .build()
-//         .unwrap();
-//
-//     runtime.block_on(async {
-//         remove_dir_if_exists("tests/data/sync/update_query_unique".to_string()).await;
-//
-//         let pk = {
-//             let table = TestSyncWorkTable::load_from_file(config.clone())
-//                 .await
-//                 .unwrap();
-//             let row = TestSyncRow {
-//                 another: 42,
-//                 non_unique: 0,
-//                 field: 0.0.into(),
-//                 id: table.get_next_pk().0,
-//             };
-//             table.insert(row.clone()).unwrap();
-//             table
-//                 .update_field_by_another(FieldByAnotherQuery { field: 1.0.into() }, 42)
-//                 .await
-//                 .unwrap();
-//             table.wait_for_ops().await;
-//             row.id
-//         };
-//         {
-//             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-//             assert!(table.select(pk.into()).is_some());
-//             assert_eq!(table.select(pk.into()).unwrap().field, 1.0);
-//             assert_eq!(table.0.pk_gen.get_state(), pk + 1)
-//         }
-//     });
-// }
-//
-// #[test]
-// fn test_space_update_query_non_unique_sync() {
-//     let config = PersistenceConfig::new(
-//         "tests/data/sync/update_query_non_unique",
-//         "tests/data/sync/update_query_non_unique",
-//     );
-//
-//     let runtime = tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(2)
-//         .enable_io()
-//         .enable_time()
-//         .build()
-//         .unwrap();
-//
-//     runtime.block_on(async {
-//         remove_dir_if_exists("tests/data/sync/update_query_non_unique".to_string()).await;
-//
-//         let pk = {
-//             let table = TestSyncWorkTable::load_from_file(config.clone())
-//                 .await
-//                 .unwrap();
-//             let row = TestSyncRow {
-//                 another: 42,
-//                 non_unique: 10,
-//                 field: 0.0.into(),
-//                 id: table.get_next_pk().0,
-//             };
-//             table.insert(row.clone()).unwrap();
-//             table
-//                 .update_another_by_non_unique(AnotherByNonUniqueQuery { another: 13 }, 10)
-//                 .await
-//                 .unwrap();
-//             table.wait_for_ops().await;
-//             row.id
-//         };
-//         {
-//             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-//             assert!(table.select(pk.into()).is_some());
-//             assert_eq!(table.select(pk.into()).unwrap().another, 13);
-//             assert_eq!(table.0.pk_gen.get_state(), pk + 1)
-//         }
-//     });
-// }
-//
-// #[test]
-// fn test_space_delete_sync() {
-//     let config = PersistenceConfig::new("tests/data/sync/delete", "tests/data/sync/delete");
-//
-//     let runtime = tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(2)
-//         .enable_io()
-//         .enable_time()
-//         .build()
-//         .unwrap();
-//
-//     runtime.block_on(async {
-//         remove_dir_if_exists("tests/data/sync/delete".to_string()).await;
-//
-//         let pk = {
-//             let table = TestSyncWorkTable::load_from_file(config.clone())
-//                 .await
-//                 .unwrap();
-//             let row = TestSyncRow {
-//                 another: 42,
-//                 non_unique: 0,
-//                 field: 0.0.into(),
-//                 id: table.get_next_pk().0,
-//             };
-//             table.insert(row.clone()).unwrap();
-//             table.delete(row.id.into()).await.unwrap();
-//             table.wait_for_ops().await;
-//             row.id
-//         };
-//         {
-//             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-//             assert!(table.select(pk.into()).is_none());
-//             assert_eq!(table.0.pk_gen.get_state(), pk + 1)
-//         }
-//     });
-// }
-//
-// #[test]
-// fn test_space_delete_query_sync() {
-//     let config = PersistenceConfig::new(
-//         "tests/data/sync/delete_query",
-//         "tests/data/sync/delete_query",
-//     );
-//
-//     let runtime = tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(2)
-//         .enable_io()
-//         .enable_time()
-//         .build()
-//         .unwrap();
-//
-//     runtime.block_on(async {
-//         remove_dir_if_exists("tests/data/sync/delete_query".to_string()).await;
-//
-//         let pk = {
-//             let table = TestSyncWorkTable::load_from_file(config.clone())
-//                 .await
-//                 .unwrap();
-//             let row = TestSyncRow {
-//                 another: 42,
-//                 non_unique: 0,
-//                 field: 0.0.into(),
-//                 id: table.get_next_pk().0,
-//             };
-//             table.insert(row.clone()).unwrap();
-//             table.delete_by_another(row.another).await.unwrap();
-//             table.wait_for_ops().await;
-//             row.id
-//         };
-//         {
-//             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-//             assert!(table.select(pk.into()).is_none());
-//             assert_eq!(table.0.pk_gen.get_state(), pk + 1)
-//         }
-//     });
-// }
+#[test]
+fn test_space_update_query_unique_sync() {
+    let config = PersistenceConfig::new(
+        "tests/data/unsized_secondary_sync/update_query_unique",
+        "tests/data/unsized_secondary_sync/update_query_unique",
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/unsized_secondary_sync/update_query_unique".to_string())
+            .await;
+
+        let pk = {
+            let table = TestSyncWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            let row = TestSyncRow {
+                another: "Some string before".to_string(),
+                non_unique: 0,
+                field: 0.0.into(),
+                id: table.get_next_pk().0,
+            };
+            table.insert(row.clone()).unwrap();
+            table
+                .update_field_by_another(
+                    FieldByAnotherQuery { field: 1.0.into() },
+                    "Some string before".to_string(),
+                )
+                .await
+                .unwrap();
+            table.wait_for_ops().await;
+            row.id
+        };
+        {
+            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            assert!(table.select(pk.into()).is_some());
+            assert_eq!(table.select(pk.into()).unwrap().field, 1.0);
+            assert_eq!(table.0.pk_gen.get_state(), pk + 1)
+        }
+    });
+}
+
+#[test]
+fn test_space_update_query_non_unique_sync() {
+    let config = PersistenceConfig::new(
+        "tests/data/unsized_secondary_sync/update_query_non_unique",
+        "tests/data/unsized_secondary_sync/update_query_non_unique",
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists(
+            "tests/data/unsized_secondary_sync/update_query_non_unique".to_string(),
+        )
+        .await;
+
+        let pk = {
+            let table = TestSyncWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            let row = TestSyncRow {
+                another: "Some string before".to_string(),
+                non_unique: 10,
+                field: 0.0.into(),
+                id: table.get_next_pk().0,
+            };
+            table.insert(row.clone()).unwrap();
+            table
+                .update_another_by_non_unique(
+                    AnotherByNonUniqueQuery {
+                        another: "Some string to test updated".to_string(),
+                    },
+                    10,
+                )
+                .await
+                .unwrap();
+            table.wait_for_ops().await;
+            row.id
+        };
+        {
+            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            assert!(table.select(pk.into()).is_some());
+            assert_eq!(
+                table.select(pk.into()).unwrap().another,
+                "Some string to test updated".to_string()
+            );
+            assert_eq!(table.0.pk_gen.get_state(), pk + 1)
+        }
+    });
+}
+
+#[test]
+fn test_space_delete_sync() {
+    let config = PersistenceConfig::new(
+        "tests/data/unsized_secondary_sync/delete",
+        "tests/data/unsized_secondary_sync/delete",
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/unsized_secondary_sync/delete".to_string()).await;
+
+        let pk = {
+            let table = TestSyncWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            let row = TestSyncRow {
+                another: "Some string before".to_string(),
+                non_unique: 0,
+                field: 0.0.into(),
+                id: table.get_next_pk().0,
+            };
+            table.insert(row.clone()).unwrap();
+            table.delete(row.id.into()).await.unwrap();
+            table.wait_for_ops().await;
+            row.id
+        };
+        {
+            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            assert!(table.select(pk.into()).is_none());
+            assert_eq!(table.0.pk_gen.get_state(), pk + 1)
+        }
+    });
+}
+
+#[test]
+fn test_space_delete_query_sync() {
+    let config = PersistenceConfig::new(
+        "tests/data/unsized_secondary_sync/delete_query",
+        "tests/data/unsized_secondary_sync/delete_query",
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/unsized_secondary_sync/delete_query".to_string()).await;
+
+        let pk = {
+            let table = TestSyncWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            let row = TestSyncRow {
+                another: "Some string before".to_string(),
+                non_unique: 0,
+                field: 0.0.into(),
+                id: table.get_next_pk().0,
+            };
+            table.insert(row.clone()).unwrap();
+            table.delete_by_another(row.another).await.unwrap();
+            table.wait_for_ops().await;
+            row.id
+        };
+        {
+            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            assert!(table.select(pk.into()).is_none());
+            assert_eq!(table.0.pk_gen.get_state(), pk + 1)
+        }
+    });
+}
