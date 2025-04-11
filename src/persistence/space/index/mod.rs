@@ -294,7 +294,7 @@ where
 
     pub async fn parse_indexset(&mut self) -> eyre::Result<BTreeMap<T, Link>> {
         let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
-        let indexset = BTreeMap::with_maximum_node_size(size);
+        let indexset = BTreeMap::<T, Link>::with_maximum_node_size(size);
         for (_, page_id) in self.table_of_contents.iter() {
             let page =
                 parse_page::<IndexPage<T>, DATA_LENGTH>(&mut self.index_file, (*page_id).into())

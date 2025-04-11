@@ -1,9 +1,9 @@
-use convert_case::Casing;
+use std::fs::copy;
+
 use data_bucket::{Link, INNER_PAGE_SIZE};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
-use std::fs::copy;
-use worktable::prelude::{SpaceIndex, SpaceIndexOps, SpaceIndexUnsized};
+use worktable::prelude::{SpaceIndexOps, SpaceIndexUnsized};
 
 use crate::{check_if_files_are_same, remove_file_if_exists};
 

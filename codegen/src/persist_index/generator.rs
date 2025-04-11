@@ -325,6 +325,7 @@ impl Generator {
                     .as_ref()
                     .expect("index fields should always be named fields");
                 let index_type = f.ty.to_token_stream().to_string();
+                let is_unique = !index_type.contains("IndexMultiMap");
                 let mut split = index_type.split("<");
                 let t = Ident::new(
                     split
@@ -334,11 +335,21 @@ impl Generator {
                     Span::mixed_site(),
                 );
 
+                let attach = if is_unique {
+                    quote! {
+                        #i.attach_node(node);
+                    }
+                } else {
+                    quote! {
+                        #i.attach_multi_node(node.into_iter().map(|p| p.into()).collect());
+                    }
+                };
+
                 quote! {
                     let #i: #t<_, Link> = #t::new();
                     for page in persisted.#i.1 {
                         let node = page.inner.get_node();
-                        #i.attach_node(node);
+                        #attach
                     }
                 }
             })

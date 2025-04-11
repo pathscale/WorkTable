@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader, GeneralPage,
-    IndexPage, IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable, SpaceId,
-    SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
+    parse_page, persist_page, GeneralHeader, GeneralPage, IndexPageUtility, IndexValue, Link,
+    PageType, SizeMeasurable, SpaceId, SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
+use indexset::concurrent::map::BTreeMap;
 use indexset::core::pair::Pair;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
@@ -22,6 +22,7 @@ use tokio::fs::File;
 
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
+use crate::UnsizedNode;
 
 #[derive(Debug)]
 pub struct SpaceIndexUnsized<T: Ord + Eq, const DATA_LENGTH: u32> {
@@ -265,6 +266,25 @@ where
         persist_page(&mut page, &mut self.index_file).await?;
 
         Ok(())
+    }
+
+    pub async fn parse_indexset(
+        &mut self,
+    ) -> eyre::Result<BTreeMap<T, Link, UnsizedNode<Pair<T, Link>>>> {
+        let indexset = BTreeMap::<T, Link, UnsizedNode<Pair<T, Link>>>::with_maximum_node_size(
+            DATA_LENGTH as usize,
+        );
+        for (_, page_id) in self.table_of_contents.iter() {
+            let page = parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(
+                &mut self.index_file,
+                (*page_id).into(),
+            )
+            .await?;
+            let node = page.inner.get_node();
+            indexset.attach_node(UnsizedNode::from_inner(node, DATA_LENGTH as usize))
+        }
+
+        Ok(indexset)
     }
 }
 
