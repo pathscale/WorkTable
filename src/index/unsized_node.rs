@@ -18,6 +18,15 @@ where
     length: usize,
 }
 
+impl<T> AsRef<[T]> for UnsizedNode<T>
+where
+    T: SizeMeasurable,
+{
+    fn as_ref(&self) -> &[T] {
+        self.inner.as_ref()
+    }
+}
+
 impl<T> UnsizedNode<T>
 where
     T: SizeMeasurable + Ord + Default + VariableSizeMeasurable,

@@ -2,6 +2,10 @@ use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal};
 use quote::__private::Span;
 
+pub fn is_unsized(ty_: &str) -> bool {
+    matches!(ty_, "String")
+}
+
 pub struct WorktableNameGenerator {
     pub(crate) name: String,
 }
@@ -12,7 +16,7 @@ impl WorktableNameGenerator {
             name: struct_ident
                 .to_string()
                 .strip_suffix("WorkTable")
-                .expect("table type nae should end on `WorkTable`")
+                .expect("table type name should end on `WorkTable`")
                 .to_string(),
         }
     }

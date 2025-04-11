@@ -23,10 +23,10 @@ pub mod prelude {
     pub use crate::in_memory::{Data, DataPages, RowWrapper, StorableRow};
     pub use crate::lock::LockMap;
     pub use crate::persistence::{
-        map_index_pages_to_toc_and_general, DeleteOperation, IndexTableOfContents, InsertOperation,
-        Operation, PersistenceConfig, PersistenceEngine, PersistenceEngineOps, PersistenceTask,
-        SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
-        SpaceSecondaryIndexOps, UpdateOperation,
+        map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
+        DeleteOperation, IndexTableOfContents, InsertOperation, Operation, PersistenceConfig,
+        PersistenceEngine, PersistenceEngineOps, PersistenceTask, SpaceData, SpaceDataOps,
+        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
@@ -39,8 +39,8 @@ pub mod prelude {
         align, get_index_page_size_from_data_length, map_data_pages_to_general, parse_data_page,
         parse_page, persist_page, seek_to_page_start, update_at, DataPage, GeneralHeader,
         GeneralPage, IndexPage, Interval, Link, PageType, Persistable, PersistableIndex,
-        SizeMeasurable, SizeMeasure, SpaceInfoPage, TableOfContentsPage, DATA_VERSION,
-        GENERAL_HEADER_SIZE, INNER_PAGE_SIZE, PAGE_SIZE,
+        SizeMeasurable, SizeMeasure, SpaceInfoPage, TableOfContentsPage, UnsizedIndexPage,
+        DATA_VERSION, GENERAL_HEADER_SIZE, INNER_PAGE_SIZE, PAGE_SIZE,
     };
 
     pub use derive_more::{From, Into};

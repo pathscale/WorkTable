@@ -1,4 +1,4 @@
-use crate::name_generator::WorktableNameGenerator;
+use crate::name_generator::{is_unsized, WorktableNameGenerator};
 use crate::worktable::generator::Generator;
 
 use crate::worktable::generator::queries::r#type::map_to_uppercase;
@@ -34,13 +34,23 @@ impl Generator {
             .indexes
             .iter()
             .map(|(i, idx)| {
-                let t = self.columns.columns_map.get(i);
+                let t = self.columns.columns_map.get(i).unwrap();
                 let i = &idx.name;
 
                 if idx.is_unique {
-                    quote! {#i: IndexMap<#t, Link>}
+                    if is_unsized(&t.to_string()) {
+                        quote! {
+                            #i: IndexMap<#t, Link, UnsizedNode<indexset::core::pair::Pair<#t, Link>>>
+                        }
+                    } else {
+                        quote! {#i: IndexMap<#t, Link>}
+                    }
                 } else {
-                    quote! {#i: IndexMultiMap<#t, Link>}
+                    if is_unsized(&t.to_string()) {
+                        quote! {#i: IndexMultiMap<#t, Link, UnsizedNode<indexset::core::multipair::MultiPair<#t, Link>>>}
+                    } else {
+                        quote! {#i: IndexMultiMap<#t, Link>}
+                    }
                 }
             })
             .collect::<Vec<_>>();

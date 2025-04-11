@@ -33,7 +33,7 @@ use crate::prelude::WT_INDEX_EXTENSION;
 
 pub use table_of_contents::IndexTableOfContents;
 pub use unsized_::SpaceIndexUnsized;
-pub use util::map_index_pages_to_toc_and_general;
+pub use util::{map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general};
 
 #[derive(Debug)]
 pub struct SpaceIndex<T: Ord + Eq, const DATA_LENGTH: u32> {

@@ -4,6 +4,7 @@ use worktable::prelude::*;
 use worktable::worktable;
 
 mod string_re_read;
+mod string_secondary_index;
 
 worktable! (
     name: TestSync,

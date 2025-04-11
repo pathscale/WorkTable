@@ -8,3 +8,4 @@ target
 Cargo.lock
 *.DS_Store
 tests/data/sync/
+/tests/data/unsized_secondary_sync/
