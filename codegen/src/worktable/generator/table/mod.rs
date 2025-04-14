@@ -90,7 +90,7 @@ impl Generator {
                     .to_string()
             })
             .collect::<Vec<_>>();
-        let pk_types_unsized = is_unsized_vec(&pk_types);
+        let pk_types_unsized = is_unsized_vec(pk_types);
         let node_type = if pk_types_unsized {
             quote! {
                 UnsizedNode<indexset::core::pair::Pair<#primary_key_type, Link>>

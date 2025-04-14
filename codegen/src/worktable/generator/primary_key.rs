@@ -57,7 +57,7 @@ impl Generator {
             })
             .collect::<Vec<_>>();
         let unsized_derive =
-            if is_unsized_vec(&types.into_iter().map(|v| v.to_string()).collect::<Vec<_>>()) {
+            if is_unsized_vec(&types.iter().map(|v| v.to_string()).collect::<Vec<_>>()) {
                 quote! {
                     VariableSizeMeasure,
                 }

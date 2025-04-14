@@ -37,6 +37,7 @@ impl Generator {
                 let t = self.columns.columns_map.get(i).unwrap();
                 let i = &idx.name;
 
+                #[allow(clippy::collapsible_else_if)]
                 if idx.is_unique {
                     if is_unsized(&t.to_string()) {
                         quote! {
