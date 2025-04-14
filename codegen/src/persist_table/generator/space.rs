@@ -1,4 +1,4 @@
-use crate::name_generator::{is_unsized, WorktableNameGenerator};
+use crate::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -28,7 +28,7 @@ impl Generator {
         let space_secondary_indexes = name_generator.get_space_secondary_index_ident();
         let space_secondary_indexes_events =
             name_generator.get_space_secondary_index_events_ident();
-        let space_index_type = if is_unsized(&primary_key_type.to_string()) {
+        let space_index_type = if self.attributes.pk_unsized {
             quote! {
                 SpaceIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
             }

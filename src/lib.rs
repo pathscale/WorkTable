@@ -40,7 +40,8 @@ pub mod prelude {
         parse_page, persist_page, seek_to_page_start, update_at, DataPage, GeneralHeader,
         GeneralPage, IndexPage, Interval, Link, PageType, Persistable, PersistableIndex,
         SizeMeasurable, SizeMeasure, SpaceInfoPage, TableOfContentsPage, UnsizedIndexPage,
-        DATA_VERSION, GENERAL_HEADER_SIZE, INNER_PAGE_SIZE, PAGE_SIZE,
+        VariableSizeMeasurable, VariableSizeMeasure, DATA_VERSION, GENERAL_HEADER_SIZE,
+        INNER_PAGE_SIZE, PAGE_SIZE,
     };
 
     pub use derive_more::{From, Into};

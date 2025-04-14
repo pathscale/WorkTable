@@ -6,6 +6,10 @@ pub fn is_unsized(ty_: &str) -> bool {
     matches!(ty_, "String")
 }
 
+pub fn is_unsized_vec(ty_: &[String]) -> bool {
+    ty_.iter().any(|v| matches!(v.as_str(), "String"))
+}
+
 pub struct WorktableNameGenerator {
     pub(crate) name: String,
 }
