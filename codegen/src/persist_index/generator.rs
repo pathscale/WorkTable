@@ -361,31 +361,41 @@ impl Generator {
                     .get(i)
                     .expect("should be available as constructed from same values");
 
-                let attach = if is_unique {
-                    quote! {
-                        #i.attach_node(node);
-                    }
-                } else {
-                    quote! {
-                        #i.attach_multi_node(node.into_iter().map(|p| p.into()).collect());
-                    }
-                };
-
                 if is_unsized(&ty.to_string()) {
+                    let node = if is_unique {
+                        quote! {
+                            let node = UnsizedNode::from_inner(page.inner.get_node(), #const_name);
+                            #i.attach_node(node);
+                        }
+                    } else {
+                        quote! {
+                            let node = UnsizedNode::from_inner(page.inner.get_node().into_iter().map(|p| p.into()).collect(), #const_name);
+                            #i.attach_multi_node(node);
+                        }
+                    };
                     quote! {
                         let #i: #t<_, Link, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
                         for page in persisted.#i.1 {
-                            let node = UnsizedNode::from_inner(page.inner.get_node(), #const_name);
-                            #attach
+                            #node
                         }
                     }
                 } else {
+                    let node = if is_unique {
+                        quote! {
+                            let node = page.inner.get_node();
+                            #i.attach_node(node);
+                        }
+                    } else {
+                        quote! {
+                            let node = page.inner.get_node();
+                            #i.attach_multi_node(node.into_iter().map(|p| p.into()).collect());
+                        }
+                    };
                     quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let #i: #t<_, Link> = #t::new();
                         for page in persisted.#i.1 {
-                            let node = page.inner.get_node();
-                            #attach
+                            #node
                         }
                     }
                 }
