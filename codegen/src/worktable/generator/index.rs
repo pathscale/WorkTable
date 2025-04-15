@@ -1,4 +1,4 @@
-use crate::name_generator::{is_unsized, WorktableNameGenerator};
+use crate::name_generator::{is_float, is_unsized, WorktableNameGenerator};
 use crate::worktable::generator::Generator;
 
 use crate::worktable::generator::queries::r#type::map_to_uppercase;
@@ -35,20 +35,25 @@ impl Generator {
             .iter()
             .map(|(i, idx)| {
                 let t = self.columns.columns_map.get(i).unwrap();
+                let t = if is_float(t.to_string().as_str()) {
+                    quote! { OrderedFloat<#t> }
+                } else {
+                    quote! { #t }
+                };
                 let i = &idx.name;
 
                 #[allow(clippy::collapsible_else_if)]
                 if idx.is_unique {
                     if is_unsized(&t.to_string()) {
                         quote! {
-                            #i: IndexMap<#t, Link, UnsizedNode<indexset::core::pair::Pair<#t, Link>>>
+                            #i: IndexMap<#t, Link, UnsizedNode<IndexPair<#t, Link>>>
                         }
                     } else {
                         quote! {#i: IndexMap<#t, Link>}
                     }
                 } else {
                     if is_unsized(&t.to_string()) {
-                        quote! {#i: IndexMultiMap<#t, Link, UnsizedNode<indexset::core::multipair::MultiPair<#t, Link>>>}
+                        quote! {#i: IndexMultiMap<#t, Link, UnsizedNode<IndexMultiPair<#t, Link>>>}
                     } else {
                         quote! {#i: IndexMultiMap<#t, Link>}
                     }
@@ -269,9 +274,25 @@ impl Generator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
+                let row = if is_float(
+                    self.columns
+                        .columns_map
+                        .get(i)
+                        .unwrap()
+                        .to_string()
+                        .as_str(),
+                ) {
+                    quote! {
+                        OrderedFloat(row.#i)
+                    }
+                } else {
+                    quote! {
+                        row.#i
+                    }
+                };
                 quote! {
-                    self.#index_field_name.insert(row.#i, link)
-                    .map_or(Ok(()), |_| Err(WorkTableError::AlreadyExists))?;
+                    self.#index_field_name.insert(#row, link)
+                        .map_or(Ok(()), |_| Err(WorkTableError::AlreadyExists))?;
                 }
             })
             .collect::<Vec<_>>();
@@ -297,13 +318,29 @@ impl Generator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
-                if idx.is_unique {
+                let row = if is_float(
+                    self.columns
+                        .columns_map
+                        .get(i)
+                        .unwrap()
+                        .to_string()
+                        .as_str(),
+                ) {
                     quote! {
-                        self.#index_field_name.remove(&row.#i);
+                        OrderedFloat(row.#i)
                     }
                 } else {
                     quote! {
-                        self.#index_field_name.remove(&row.#i, &link);
+                        row.#i
+                    }
+                };
+                if idx.is_unique {
+                    quote! {
+                        self.#index_field_name.remove(&#row);
+                    }
+                } else {
+                    quote! {
+                        self.#index_field_name.remove(&#row, &link);
                     }
                 }
             })
@@ -333,6 +370,8 @@ impl Generator {
 
                 let (new_value_expr, old_value_expr) = if type_str == "String" {
                     (quote! { new.to_string() }, quote! { old.to_string() })
+                } else if is_float(type_str.as_str()) {
+                    (quote! { OrderedFloat(*new) }, quote! { OrderedFloat(*old) })
                 } else {
                     (quote! { *new }, quote! { *old })
                 };

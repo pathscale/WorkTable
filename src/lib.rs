@@ -43,9 +43,12 @@ pub mod prelude {
         VariableSizeMeasurable, VariableSizeMeasure, DATA_VERSION, GENERAL_HEADER_SIZE,
         INNER_PAGE_SIZE, PAGE_SIZE,
     };
-
     pub use derive_more::{From, Into};
-    pub use lockfree::set::Set as LockFreeSet;
+    pub use indexset::{
+        cdc::change::ChangeEvent as IndexChangeEvent,
+        core::{multipair::MultiPair as IndexMultiPair, pair::Pair as IndexPair},
+    };
+    pub use ordered_float::OrderedFloat;
     pub use worktable_codegen::{PersistIndex, PersistTable};
 
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";

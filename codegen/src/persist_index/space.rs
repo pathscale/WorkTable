@@ -26,8 +26,8 @@ impl Generator {
             .iter()
             .map(|(i, t)| {
                 quote! {
-                    #i: Vec<indexset::cdc::change::ChangeEvent<
-                        indexset::core::pair::Pair<#t, Link>
+                    #i: Vec<IndexChangeEvent<
+                        IndexPair<#t, Link>
                     >>,
                 }
             })

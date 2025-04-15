@@ -10,6 +10,10 @@ pub fn is_unsized_vec(ty_: &[String]) -> bool {
     ty_.iter().any(|v| matches!(v.as_str(), "String"))
 }
 
+pub fn is_float(ty_: &str) -> bool {
+    matches!(ty_, "f64" | "f32")
+}
+
 pub struct WorktableNameGenerator {
     pub(crate) name: String,
 }

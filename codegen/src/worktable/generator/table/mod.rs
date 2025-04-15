@@ -93,11 +93,11 @@ impl Generator {
         let pk_types_unsized = is_unsized_vec(pk_types);
         let node_type = if pk_types_unsized {
             quote! {
-                UnsizedNode<indexset::core::pair::Pair<#primary_key_type, Link>>
+                UnsizedNode<IndexPair<#primary_key_type, Link>>
             }
         } else {
             quote! {
-                Vec<indexset::core::pair::Pair<#primary_key_type, Link>>
+                Vec<IndexPair<#primary_key_type, Link>>
             }
         };
         let derive_attrs = if pk_types_unsized {
