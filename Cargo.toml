@@ -35,3 +35,4 @@ indexset = { version = "0.12.0", features = ["concurrent", "cdc", "multimap"] }
 convert_case = "0.6.0"
 ordered-float = "5.0.0"
 serde = { version = "1.0.215", features = ["derive"] }
+prettytable-rs = "^0.10"
