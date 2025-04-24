@@ -20,50 +20,6 @@ worktable!(
     }
 );
 
-impl MapWorkTable {
-    pub async fn update_value_by_id_lockfreee(
-        &self,
-        row: ValueByIdQuery,
-        pk: MapPrimaryKey,
-    ) -> core::result::Result<(), WorkTableError> {
-        let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
-            .map_err(|_| WorkTableError::SerializeError)?;
-        let mut archived_row = unsafe {
-            rkyv::access_unchecked_mut::<<ValueByIdQuery as rkyv::Archive>::Archived>(
-                &mut bytes[..],
-            )
-            .unseal_unchecked()
-        };
-        let link = self
-            .0
-            .pk_map
-            .get(&pk)
-            .map(|v| v.get().value)
-            .ok_or(WorkTableError::NotFound)?;
-        let mut need_to_reinsert = false;
-        if !need_to_reinsert {
-            need_to_reinsert = archived_row.get_value_size() > self.get_value_size(link)?
-        }
-        if need_to_reinsert {
-            let mut row_old = self.select(pk.clone()).unwrap();
-            row_old.value = row.value;
-            self.delete_without_lock(pk.clone()).await?;
-            self.insert(row_old)?;
-            return core::result::Result::Ok(());
-        }
-        let updated_bytes: Vec<u8> = vec![];
-        unsafe {
-            self.0
-                .data
-                .with_mut_ref(link, |archived| {
-                    std::mem::swap(&mut archived.inner.value, &mut archived_row.value);
-                })
-                .map_err(WorkTableError::PagesError)?
-        };
-        core::result::Result::Ok(())
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rw_lock_hash_map_vs_wt() {
     let wt = Arc::new(MapWorkTable::default());

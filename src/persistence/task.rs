@@ -1,7 +1,7 @@
 use std::fmt::Debug;
-use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
+
 use tokio::sync::Notify;
 
 use crate::persistence::PersistenceEngineOps;
