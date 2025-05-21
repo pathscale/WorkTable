@@ -1,16 +1,33 @@
+use data_bucket::page::PageId;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-
-use data_bucket::page::PageId;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
+use uuid::Uuid;
+use worktable_codegen::worktable;
 
 use crate::persistence::PersistenceEngineOps;
-use crate::prelude::Operation;
+use crate::prelude::*;
+use crate::util::OptimizedVec;
 
-// pub struct NewQueue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
-//     page_id_queue: RwLock<Vec<PageId>>,
-// }
+worktable! (
+    name: QueueInner,
+    columns: {
+        id: u64 primary_key autoincrement,
+        operation_id: Uuid,
+        page_id: PageId,
+        link: Link,
+    },
+    indexes: {
+        operation_id_idx: operation_id,
+        page_id_idx: page_id,
+        link_idx: link,
+    },
+);
+
+pub struct NewQueue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+}
 
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {

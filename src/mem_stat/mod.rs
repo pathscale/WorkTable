@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use data_bucket::page::PageId;
 use data_bucket::Link;
 use indexset::core::multipair::MultiPair;
 use indexset::core::node::NodeLike;
@@ -174,4 +175,4 @@ where
     }
 }
 
-impl_memstat_zero!(Link, Uuid);
+impl_memstat_zero!(Link, PageId, Uuid);
