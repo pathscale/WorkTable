@@ -2,10 +2,15 @@ use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
-use tokio::sync::Notify;
+use data_bucket::page::PageId;
+use tokio::sync::{Notify, RwLock};
 
 use crate::persistence::PersistenceEngineOps;
 use crate::prelude::Operation;
+
+// pub struct NewQueue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+//     page_id_queue: RwLock<Vec<PageId>>,
+// }
 
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {

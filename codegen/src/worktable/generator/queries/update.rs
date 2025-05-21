@@ -269,7 +269,7 @@ impl Generator {
                     #primary_key_ident,
                     #secondary_events_ident
                 > = Operation::Update(UpdateOperation {
-                    id: Default::default(),
+                    id: uuid::Uuid::new_v4().into(),
                     secondary_keys_events,
                     bytes: updated_bytes,
                     link,

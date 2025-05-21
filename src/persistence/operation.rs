@@ -1,10 +1,10 @@
+use crate::prelude::From;
 use data_bucket::Link;
 use derive_more::Display;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
-
-use crate::prelude::From;
+use uuid::Uuid;
 
 /// Represents page's identifier. Is unique within the table bounds
 #[derive(
@@ -23,7 +23,7 @@ use crate::prelude::From;
     PartialOrd,
     Serialize,
 )]
-pub struct OperationId(u32);
+pub struct OperationId(Uuid);
 
 #[derive(Debug)]
 pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
