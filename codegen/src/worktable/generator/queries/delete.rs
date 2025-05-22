@@ -90,6 +90,7 @@ impl Generator {
                     id: uuid::Uuid::new_v4().into(),
                     secondary_keys_events,
                     primary_key_events,
+                    link,
                 });
                 self.2.apply_operation(op);
             }

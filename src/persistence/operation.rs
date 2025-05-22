@@ -25,14 +25,34 @@ use uuid::Uuid;
 )]
 pub struct OperationId(Uuid);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Insert(InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>),
     Update(UpdateOperation<SecondaryKeys>),
     Delete(DeleteOperation<PrimaryKey, SecondaryKeys>),
 }
 
-#[derive(Debug)]
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+    Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+{
+    pub fn operation_id(&self) -> OperationId {
+        match &self {
+            Operation::Insert(insert) => insert.id,
+            Operation::Update(update) => update.id,
+            Operation::Delete(delete) => delete.id,
+        }
+    }
+
+    pub fn link(&self) -> Link {
+        match &self {
+            Operation::Insert(insert) => insert.link,
+            Operation::Update(update) => update.link,
+            Operation::Delete(delete) => delete.link,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
@@ -42,7 +62,7 @@ pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub link: Link,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UpdateOperation<SecondaryKeys> {
     pub id: OperationId,
     pub secondary_keys_events: SecondaryKeys,
@@ -50,9 +70,10 @@ pub struct UpdateOperation<SecondaryKeys> {
     pub link: Link,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DeleteOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
+    pub link: Link,
 }

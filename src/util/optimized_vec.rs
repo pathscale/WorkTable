@@ -25,7 +25,7 @@ impl<T> Default for OptimizedVec<T> {
     }
 }
 
-impl<T: Clone> OptimizedVec<T> {
+impl<T> OptimizedVec<T> {
     pub fn with_capacity(cap: usize) -> Self {
         OptimizedVec {
             data: Vec::with_capacity(cap),
@@ -63,7 +63,7 @@ impl<T: Clone> OptimizedVec<T> {
     /// # Returns
     /// * `Option<T>` - Value at the index,
     /// or `None` if the index is out of bounds or the value is empty.
-    pub fn get(&self, index: usize) -> Option<T> {
+    pub fn get(&self, index: usize) -> Option<&T> {
         if index >= self.data.len() {
             return None;
         }
@@ -72,7 +72,7 @@ impl<T: Clone> OptimizedVec<T> {
             return None;
         }
 
-        Some(self.data[index].clone())
+        Some(&self.data[index])
     }
 
     /// Gets a mutable value from the vector.
@@ -99,7 +99,10 @@ impl<T: Clone> OptimizedVec<T> {
     /// # Returns
     /// * `Option<T>` - Value at the index,
     /// or `None` if the index is out of bounds or the value is empty.
-    pub fn remove(&mut self, index: usize) -> Option<T> {
+    pub fn remove(&mut self, index: usize) -> Option<T>
+    where
+        T: Clone,
+    {
         if index >= self.data.len() {
             return None;
         }
@@ -171,7 +174,7 @@ mod tests {
         let mut vec = OptimizedVec::<i32>::default();
         let index = vec.push(1);
 
-        assert_eq!(vec.get(index), Some(1));
+        assert_eq!(vec.get(index), Some(&1));
         assert_eq!(vec.get(index + 1), None);
     }
 

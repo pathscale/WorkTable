@@ -1,8 +1,9 @@
-use data_bucket::page::PageId;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-use tokio::sync::Notify;
+
+use data_bucket::page::PageId;
+use tokio::sync::{Notify, RwLock};
 use uuid::Uuid;
 use worktable_codegen::worktable;
 
@@ -17,6 +18,7 @@ worktable! (
         operation_id: Uuid,
         page_id: PageId,
         link: Link,
+        pos: usize,
     },
     indexes: {
         operation_id_idx: operation_id,
@@ -25,8 +27,35 @@ worktable! (
     },
 );
 
-pub struct NewQueue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+    queue_inner_wt: QueueInnerWorkTable,
+}
+
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+    QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+{
+    pub fn new() -> Self {
+        Self {
+            operations: OptimizedVec::with_capacity(256),
+            queue_inner_wt: QueueInnerWorkTable::default(),
+        }
+    }
+
+    pub fn push(&mut self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> eyre::Result<()>{
+        let link = value.link();
+        let mut row = QueueInnerRow {
+            id: self.queue_inner_wt.get_next_pk().into(),
+            operation_id: value.operation_id().into(),
+            page_id: link.page_id.into(),
+            link,
+            pos: 0,
+        };
+        let pos = self.operations.push(value);
+        row.pos = pos;
+        self.queue_inner_wt.insert(row)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -77,6 +106,16 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         }
     }
 
+    pub fn pop_iter(
+        &self,
+    ) -> impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
+        self.queue.pop_iter()
+    }
+
+    pub async fn wait_for_available(&self) {
+        self.notify.notified().await;
+    }
+
     pub fn len(&self) -> usize {
         self.len.load(Ordering::Relaxed) as usize
     }
@@ -110,7 +149,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         let engine_queue = queue.clone();
         let engine_progress_notify = progress_notify.clone();
         let task = async move {
+            let analyzer = QueueAnalyzer::new();
             loop {
+                engine_queue.wait_for_available().await;
+                let ops_available_iter = engine_queue.pop_iter();
+                
                 let next_op = if let Some(next_op) = engine_queue.immediate_pop() {
                     next_op
                 } else {
