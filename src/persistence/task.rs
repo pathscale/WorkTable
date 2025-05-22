@@ -42,7 +42,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         }
     }
 
-    pub fn push(&mut self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> eyre::Result<()>{
+    pub fn push(
+        &mut self,
+        value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
+    ) -> eyre::Result<()> {
         let link = value.link();
         let mut row = QueueInnerRow {
             id: self.queue_inner_wt.get_next_pk().into(),
@@ -153,7 +156,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             loop {
                 engine_queue.wait_for_available().await;
                 let ops_available_iter = engine_queue.pop_iter();
-                
+
                 let next_op = if let Some(next_op) = engine_queue.immediate_pop() {
                     next_op
                 } else {
