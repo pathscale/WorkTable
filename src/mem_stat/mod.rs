@@ -12,6 +12,7 @@ use indexset::core::pair::Pair;
 use ordered_float::OrderedFloat;
 use uuid::Uuid;
 
+use crate::prelude::OperationId;
 use crate::IndexMultiMap;
 use crate::{impl_memstat_zero, IndexMap};
 
@@ -175,4 +176,4 @@ where
     }
 }
 
-impl_memstat_zero!(Link, PageId, Uuid);
+impl_memstat_zero!(Link, PageId, Uuid, OperationId);

@@ -1,21 +1,23 @@
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
+
+use crate::persistence::operation::OperationId;
+use crate::persistence::PersistenceEngineOps;
+use crate::prelude::*;
+use crate::util::OptimizedVec;
 
 use data_bucket::page::PageId;
 use tokio::sync::{Notify, RwLock};
 use uuid::Uuid;
 use worktable_codegen::worktable;
 
-use crate::persistence::PersistenceEngineOps;
-use crate::prelude::*;
-use crate::util::OptimizedVec;
-
 worktable! (
     name: QueueInner,
     columns: {
         id: u64 primary_key autoincrement,
-        operation_id: Uuid,
+        operation_id: OperationId,
         page_id: PageId,
         link: Link,
         pos: usize,
@@ -26,6 +28,9 @@ worktable! (
         link_idx: link,
     },
 );
+
+pub type BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> =
+    Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>;
 
 pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
@@ -58,6 +63,95 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         row.pos = pos;
         self.queue_inner_wt.insert(row)?;
         Ok(())
+    }
+
+    pub fn extend_from_iter(
+        &mut self,
+        i: impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+    ) -> eyre::Result<()> {
+        for op in i {
+            self.push(op)?
+        }
+        Ok(())
+    }
+
+    pub fn get_first_op_id_available(&self) -> Option<OperationId> {
+        self.queue_inner_wt
+            .0
+            .indexes
+            .operation_id_idx
+            .iter()
+            .next()
+            .map(|(id, _)| (*id).into())
+    }
+
+    pub fn collect_batch_from_op_id(
+        &mut self,
+        op_id: OperationId,
+    ) -> eyre::Result<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
+        let ops_rows = self
+            .queue_inner_wt
+            .select_by_operation_id(op_id.into())
+            .execute()?;
+
+        let mut ops_set = HashSet::new();
+
+        let used_page_ids = ops_rows.iter().map(|r| r.page_id).collect::<HashSet<_>>();
+        // We collect all ops available for pages that are used in our current op_id
+        for page_id in used_page_ids.iter() {
+            let page_ops = self.queue_inner_wt.select_by_page_id(*page_id).execute()?;
+            ops_set.extend(page_ops.into_iter().map(|r| r.operation_id));
+        }
+        // After we need to find out if multi ops are using same pages, and if not,
+        // we need to find the first multi op that blocks batch update by using
+        // another page.
+        let mut block_op_id = None;
+        for op_id in ops_set.iter().filter(|op_id| match op_id {
+            OperationId::Single(_) => false,
+            OperationId::Multi(_) => true,
+        }) {
+            let rows = self
+                .queue_inner_wt
+                .select_by_operation_id(*op_id)
+                .execute()?;
+            let mut pages = rows.iter().map(|r| r.page_id).collect::<HashSet<_>>();
+            // if pages used by multi op are not available is used_page_ids set, it's blocker op.
+            for page in pages.iter() {
+                if !used_page_ids.contains(page) {
+                    if let Some(mut block_op_id) = block_op_id {
+                        if block_op_id > *op_id {
+                            block_op_id = *op_id
+                        }
+                    } else {
+                        block_op_id = Some(*op_id)
+                    }
+                }
+            }
+        }
+        // And if we found some blocker, we need to remove all ops after blocking op.
+        let ops_set = if let Some(block_op_id) = block_op_id {
+            ops_set
+                .into_iter()
+                .filter(|op_id| *op_id >= block_op_id)
+                .collect()
+        } else {
+            ops_set
+        };
+        // After this point, we have ops set ready for batch generation.
+        let mut ops_pos_set = HashSet::new();
+        for op_id in ops_set {
+            let rows = self.queue_inner_wt.select_by_operation_id(op_id).execute()?;
+            ops_pos_set.extend(rows.into_iter().map(|r| (r.pos, r.id)))
+        }
+        
+        let mut ops = vec![];
+        for (pos, id) in ops_pos_set {
+            let op = self.operations.remove(pos).expect("should be available as presented in table");
+            ops.push(op);
+            self.queue_inner_wt.delete(id.into())?
+        }
+
+        Ok(ops)
     }
 }
 
@@ -152,22 +246,14 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         let engine_queue = queue.clone();
         let engine_progress_notify = progress_notify.clone();
         let task = async move {
-            let analyzer = QueueAnalyzer::new();
+            let mut analyzer = QueueAnalyzer::new();
             loop {
                 engine_queue.wait_for_available().await;
                 let ops_available_iter = engine_queue.pop_iter();
-
-                let next_op = if let Some(next_op) = engine_queue.immediate_pop() {
-                    next_op
-                } else {
-                    engine_progress_notify.notify_waiters();
-                    engine_queue.pop().await
-                };
-                tracing::debug!("Applying operation {:?}", next_op);
-                let res = engine.apply_operation(next_op).await;
-                if let Err(err) = res {
+                if let Err(err) = analyzer.extend_from_iter(ops_available_iter) {
                     tracing::warn!("{}", err);
                 }
+                if let Some(op_id) = analyzer.get_first_op_id_available() {}
             }
         };
         let engine_task_handle = tokio::spawn(task).abort_handle();

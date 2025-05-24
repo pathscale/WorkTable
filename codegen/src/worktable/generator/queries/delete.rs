@@ -87,7 +87,7 @@ impl Generator {
                     #pk_ident,
                     #secondary_events_ident
                 > = Operation::Delete(DeleteOperation {
-                    id: uuid::Uuid::new_v4().into(),
+                    id: uuid::Uuid::now_v7().into(),
                     secondary_keys_events,
                     primary_key_events,
                     link,

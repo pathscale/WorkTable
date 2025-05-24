@@ -94,6 +94,7 @@ impl Generator {
 
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #diff_process
                 #persist_op
 
@@ -269,7 +270,7 @@ impl Generator {
                     #primary_key_ident,
                     #secondary_events_ident
                 > = Operation::Update(UpdateOperation {
-                    id: uuid::Uuid::new_v4().into(),
+                    id: op_id,
                     secondary_keys_events,
                     bytes: updated_bytes,
                     link,
@@ -406,6 +407,7 @@ impl Generator {
                         .map(|v| v.get().value)
                         .ok_or(WorkTableError::NotFound)?;
 
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
                 #diff_process
                 #persist_op
@@ -532,6 +534,7 @@ impl Generator {
                 }
 
                 let mut links_to_unlock = vec![];
+                let op_id = OperationId::Multi(uuid::Uuid::now_v7());
                 for link in links.into_iter() {
                     let pk = self.0.data.select(link)?.get_primary_key().clone();
                     let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
@@ -638,6 +641,7 @@ impl Generator {
                 let lock = std::sync::Arc::new(lock);
                 self.0.lock_map.insert(pk.clone(), lock.clone());
 
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
                 #diff_process
                 #persist_op

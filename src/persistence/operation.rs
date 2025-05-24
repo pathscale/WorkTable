@@ -1,5 +1,5 @@
 use crate::prelude::From;
-use data_bucket::Link;
+use data_bucket::{Link, SizeMeasurable};
 use derive_more::Display;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
@@ -13,7 +13,6 @@ use uuid::Uuid;
     Clone,
     Deserialize,
     Debug,
-    Default,
     Display,
     Eq,
     From,
@@ -23,7 +22,24 @@ use uuid::Uuid;
     PartialOrd,
     Serialize,
 )]
-pub struct OperationId(Uuid);
+#[rkyv(derive(Debug, PartialOrd, PartialEq, Eq, Ord))]
+pub enum OperationId {
+    #[from]
+    Single(Uuid),
+    Multi(Uuid),
+}
+
+impl SizeMeasurable for OperationId {
+    fn aligned_size(&self) -> usize {
+        Uuid::default().aligned_size()
+    }
+}
+
+impl Default for OperationId {
+    fn default() -> Self {
+        OperationId::Single(Uuid::now_v7())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
