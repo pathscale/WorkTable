@@ -29,6 +29,12 @@ worktable! (
     },
 );
 
+impl QueueInnerWorkTable {
+    pub fn iter_links(&self) -> impl Iterator<Item = Link> {
+        self.0.indexes.link_idx.iter().map(|(l, _)| *l)
+    }
+}
+
 pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     queue_inner_wt: QueueInnerWorkTable,
@@ -82,10 +88,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             .map(|(id, _)| (*id).into())
     }
 
-    pub fn collect_batch_from_op_id(
+    pub async fn collect_batch_from_op_id(
         &mut self,
         op_id: OperationId,
-    ) -> eyre::Result<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
+    ) -> eyre::Result<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>
+    where
+        PrimaryKeyGenState: Clone,
+        PrimaryKey: Clone,
+        SecondaryKeys: Clone,
+    {
         let ops_rows = self
             .queue_inner_wt
             .select_by_operation_id(op_id.into())
@@ -147,17 +158,18 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         let mut ops = vec![];
         let info_wt = QueueInnerWorkTable::default();
         for (pos, id) in ops_pos_set {
+            let mut row = self
+                .queue_inner_wt
+                .select(id.into())
+                .expect("exists as Id exists");
+            row.pos = ops.len();
             let op = self
                 .operations
                 .remove(pos)
                 .expect("should be available as presented in table");
             ops.push(op);
-            let row = self
-                .queue_inner_wt
-                .select(id.into())
-                .expect("exists as Id exists");
             info_wt.insert(row)?;
-            self.queue_inner_wt.delete(id.into())?
+            self.queue_inner_wt.delete(id.into()).await?
         }
         // return ops sorted by `OperationId`
         ops.sort_by(|left, right| left.operation_id().cmp(&right.operation_id()));

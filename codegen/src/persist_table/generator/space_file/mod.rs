@@ -260,7 +260,7 @@ impl Generator {
                     let file_length = data_file.metadata().await?.len();
                     let count = file_length / (#inner_const_name as u64 + GENERAL_HEADER_SIZE as u64);
                     for page_id in 1..=count {
-                        let index = parse_data_page::<{ #page_const_name }, { #inner_const_name }>(&mut data_file, page_id as u32).await?;
+                        let index = parse_data_page::<{ #page_const_name as u32}, { #inner_const_name as usize }>(&mut data_file, page_id as u32).await?;
                         data.push(index);
                     }
                     (data, info)

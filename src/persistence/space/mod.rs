@@ -1,9 +1,11 @@
 mod data;
 mod index;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 
+use data_bucket::page::PageId;
 use data_bucket::{GeneralPage, Link, SpaceInfoPage};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
@@ -15,7 +17,7 @@ pub use index::{
     IndexTableOfContents, SpaceIndex, SpaceIndexUnsized,
 };
 
-pub type BatchData = Vec<(Link, Vec<u8>)>;
+pub type BatchData = HashMap<PageId, Vec<(Link, Vec<u8>)>>;
 
 pub trait SpaceDataOps<PkGenState> {
     fn from_table_files_path<S: AsRef<str> + Send>(
@@ -32,7 +34,10 @@ pub trait SpaceDataOps<PkGenState> {
         link: Link,
         bytes: &[u8],
     ) -> impl Future<Output = eyre::Result<()>> + Send;
-    fn save_batch_data(&mut self, batch_data: BatchData);
+    fn save_batch_data(
+        &mut self,
+        batch_data: BatchData,
+    ) -> impl Future<Output = eyre::Result<()>> + Send;
     fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>>;
     fn save_info(&mut self) -> impl Future<Output = eyre::Result<()>> + Send;
 }

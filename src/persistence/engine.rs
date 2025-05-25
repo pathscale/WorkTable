@@ -134,6 +134,6 @@ where
         &mut self,
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> impl Future<Output = eyre::Result<()>> + Send {
-        todo!()
+        async move { todo!() }
     }
 }
