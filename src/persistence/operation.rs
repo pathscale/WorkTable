@@ -1,3 +1,5 @@
+use crate::persistence::space::BatchData;
+use crate::persistence::task::QueueInnerWorkTable;
 use crate::prelude::From;
 use data_bucket::{Link, SizeMeasurable};
 use derive_more::Display;
@@ -39,6 +41,17 @@ impl Default for OperationId {
     fn default() -> Self {
         OperationId::Single(Uuid::now_v7())
     }
+}
+
+pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    pub ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+    pub info_wt: QueueInnerWorkTable,
+}
+
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+{
+    pub fn get_batch_data_op(&self) -> BatchData {}
 }
 
 #[derive(Clone, Debug)]

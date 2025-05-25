@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
-use crate::persistence::operation::OperationId;
+use crate::persistence::operation::{BatchOperation, OperationId};
 use crate::persistence::PersistenceEngineOps;
 use crate::prelude::*;
 use crate::util::OptimizedVec;
@@ -28,9 +28,6 @@ worktable! (
         link_idx: link,
     },
 );
-
-pub type BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> =
-    Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>;
 
 pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
@@ -140,18 +137,32 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         // After this point, we have ops set ready for batch generation.
         let mut ops_pos_set = HashSet::new();
         for op_id in ops_set {
-            let rows = self.queue_inner_wt.select_by_operation_id(op_id).execute()?;
+            let rows = self
+                .queue_inner_wt
+                .select_by_operation_id(op_id)
+                .execute()?;
             ops_pos_set.extend(rows.into_iter().map(|r| (r.pos, r.id)))
         }
-        
+
         let mut ops = vec![];
+        let info_wt = QueueInnerWorkTable::default();
         for (pos, id) in ops_pos_set {
-            let op = self.operations.remove(pos).expect("should be available as presented in table");
+            let op = self
+                .operations
+                .remove(pos)
+                .expect("should be available as presented in table");
             ops.push(op);
+            let row = self
+                .queue_inner_wt
+                .select(id.into())
+                .expect("exists as Id exists");
+            info_wt.insert(row)?;
             self.queue_inner_wt.delete(id.into())?
         }
+        // return ops sorted by `OperationId`
+        ops.sort_by(|left, right| left.operation_id().cmp(&right.operation_id()));
 
-        Ok(ops)
+        Ok(BatchOperation { ops, info_wt })
     }
 }
 

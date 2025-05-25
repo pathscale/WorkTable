@@ -2,7 +2,7 @@ use std::fs;
 use std::marker::PhantomData;
 use std::path::Path;
 
-use crate::persistence::operation::Operation;
+use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
     PersistenceEngineOps, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
 };
@@ -128,5 +128,12 @@ where
                     .await
             }
         }
+    }
+
+    fn apply_batch_operation(
+        &mut self,
+        batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
+    ) -> impl Future<Output = eyre::Result<()>> + Send {
+        todo!()
     }
 }

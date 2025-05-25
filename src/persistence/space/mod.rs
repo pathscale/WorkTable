@@ -15,6 +15,8 @@ pub use index::{
     IndexTableOfContents, SpaceIndex, SpaceIndexUnsized,
 };
 
+pub type BatchData = Vec<(Link, Vec<u8>)>;
+
 pub trait SpaceDataOps<PkGenState> {
     fn from_table_files_path<S: AsRef<str> + Send>(
         path: S,
@@ -30,6 +32,7 @@ pub trait SpaceDataOps<PkGenState> {
         link: Link,
         bytes: &[u8],
     ) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn save_batch_data(&mut self, batch_data: BatchData);
     fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>>;
     fn save_info(&mut self) -> impl Future<Output = eyre::Result<()>> + Send;
 }
