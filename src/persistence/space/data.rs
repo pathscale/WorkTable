@@ -6,11 +6,7 @@ use crate::persistence::space::{open_or_create_file, BatchData};
 use crate::persistence::SpaceDataOps;
 use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
-use data_bucket::{
-    parse_data_pages_batch, parse_general_header_by_index, parse_page, parse_pages_batch,
-    persist_page, update_at, DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable,
-    SizeMeasurable, SpaceInfoPage, GENERAL_HEADER_SIZE,
-};
+use data_bucket::{parse_data_pages_batch, parse_general_header_by_index, parse_page, parse_pages_batch, persist_page, persist_pages_batch, update_at, DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage, GENERAL_HEADER_SIZE};
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::allocator::ArenaHandle;
@@ -130,6 +126,22 @@ where
         let pages =
             parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE>(&mut self.data_file, page_ids)
                 .await?;
+
+        let updated_pages = pages
+            .into_iter()
+            .map(|mut page| {
+                let id = page.header.page_id;
+                let ops = batch_data
+                    .get(&id)
+                    .expect("should be available as pages parsed from these ids");
+                for (link, bytes) in ops {
+                    page.inner.update_at(*link, bytes)?;
+                }
+                Ok::<_, eyre::Report>(page)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        persist_pages_batch(updated_pages, &mut self.data_file).await?;
 
         Ok(())
     }
