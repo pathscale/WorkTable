@@ -19,6 +19,8 @@ pub use index::{
 
 pub type BatchData = HashMap<PageId, Vec<(Link, Vec<u8>)>>;
 
+pub type BatchChangeEvent<T> = HashMap<PageId, Vec<ChangeEvent<Pair<T, Link>>>>;
+
 pub trait SpaceDataOps<PkGenState> {
     fn from_table_files_path<S: AsRef<str> + Send>(
         path: S,
@@ -64,6 +66,10 @@ where
     fn process_change_event(
         &mut self,
         event: ChangeEvent<Pair<T, Link>>,
+    ) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn process_change_event_batch(
+        &mut self,
+        events: BatchChangeEvent<T>,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
 }
 

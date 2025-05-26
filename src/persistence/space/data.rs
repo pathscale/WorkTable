@@ -110,7 +110,7 @@ where
     async fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
         if link.page_id > self.last_page_id.into() {
             let mut page = GeneralPage {
-                header: GeneralHeader::new(link.page_id, PageType::SpaceInfo, 0.into()),
+                header: GeneralHeader::new(link.page_id, PageType::Data, 0.into()),
                 inner: DataPage {
                     length: 0,
                     data: [0; 1],
@@ -127,11 +127,37 @@ where
 
     async fn save_batch_data(&mut self, batch_data: BatchData) -> eyre::Result<()> {
         let page_ids = batch_data.keys().map(|id| (*id).into()).collect::<Vec<_>>();
-        let pages =
-            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE>(&mut self.data_file, page_ids)
+        let ids_to_create = page_ids
+            .iter()
+            .filter(|id| **id > self.last_page_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let ids_to_parse = page_ids
+            .iter()
+            .filter(|id| **id <= self.last_page_id)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if let Some(max) = ids_to_create.last() {
+            self.last_page_id = *max;
+        }
+        let created_pages = ids_to_create
+            .into_iter()
+            .map(|id| GeneralPage {
+                header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
+                inner: DataPage {
+                    length: 0,
+                    data: [0; INNER_PAGE_SIZE],
+                },
+            })
+            .collect::<Vec<_>>();
+        let parsed_pages =
+            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE>(&mut self.data_file, ids_to_parse)
                 .await?;
 
-        let updated_pages = pages
+        let updated_pages = vec![parsed_pages, created_pages]
+            .into_iter()
+            .flatten()
             .into_iter()
             .map(|mut page| {
                 let id = page.header.page_id;

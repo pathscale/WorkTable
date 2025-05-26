@@ -10,9 +10,9 @@ use std::sync::Arc;
 use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    get_index_page_size_from_data_length, parse_page, persist_page, GeneralHeader, GeneralPage,
-    IndexPage, IndexPageUtility, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
-    GENERAL_HEADER_SIZE,
+    get_index_page_size_from_data_length, parse_data_pages_batch, parse_page, parse_pages_batch,
+    persist_page, persist_pages_batch, GeneralHeader, GeneralPage, IndexPage, IndexPageUtility,
+    Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -27,7 +27,7 @@ use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 use tokio::fs::File;
 
-use crate::persistence::space::open_or_create_file;
+use crate::persistence::space::{open_or_create_file, BatchChangeEvent};
 use crate::persistence::SpaceIndexOps;
 use crate::prelude::WT_INDEX_EXTENSION;
 
@@ -36,16 +36,16 @@ pub use unsized_::SpaceIndexUnsized;
 pub use util::{map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general};
 
 #[derive(Debug)]
-pub struct SpaceIndex<T: Ord + Eq, const DATA_LENGTH: u32> {
+pub struct SpaceIndex<T: Ord + Eq, const INNER_PAGE_SIZE: u32> {
     space_id: SpaceId,
-    table_of_contents: IndexTableOfContents<T, DATA_LENGTH>,
+    table_of_contents: IndexTableOfContents<T, INNER_PAGE_SIZE>,
     next_page_id: Arc<AtomicU32>,
     index_file: File,
     #[allow(dead_code)]
     info: GeneralPage<SpaceInfoPage<()>>,
 }
 
-impl<T, const DATA_LENGTH: u32> SpaceIndex<T, DATA_LENGTH>
+impl<T, const INNER_PAGE_SIZE: u32> SpaceIndex<T, INNER_PAGE_SIZE>
 where
     T: Archive
         + Ord
@@ -79,13 +79,13 @@ where
         } else {
             open_or_create_file(index_file_path).await?
         };
-        let info = parse_page::<_, DATA_LENGTH>(&mut index_file, 0).await?;
+        let info = parse_page::<_, INNER_PAGE_SIZE>(&mut index_file, 0).await?;
 
         let file_length = index_file.metadata().await?.len();
-        let page_id = if file_length % (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) == 0 {
-            file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64)
+        let page_id = if file_length % (INNER_PAGE_SIZE as u64 + GENERAL_HEADER_SIZE as u64) == 0 {
+            file_length / (INNER_PAGE_SIZE as u64 + GENERAL_HEADER_SIZE as u64)
         } else {
-            file_length / (DATA_LENGTH as u64 + GENERAL_HEADER_SIZE as u64) + 1
+            file_length / (INNER_PAGE_SIZE as u64 + GENERAL_HEADER_SIZE as u64) + 1
         };
         let next_page_id = Arc::new(AtomicU32::new(page_id as u32));
         let table_of_contents =
@@ -105,7 +105,7 @@ where
         node_id: Pair<T, Link>,
         page_id: PageId,
     ) -> eyre::Result<()> {
-        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
         let mut page = IndexPage::new(node_id.key.clone(), size);
         page.current_index = 1;
         page.current_length = 1;
@@ -136,7 +136,7 @@ where
     ) -> eyre::Result<Option<T>> {
         let mut new_node_id = None;
 
-        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
         let mut utility =
             IndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id).await?;
         utility.slots.insert(index, utility.current_index);
@@ -174,7 +174,7 @@ where
     ) -> eyre::Result<Option<T>> {
         let mut new_node_id = None;
 
-        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
         let mut utility =
             IndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id).await?;
         let value_position = *utility
@@ -275,7 +275,8 @@ where
             .get(&node_id)
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
         let mut page =
-            parse_page::<IndexPage<T>, DATA_LENGTH>(&mut self.index_file, page_id.into()).await?;
+            parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_id.into())
+                .await?;
         let splitted_page = page.inner.split(split_index);
         let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
             id
@@ -296,12 +297,14 @@ where
     }
 
     pub async fn parse_indexset(&mut self) -> eyre::Result<BTreeMap<T, Link>> {
-        let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
+        let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
         let indexset = BTreeMap::<T, Link>::with_maximum_node_size(size);
         for (_, page_id) in self.table_of_contents.iter() {
-            let page =
-                parse_page::<IndexPage<T>, DATA_LENGTH>(&mut self.index_file, (*page_id).into())
-                    .await?;
+            let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(
+                &mut self.index_file,
+                (*page_id).into(),
+            )
+            .await?;
             let node = page.inner.get_node();
             indexset.attach_node(node)
         }
@@ -310,7 +313,7 @@ where
     }
 }
 
-impl<T, const DATA_LENGTH: u32> SpaceIndexOps<T> for SpaceIndex<T, DATA_LENGTH>
+impl<T, const INNER_PAGE_SIZE: u32> SpaceIndexOps<T> for SpaceIndex<T, INNER_PAGE_SIZE>
 where
     T: Archive
         + Ord
@@ -392,6 +395,34 @@ where
                 split_index,
             } => self.process_split_node(node_id.key, split_index).await,
         }
+    }
+
+    async fn process_change_event_batch(
+        &mut self,
+        events: BatchChangeEvent<T>,
+    ) -> eyre::Result<()> {
+        println!("{:?}", events);
+        let page_ids = events.keys().map(|id| (*id).into()).collect::<Vec<_>>();
+        let pages =
+            parse_pages_batch::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_ids)
+                .await?;
+
+        let updated_pages = pages
+            .into_iter()
+            .map(|mut page| {
+                let id = page.header.page_id;
+                let evs = events
+                    .get(&id)
+                    .expect("should be available as pages parsed from these ids");
+                for ev in evs {
+                    page.inner.apply_change_event(ev.clone())?;
+                }
+                Ok::<_, eyre::Report>(page)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        persist_pages_batch(updated_pages, &mut self.index_file).await?;
+        Ok(())
     }
 }
 

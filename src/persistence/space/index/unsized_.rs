@@ -20,6 +20,7 @@ use rkyv::util::AlignedVec;
 use rkyv::{rancor, Archive, Deserialize, Serialize};
 use tokio::fs::File;
 
+use crate::persistence::space::BatchChangeEvent;
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
 use crate::UnsizedNode;
@@ -357,5 +358,12 @@ where
                 split_index,
             } => self.process_split_node(node_id.key, split_index).await,
         }
+    }
+
+    async fn process_change_event_batch(
+        &mut self,
+        events: BatchChangeEvent<T>,
+    ) -> eyre::Result<()> {
+        todo!()
     }
 }

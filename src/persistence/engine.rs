@@ -85,13 +85,13 @@ impl<
         PrimaryKeyGenState,
     >
 where
-    PrimaryKey: Debug + Ord + TablePrimaryKey + Send,
+    PrimaryKey: Clone + Debug + Ord + TablePrimaryKey + Send,
     <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send,
-    SecondaryIndexEvents: Debug + Send,
-    PrimaryKeyGenState: Debug + Send,
+    SecondaryIndexEvents: Clone + Debug + Send,
+    PrimaryKeyGenState: Clone + Debug + Send,
 {
     async fn apply_operation(
         &mut self,
@@ -136,10 +136,15 @@ where
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> impl Future<Output = eyre::Result<()>> + Send {
         async move {
-            println!("Started batch data gen");
+            println!("Start");
             let batch_data_op = batch_op.get_batch_data_op()?;
-            println!("Batch data is: {:?}", batch_op);
             self.data.save_batch_data(batch_data_op).await?;
+            println!("Saved data");
+            let pk_evs = batch_op.get_primary_key_evs()?;
+            println!("{:?}", pk_evs);
+            self.primary_index
+                .process_change_event_batch(pk_evs)
+                .await?;
 
             Ok(())
         }

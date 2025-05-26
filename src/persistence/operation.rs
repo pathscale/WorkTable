@@ -8,7 +8,7 @@ use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::persistence::space::BatchData;
+use crate::persistence::space::{BatchChangeEvent, BatchData};
 use crate::persistence::task::{QueueInnerRowFields, QueueInnerWorkTable};
 use crate::prelude::{From, Order, SelectQueryExecutor};
 
@@ -56,10 +56,35 @@ pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
 where
-    PrimaryKeyGenState: Debug,
-    PrimaryKey: Debug,
-    SecondaryKeys: Debug,
+    PrimaryKeyGenState: Debug + Clone,
+    PrimaryKey: Debug + Clone,
+    SecondaryKeys: Debug + Clone,
 {
+    pub fn get_primary_key_evs(&self) -> eyre::Result<BatchChangeEvent<PrimaryKey>> {
+        let mut data = HashMap::new();
+        let rows = self
+            .info_wt
+            .select_all()
+            .order_on(QueueInnerRowFields::OperationId, Order::Asc)
+            .execute()?;
+        for row in rows {
+            let link = row.link;
+            let pos = row.pos;
+            let op = self
+                .ops
+                .get(pos)
+                .expect("pos should be correct as was set while batch build");
+            if let Some(evs) = op.primary_key_events() {
+                let link = op.link();
+                data.entry(link.page_id)
+                    .and_modify(|v: &mut Vec<_>| v.extend(evs.iter().cloned()))
+                    .or_insert(evs.clone());
+            }
+        }
+
+        Ok(data)
+    }
+
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {
         let mut data = HashMap::new();
         for link in self.info_wt.iter_links() {
@@ -120,7 +145,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         match &self {
             Operation::Insert(insert) => Some(&insert.bytes),
             Operation::Update(update) => Some(&update.bytes),
-            Operation::Delete(delete) => None,
+            Operation::Delete(_) => None,
+        }
+    }
+
+    pub fn primary_key_events(&self) -> Option<&Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
+        match &self {
+            Operation::Insert(insert) => Some(&insert.primary_key_events),
+            Operation::Update(_) => None,
+            Operation::Delete(delete) => Some(&delete.primary_key_events),
         }
     }
 }
