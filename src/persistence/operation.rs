@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-
 use data_bucket::{Link, SizeMeasurable};
 use derive_more::Display;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt::Debug;
 use uuid::Uuid;
 
 use crate::persistence::space::BatchData;
@@ -46,6 +46,7 @@ impl Default for OperationId {
     }
 }
 
+#[derive(Debug)]
 pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     pub info_wt: QueueInnerWorkTable,
@@ -53,6 +54,10 @@ pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+where
+    PrimaryKeyGenState: Debug,
+    PrimaryKey: Debug,
+    SecondaryKeys: Debug,
 {
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {
         let mut data = HashMap::new();

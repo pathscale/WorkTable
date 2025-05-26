@@ -6,7 +6,11 @@ use crate::persistence::space::{open_or_create_file, BatchData};
 use crate::persistence::SpaceDataOps;
 use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
-use data_bucket::{parse_data_pages_batch, parse_general_header_by_index, parse_page, parse_pages_batch, persist_page, persist_pages_batch, update_at, DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage, GENERAL_HEADER_SIZE};
+use data_bucket::{
+    parse_data_pages_batch, parse_general_header_by_index, parse_page, parse_pages_batch,
+    persist_page, persist_pages_batch, update_at, DataPage, GeneralHeader, GeneralPage, Link,
+    PageType, Persistable, SizeMeasurable, SpaceInfoPage, GENERAL_HEADER_SIZE,
+};
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::allocator::ArenaHandle;

@@ -31,7 +31,13 @@ worktable! (
 
 impl QueueInnerWorkTable {
     pub fn iter_links(&self) -> impl Iterator<Item = Link> {
-        self.0.indexes.link_idx.iter().map(|(l, _)| *l)
+        self.0
+            .indexes
+            .link_idx
+            .iter()
+            .map(|(l, _)| *l)
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 }
 
@@ -259,9 +265,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     pub fn run_engine<E>(mut engine: E) -> Self
     where
         E: PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> + Send + 'static,
-        SecondaryKeys: Debug + Send + 'static,
-        PrimaryKeyGenState: Debug + Send + 'static,
-        PrimaryKey: Debug + Send + 'static,
+        SecondaryKeys: Clone + Debug + Send + 'static,
+        PrimaryKeyGenState: Clone + Debug + Send + 'static,
+        PrimaryKey: Clone + Debug + Send + 'static,
     {
         let queue = Arc::new(Queue::new());
         let progress_notify = Arc::new(Notify::new());
@@ -271,12 +277,34 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         let task = async move {
             let mut analyzer = QueueAnalyzer::new();
             loop {
-                engine_queue.wait_for_available().await;
+                let op = if let Some(next_op) = engine_queue.immediate_pop() {
+                    next_op
+                } else {
+                    engine_progress_notify.notify_waiters();
+                    engine_queue.pop().await
+                };
+                if let Err(err) = analyzer.push(op) {
+                    tracing::warn!("Error while feeding data to analyzer: {}", err);
+                }
                 let ops_available_iter = engine_queue.pop_iter();
                 if let Err(err) = analyzer.extend_from_iter(ops_available_iter) {
-                    tracing::warn!("{}", err);
+                    tracing::warn!("Error while feeding data to analyzer: {}", err);
                 }
-                if let Some(op_id) = analyzer.get_first_op_id_available() {}
+                if let Some(op_id) = analyzer.get_first_op_id_available() {
+                    let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
+                    if let Err(e) = batch_op {
+                        tracing::warn!("Error collecting batch operation: {}", e);
+                    } else {
+                        let batch_op = batch_op.unwrap();
+                        let res = engine.apply_batch_operation(batch_op).await;
+                        if let Err(e) = res {
+                            tracing::warn!(
+                                "Persistence engine failed while applying batch op: {}",
+                                e
+                            );
+                        }
+                    }
+                }
             }
         };
         let engine_task_handle = tokio::spawn(task).abort_handle();

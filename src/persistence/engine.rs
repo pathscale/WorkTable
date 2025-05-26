@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::fs;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -84,13 +85,13 @@ impl<
         PrimaryKeyGenState,
     >
 where
-    PrimaryKey: Ord + TablePrimaryKey + Send,
+    PrimaryKey: Debug + Ord + TablePrimaryKey + Send,
     <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send,
-    SecondaryIndexEvents: Send,
-    PrimaryKeyGenState: Send,
+    SecondaryIndexEvents: Debug + Send,
+    PrimaryKeyGenState: Debug + Send,
 {
     async fn apply_operation(
         &mut self,
@@ -134,6 +135,13 @@ where
         &mut self,
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> impl Future<Output = eyre::Result<()>> + Send {
-        async move { todo!() }
+        async move {
+            println!("Started batch data gen");
+            let batch_data_op = batch_op.get_batch_data_op()?;
+            println!("Batch data is: {:?}", batch_op);
+            self.data.save_batch_data(batch_data_op).await?;
+
+            Ok(())
+        }
     }
 }
