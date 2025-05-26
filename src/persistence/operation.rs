@@ -1,10 +1,11 @@
+use std::collections::HashMap;
+use std::fmt::Debug;
+
 use data_bucket::{Link, SizeMeasurable};
 use derive_more::Display;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt::Debug;
 use uuid::Uuid;
 
 use crate::persistence::space::BatchData;

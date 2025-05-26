@@ -177,10 +177,13 @@ where
         let size = get_index_page_size_from_data_length::<T>(DATA_LENGTH as usize);
         let mut utility =
             IndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id).await?;
-        utility.current_index = *utility
+        let value_position = *utility
             .slots
             .get(index)
             .expect("Slots should exist for every index within `size`");
+        if value_position < utility.current_index {
+            utility.current_index = value_position;
+        }
         utility.slots.remove(index);
         utility.slots.push(0);
         utility.current_length -= 1;
