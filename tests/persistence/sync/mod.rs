@@ -62,7 +62,6 @@ fn test_space_insert_sync() {
             table.wait_for_ops().await;
             row.id
         };
-        sleep(Duration::from_millis(600)).await;
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
             assert!(table.select(pk.into()).is_some());

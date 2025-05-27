@@ -145,6 +145,11 @@ where
             self.primary_index
                 .process_change_event_batch(pk_evs)
                 .await?;
+            if let Some(pk_gen_state_update) = batch_op.get_pk_gen_state()? {
+                let info = self.data.get_mut_info();
+                info.inner.pk_gen_state = pk_gen_state_update;
+                self.data.save_info().await?;
+            }
 
             Ok(())
         }

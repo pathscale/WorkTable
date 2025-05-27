@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
-use crate::persistence::operation::{BatchOperation, OperationId};
+use crate::persistence::operation::{BatchOperation, OperationId, OperationType};
 use crate::persistence::PersistenceEngineOps;
 use crate::prelude::*;
 use crate::util::OptimizedVec;
@@ -20,12 +20,14 @@ worktable! (
         operation_id: OperationId,
         page_id: PageId,
         link: Link,
+        op_type: OperationType,
         pos: usize,
     },
     indexes: {
         operation_id_idx: operation_id,
         page_id_idx: page_id,
         link_idx: link,
+        op_type_idx: op_type
     },
 );
 
@@ -67,6 +69,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             page_id: link.page_id.into(),
             link,
             pos: 0,
+            op_type: value.operation_type(),
         };
         let pos = self.operations.push(value);
         row.pos = pos;

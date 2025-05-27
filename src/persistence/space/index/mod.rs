@@ -2,7 +2,9 @@ mod table_of_contents;
 mod unsized_;
 mod util;
 
+use std::collections::HashMap;
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -50,6 +52,7 @@ where
     T: Archive
         + Ord
         + Eq
+        + Hash
         + Clone
         + Default
         + Debug
@@ -318,6 +321,7 @@ where
     T: Archive
         + Ord
         + Eq
+        + Hash
         + Clone
         + Default
         + Debug
@@ -401,27 +405,42 @@ where
         &mut self,
         events: BatchChangeEvent<T>,
     ) -> eyre::Result<()> {
-        println!("{:?}", events);
-        let page_ids = events.keys().map(|id| (*id).into()).collect::<Vec<_>>();
-        let pages =
-            parse_pages_batch::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_ids)
-                .await?;
+        let mut pages: HashMap<T, _> = HashMap::new();
+        for ev in events {
+            match ev {
+                ChangeEvent::InsertAt { .. } => {}
+                ChangeEvent::RemoveAt { .. } => {}
+                ChangeEvent::CreateNode { max_value } => {
+                    let page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
+                        id
+                    } else {
+                        self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
+                    };
+                    self.table_of_contents
+                        .insert(max_value.key.clone(), page_id);
 
-        let updated_pages = pages
-            .into_iter()
-            .map(|mut page| {
-                let id = page.header.page_id;
-                let evs = events
-                    .get(&id)
-                    .expect("should be available as pages parsed from these ids");
-                for ev in evs {
-                    page.inner.apply_change_event(ev.clone())?;
+                    let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
+                    let mut page = IndexPage::new(max_value.key.clone(), size);
+                    let ev = ChangeEvent::InsertAt {
+                        max_value: max_value.clone(),
+                        value: max_value.clone(),
+                        index: 0,
+                    };
+                    page.apply_change_event(ev)?;
+                    let header = GeneralHeader::new(page_id, PageType::Index, self.space_id);
+                    let mut general_page = GeneralPage {
+                        inner: page,
+                        header,
+                    };
+                    pages.insert(max_value.key, general_page);
                 }
-                Ok::<_, eyre::Report>(page)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+                ChangeEvent::RemoveNode { .. } => {}
+                ChangeEvent::SplitNode { .. } => {}
+            }
+        }
 
-        persist_pages_batch(updated_pages, &mut self.index_file).await?;
+        self.table_of_contents.persist(&mut self.index_file).await?;
+        persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
         Ok(())
     }
 }

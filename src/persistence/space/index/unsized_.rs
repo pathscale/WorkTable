@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -40,6 +41,7 @@ where
     T: Archive
         + Ord
         + Eq
+        + Hash
         + Clone
         + Default
         + Debug
@@ -294,6 +296,7 @@ where
     T: Archive
         + Ord
         + Eq
+        + Hash
         + Clone
         + Default
         + Debug
