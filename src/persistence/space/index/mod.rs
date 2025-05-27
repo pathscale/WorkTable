@@ -405,11 +405,36 @@ where
         &mut self,
         events: BatchChangeEvent<T>,
     ) -> eyre::Result<()> {
-        let mut pages: HashMap<T, _> = HashMap::new();
+        let mut pages: HashMap<PageId, _> = HashMap::new();
         for ev in events {
-            match ev {
-                ChangeEvent::InsertAt { .. } => {}
-                ChangeEvent::RemoveAt { .. } => {}
+            match &ev {
+                ChangeEvent::InsertAt { max_value, .. }
+                | ChangeEvent::RemoveAt { max_value, .. } => {
+                    let page_id = &max_value.key;
+                    let page_index = self
+                        .table_of_contents
+                        .get(page_id)
+                        .expect("page should be available in table of contents");
+                    let page = pages.get_mut(&page_index);
+                    let page_to_update = if let Some(page) = page {
+                        page
+                    } else {
+                        let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(
+                            &mut self.index_file,
+                            page_index.into(),
+                        )
+                        .await?;
+                        pages.insert(page_index, page);
+                        pages
+                            .get_mut(&page_index)
+                            .expect("should be available as was just inserted before")
+                    };
+                    page_to_update.inner.apply_change_event(ev.clone())?;
+                    if &page_to_update.inner.node_id != page_id {
+                        self.table_of_contents
+                            .update_key(page_id, page_to_update.inner.node_id.clone());
+                    }
+                }
                 ChangeEvent::CreateNode { max_value } => {
                     let page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
                         id
@@ -428,11 +453,13 @@ where
                     };
                     page.apply_change_event(ev)?;
                     let header = GeneralHeader::new(page_id, PageType::Index, self.space_id);
-                    let mut general_page = GeneralPage {
+                    let general_page = GeneralPage {
                         inner: page,
                         header,
                     };
-                    pages.insert(max_value.key, general_page);
+                    pages.insert(page_id, general_page);
+                    self.table_of_contents
+                        .insert(max_value.key.clone(), page_id)
                 }
                 ChangeEvent::RemoveNode { .. } => {}
                 ChangeEvent::SplitNode { .. } => {}
@@ -440,6 +467,7 @@ where
         }
 
         self.table_of_contents.persist(&mut self.index_file).await?;
+        println!("{:?}", pages.values());
         persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
         Ok(())
     }

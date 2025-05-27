@@ -136,12 +136,9 @@ where
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> impl Future<Output = eyre::Result<()>> + Send {
         async move {
-            println!("Start");
             let batch_data_op = batch_op.get_batch_data_op()?;
             self.data.save_batch_data(batch_data_op).await?;
-            println!("Saved data");
             let pk_evs = batch_op.get_primary_key_evs()?;
-            println!("{:?}", pk_evs);
             self.primary_index
                 .process_change_event_batch(pk_evs)
                 .await?;

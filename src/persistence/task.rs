@@ -29,6 +29,11 @@ worktable! (
         link_idx: link,
         op_type_idx: op_type
     },
+    queries: {
+        update: {
+            PosByOpId(pos) by operation_id,
+        },
+    }
 );
 
 impl QueueInnerWorkTable {
@@ -50,6 +55,10 @@ pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+where
+    PrimaryKeyGenState: Debug,
+    PrimaryKey: Debug,
+    SecondaryKeys: Debug,
 {
     pub fn new() -> Self {
         Self {
@@ -182,6 +191,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         }
         // return ops sorted by `OperationId`
         ops.sort_by(|left, right| left.operation_id().cmp(&right.operation_id()));
+        for (pos, op) in ops.iter().enumerate() {
+            let op_id = op.operation_id();
+            let q = PosByOpIdQuery { pos };
+            info_wt.update_pos_by_op_id(q, op_id).await?;
+        }
 
         Ok(BatchOperation { ops, info_wt })
     }
@@ -268,9 +282,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     pub fn run_engine<E>(mut engine: E) -> Self
     where
         E: PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> + Send + 'static,
-        SecondaryKeys: Clone + Debug + Send + 'static,
-        PrimaryKeyGenState: Clone + Debug + Send + 'static,
-        PrimaryKey: Clone + Debug + Send + 'static,
+        SecondaryKeys: Clone + Debug + Send + Sync + 'static,
+        PrimaryKeyGenState: Clone + Debug + Send + Sync + 'static,
+        PrimaryKey: Clone + Debug + Send + Sync + 'static,
     {
         let queue = Arc::new(Queue::new());
         let progress_notify = Arc::new(Notify::new());

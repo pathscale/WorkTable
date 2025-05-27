@@ -105,17 +105,16 @@ where
 
     pub fn get_primary_key_evs(&self) -> eyre::Result<BatchChangeEvent<PrimaryKey>> {
         let mut data = vec![];
-        let rows = self
-            .info_wt
-            .select_all()
-            .order_on(QueueInnerRowFields::OperationId, Order::Asc)
-            .execute()?;
+        let mut rows = self.info_wt.select_all().execute()?;
+        rows.sort_by(|l, r| l.operation_id.cmp(&r.operation_id));
         for row in rows {
+            println!("{:?}", row);
             let pos = row.pos;
             let op = self
                 .ops
                 .get(pos)
                 .expect("pos should be correct as was set while batch build");
+            println!("{:?}", op);
             if let Some(evs) = op.primary_key_events() {
                 data.extend(evs.iter().cloned())
             }
