@@ -222,9 +222,9 @@ impl Generator {
 
     fn gen_table_count_fn(&self) -> TokenStream {
         quote! {
-            pub fn count(&self) -> Option<usize> {
+            pub fn count(&self) -> usize {
                 let count = self.0.pk_map.len();
-                (count > 0).then_some(count)
+                count
             }
         }
     }

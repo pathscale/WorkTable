@@ -467,7 +467,6 @@ where
         }
 
         self.table_of_contents.persist(&mut self.index_file).await?;
-        println!("{:?}", pages.values());
         persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
         Ok(())
     }

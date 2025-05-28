@@ -199,6 +199,10 @@ where
 
         Ok(BatchOperation { ops, info_wt })
     }
+
+    pub fn len(&self) -> usize {
+        self.queue_inner_wt.count()
+    }
 }
 
 #[derive(Debug)]
@@ -295,13 +299,19 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             let mut analyzer = QueueAnalyzer::new();
             loop {
                 let op = if let Some(next_op) = engine_queue.immediate_pop() {
-                    next_op
+                    Some(next_op)
                 } else {
-                    engine_progress_notify.notify_waiters();
-                    engine_queue.pop().await
+                    if analyzer.len() == 0 {
+                        engine_progress_notify.notify_waiters();
+                        Some(engine_queue.pop().await)
+                    } else {
+                        None
+                    }
                 };
-                if let Err(err) = analyzer.push(op) {
-                    tracing::warn!("Error while feeding data to analyzer: {}", err);
+                if let Some(op) = op {
+                    if let Err(err) = analyzer.push(op) {
+                        tracing::warn!("Error while feeding data to analyzer: {}", err);
+                    }
                 }
                 let ops_available_iter = engine_queue.pop_iter();
                 if let Err(err) = analyzer.extend_from_iter(ops_available_iter) {
