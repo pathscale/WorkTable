@@ -461,8 +461,50 @@ where
                     self.table_of_contents
                         .insert(max_value.key.clone(), page_id)
                 }
-                ChangeEvent::RemoveNode { .. } => {}
-                ChangeEvent::SplitNode { .. } => {}
+                ChangeEvent::RemoveNode { max_value } => {
+                    self.table_of_contents.remove(&max_value.key);
+                }
+                ChangeEvent::SplitNode {
+                    max_value,
+                    split_index,
+                } => {
+                    let page_id = &max_value.key;
+                    let page_index = self
+                        .table_of_contents
+                        .get(page_id)
+                        .expect("page should be available in table of contents");
+                    let page = pages.get_mut(&page_index);
+                    let page_to_update = if let Some(page) = page {
+                        page
+                    } else {
+                        let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(
+                            &mut self.index_file,
+                            page_index.into(),
+                        )
+                        .await?;
+                        pages.insert(page_index, page);
+                        pages
+                            .get_mut(&page_index)
+                            .expect("should be available as was just inserted before")
+                    };
+                    let splitted_page = page_to_update.inner.split(*split_index);
+                    let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
+                        id
+                    } else {
+                        self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
+                    };
+
+                    self.table_of_contents
+                        .update_key(&page_id, page_to_update.inner.node_id.clone());
+                    self.table_of_contents
+                        .insert(splitted_page.node_id.clone(), new_page_id);
+                    let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
+                    let general_page = GeneralPage {
+                        inner: splitted_page,
+                        header,
+                    };
+                    pages.insert(new_page_id, general_page);
+                }
             }
         }
 
