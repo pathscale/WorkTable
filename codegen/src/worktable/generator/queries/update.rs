@@ -62,7 +62,7 @@ impl Generator {
         } else {
             quote! {
                 if bytes.len() >= link.length as usize {
-                    self.delete_without_lock(pk.clone()).await?;
+                    self.delete_without_lock(pk.clone())?;
                     self.insert(row)?;
 
                     lock.unlock();  // Releases locks
@@ -244,7 +244,7 @@ impl Generator {
                 if need_to_reinsert {
                     let mut row_old = self.select(pk.clone()).unwrap();
                     #(#row_updates)*
-                    self.delete_without_lock(pk.clone()).await?;
+                    self.delete_without_lock(pk.clone())?;
                     self.insert(row_old)?;
 
                     lock.unlock();  // Releases locks
@@ -488,7 +488,7 @@ impl Generator {
                 if need_to_reinsert {
                     let mut row_old = self.select(pk.clone()).unwrap();
                     #(#row_updates)*
-                    self.delete_without_lock(pk.clone()).await?;
+                    self.delete_without_lock(pk.clone())?;
                     self.insert(row_old)?;
 
                     let lock = self.0.lock_map.get(&pk).expect("was inserted before and not deleted");

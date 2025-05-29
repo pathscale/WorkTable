@@ -2,15 +2,17 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use crate::persistence::space::{BatchChangeEvent, BatchData};
-use crate::persistence::task::{QueueInnerRowFields, QueueInnerWorkTable};
+use crate::persistence::task::QueueInnerRow;
+use crate::prelude::*;
 use crate::prelude::{From, Order, SelectQueryExecutor};
+use data_bucket::page::PageId;
 use data_bucket::{Link, SizeMeasurable};
 use derive_more::Display;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
 use uuid::Uuid;
-use worktable_codegen::MemStat;
+use worktable_codegen::{worktable, MemStat};
 
 /// Represents page's identifier. Is unique within the table bounds
 #[derive(
@@ -76,10 +78,58 @@ impl SizeMeasurable for OperationType {
     }
 }
 
+worktable! (
+    name: BatchInner,
+    columns: {
+        id: u64 primary_key autoincrement,
+        operation_id: OperationId,
+        page_id: PageId,
+        link: Link,
+        op_type: OperationType,
+        pos: usize,
+    },
+    indexes: {
+        operation_id_idx: operation_id,
+        page_id_idx: page_id,
+        link_idx: link,
+        op_type_idx: op_type,
+    },
+    queries: {
+        update: {
+            PosByOpId(pos) by operation_id,
+        },
+    }
+);
+
+impl BatchInnerWorkTable {
+    pub fn iter_links(&self) -> impl Iterator<Item = Link> {
+        self.0
+            .indexes
+            .link_idx
+            .iter()
+            .map(|(l, _)| *l)
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}
+
+impl From<QueueInnerRow> for BatchInnerRow {
+    fn from(value: QueueInnerRow) -> Self {
+        BatchInnerRow {
+            id: value.id,
+            operation_id: value.operation_id,
+            page_id: value.page_id,
+            link: value.link,
+            op_type: Default::default(),
+            pos: 0,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
-    pub info_wt: QueueInnerWorkTable,
+    pub info_wt: BatchInnerWorkTable,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
@@ -93,7 +143,7 @@ where
         let row = self
             .info_wt
             .select_by_op_type(OperationType::Insert)
-            .order_on(QueueInnerRowFields::OperationId, Order::Desc)
+            .order_on(BatchInnerRowFields::OperationId, Order::Desc)
             .limit(1)
             .execute()?;
         Ok(row.into_iter().next().map(|r| {
@@ -127,7 +177,7 @@ where
             let last_op = self
                 .info_wt
                 .select_by_link(link)
-                .order_on(QueueInnerRowFields::OperationId, Order::Desc)
+                .order_on(BatchInnerRowFields::OperationId, Order::Desc)
                 .limit(1)
                 .execute()?;
             let op_row = last_op

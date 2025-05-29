@@ -1,12 +1,15 @@
+use crate::persistence::operation::{
+    BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, OperationType, PosByOpIdQuery,
+};
+use crate::persistence::PersistenceEngineOps;
+use crate::prelude::*;
+use crate::util::OptimizedVec;
+
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-
-use crate::persistence::operation::{BatchOperation, OperationId, OperationType};
-use crate::persistence::PersistenceEngineOps;
-use crate::prelude::*;
-use crate::util::OptimizedVec;
+use std::time::Instant;
 
 use data_bucket::page::PageId;
 use tokio::sync::{Notify, RwLock};
@@ -20,33 +23,14 @@ worktable! (
         operation_id: OperationId,
         page_id: PageId,
         link: Link,
-        op_type: OperationType,
         pos: usize,
     },
     indexes: {
         operation_id_idx: operation_id,
         page_id_idx: page_id,
         link_idx: link,
-        op_type_idx: op_type
     },
-    queries: {
-        update: {
-            PosByOpId(pos) by operation_id,
-        },
-    }
 );
-
-impl QueueInnerWorkTable {
-    pub fn iter_links(&self) -> impl Iterator<Item = Link> {
-        self.0
-            .indexes
-            .link_idx
-            .iter()
-            .map(|(l, _)| *l)
-            .collect::<Vec<_>>()
-            .into_iter()
-    }
-}
 
 pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
@@ -78,7 +62,6 @@ where
             page_id: link.page_id.into(),
             link,
             pos: 0,
-            op_type: value.operation_type(),
         };
         let pos = self.operations.push(value);
         row.pos = pos;
@@ -115,6 +98,7 @@ where
         PrimaryKey: Clone,
         SecondaryKeys: Clone,
     {
+        let start = Instant::now();
         let ops_rows = self
             .queue_inner_wt
             .select_by_operation_id(op_id.into())
@@ -173,22 +157,26 @@ where
             ops_pos_set.extend(rows.into_iter().map(|r| (r.pos, r.id)))
         }
 
-        let mut ops = vec![];
-        let info_wt = QueueInnerWorkTable::default();
+        let mut ops = Vec::with_capacity(ops_pos_set.len());
+        println!("Len is {:?}", ops_pos_set.len());
+        let info_wt = BatchInnerWorkTable::default();
         for (pos, id) in ops_pos_set {
-            let mut row = self
+            let mut row: BatchInnerRow = self
                 .queue_inner_wt
                 .select(id.into())
-                .expect("exists as Id exists");
-            row.pos = ops.len();
+                .expect("exists as Id exists")
+                .into();
             let op = self
                 .operations
                 .remove(pos)
                 .expect("should be available as presented in table");
+            row.pos = ops.len();
+            row.op_type = op.operation_type();
             ops.push(op);
             info_wt.insert(row)?;
-            self.queue_inner_wt.delete(id.into()).await?
+            self.queue_inner_wt.delete_without_lock(id.into())?
         }
+        println!("New wt generated {:?}", start.elapsed());
         // return ops sorted by `OperationId`
         ops.sort_by(|left, right| left.operation_id().cmp(&right.operation_id()));
         for (pos, op) in ops.iter().enumerate() {
@@ -301,6 +289,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
                 let op = if let Some(next_op) = engine_queue.immediate_pop() {
                     Some(next_op)
                 } else {
+                    println!("Queue is {:?}", analyzer.len());
                     if analyzer.len() == 0 {
                         engine_progress_notify.notify_waiters();
                         Some(engine_queue.pop().await)
@@ -313,17 +302,24 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
                         tracing::warn!("Error while feeding data to analyzer: {}", err);
                     }
                 }
+                let start = Instant::now();
                 let ops_available_iter = engine_queue.pop_iter();
                 if let Err(err) = analyzer.extend_from_iter(ops_available_iter) {
                     tracing::warn!("Error while feeding data to analyzer: {}", err);
                 }
+                let ops_feed = start.elapsed();
+                println!("After data feed: {:?}", ops_feed);
                 if let Some(op_id) = analyzer.get_first_op_id_available() {
                     let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
+                    let batch_collect = start.elapsed();
+                    println!("After batch collect: {:?}", batch_collect);
                     if let Err(e) = batch_op {
                         tracing::warn!("Error collecting batch operation: {}", e);
                     } else {
                         let batch_op = batch_op.unwrap();
                         let res = engine.apply_batch_operation(batch_op).await;
+                        let apply = start.elapsed();
+                        println!("After op apply: {:?}", apply);
                         if let Err(e) = res {
                             tracing::warn!(
                                 "Persistence engine failed while applying batch op: {}",
