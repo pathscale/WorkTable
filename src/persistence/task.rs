@@ -158,7 +158,6 @@ where
         }
 
         let mut ops = Vec::with_capacity(ops_pos_set.len());
-        println!("Len is {:?}", ops_pos_set.len());
         let info_wt = BatchInnerWorkTable::default();
         for (pos, id) in ops_pos_set {
             let mut row: BatchInnerRow = self

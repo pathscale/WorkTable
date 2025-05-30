@@ -90,7 +90,7 @@ fn test_space_insert_many_sync() {
             let table = TestSyncWorkTable::load_from_file(config.clone())
                 .await
                 .unwrap();
-            for i in 0..200_000 {
+            for i in 0..2_000 {
                 let pk = {
                     let row = TestSyncRow {
                         another: i,

@@ -83,6 +83,10 @@ pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
         &mut self,
         events: SecondaryIndexEvents,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn process_change_event_batch(
+        &mut self,
+        events: SecondaryIndexEvents,
+    ) -> impl Future<Output = eyre::Result<()>> + Send;
 }
 
 pub async fn open_or_create_file<S: AsRef<str>>(path: S) -> eyre::Result<File> {

@@ -487,6 +487,7 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
+                    println!("Event: {:?}", &ev);
                     let splitted_page = page_to_update.inner.split(*split_index);
                     let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
                         id

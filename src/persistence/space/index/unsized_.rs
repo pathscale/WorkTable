@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -5,8 +6,9 @@ use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    parse_page, persist_page, GeneralHeader, GeneralPage, IndexPageUtility, IndexValue, Link,
-    PageType, SizeMeasurable, SpaceId, SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
+    get_index_page_size_from_data_length, parse_page, persist_page, persist_pages_batch,
+    GeneralHeader, GeneralPage, IndexPage, IndexPageUtility, IndexValue, Link, PageType,
+    SizeMeasurable, SpaceId, SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -291,7 +293,7 @@ where
     }
 }
 
-impl<T, const DATA_LENGTH: u32> SpaceIndexOps<T> for SpaceIndexUnsized<T, DATA_LENGTH>
+impl<T, const INNER_PAGE_SIZE: u32> SpaceIndexOps<T> for SpaceIndexUnsized<T, INNER_PAGE_SIZE>
 where
     T: Archive
         + Ord
@@ -332,7 +334,7 @@ where
     }
 
     async fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()> {
-        SpaceIndex::<T, DATA_LENGTH>::bootstrap(file, table_name).await
+        SpaceIndex::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name).await
     }
 
     async fn process_change_event(
@@ -367,6 +369,113 @@ where
         &mut self,
         events: BatchChangeEvent<T>,
     ) -> eyre::Result<()> {
-        todo!()
+        let mut pages: HashMap<PageId, _> = HashMap::new();
+        for ev in events {
+            match &ev {
+                ChangeEvent::InsertAt { max_value, .. }
+                | ChangeEvent::RemoveAt { max_value, .. } => {
+                    let page_id = &max_value.key;
+                    let page_index = self
+                        .table_of_contents
+                        .get(page_id)
+                        .expect("page should be available in table of contents");
+                    let page = pages.get_mut(&page_index);
+                    let page_to_update = if let Some(page) = page {
+                        page
+                    } else {
+                        println!("Try to parse page: {:?} {:?}", page_index, page_id);
+                        let page =
+                            parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
+                                &mut self.index_file,
+                                page_index.into(),
+                            )
+                            .await?;
+                        println!("Page {:?} {:?} parsed", page_index, page_id);
+                        pages.insert(page_index, page);
+                        pages
+                            .get_mut(&page_index)
+                            .expect("should be available as was just inserted before")
+                    };
+                    page_to_update.inner.apply_change_event(ev.clone())?;
+                    if &page_to_update.inner.node_id != page_id {
+                        self.table_of_contents
+                            .update_key(page_id, page_to_update.inner.node_id.clone());
+                    }
+                }
+                ChangeEvent::CreateNode { max_value } => {
+                    let page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
+                        id
+                    } else {
+                        self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
+                    };
+                    self.table_of_contents
+                        .insert(max_value.key.clone(), page_id);
+
+                    let mut page = UnsizedIndexPage::<T, INNER_PAGE_SIZE>::new(
+                        max_value.key.clone(),
+                        max_value.clone().into(),
+                    )?;
+                    let header = GeneralHeader::new(page_id, PageType::IndexUnsized, self.space_id);
+                    let general_page = GeneralPage {
+                        inner: page,
+                        header,
+                    };
+                    pages.insert(page_id, general_page);
+                    self.table_of_contents
+                        .insert(max_value.key.clone(), page_id)
+                }
+                ChangeEvent::RemoveNode { max_value } => {
+                    self.table_of_contents.remove(&max_value.key);
+                }
+                ChangeEvent::SplitNode {
+                    max_value,
+                    split_index,
+                } => {
+                    let page_id = &max_value.key;
+                    let page_index = self
+                        .table_of_contents
+                        .get(page_id)
+                        .expect("page should be available in table of contents");
+                    let page = pages.get_mut(&page_index);
+                    let page_to_update = if let Some(page) = page {
+                        page
+                    } else {
+                        println!("Try to parse page: {:?} {:?}", page_index, page_id);
+                        let page =
+                            parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
+                                &mut self.index_file,
+                                page_index.into(),
+                            )
+                            .await?;
+                        pages.insert(page_index, page);
+                        pages
+                            .get_mut(&page_index)
+                            .expect("should be available as was just inserted before")
+                    };
+                    let splitted_page = page_to_update.inner.split(*split_index);
+
+                    let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
+                        id
+                    } else {
+                        self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
+                    };
+
+                    self.table_of_contents
+                        .update_key(&page_id, page_to_update.inner.node_id.clone());
+                    self.table_of_contents
+                        .insert(splitted_page.node_id.clone(), new_page_id);
+                    let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
+                    let general_page = GeneralPage {
+                        inner: splitted_page,
+                        header,
+                    };
+                    pages.insert(new_page_id, general_page);
+                }
+            }
+        }
+
+        self.table_of_contents.persist(&mut self.index_file).await?;
+        persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
+        Ok(())
     }
 }

@@ -137,7 +137,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
 where
     PrimaryKeyGenState: Debug + Clone,
     PrimaryKey: Debug + Clone,
-    SecondaryKeys: Debug + Clone,
+    SecondaryKeys: Debug + Default + Clone + TableSecondaryIndexEventsOps,
 {
     pub fn get_pk_gen_state(&self) -> eyre::Result<Option<PrimaryKeyGenState>> {
         let row = self
@@ -153,8 +153,10 @@ where
         }))
     }
 
-    pub fn get_primary_key_evs(&self) -> eyre::Result<BatchChangeEvent<PrimaryKey>> {
-        let mut data = vec![];
+    pub fn get_indexes_evs(&self) -> eyre::Result<(BatchChangeEvent<PrimaryKey>, SecondaryKeys)> {
+        let mut primary = vec![];
+        let mut secondary = SecondaryKeys::default();
+
         let mut rows = self.info_wt.select_all().execute()?;
         rows.sort_by(|l, r| l.operation_id.cmp(&r.operation_id));
         for row in rows {
@@ -164,11 +166,13 @@ where
                 .get(pos)
                 .expect("pos should be correct as was set while batch build");
             if let Some(evs) = op.primary_key_events() {
-                data.extend(evs.iter().cloned())
+                primary.extend(evs.iter().cloned())
             }
+            let secondary_new = op.secondary_key_events();
+            secondary.extend(secondary_new.clone());
         }
 
-        Ok(data)
+        Ok((primary, secondary))
     }
 
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {
@@ -248,6 +252,14 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => Some(&insert.primary_key_events),
             Operation::Update(_) => None,
             Operation::Delete(delete) => Some(&delete.primary_key_events),
+        }
+    }
+
+    pub fn secondary_key_events(&self) -> &SecondaryKeys {
+        match &self {
+            Operation::Insert(insert) => &insert.secondary_keys_events,
+            Operation::Update(update) => &update.secondary_keys_events,
+            Operation::Delete(delete) => &delete.secondary_keys_events,
         }
     }
 

@@ -345,9 +345,6 @@ mod tests {
             links.push(link)
         }
         let other_links = rx.recv().unwrap();
-
-        print!("{:?}", other_links);
-        print!("{:?}", links);
     }
 
     #[test]

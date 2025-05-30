@@ -1,13 +1,16 @@
-use std::fmt::Debug;
-use std::fs;
-use std::marker::PhantomData;
-use std::path::Path;
-
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
     PersistenceEngineOps, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
 };
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
+use crate::TableSecondaryIndexEventsOps;
+use futures::future::Either;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use std::fmt::Debug;
+use std::fs;
+use std::marker::PhantomData;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct PersistenceEngine<
@@ -90,7 +93,7 @@ where
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send,
-    SecondaryIndexEvents: Clone + Debug + Send,
+    SecondaryIndexEvents: Clone + Debug + Default + TableSecondaryIndexEventsOps + Send,
     PrimaryKeyGenState: Clone + Debug + Send,
 {
     async fn apply_operation(
@@ -137,11 +140,31 @@ where
     ) -> impl Future<Output = eyre::Result<()>> + Send {
         async move {
             let batch_data_op = batch_op.get_batch_data_op()?;
-            self.data.save_batch_data(batch_data_op).await?;
-            let pk_evs = batch_op.get_primary_key_evs()?;
-            self.primary_index
-                .process_change_event_batch(pk_evs)
-                .await?;
+
+            let (pk_evs, secondary_evs) = batch_op.get_indexes_evs()?;
+            // self.data.save_batch_data(batch_data_op).await?;
+            // self.primary_index
+            //     .process_change_event_batch(pk_evs)
+            //     .await?;
+            // self.secondary_indexes
+            //     .process_change_event_batch(secondary_evs)
+            //     .await?;
+            {
+                let mut futs = FuturesUnordered::new();
+                futs.push(Either::Left(Either::Right(
+                    self.data.save_batch_data(batch_data_op),
+                )));
+                futs.push(Either::Left(Either::Left(
+                    self.primary_index.process_change_event_batch(pk_evs),
+                )));
+                futs.push(Either::Right(
+                    self.secondary_indexes
+                        .process_change_event_batch(secondary_evs),
+                ));
+
+                while (futs.next().await).is_some() {}
+            }
+
             if let Some(pk_gen_state_update) = batch_op.get_pk_gen_state()? {
                 let info = self.data.get_mut_info();
                 info.inner.pk_gen_state = pk_gen_state_update;
