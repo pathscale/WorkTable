@@ -32,11 +32,11 @@ impl Generator {
         let space_file_ident = name_generator.get_space_file_ident();
         let primary_index = if self.attributes.pk_unsized {
             quote! {
-                pub primary_index: (Vec<GeneralPage<TableOfContentsPage<#pk_type>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>>>),
+                pub primary_index: (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>>>),
             }
         } else {
             quote! {
-                pub primary_index: (Vec<GeneralPage<TableOfContentsPage<#pk_type>>>, Vec<GeneralPage<IndexPage<#pk_type>>>),
+                pub primary_index: (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>),
             }
         };
 

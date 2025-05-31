@@ -45,7 +45,7 @@ async fn test_primary_index_parse() {
     assert_eq!(index.header.previous_id, 0.into());
     assert_eq!(index.header.next_id, 0.into());
     assert_eq!(index.header.page_type, PageType::Index);
-    assert_eq!(index.header.data_length, 16334);
+    assert_eq!(index.header.data_length, 16350);
 
     let mut key = 1;
     let length = 24;
@@ -82,7 +82,7 @@ async fn test_another_idx_index_parse() {
     assert_eq!(index.header.previous_id, 0.into());
     assert_eq!(index.header.next_id, 0.into());
     assert_eq!(index.header.page_type, PageType::Index);
-    assert_eq!(index.header.data_length, 16334);
+    assert_eq!(index.header.data_length, 16350);
 
     let mut key = 1;
     let length = 24;

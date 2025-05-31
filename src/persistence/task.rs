@@ -175,7 +175,7 @@ where
             info_wt.insert(row)?;
             self.queue_inner_wt.delete_without_lock(id.into())?
         }
-        println!("New wt generated {:?}", start.elapsed());
+        // println!("New wt generated {:?}", start.elapsed());
         // return ops sorted by `OperationId`
         ops.sort_by(|left, right| left.operation_id().cmp(&right.operation_id()));
         for (pos, op) in ops.iter().enumerate() {
@@ -288,7 +288,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
                 let op = if let Some(next_op) = engine_queue.immediate_pop() {
                     Some(next_op)
                 } else {
-                    println!("Queue is {:?}", analyzer.len());
+                    // println!("Queue is {:?}", analyzer.len());
                     if analyzer.len() == 0 {
                         engine_progress_notify.notify_waiters();
                         Some(engine_queue.pop().await)
@@ -307,18 +307,18 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
                     tracing::warn!("Error while feeding data to analyzer: {}", err);
                 }
                 let ops_feed = start.elapsed();
-                println!("After data feed: {:?}", ops_feed);
+                // println!("After data feed: {:?}", ops_feed);
                 if let Some(op_id) = analyzer.get_first_op_id_available() {
                     let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
                     let batch_collect = start.elapsed();
-                    println!("After batch collect: {:?}", batch_collect);
+                    // println!("After batch collect: {:?}", batch_collect);
                     if let Err(e) = batch_op {
                         tracing::warn!("Error collecting batch operation: {}", e);
                     } else {
                         let batch_op = batch_op.unwrap();
                         let res = engine.apply_batch_operation(batch_op).await;
                         let apply = start.elapsed();
-                        println!("After op apply: {:?}", apply);
+                        // println!("After op apply: {:?}", apply);
                         if let Err(e) = res {
                             tracing::warn!(
                                 "Persistence engine failed while applying batch op: {}",

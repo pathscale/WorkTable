@@ -40,7 +40,7 @@ pub use util::{map_index_pages_to_toc_and_general, map_unsized_index_pages_to_to
 #[derive(Debug)]
 pub struct SpaceIndex<T: Ord + Eq, const INNER_PAGE_SIZE: u32> {
     space_id: SpaceId,
-    table_of_contents: IndexTableOfContents<T, INNER_PAGE_SIZE>,
+    table_of_contents: IndexTableOfContents<(T, Link), INNER_PAGE_SIZE>,
     next_page_id: Arc<AtomicU32>,
     index_file: File,
     #[allow(dead_code)]
@@ -61,7 +61,7 @@ where
         + Send
         + Sync
         + 'static,
-    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq + Debug,
 {
     pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId) -> eyre::Result<Self> {
         let mut index_file = if !Path::new(index_file_path.as_ref()).exists() {
@@ -109,7 +109,7 @@ where
         page_id: PageId,
     ) -> eyre::Result<()> {
         let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
-        let mut page = IndexPage::new(node_id.key.clone(), size);
+        let mut page = IndexPage::new(node_id.clone().into(), size);
         page.current_index = 1;
         page.current_length = 1;
         page.slots[0] = 0;
@@ -133,10 +133,10 @@ where
     async fn insert_on_index_page(
         &mut self,
         page_id: PageId,
-        node_id: T,
+        node_id: Pair<T, Link>,
         index: usize,
         value: Pair<T, Link>,
-    ) -> eyre::Result<Option<T>> {
+    ) -> eyre::Result<Option<Pair<T, Link>>> {
         let mut new_node_id = None;
 
         let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
@@ -158,9 +158,9 @@ where
         )
         .await?;
 
-        if node_id < value.key {
-            utility.node_id = value.key.clone();
-            new_node_id = Some(value.key);
+        if &node_id.key < &value.key {
+            utility.node_id = value.clone().into();
+            new_node_id = Some(value);
         }
 
         IndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility).await?;
@@ -171,10 +171,10 @@ where
     async fn remove_from_index_page(
         &mut self,
         page_id: PageId,
-        node_id: T,
+        node_id: Pair<T, Link>,
         index: usize,
         value: Pair<T, Link>,
-    ) -> eyre::Result<Option<T>> {
+    ) -> eyre::Result<Option<Pair<T, Link>>> {
         let mut new_node_id = None;
 
         let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
@@ -193,7 +193,7 @@ where
         IndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.current_index)
             .await?;
 
-        if node_id == value.key {
+        if &node_id.key == &value.key {
             let index = *utility
                 .slots
                 .get(index - 1)
@@ -204,9 +204,8 @@ where
                 size,
                 index as usize,
             )
-            .await?
-            .key;
-            new_node_id = Some(utility.node_id.clone())
+            .await?;
+            new_node_id = Some(utility.node_id.clone().into())
         }
 
         IndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility).await?;
@@ -216,19 +215,22 @@ where
 
     async fn process_insert_at(
         &mut self,
-        node_id: T,
+        node_id: Pair<T, Link>,
         value: Pair<T, Link>,
         index: usize,
     ) -> eyre::Result<()> {
         let page_id = self
             .table_of_contents
-            .get(&node_id)
+            .get(&(node_id.key.clone(), node_id.value))
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
         if let Some(new_node_id) = self
             .insert_on_index_page(page_id, node_id.clone(), index, value)
             .await?
         {
-            self.table_of_contents.update_key(&node_id, new_node_id);
+            self.table_of_contents.update_key(
+                &(node_id.key, node_id.value),
+                (new_node_id.key, new_node_id.value),
+            );
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -236,19 +238,22 @@ where
 
     async fn process_remove_at(
         &mut self,
-        node_id: T,
+        node_id: Pair<T, Link>,
         value: Pair<T, Link>,
         index: usize,
     ) -> eyre::Result<()> {
         let page_id = self
             .table_of_contents
-            .get(&node_id)
+            .get(&(node_id.key.clone(), node_id.value))
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
         if let Some(new_node_id) = self
             .remove_from_index_page(page_id, node_id.clone(), index, value)
             .await?
         {
-            self.table_of_contents.update_key(&node_id, new_node_id);
+            self.table_of_contents.update_key(
+                &(node_id.key, node_id.value),
+                (new_node_id.key, new_node_id.value),
+            );
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -259,23 +264,28 @@ where
         } else {
             self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
         };
-        self.table_of_contents.insert(node_id.key.clone(), page_id);
+        self.table_of_contents
+            .insert((node_id.key.clone(), node_id.value), page_id);
         self.table_of_contents.persist(&mut self.index_file).await?;
         self.add_new_index_page(node_id, page_id).await?;
 
         Ok(())
     }
 
-    async fn process_remove_node(&mut self, node_id: T) -> eyre::Result<()> {
-        self.table_of_contents.remove(&node_id);
+    async fn process_remove_node(&mut self, node_id: Pair<T, Link>) -> eyre::Result<()> {
+        self.table_of_contents.remove(&(node_id.key, node_id.value));
         self.table_of_contents.persist(&mut self.index_file).await?;
         Ok(())
     }
 
-    async fn process_split_node(&mut self, node_id: T, split_index: usize) -> eyre::Result<()> {
+    async fn process_split_node(
+        &mut self,
+        node_id: Pair<T, Link>,
+        split_index: usize,
+    ) -> eyre::Result<()> {
         let page_id = self
             .table_of_contents
-            .get(&node_id)
+            .get(&(node_id.key.clone(), node_id.value))
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
         let mut page =
             parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_id.into())
@@ -287,10 +297,17 @@ where
             self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
         };
 
-        self.table_of_contents
-            .update_key(&node_id, page.inner.node_id.clone());
-        self.table_of_contents
-            .insert(splitted_page.node_id.clone(), new_page_id);
+        self.table_of_contents.update_key(
+            &(node_id.key.clone(), node_id.value),
+            (page.inner.node_id.key.clone(), page.inner.node_id.link),
+        );
+        self.table_of_contents.insert(
+            (
+                splitted_page.node_id.key.clone(),
+                splitted_page.node_id.link,
+            ),
+            new_page_id,
+        );
         self.table_of_contents.persist(&mut self.index_file).await?;
 
         self.add_index_page(splitted_page, new_page_id).await?;
@@ -330,7 +347,7 @@ where
         + Send
         + Sync
         + 'static,
-    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq + Debug,
 {
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(
         table_path: S,
@@ -382,22 +399,22 @@ where
                 max_value: node_id,
                 value,
                 index,
-            } => self.process_insert_at(node_id.key, value, index).await,
+            } => self.process_insert_at(node_id, value, index).await,
             ChangeEvent::RemoveAt {
                 max_value: node_id,
                 value,
                 index,
-            } => self.process_remove_at(node_id.key, value, index).await,
+            } => self.process_remove_at(node_id, value, index).await,
             ChangeEvent::CreateNode { max_value: node_id } => {
                 self.process_create_node(node_id).await
             }
             ChangeEvent::RemoveNode { max_value: node_id } => {
-                self.process_remove_node(node_id.key).await
+                self.process_remove_node(node_id).await
             }
             ChangeEvent::SplitNode {
                 max_value: node_id,
                 split_index,
-            } => self.process_split_node(node_id.key, split_index).await,
+            } => self.process_split_node(node_id, split_index).await,
         }
     }
 
@@ -410,7 +427,9 @@ where
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. }
                 | ChangeEvent::RemoveAt { max_value, .. } => {
-                    let page_id = &max_value.key;
+                    let page_id = &(max_value.key.clone(), max_value.value);
+                    // println!("{:?}", page_id);
+                    // println!("{:?}", self.table_of_contents.iter().collect::<Vec<_>>());
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
@@ -430,9 +449,18 @@ where
                             .expect("should be available as was just inserted before")
                     };
                     page_to_update.inner.apply_change_event(ev.clone())?;
-                    if &page_to_update.inner.node_id != page_id {
-                        self.table_of_contents
-                            .update_key(page_id, page_to_update.inner.node_id.clone());
+                    if &(
+                        page_to_update.inner.node_id.key.clone(),
+                        page_to_update.inner.node_id.link,
+                    ) != page_id
+                    {
+                        self.table_of_contents.update_key(
+                            page_id,
+                            (
+                                page_to_update.inner.node_id.key.clone(),
+                                page_to_update.inner.node_id.link,
+                            ),
+                        );
                     }
                 }
                 ChangeEvent::CreateNode { max_value } => {
@@ -442,10 +470,10 @@ where
                         self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
                     };
                     self.table_of_contents
-                        .insert(max_value.key.clone(), page_id);
+                        .insert((max_value.key.clone(), max_value.value), page_id);
 
                     let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
-                    let mut page = IndexPage::new(max_value.key.clone(), size);
+                    let mut page = IndexPage::new(max_value.clone().into(), size);
                     let ev = ChangeEvent::InsertAt {
                         max_value: max_value.clone(),
                         value: max_value.clone(),
@@ -459,16 +487,17 @@ where
                     };
                     pages.insert(page_id, general_page);
                     self.table_of_contents
-                        .insert(max_value.key.clone(), page_id)
+                        .insert((max_value.key.clone(), max_value.value), page_id)
                 }
                 ChangeEvent::RemoveNode { max_value } => {
-                    self.table_of_contents.remove(&max_value.key);
+                    self.table_of_contents
+                        .remove(&(max_value.key.clone(), max_value.value));
                 }
                 ChangeEvent::SplitNode {
                     max_value,
                     split_index,
                 } => {
-                    let page_id = &max_value.key;
+                    let page_id = &(max_value.key.clone(), max_value.value);
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
@@ -487,7 +516,7 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
-                    println!("Event: {:?}", &ev);
+                    // println!("Event: {:?}", &ev);
                     let splitted_page = page_to_update.inner.split(*split_index);
                     let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
                         id
@@ -495,10 +524,20 @@ where
                         self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
                     };
 
-                    self.table_of_contents
-                        .update_key(&page_id, page_to_update.inner.node_id.clone());
-                    self.table_of_contents
-                        .insert(splitted_page.node_id.clone(), new_page_id);
+                    self.table_of_contents.update_key(
+                        &page_id,
+                        (
+                            page_to_update.inner.node_id.key.clone(),
+                            page_to_update.inner.node_id.link,
+                        ),
+                    );
+                    self.table_of_contents.insert(
+                        (
+                            splitted_page.node_id.key.clone(),
+                            splitted_page.node_id.link,
+                        ),
+                        new_page_id,
+                    );
                     let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
                     let general_page = GeneralPage {
                         inner: splitted_page,
@@ -518,13 +557,19 @@ where
 #[cfg(test)]
 mod test {
     use data_bucket::{
-        get_index_page_size_from_data_length, IndexPage, Persistable, INNER_PAGE_SIZE,
+        get_index_page_size_from_data_length, IndexPage, IndexValue, Persistable, INNER_PAGE_SIZE,
     };
 
     #[test]
     fn test_size_measure() {
         let size = get_index_page_size_from_data_length::<u32>(INNER_PAGE_SIZE);
-        let page = IndexPage::new(0, size);
+        let page = IndexPage::new(
+            IndexValue {
+                key: 0,
+                link: Default::default(),
+            },
+            size,
+        );
         assert!(page.as_bytes().as_ref().len() <= INNER_PAGE_SIZE)
     }
 }
