@@ -7,9 +7,9 @@ use crate::persistence::SpaceDataOps;
 use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
 use data_bucket::{
-    parse_data_pages_batch, parse_general_header_by_index, parse_page, parse_pages_batch,
-    persist_page, persist_pages_batch, update_at, DataPage, GeneralHeader, GeneralPage, Link,
-    PageType, Persistable, SizeMeasurable, SpaceInfoPage, GENERAL_HEADER_SIZE,
+    parse_data_pages_batch, parse_general_header_by_index, parse_page, persist_page,
+    persist_pages_batch, update_at, DataPage, GeneralHeader, GeneralPage, Link, PageType,
+    Persistable, SizeMeasurable, SpaceInfoPage,
 };
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
@@ -158,7 +158,6 @@ where
         let updated_pages = vec![parsed_pages, created_pages]
             .into_iter()
             .flatten()
-            .into_iter()
             .map(|mut page| {
                 let id = page.header.page_id;
                 let ops = batch_data

@@ -49,8 +49,8 @@ impl Generator {
 
         let fields: Vec<_> = self
             .field_types
-            .iter()
-            .map(|(i, t)| {
+            .keys()
+            .map(|i| {
                 quote! {
                     self.#i.extend(another.#i);
                 }

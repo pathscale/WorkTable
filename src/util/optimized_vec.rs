@@ -62,7 +62,8 @@ impl<T> OptimizedVec<T> {
     /// * `index` - Index of the value to get
     /// # Returns
     /// * `Option<T>` - Value at the index,
-    /// or `None` if the index is out of bounds or the value is empty.
+    ///   or `None` if the index is out of bounds or the value is empty.
+    #[allow(dead_code)]
     pub fn get(&self, index: usize) -> Option<&T> {
         if index >= self.data.len() {
             return None;
@@ -80,7 +81,8 @@ impl<T> OptimizedVec<T> {
     /// * `index` - Index of the value to get
     /// # Returns
     /// * `Option<&mut T>` - Mutable value at the index,
-    /// or `None` if the index is out of bounds or the value is empty.
+    ///   or `None` if the index is out of bounds or the value is empty.
+    #[allow(dead_code)]
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if index >= self.data.len() {
             return None;
@@ -98,7 +100,7 @@ impl<T> OptimizedVec<T> {
     /// * `index` - Index of the value to remove.
     /// # Returns
     /// * `Option<T>` - Value at the index,
-    /// or `None` if the index is out of bounds or the value is empty.
+    ///   or `None` if the index is out of bounds or the value is empty.
     pub fn remove(&mut self, index: usize) -> Option<T>
     where
         T: Clone,
@@ -121,6 +123,7 @@ impl<T> OptimizedVec<T> {
     /// Gets the data vector.
     /// # Returns
     /// * `&Vec<T>` - Data vector.
+    #[allow(dead_code)]
     pub fn get_data(&self) -> &Vec<T> {
         &self.data
     }
@@ -128,6 +131,7 @@ impl<T> OptimizedVec<T> {
     /// Gets the length of the vector.
     /// # Returns
     /// * `usize` - Length of the vector.
+    #[allow(dead_code)]
     #[must_use]
     pub fn len(&self) -> usize {
         self.length
@@ -136,6 +140,7 @@ impl<T> OptimizedVec<T> {
     /// Returns true of [`OptimizedVec`] is empty.
     /// # Returns
     /// * `bool` - State of emptiness.
+    #[allow(dead_code)]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0

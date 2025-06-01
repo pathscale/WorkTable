@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    get_index_page_size_from_data_length, parse_page, persist_page, persist_pages_batch,
-    GeneralHeader, GeneralPage, IndexPage, IndexPageUtility, IndexValue, Link, PageType,
-    SizeMeasurable, SpaceId, SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable,
+    parse_page, persist_page, persist_pages_batch, GeneralHeader, GeneralPage, IndexPageUtility,
+    IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage, UnsizedIndexPage,
+    VariableSizeMeasurable,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -71,10 +71,6 @@ where
         node_id: Pair<T, Link>,
         page_id: PageId,
     ) -> eyre::Result<()> {
-        let value = IndexValue {
-            key: node_id.key.clone(),
-            link: node_id.value,
-        };
         let page = UnsizedIndexPage::new(node_id.clone().into())?;
         self.add_index_page(page, page_id).await
     }
@@ -169,7 +165,7 @@ where
             (value_offset, (value_offset - previous_offset) as u16),
         );
 
-        if &node_id.key < &value.key {
+        if node_id.key < value.key {
             utility.update_node_id(value.clone().into())?;
             new_node_id = Some(value);
         }
@@ -224,7 +220,7 @@ where
         utility.slots.remove(index);
         utility.slots_size -= 1;
 
-        if &node_id.key == &value.key {
+        if node_id.key == value.key {
             let (offset, len) = *utility
                 .slots
                 .get(index - 1)
@@ -437,7 +433,7 @@ where
                     self.table_of_contents
                         .insert((max_value.key.clone(), max_value.value), page_id);
 
-                    let mut page =
+                    let page =
                         UnsizedIndexPage::<T, INNER_PAGE_SIZE>::new(max_value.clone().into())?;
                     let header = GeneralHeader::new(page_id, PageType::IndexUnsized, self.space_id);
                     let general_page = GeneralPage {

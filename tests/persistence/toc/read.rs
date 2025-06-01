@@ -1,7 +1,7 @@
-use data_bucket::page::PageId;
-use data_bucket::{Link, INNER_PAGE_SIZE};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+
+use data_bucket::{Link, INNER_PAGE_SIZE};
 use tokio::fs::OpenOptions;
 use worktable::prelude::IndexTableOfContents;
 

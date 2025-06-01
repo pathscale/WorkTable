@@ -1,5 +1,5 @@
 use crate::persistence::operation::{
-    BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, OperationType, PosByOpIdQuery,
+    BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery,
 };
 use crate::persistence::PersistenceEngineOps;
 use crate::prelude::*;
@@ -9,11 +9,9 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use data_bucket::page::PageId;
-use tokio::sync::{Notify, RwLock};
-use uuid::Uuid;
+use tokio::sync::Notify;
 use worktable_codegen::worktable;
 
 worktable! (
@@ -58,8 +56,8 @@ where
         let link = value.link();
         let mut row = QueueInnerRow {
             id: self.queue_inner_wt.get_next_pk().into(),
-            operation_id: value.operation_id().into(),
-            page_id: link.page_id.into(),
+            operation_id: value.operation_id(),
+            page_id: link.page_id,
             link,
             pos: 0,
         };
@@ -86,7 +84,7 @@ where
             .operation_id_idx
             .iter()
             .next()
-            .map(|(id, _)| (*id).into())
+            .map(|(id, _)| *id)
     }
 
     pub async fn collect_batch_from_op_id(
@@ -100,7 +98,7 @@ where
     {
         let ops_rows = self
             .queue_inner_wt
-            .select_by_operation_id(op_id.into())
+            .select_by_operation_id(op_id)
             .execute()?;
 
         let mut ops_set = HashSet::new();
@@ -123,13 +121,13 @@ where
                 .queue_inner_wt
                 .select_by_operation_id(*op_id)
                 .execute()?;
-            let mut pages = rows.iter().map(|r| r.page_id).collect::<HashSet<_>>();
+            let pages = rows.iter().map(|r| r.page_id).collect::<HashSet<_>>();
             // if pages used by multi op are not available is used_page_ids set, it's blocker op.
             for page in pages.iter() {
                 if !used_page_ids.contains(page) {
-                    if let Some(mut block_op_id) = block_op_id {
-                        if block_op_id > *op_id {
-                            block_op_id = *op_id
+                    if let Some(block_op_id) = block_op_id.as_mut() {
+                        if *block_op_id > *op_id {
+                            *block_op_id = *op_id
                         }
                     } else {
                         block_op_id = Some(*op_id)
@@ -176,7 +174,7 @@ where
         }
         // println!("New wt generated {:?}", start.elapsed());
         // return ops sorted by `OperationId`
-        ops.sort_by(|left, right| left.operation_id().cmp(&right.operation_id()));
+        ops.sort_by_key(|k| k.operation_id());
         for (pos, op) in ops.iter().enumerate() {
             let op_id = op.operation_id();
             let q = PosByOpIdQuery { pos };
@@ -243,14 +241,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         &self,
     ) -> impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         let iter_count = self.len.clone();
-        self.queue.pop_iter().map(move |v| {
+        self.queue.pop_iter().inspect(move |_| {
             iter_count.fetch_sub(1, Ordering::Relaxed);
-            v
         })
-    }
-
-    pub async fn wait_for_available(&self) {
-        self.notify.notified().await;
     }
 
     pub fn len(&self) -> usize {

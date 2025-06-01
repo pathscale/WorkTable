@@ -344,7 +344,7 @@ mod tests {
             let link = shared.save_row(&row);
             links.push(link)
         }
-        let other_links = rx.recv().unwrap();
+        let _other_links = rx.recv().unwrap();
     }
 
     #[test]

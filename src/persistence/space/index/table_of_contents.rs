@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    parse_page, persist_page, GeneralHeader, GeneralPage, Link, PageType, SizeMeasurable, SpaceId,
+    parse_page, persist_page, GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId,
     TableOfContentsPage,
 };
 use rkyv::de::Pool;

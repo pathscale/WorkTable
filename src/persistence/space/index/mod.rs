@@ -12,9 +12,9 @@ use std::sync::Arc;
 use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    get_index_page_size_from_data_length, parse_data_pages_batch, parse_page, parse_pages_batch,
-    persist_page, persist_pages_batch, GeneralHeader, GeneralPage, IndexPage, IndexPageUtility,
-    Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage, GENERAL_HEADER_SIZE,
+    get_index_page_size_from_data_length, parse_page, persist_page, persist_pages_batch,
+    GeneralHeader, GeneralPage, IndexPage, IndexPageUtility, Link, PageType, SizeMeasurable,
+    SpaceId, SpaceInfoPage, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -158,7 +158,7 @@ where
         )
         .await?;
 
-        if &node_id.key < &value.key {
+        if node_id.key < value.key {
             utility.node_id = value.clone().into();
             new_node_id = Some(value);
         }
@@ -193,7 +193,7 @@ where
         IndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.current_index)
             .await?;
 
-        if &node_id.key == &value.key {
+        if node_id.key == value.key {
             let index = *utility
                 .slots
                 .get(index - 1)
@@ -525,7 +525,7 @@ where
                     };
 
                     self.table_of_contents.update_key(
-                        &page_id,
+                        page_id,
                         (
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,

@@ -6,6 +6,7 @@ use data_bucket::{
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+#[allow(clippy::type_complexity)]
 pub fn map_index_pages_to_toc_and_general<T, const DATA_LENGTH: u32>(
     pages: Vec<IndexPage<T>>,
 ) -> (
@@ -35,6 +36,7 @@ where
     (toc, general_index_pages)
 }
 
+#[allow(clippy::type_complexity)]
 pub fn map_unsized_index_pages_to_toc_and_general<T, const DATA_LENGTH: u32>(
     pages: Vec<UnsizedIndexPage<T, DATA_LENGTH>>,
 ) -> (
