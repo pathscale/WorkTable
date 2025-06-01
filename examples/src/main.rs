@@ -103,3 +103,5 @@
 //
 //     println!("{info}");
 // }
+
+fn main() {}
