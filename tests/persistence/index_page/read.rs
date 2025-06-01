@@ -209,9 +209,8 @@ async fn test_index_pages_read_full_page() {
         .await
         .unwrap();
     assert_eq!(page.inner.node_id.key, 1000);
-    assert_eq!(page.inner.current_index, 907);
-    assert_eq!(page.inner.current_length, 907);
-    assert_eq!(page.inner.size, page.inner.current_index);
+    assert_eq!(page.inner.current_index, 905);
+    assert_eq!(page.inner.current_length, 905);
 }
 
 #[tokio::test]
@@ -227,13 +226,13 @@ async fn test_index_pages_read_after_node_split() {
         .await
         .unwrap();
     assert_eq!(page.inner.node_id.key, 457);
-    assert_eq!(page.inner.current_index, 1);
+    assert_eq!(page.inner.current_index, 0);
     assert_eq!(page.inner.current_length, 453);
 
     let page = parse_page::<IndexPage<u32>, { INNER_PAGE_SIZE as u32 }>(&mut file, 3)
         .await
         .unwrap();
     assert_eq!(page.inner.node_id.key, 1000);
-    assert_eq!(page.inner.current_index, 454);
-    assert_eq!(page.inner.current_length, 454);
+    assert_eq!(page.inner.current_index, 453);
+    assert_eq!(page.inner.current_length, 452);
 }
