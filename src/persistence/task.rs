@@ -340,7 +340,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
 
     pub async fn wait_for_ops(&self) {
         let count = self.queue.len();
-        tracing::info!("Waiting for {} operations", count);
-        self.progress_notify.notified().await
+        if count != 0 {
+            tracing::info!("Waiting for {} operations", count);
+            self.progress_notify.notified().await
+        }
     }
 }
