@@ -98,7 +98,6 @@ where
         PrimaryKey: Clone,
         SecondaryKeys: Clone,
     {
-        let start = Instant::now();
         let ops_rows = self
             .queue_inner_wt
             .select_by_operation_id(op_id.into())
@@ -196,7 +195,7 @@ where
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     queue: lockfree::queue::Queue<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     notify: Notify,
-    len: AtomicU16,
+    len: Arc<AtomicU16>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
@@ -206,7 +205,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         Self {
             queue: lockfree::queue::Queue::new(),
             notify: Notify::new(),
-            len: AtomicU16::new(0),
+            len: Arc::new(AtomicU16::new(0)),
         }
     }
 
@@ -243,7 +242,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     pub fn pop_iter(
         &self,
     ) -> impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
-        self.queue.pop_iter()
+        let iter_count = self.len.clone();
+        self.queue.pop_iter().map(move |v| {
+            iter_count.fetch_sub(1, Ordering::Relaxed);
+            v
+        })
     }
 
     pub async fn wait_for_available(&self) {
@@ -301,24 +304,22 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
                         tracing::warn!("Error while feeding data to analyzer: {}", err);
                     }
                 }
-                let start = Instant::now();
                 let ops_available_iter = engine_queue.pop_iter();
                 if let Err(err) = analyzer.extend_from_iter(ops_available_iter) {
                     tracing::warn!("Error while feeding data to analyzer: {}", err);
                 }
-                let ops_feed = start.elapsed();
-                // println!("After data feed: {:?}", ops_feed);
                 if let Some(op_id) = analyzer.get_first_op_id_available() {
                     let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
-                    let batch_collect = start.elapsed();
-                    // println!("After batch collect: {:?}", batch_collect);
                     if let Err(e) = batch_op {
                         tracing::warn!("Error collecting batch operation: {}", e);
                     } else {
                         let batch_op = batch_op.unwrap();
+                        println!(
+                            "Batch len is {}, queue len is {}",
+                            batch_op.ops.len(),
+                            analyzer.len()
+                        );
                         let res = engine.apply_batch_operation(batch_op).await;
-                        let apply = start.elapsed();
-                        // println!("After op apply: {:?}", apply);
                         if let Err(e) = res {
                             tracing::warn!(
                                 "Persistence engine failed while applying batch op: {}",
