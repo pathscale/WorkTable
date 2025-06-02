@@ -6,6 +6,26 @@ use tokio::fs::OpenOptions;
 use worktable::prelude::IndexTableOfContents;
 
 #[tokio::test]
+async fn test_index_table_of_contents_read_xd() {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .open("tests/data/sync/insert_many/test_sync/primary.wt.idx")
+        .await
+        .unwrap();
+    let next_id_gen = Arc::new(AtomicU32::new(1));
+    let toc = IndexTableOfContents::<(u64, Link), { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+        &mut file,
+        0.into(),
+        next_id_gen,
+    )
+    .await
+    .unwrap();
+
+    println!("{:?}", toc.iter().collect::<Vec<_>>())
+}
+
+#[tokio::test]
 async fn test_index_table_of_contents_read() {
     let mut file = OpenOptions::new()
         .write(true)
