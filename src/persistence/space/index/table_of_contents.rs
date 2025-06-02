@@ -119,12 +119,10 @@ where
     where
         T: Clone + Debug,
     {
-        let mut page = self.get_current_page_mut();
-        if let Some(_) = page.inner.update_key(old_key, new_key.clone()) {
-            return;
-        } else {
+        let page = self.get_current_page_mut();
+        if page.inner.update_key(old_key, new_key.clone()).is_none() {
             for page in self.pages.iter_mut() {
-                if let Some(_) = page.inner.update_key(old_key, new_key.clone()) {
+                if page.inner.update_key(old_key, new_key.clone()).is_some() {
                     return;
                 }
             }
