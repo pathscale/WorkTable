@@ -16,8 +16,6 @@ perf_measurements = ["dep:performance_measurement", "dep:performance_measurement
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-argon2 = { version = "0.5" }
-rand_core = { version = "0.6.4", features = ["getrandom"] }
 eyre = "0.6.12"
 derive_more = { version = "1.0.0", features = ["from", "error", "display", "into"] }
 tokio = { version = "1", features = ["full"] }
