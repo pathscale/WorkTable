@@ -410,8 +410,8 @@ fn test_space_delete_query_sync() {
 #[test]
 fn test_space_all_data_is_available() {
     let config = PersistenceConfig::new(
-        "tests/data/unsized_secondary_sync/delete_query",
-        "tests/data/unsized_secondary_sync/delete_query",
+        "tests/data/unsized_secondary_sync/data_is_available",
+        "tests/data/unsized_secondary_sync/data_is_available",
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -422,7 +422,8 @@ fn test_space_all_data_is_available() {
         .unwrap();
 
     runtime.block_on(async {
-        remove_dir_if_exists("tests/data/unsized_secondary_sync/delete_query".to_string()).await;
+        remove_dir_if_exists("tests/data/unsized_secondary_sync/data_is_available".to_string())
+            .await;
 
         {
             let table = TestSyncWorkTable::load_from_file(config.clone())
@@ -448,19 +449,7 @@ fn test_space_all_data_is_available() {
                     .is_some());
             }
             for i in 0..200 {
-                if i == 89 {
-                    println!(
-                        "{:?}",
-                        table.0.indexes.non_unique_idx.get(&i).collect::<Vec<_>>()
-                    )
-                }
-
-                assert_eq!(
-                    table.select_by_non_unique(i).execute().unwrap().len(),
-                    10,
-                    "Error on {}",
-                    i
-                );
+                assert_eq!(table.select_by_non_unique(i).execute().unwrap().len(), 10,);
             }
         }
     });
