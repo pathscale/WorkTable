@@ -57,7 +57,7 @@ impl Parser {
     }
 
     pub fn parse_config(&mut self, config: &mut Config) -> syn::Result<Option<()>> {
-        while let Some(_) = self.peek_next() {
+        while self.peek_next().is_some() {
             let Some(_) = self.input_iter.peek() else {
                 return Ok(None);
             };
