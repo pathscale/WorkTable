@@ -123,9 +123,9 @@ async fn test_index_page_read_after_remove_at_in_space_index() {
     assert_eq!(page.inner.current_index, 1);
     assert_eq!(page.inner.current_length, 1);
     assert_eq!(page.inner.slots.first().unwrap(), &0);
-    assert_eq!(page.inner.index_values.get(0).unwrap().key, 5);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.length, 24);
-    assert_eq!(page.inner.index_values.get(0).unwrap().link.offset, 0);
+    assert_eq!(page.inner.index_values.first().unwrap().key, 5);
+    assert_eq!(page.inner.index_values.first().unwrap().link.length, 24);
+    assert_eq!(page.inner.index_values.first().unwrap().link.offset, 0);
 }
 
 #[tokio::test]

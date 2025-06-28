@@ -162,9 +162,9 @@ fn test_big_amount_reread() {
                     .insert(StringReReadRow {
                         first: format!("first_{}", i % 100),
                         id: table.get_next_pk().into(),
-                        third: format!("third_{}", i),
-                        second: format!("second_{}", i),
-                        last: format!("_________________________last_____________________{}", i),
+                        third: format!("third_{i}"),
+                        second: format!("second_{i}"),
+                        last: format!("_________________________last_____________________{i}"),
                     })
                     .unwrap();
             }
