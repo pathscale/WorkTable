@@ -83,6 +83,63 @@ fn test_key() {
 }
 
 #[test]
+fn test_key_delete() {
+    let config = PersistenceConfig::new("tests/data/key_delete", "tests/data/key_delete");
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/key_delete".to_string()).await;
+
+        let pk = {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            table
+                .insert(StringReReadRow {
+                    first: "first".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third".to_string(),
+                    second: "second".to_string(),
+                    last: "_________________________last_____________________".to_string(),
+                })
+                .unwrap();
+            let pk = table
+                .insert(StringReReadRow {
+                    first: "first".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third_again".to_string(),
+                    second: "second_again".to_string(),
+                    last: "_________________________last_____________________".to_string(),
+                })
+                .unwrap();
+
+            table.wait_for_ops().await;
+            pk
+        };
+        {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            table.delete(pk).await.unwrap();
+
+            table.wait_for_ops().await
+        }
+        {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            assert_eq!(table.select_all().execute().unwrap().len(), 1);
+        }
+    })
+}
+
+#[test]
 fn test_big_amount_reread() {
     let config = PersistenceConfig::new("tests/data/key_big_amount", "tests/data/key_big_amount");
 
@@ -127,6 +184,7 @@ fn test_big_amount_reread() {
                     last: "_________________________last_____________________".to_string(),
                 })
                 .unwrap();
+
             table.wait_for_ops().await
         }
         {
