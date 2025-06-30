@@ -89,6 +89,113 @@ fn test_key() {
 }
 
 #[test]
+fn test_key_delete_scenario() {
+    let config = PersistenceConfig::new("tests/data/key/delete", "tests/data/key/delete");
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/key/delete".to_string()).await;
+
+        let (pk0, pk) = {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            let pk0 = table
+                .insert(StringReReadRow {
+                    first: "first".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third".to_string(),
+                    second: "second".to_string(),
+                    last: "_________________________last_____________________".to_string(),
+                })
+                .unwrap();
+            let pk = table
+                .insert(StringReReadRow {
+                    first: "first".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third_again".to_string(),
+                    second: "second_again".to_string(),
+                    last: "_________________________last_____________________".to_string(),
+                })
+                .unwrap();
+
+            table.wait_for_ops().await;
+            (pk0, pk)
+        };
+        {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            table.delete(pk.clone()).await.unwrap();
+
+            table.wait_for_ops().await
+        }
+        {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            assert_eq!(table.select_all().execute().unwrap().len(), 1);
+
+            assert!(table.select(pk).is_none());
+            assert_eq!(
+                table
+                    .select_by_first("first".to_string())
+                    .execute()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(table.select_by_second("second_again".to_string()).is_none());
+            table
+                .insert(StringReReadRow {
+                    first: "first".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third_again".to_string(),
+                    second: "second_again".to_string(),
+                    last: "_________________________last_____________________".to_string(),
+                })
+                .unwrap();
+
+            table.wait_for_ops().await
+        }
+        {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            println!("{:?}", table.select_all().execute().unwrap());
+            table.delete(pk0.clone()).await.unwrap();
+            println!("{:?}", table.select_all().execute().unwrap());
+
+            table.wait_for_ops().await
+        }
+        {
+            let table = StringReReadWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            println!("{:?}", table.select_all().execute().unwrap());
+            assert_eq!(table.select_all().execute().unwrap().len(), 1);
+
+            assert!(table.select(pk0).is_none());
+            assert_eq!(
+                table
+                    .select_by_first("first".to_string())
+                    .execute()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(table.select_by_second("second".to_string()).is_none());
+        }
+    })
+}
+
+#[test]
 fn test_key_delete() {
     let config = PersistenceConfig::new("tests/data/key/delete", "tests/data/key/delete");
 
