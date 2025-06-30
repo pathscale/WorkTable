@@ -90,7 +90,10 @@ fn test_key() {
 
 #[test]
 fn test_key_delete_scenario() {
-    let config = PersistenceConfig::new("tests/data/key/delete", "tests/data/key/delete");
+    let config = PersistenceConfig::new(
+        "tests/data/key/delete_scenario",
+        "tests/data/key/delete_scenario",
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -100,7 +103,7 @@ fn test_key_delete_scenario() {
         .unwrap();
 
     runtime.block_on(async {
-        remove_dir_if_exists("tests/data/key/delete".to_string()).await;
+        remove_dir_if_exists("tests/data/key/delete_scenario".to_string()).await;
 
         let (pk0, pk) = {
             let table = StringReReadWorkTable::load_from_file(config.clone())
@@ -168,9 +171,7 @@ fn test_key_delete_scenario() {
             let table = StringReReadWorkTable::load_from_file(config.clone())
                 .await
                 .unwrap();
-            println!("{:?}", table.select_all().execute().unwrap());
             table.delete(pk0.clone()).await.unwrap();
-            println!("{:?}", table.select_all().execute().unwrap());
 
             table.wait_for_ops().await
         }
@@ -178,7 +179,6 @@ fn test_key_delete_scenario() {
             let table = StringReReadWorkTable::load_from_file(config.clone())
                 .await
                 .unwrap();
-            println!("{:?}", table.select_all().execute().unwrap());
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
             assert!(table.select(pk0).is_none());
