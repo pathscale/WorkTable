@@ -324,16 +324,14 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             loop {
                 let op = if let Some(next_op) = engine_queue.immediate_pop() {
                     Some(next_op)
+                } else if analyzer.len() == 0 {
+                    engine_progress_notify.notify_waiters();
+                    task_analyzer_in_progress.store(false, Ordering::Release);
+                    let res = Some(engine_queue.pop().await);
+                    task_analyzer_in_progress.store(true, Ordering::Release);
+                    res
                 } else {
-                    if analyzer.len() == 0 {
-                        engine_progress_notify.notify_waiters();
-                        task_analyzer_in_progress.store(false, Ordering::Release);
-                        let res = Some(engine_queue.pop().await);
-                        task_analyzer_in_progress.store(true, Ordering::Release);
-                        res
-                    } else {
-                        None
-                    }
+                    None
                 };
                 if let Some(op) = op {
                     if let Err(err) = analyzer.push(op) {
