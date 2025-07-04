@@ -1,10 +1,9 @@
+use data_bucket::page::PageId;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-
-use data_bucket::page::PageId;
 use tokio::sync::Notify;
 use worktable_codegen::worktable;
 
@@ -396,7 +395,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
                 tracing::info!("Waiting for {} operations", count);
             }
 
-            self.progress_notify.notified().await;
+            tokio::select! {
+                _ = self.progress_notify.notified() => {},
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
         }
     }
 }
