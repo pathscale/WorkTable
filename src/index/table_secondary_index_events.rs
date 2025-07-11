@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use indexset::cdc::change;
+use std::collections::HashSet;
 
 pub trait TableSecondaryIndexEventsOps {
     fn extend(&mut self, another: Self)

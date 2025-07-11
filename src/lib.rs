@@ -26,10 +26,10 @@ pub mod prelude {
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
         map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
-        DeleteOperation, IndexTableOfContents, InsertOperation, Operation, OperationId,
-        PersistenceConfig, PersistenceEngine, PersistenceEngineOps, PersistenceTask, SpaceData,
-        SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps,
-        UpdateOperation, validate_events
+        validate_events, DeleteOperation, IndexTableOfContents, InsertOperation, Operation,
+        OperationId, PersistenceConfig, PersistenceEngine, PersistenceEngineOps, PersistenceTask,
+        SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
+        SpaceSecondaryIndexOps, UpdateOperation,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
