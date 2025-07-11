@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
@@ -62,7 +63,7 @@ impl S5TraceWorkTable {
 use std::sync::{Arc, Mutex};
 use tokio::task;
 
-#[tokio::main]
+#[tokio::main(worker_threads = 8)]
 async fn main() {
     // Init Worktable
     let config = PersistenceConfig::new("data", "data");

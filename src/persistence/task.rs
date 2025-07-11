@@ -216,7 +216,7 @@ where
             info_wt.update_pos_by_op_id(q, op_id).await?;
         }
 
-        Ok(BatchOperation { ops, info_wt })
+        Ok(BatchOperation::new(ops, info_wt))
     }
 
     pub fn len(&self) -> usize {
@@ -349,6 +349,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
                     } else {
                         let batch_op = batch_op.unwrap();
                         let res = engine.apply_batch_operation(batch_op).await;
+                        println!("Applied batch op");
                         if let Err(e) = res {
                             tracing::warn!(
                                 "Persistence engine failed while applying batch op: {}",

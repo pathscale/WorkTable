@@ -1,0 +1,54 @@
+use data_bucket::Link;
+use indexset::cdc::change::{self, ChangeEvent};
+use indexset::core::pair::Pair;
+
+pub fn validate_events<T>(evs: &mut Vec<ChangeEvent<Pair<T, Link>>>) -> Vec<change::Id> {
+    let mut removed_events = vec![];
+    let mut finish_condition = false;
+
+    while !finish_condition {
+        let (iteration_events, error_pos) = validate_events_iteration(evs);
+        if iteration_events.is_empty() {
+            finish_condition = true;
+        } else {
+            let drain_pos = evs.len() - error_pos;
+            evs.drain(drain_pos..);
+            removed_events.extend(iteration_events);
+        }
+    }
+
+    removed_events.sort();
+
+    removed_events
+}
+
+fn validate_events_iteration<T>(evs: &Vec<ChangeEvent<Pair<T, Link>>>) -> (Vec<change::Id>, usize) {
+    const MAX_CHECK_DEPTH: usize = 16;
+    
+    let mut last_ev_id = evs
+        .last()
+        .expect("Events should not be empty at this point")
+        .id();
+    let mut evs_before_error = vec![last_ev_id];
+    let mut rev_evs_iter = evs.iter().rev().skip(1);
+    let mut error_flag = false;
+    let mut check_depth = 1;
+
+    while !error_flag && check_depth < MAX_CHECK_DEPTH {
+        if let Some(next_ev) = rev_evs_iter.next().map(|ev| ev.id()) {
+            if next_ev.inner() == last_ev_id.inner() + 1 {
+                check_depth += 1;
+                last_ev_id = next_ev;
+                evs_before_error.push(last_ev_id);
+            } else {
+                error_flag = true
+            }
+        }
+    }
+
+    if error_flag {
+        (evs_before_error, check_depth)
+    } else {
+        (vec![], 0)
+    }
+}

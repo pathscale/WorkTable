@@ -1,6 +1,6 @@
 mod engine;
 mod manager;
-mod operation;
+pub mod operation;
 mod space;
 mod task;
 
@@ -9,6 +9,7 @@ pub use engine::PersistenceEngine;
 pub use manager::PersistenceConfig;
 pub use operation::{
     DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
+    validate_events
 };
 pub use space::{
     map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,

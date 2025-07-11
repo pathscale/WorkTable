@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::{IndexMap, IndexMultiMap};
@@ -13,7 +14,7 @@ pub trait TableIndex<T> {
 
 impl<T, Node> TableIndex<T> for IndexMultiMap<T, Link, Node>
 where
-    T: Eq + Hash + Clone + Send + Ord,
+    T: Debug + Eq + Hash + Clone + Send + Ord,
     Node: NodeLike<MultiPair<T, Link>> + Send + 'static,
 {
     fn insert(&self, value: T, link: Link) -> Option<Link> {
@@ -27,7 +28,7 @@ where
 
 impl<T, Node> TableIndex<T> for IndexMap<T, Link, Node>
 where
-    T: Eq + Hash + Clone + Send + Ord,
+    T: Debug + Eq + Hash + Clone + Send + Ord,
     Node: NodeLike<Pair<T, Link>> + Send + 'static,
 {
     fn insert(&self, value: T, link: Link) -> Option<Link> {

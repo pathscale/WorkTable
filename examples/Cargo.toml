@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 eyre = "0.6.12"
-worktable = "0.6.8"
+worktable = { path = "..", version = "0.6.8" }
 #worktable = { path = "..", version = "0.5.3", features = ["perf_measurements"] }
 rkyv = { version = "0.8.9", features = ["uuid-1"] }
 #lockfree = "0.5.1"

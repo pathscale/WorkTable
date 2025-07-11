@@ -47,7 +47,7 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_space_secondary_index_events_ident();
 
-        let fields: Vec<_> = self
+        let fields_extend: Vec<_> = self
             .field_types
             .keys()
             .map(|i| {
@@ -57,10 +57,34 @@ impl Generator {
             })
             .collect();
 
+        let fields_sort: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                quote! {
+                    self.#i.sort_by(|ev1, ev2| ev1.id().cmp(&ev2.id()));
+                }
+            })
+            .collect();
+
+        let fields_validate: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                quote! {
+                    self.#i;
+                }
+            })
+            .collect();
+
         quote! {
             impl TableSecondaryIndexEventsOps for #ident {
                 fn extend(&mut self, another: #ident) {
-                    #(#fields)*
+                    #(#fields_extend)*
+                }
+
+                fn sort(&mut self) {
+                    #(#fields_sort)*
                 }
             }
         }

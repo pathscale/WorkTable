@@ -29,7 +29,7 @@ pub mod prelude {
         DeleteOperation, IndexTableOfContents, InsertOperation, Operation, OperationId,
         PersistenceConfig, PersistenceEngine, PersistenceEngineOps, PersistenceTask, SpaceData,
         SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps,
-        UpdateOperation,
+        UpdateOperation, validate_events
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
