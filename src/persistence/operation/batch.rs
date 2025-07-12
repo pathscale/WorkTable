@@ -82,11 +82,17 @@ pub struct PreparedIndexEvents<PrimaryKey, SecondaryKeys> {
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+where
+    PrimaryKeyGenState: Debug + Clone,
+    PrimaryKey: Debug + Clone,
+    SecondaryKeys: Debug,
 {
     pub fn new(
         ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
         info_wt: BatchInnerWorkTable,
     ) -> Self {
+        let ixd = ops.len() - 40;
+
         Self {
             ops,
             info_wt,
@@ -105,7 +111,11 @@ where
     pub fn validate(
         &mut self,
     ) -> eyre::Result<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>> {
-        let prepared_evs = self.prepare_indexes_evs()?;
+        let mut prepared_evs = self.prepare_indexes_evs()?;
+
+        let primary_invalid_events = validate_events(&mut prepared_evs.primary_evs);
+        let secondary_invalid_events = prepared_evs.secondary_evs.validate();
+
         self.prepared_index_evs = Some(prepared_evs);
 
         Ok(vec![])

@@ -1,12 +1,13 @@
 use std::fmt::Debug;
 use std::hash::Hash;
 
-use crate::{IndexMap, IndexMultiMap};
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::multipair::MultiPair;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
+
+use crate::{IndexMap, IndexMultiMap};
 
 pub trait TableIndexCdc<T> {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>);

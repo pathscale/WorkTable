@@ -6,7 +6,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::in_memory::{RowWrapper, StorableRow};
 use crate::mem_stat::MemStat;
-use crate::{TableSecondaryIndex, WorkTable};
+use crate::{TableSecondaryIndex, TableSecondaryIndexInfo, WorkTable};
 
 #[derive(Debug)]
 pub struct SystemInfo {
@@ -50,7 +50,7 @@ impl<
         PrimaryKey,
         AvailableTypes,
         AvailableIndexes,
-        SecondaryIndexes: MemStat + TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+        SecondaryIndexes,
         LockType,
         PkGen,
         NodeType,
@@ -72,6 +72,7 @@ where
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     NodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+    SecondaryIndexes: MemStat + TableSecondaryIndexInfo,
 {
     pub fn system_info(&self) -> SystemInfo {
         let page_count = self.data.get_page_count();

@@ -38,7 +38,8 @@ pub mod prelude {
     pub use crate::{
         lock::Lock, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, TableIndex,
         TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-        TableSecondaryIndexEventsOps, UnsizedNode, WorkTable, WorkTableError,
+        TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UnsizedNode, WorkTable,
+        WorkTableError,
     };
     pub use data_bucket::{
         align, get_index_page_size_from_data_length, map_data_pages_to_general, parse_data_page,

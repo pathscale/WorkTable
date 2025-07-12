@@ -2,7 +2,9 @@ use data_bucket::Link;
 use indexset::cdc::change::{self, ChangeEvent};
 use indexset::core::pair::Pair;
 
-pub fn validate_events<T>(evs: &mut Vec<ChangeEvent<Pair<T, Link>>>) -> Vec<change::Id> {
+pub fn validate_events<T>(
+    evs: &mut Vec<ChangeEvent<Pair<T, Link>>>,
+) -> Vec<ChangeEvent<Pair<T, Link>>> {
     let mut removed_events = vec![];
     let mut finish_condition = false;
 
@@ -12,12 +14,11 @@ pub fn validate_events<T>(evs: &mut Vec<ChangeEvent<Pair<T, Link>>>) -> Vec<chan
             finish_condition = true;
         } else {
             let drain_pos = evs.len() - error_pos;
-            evs.drain(drain_pos..);
-            removed_events.extend(iteration_events);
+            removed_events.extend(evs.drain(drain_pos..));
         }
     }
 
-    removed_events.sort();
+    removed_events.sort_by(|ev1, ev2| ev2.id().cmp(&ev1.id()));
 
     removed_events
 }
