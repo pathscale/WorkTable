@@ -47,7 +47,45 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_space_secondary_index_events_ident();
 
-        let fields: Vec<_> = self
+        let extend_fn = self.gen_space_secondary_index_events_extend_fn();
+        let sort_fn = self.gen_space_secondary_index_events_sort_fn();
+        let validate_fn = self.gen_space_secondary_index_events_validate_fn();
+
+        quote! {
+            impl TableSecondaryIndexEventsOps for #ident {
+                #extend_fn
+                #sort_fn
+                #validate_fn
+            }
+        }
+    }
+
+    fn gen_space_secondary_index_events_sort_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let ident = name_generator.get_space_secondary_index_events_ident();
+
+        let fields_sort: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                quote! {
+                    self.#i.sort_by(|ev1, ev2| ev1.id().cmp(&ev2.id()));
+                }
+            })
+            .collect();
+
+        quote! {
+            fn sort(&mut self) {
+                    #(#fields_sort)*
+                }
+        }
+    }
+
+    fn gen_space_secondary_index_events_extend_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let ident = name_generator.get_space_secondary_index_events_ident();
+
+        let fields_extend: Vec<_> = self
             .field_types
             .keys()
             .map(|i| {
@@ -58,11 +96,42 @@ impl Generator {
             .collect();
 
         quote! {
-            impl TableSecondaryIndexEventsOps for #ident {
-                fn extend(&mut self, another: #ident) {
-                    #(#fields)*
+            fn extend(&mut self, another: #ident) {
+                    #(#fields_extend)*
                 }
-            }
+        }
+    }
+
+    fn gen_space_secondary_index_events_validate_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let ident = name_generator.get_space_secondary_index_events_ident();
+
+        let fields_validate: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                quote! {
+                    let #i = validate_events(&mut self.#i);
+                }
+            })
+            .collect();
+        let fields_init: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                quote! {
+                    #i,
+                }
+            })
+            .collect();
+
+        quote! {
+            fn validate(&mut self) -> #ident {
+                    #(#fields_validate)*
+                    Self {
+                        #(#fields_init)*
+                    }
+                }
         }
     }
 
