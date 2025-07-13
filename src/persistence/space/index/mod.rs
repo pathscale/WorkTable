@@ -429,20 +429,11 @@ where
     ) -> eyre::Result<()> {
         let mut pages: HashMap<PageId, _> = HashMap::new();
         for ev in &events {
-            println!("{:?}", ev.id());
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. }
                 | ChangeEvent::RemoveAt { max_value, .. } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
                     let Some(page_index) = self.table_of_contents.get(page_id) else {
-                        for ev in &events {
-                            println!("{:?}", ev)
-                        }
-                        println!("{:?}", page_id);
-                        for entry in self.table_of_contents.iter() {
-                            println!("{:?}", entry)
-                        }
-                        println!("{:?}", ev.id());
                         panic!("page should be available in table of contents")
                     };
                     let page = pages.get_mut(&page_index);
@@ -519,14 +510,6 @@ where
                 } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
                     let Some(page_index) = self.table_of_contents.get(page_id) else {
-                        for ev in &events {
-                            println!("{:?}", ev)
-                        }
-                        println!("{:?}", page_id);
-                        for entry in self.table_of_contents.iter() {
-                            println!("{:?}", entry)
-                        }
-                        println!("{:?}", ev.id());
                         panic!("page should be available in table of contents")
                     };
                     let page = pages.get_mut(&page_index);

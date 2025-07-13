@@ -73,9 +73,17 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
-        quote! {
-            fn is_empty(&self) -> bool {
-                #(#is_empty) &&*
+        if is_empty.is_empty() {
+            quote! {
+                fn is_empty(&self) -> bool {
+                    true
+                }
+            }
+        } else {
+            quote! {
+                fn is_empty(&self) -> bool {
+                    #(#is_empty) &&*
+                }
             }
         }
     }

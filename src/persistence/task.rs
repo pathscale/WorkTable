@@ -1,6 +1,8 @@
+use convert_case::Case::Pascal;
 use data_bucket::page::PageId;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
@@ -36,7 +38,46 @@ const MAX_PAGE_AMOUNT: usize = 16;
 pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     queue_inner_wt: Arc<QueueInnerWorkTable>,
-    phantom_data: PhantomData<AvailableIndexes>,
+    last_events_ids: LastEventIds<AvailableIndexes>,
+    last_invalid_batch_size: usize,
+    page_limit: usize,
+    attempts: usize,
+}
+
+#[derive(Debug)]
+pub struct LastEventIds<AvailableIndexes> {
+    pub primary_id: IndexChangeEventId,
+    pub secondary_ids: HashMap<AvailableIndexes, IndexChangeEventId>,
+}
+
+impl<AvailableIndexes> Default for LastEventIds<AvailableIndexes>
+where
+    AvailableIndexes: Eq + Hash,
+{
+    fn default() -> Self {
+        Self {
+            primary_id: Default::default(),
+            secondary_ids: HashMap::new(),
+        }
+    }
+}
+
+impl<AvailableIndexes> LastEventIds<AvailableIndexes>
+where
+    AvailableIndexes: Debug + Hash + Eq,
+{
+    pub fn merge(&mut self, another: Self) {
+        println!("Before merge {:?}", self);
+        if another.primary_id != IndexChangeEventId::default() {
+            self.primary_id = another.primary_id
+        }
+        for (index, id) in another.secondary_ids {
+            if id != IndexChangeEventId::default() {
+                self.secondary_ids.insert(index, id);
+            }
+        }
+        println!("After merge {:?}", self);
+    }
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
@@ -45,13 +86,16 @@ where
     PrimaryKeyGenState: Debug,
     PrimaryKey: Debug,
     SecondaryKeys: Debug,
-    AvailableIndexes: Debug + Copy + Clone,
+    AvailableIndexes: Debug + Copy + Clone + Hash + Eq,
 {
     pub fn new(queue_inner_wt: Arc<QueueInnerWorkTable>) -> Self {
         Self {
             operations: OptimizedVec::with_capacity(256),
             queue_inner_wt,
-            phantom_data: PhantomData,
+            last_events_ids: Default::default(),
+            last_invalid_batch_size: 0,
+            page_limit: MAX_PAGE_AMOUNT,
+            attempts: 0,
         }
     }
 
@@ -96,7 +140,9 @@ where
     pub async fn collect_batch_from_op_id(
         &mut self,
         op_id: OperationId,
-    ) -> eyre::Result<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>>
+    ) -> eyre::Result<
+        Option<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>>,
+    >
     where
         PrimaryKeyGenState: Clone,
         PrimaryKey: Clone,
@@ -107,7 +153,7 @@ where
 
         let mut next_op_id = op_id;
         let mut no_more_ops = false;
-        while used_page_ids.len() < MAX_PAGE_AMOUNT && !no_more_ops {
+        while used_page_ids.len() < self.page_limit && !no_more_ops {
             let ops_rows = self
                 .queue_inner_wt
                 .select_by_operation_id(next_op_id)
@@ -221,10 +267,28 @@ where
         }
 
         let mut op = BatchOperation::new(ops, info_wt);
-        let invalid_for_this_batch_ops = op.validate().await?;
-        self.extend_from_iter(invalid_for_this_batch_ops.into_iter())?;
+        let invalid_for_this_batch_ops = op.validate(&self.last_events_ids, self.attempts).await?;
+        if let Some(invalid_for_this_batch_ops) = invalid_for_this_batch_ops {
+            self.extend_from_iter(invalid_for_this_batch_ops.into_iter())?;
+            let last_ids = op.get_last_event_ids();
+            self.last_events_ids.merge(last_ids);
+            self.last_invalid_batch_size = 0;
+            self.page_limit = MAX_PAGE_AMOUNT;
+            self.attempts = 0;
 
-        Ok(op)
+            Ok(Some(op))
+        } else {
+            // can't collect batch for now
+            let ops = op.ops();
+            self.attempts += 1;
+            if self.last_invalid_batch_size == ops.len() {
+                self.page_limit += 8;
+            } else {
+                self.last_invalid_batch_size = ops.len();
+            }
+            self.extend_from_iter(ops.into_iter())?;
+            Ok(None)
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -326,7 +390,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             + 'static,
         PrimaryKeyGenState: Clone + Debug + Send + Sync + 'static,
         PrimaryKey: Clone + Debug + Send + Sync + 'static,
-        AvailableIndexes: Copy + Clone + Debug + Send + Sync + 'static,
+        AvailableIndexes: Copy + Clone + Debug + Hash + Eq + Send + Sync + 'static,
     {
         let queue = Arc::new(Queue::new());
         let progress_notify = Arc::new(Notify::new());
@@ -365,14 +429,16 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     if let Err(e) = batch_op {
                         tracing::warn!("Error collecting batch operation: {}", e);
                     } else {
-                        let batch_op = batch_op.unwrap();
-                        let res = engine.apply_batch_operation(batch_op).await;
-                        println!("Applied batch op");
-                        if let Err(e) = res {
-                            tracing::warn!(
-                                "Persistence engine failed while applying batch op: {}",
-                                e
-                            );
+                        if let Some(batch_op) = batch_op.unwrap() {
+                            let res = engine.apply_batch_operation(batch_op).await;
+                            if let Err(e) = res {
+                                tracing::warn!(
+                                    "Persistence engine failed while applying batch op: {}",
+                                    e
+                                );
+                            }
+                        } else {
+                            tokio::time::sleep(Duration::from_millis(500)).await;
                         }
                     }
                 }

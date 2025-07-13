@@ -5,12 +5,6 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::persistence::operation::util::MAX_CHECK_DEPTH;
-use crate::persistence::space::{BatchChangeEvent, BatchData};
-use crate::persistence::task::{QueueInnerRow, QueueInnerWorkTable};
-use crate::persistence::OperationType;
-use crate::prelude::*;
-use crate::prelude::{From, Order, SelectQueryExecutor};
 use data_bucket::page::PageId;
 use data_bucket::{Link, SizeMeasurable};
 use derive_more::Display;
@@ -19,6 +13,13 @@ use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
 use uuid::Uuid;
 use worktable_codegen::{worktable, MemStat};
+
+use crate::persistence::operation::util::MAX_CHECK_DEPTH;
+use crate::persistence::space::{BatchChangeEvent, BatchData};
+use crate::persistence::task::{LastEventIds, QueueInnerRow, QueueInnerWorkTable};
+use crate::persistence::OperationType;
+use crate::prelude::*;
+use crate::prelude::{From, Order, SelectQueryExecutor};
 
 worktable! (
     name: BatchInner,
@@ -111,8 +112,12 @@ where
     PrimaryKeyGenState: Debug + Clone,
     PrimaryKey: Debug + Clone,
     SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
-    AvailableIndexes: Debug + Clone + Copy,
+    AvailableIndexes: Debug + Clone + Copy + Hash + Eq,
 {
+    pub fn ops(self) -> Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>> {
+        self.ops
+    }
+
     fn remove_operations_from_events(
         &mut self,
         invalid_events: PreparedIndexEvents<PrimaryKey, SecondaryEvents>,
@@ -120,37 +125,31 @@ where
         let mut removed_ops = HashSet::new();
 
         for ev in &invalid_events.primary_evs {
-            let operation_pos_rev = self
-                .ops
-                .iter()
-                .rev()
-                .position(|op| {
-                    if let Some(evs) = op.primary_key_events() {
-                        for inner_ev in evs {
-                            if inner_ev.id() == ev.id() {
-                                return true;
-                            }
+            if let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
+                if let Some(evs) = op.primary_key_events() {
+                    for inner_ev in evs {
+                        if inner_ev.id() == ev.id() {
+                            return true;
                         }
-                        false
-                    } else {
-                        false
                     }
-                })
-                .expect("Should exist as event was returned from validation");
-            let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
-            removed_ops.insert(op);
+                    false
+                } else {
+                    false
+                }
+            }) {
+                let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
+                removed_ops.insert(op);
+            }
         }
         for (index, id) in invalid_events.secondary_evs.iter_event_ids() {
-            if let Some(operation_pos_rev) =
-                self.ops.iter().take(MAX_CHECK_DEPTH).rev().position(|op| {
-                    let evs = op.secondary_key_events();
-                    if evs.contains_event(index, id) {
-                        true
-                    } else {
-                        false
-                    }
-                })
-            {
+            if let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
+                let evs = op.secondary_key_events();
+                if evs.contains_event(index, id) {
+                    true
+                } else {
+                    false
+                }
+            }) {
                 let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
                 removed_ops.insert(op);
             };
@@ -184,9 +183,37 @@ where
         removed_ops
     }
 
+    pub fn get_last_event_ids(&self) -> LastEventIds<AvailableIndexes> {
+        let prepared_evs = self
+            .prepared_index_evs
+            .as_ref()
+            .expect("should be set before 0 iteration");
+
+        let primary_id = prepared_evs
+            .primary_evs
+            .last()
+            .map(|ev| ev.id())
+            .unwrap_or_default();
+        println!("Last primary {:?}", primary_id);
+        println!("{:?}", prepared_evs.primary_evs);
+        let secondary_ids = prepared_evs.secondary_evs.last_evs();
+        println!("Last secondary {:?}", secondary_ids);
+        println!("{:?}", prepared_evs.secondary_evs);
+        let secondary_ids = secondary_ids
+            .into_iter()
+            .map(|(i, v)| (i, v.unwrap_or_default()))
+            .collect();
+        LastEventIds {
+            primary_id,
+            secondary_ids,
+        }
+    }
+
     pub async fn validate(
         &mut self,
-    ) -> eyre::Result<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>> {
+        last_ids: &LastEventIds<AvailableIndexes>,
+        attempts: usize,
+    ) -> eyre::Result<Option<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>>> {
         let mut valid = false;
         let mut iteration = 0;
 
@@ -194,11 +221,14 @@ where
         let mut ops_to_remove = vec![];
 
         while !valid {
+            println!("Iteration {:?}", iteration);
             let prepared_evs = self
                 .prepared_index_evs
                 .as_mut()
                 .expect("should be set before 0 iteration");
+            println!("Validate primary");
             let primary_invalid_events = validate_events(&mut prepared_evs.primary_evs);
+            println!("Validate Secondary");
             let secondary_invalid_events = prepared_evs.secondary_evs.validate();
 
             valid = if SecondaryEvents::is_unit() {
@@ -220,13 +250,99 @@ where
             iteration += 1;
         }
 
+        {
+            let prepared_evs = self
+                .prepared_index_evs
+                .as_ref()
+                .expect("should be set before 0 iteration");
+            if let Some(id) = prepared_evs.primary_evs.first().map(|ev| ev.id()) {
+                if !id.is_next_for(last_ids.primary_id)
+                    && last_ids.primary_id != IndexChangeEventId::default()
+                {
+                    let mut possibly_valid = false;
+                    if id.inner() - last_ids.primary_id.inner() == 2 {
+                        // TODO: for split sometimes this happens
+                        let ev = prepared_evs.primary_evs.first().unwrap();
+                        match ev {
+                            ChangeEvent::SplitNode { .. } => {
+                                println!("Split is first");
+                                possibly_valid = true
+                            }
+                            _ => {}
+                        }
+                        if attempts > 8 {
+                            possibly_valid = true
+                        }
+                    }
+
+                    if !possibly_valid {
+                        println!(
+                            "Primary Left id is {:?} and right is {:?}, so invalid",
+                            last_ids.primary_id, id
+                        );
+                        println!("Stay {:?}", self.ops.len());
+                        println!("Removed {:?}", ops_to_remove.len());
+                        self.ops.extend(ops_to_remove);
+                        return Ok(None);
+                    }
+                }
+            }
+            let secondary_first = prepared_evs.secondary_evs.first_evs();
+            for (index, id) in secondary_first {
+                let Some(last) = last_ids.secondary_ids.get(&index) else {
+                    continue;
+                };
+                if let Some(id) = id {
+                    if !id.is_next_for(*last) && *last != IndexChangeEventId::default() {
+                        let mut possibly_valid = false;
+                        if id.inner() - last.inner() == 2 {
+                            // TODO: for split sometimes this happens
+                            possibly_valid = prepared_evs.secondary_evs.is_first_ev_is_split(index);
+                            if attempts > 8 {
+                                possibly_valid = true
+                            }
+                        }
+
+                        if !possibly_valid {
+                            println!(
+                                "Secondary Left id is {:?} and right is {:?}, so invalid",
+                                last, id
+                            );
+                            println!("Stay {:?}", self.ops.len());
+                            println!("Removed {:?}", ops_to_remove.len());
+                            self.ops.extend(ops_to_remove);
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            let prepared_evs = self
+                .prepared_index_evs
+                .as_ref()
+                .expect("should be set before 0 iteration");
+            if prepared_evs.primary_evs.is_empty() && prepared_evs.secondary_evs.is_empty() {
+                println!("Removed all events so invalid");
+                println!("Stay {:?}", self.ops.len());
+                println!("Removed {:?}", ops_to_remove.len());
+                self.ops = ops_to_remove;
+                return Ok(None);
+            }
+        }
+
+        println!("Valid now");
+
         for (pos, op) in self.ops.iter().enumerate() {
             let op_id = op.operation_id();
             let q = PosByOpIdQuery { pos };
             self.info_wt.update_pos_by_op_id(q, op_id).await?
         }
 
-        Ok(ops_to_remove)
+        println!("Updated poss");
+
+        Ok(Some(ops_to_remove))
     }
 
     fn prepare_indexes_evs(
@@ -269,6 +385,10 @@ where
 
     pub fn get_indexes_evs(&self) -> eyre::Result<(BatchChangeEvent<PrimaryKey>, SecondaryEvents)> {
         if let Some(evs) = &self.prepared_index_evs {
+            println!("Final primary key events state");
+            for ev in &evs.primary_evs {
+                println!("{:?}", ev)
+            }
             Ok((evs.primary_evs.clone(), evs.secondary_evs.clone()))
         } else {
             tracing::warn!(

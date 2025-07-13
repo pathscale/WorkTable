@@ -30,10 +30,9 @@ where
 }
 
 fn validate_events_iteration<T>(evs: &Vec<ChangeEvent<Pair<T, Link>>>) -> (Vec<change::Id>, usize) {
-    let mut last_ev_id = evs
-        .last()
-        .expect("Events should not be empty at this point")
-        .id();
+    let Some(mut last_ev_id) = evs.last().map(|ev| ev.id()) else {
+        return (vec![], 0);
+    };
     let mut evs_before_error = vec![last_ev_id];
     let mut rev_evs_iter = evs.iter().rev().skip(1);
     let mut error_flag = false;
@@ -41,13 +40,17 @@ fn validate_events_iteration<T>(evs: &Vec<ChangeEvent<Pair<T, Link>>>) -> (Vec<c
 
     while !error_flag && check_depth < MAX_CHECK_DEPTH {
         if let Some(next_ev) = rev_evs_iter.next().map(|ev| ev.id()) {
-            if next_ev.inner() + 1 == last_ev_id.inner() {
+            if last_ev_id.is_next_for(next_ev) || last_ev_id == next_ev {
+                println!("{:?} {:?}, ok", last_ev_id, next_ev);
                 check_depth += 1;
                 last_ev_id = next_ev;
                 evs_before_error.push(last_ev_id);
             } else {
+                println!("{:?} {:?}, err", last_ev_id, next_ev);
                 error_flag = true
             }
+        } else {
+            break;
         }
     }
 

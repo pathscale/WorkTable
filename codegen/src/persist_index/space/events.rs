@@ -37,8 +37,11 @@ impl Generator {
 
         let extend_fn = self.gen_space_secondary_index_events_extend_fn();
         let remove_fn = self.gen_space_secondary_index_events_remove_fn();
+        let last_evs_fn = self.gen_space_secondary_index_events_last_evs_fn();
+        let first_evs = self.gen_space_secondary_index_events_first_evs_fn();
         let iter_event_ids_fn = self.gen_space_secondary_index_events_iter_event_ids_fn();
         let contains_event_fn = self.gen_space_secondary_index_events_contains_event_fn();
+        let split_is_first_fn = self.gen_space_secondary_index_events_is_first_split_fn();
         let sort_fn = self.gen_space_secondary_index_events_sort_fn();
         let validate_fn = self.gen_space_secondary_index_events_validate_fn();
         let is_empty_fn = self.gen_space_secondary_index_events_is_empty_fn();
@@ -48,8 +51,11 @@ impl Generator {
             impl TableSecondaryIndexEventsOps<#avt_index_ident> for #ident {
                 #extend_fn
                 #remove_fn
+                #last_evs_fn
+                #first_evs
                 #iter_event_ids_fn
                 #contains_event_fn
+                #split_is_first_fn
                 #sort_fn
                 #validate_fn
                 #is_empty_fn
@@ -72,6 +78,58 @@ impl Generator {
         quote! {
             fn sort(&mut self) {
                     #(#fields_sort)*
+                }
+        }
+    }
+
+    fn gen_space_secondary_index_events_first_evs_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let avt_index_ident = name_generator.get_available_indexes_ident();
+
+        let fields_first: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                quote! {
+                    let first = self.#i.first().map(|ev| ev.id());
+                    map.insert(#avt_index_ident::#index_variant, first);
+                }
+            })
+            .collect();
+
+        quote! {
+            fn first_evs(&self) -> std::collections::HashMap<#avt_index_ident, Option<IndexChangeEventId>> {
+                    let mut map = std::collections::HashMap::new();
+                    #(#fields_first)*
+                    map
+                }
+        }
+    }
+
+    fn gen_space_secondary_index_events_last_evs_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let avt_index_ident = name_generator.get_available_indexes_ident();
+
+        let fields_last: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                quote! {
+                    let last = self.#i.last().map(|ev| ev.id());
+                    map.insert(#avt_index_ident::#index_variant, last);
+                }
+            })
+            .collect();
+
+        quote! {
+            fn last_evs(&self) -> std::collections::HashMap<#avt_index_ident, Option<IndexChangeEventId>> {
+                    let mut map = std::collections::HashMap::new();
+                    #(#fields_last)*
+                    map
                 }
         }
     }
@@ -142,12 +200,59 @@ impl Generator {
 
         quote! {
             fn iter_event_ids(&self) -> impl Iterator<Item = (#avt_index_ident, IndexChangeEventId)> {
-                vec![
+                <std::vec::IntoIter<Vec<(#avt_index_ident, IndexChangeEventId)>> as Iterator>::flatten(
+                    vec![
                     #(#fields_iter),*
                 ]
                     .into_iter()
-                    .flatten()
+                    )
                 }
+        }
+    }
+
+    fn gen_space_secondary_index_events_is_first_split_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let avt_index_ident = name_generator.get_available_indexes_ident();
+
+        let fields_matches: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                quote! {
+                    #avt_index_ident::#index_variant => {
+                        if let Some(first) = self.#i.first() {
+                            match first {
+                                IndexChangeEvent::SplitNode {..} => {
+                                    true
+                                }
+                                _ => {
+                                    false
+                                }
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        if fields_matches.is_empty() {
+            quote! {
+                fn is_first_ev_is_split(&self, _index: #avt_index_ident) -> bool {
+                    false
+                }
+            }
+        } else {
+            quote! {
+                fn is_first_ev_is_split(&self, index: #avt_index_ident) -> bool {
+                    match index {
+                        #(#fields_matches),*
+                    }
+                }
+            }
         }
     }
 
@@ -169,10 +274,18 @@ impl Generator {
             })
             .collect();
 
-        quote! {
-            fn contains_event(&self, index: #avt_index_ident, id: IndexChangeEventId) -> bool {
-                match index {
-                    #(#fields_matches).*
+        if fields_matches.is_empty() {
+            quote! {
+                fn contains_event(&self, index: #avt_index_ident, id: IndexChangeEventId) -> bool {
+                    false
+                }
+            }
+        } else {
+            quote! {
+                fn contains_event(&self, index: #avt_index_ident, id: IndexChangeEventId) -> bool {
+                    match index {
+                        #(#fields_matches),*
+                    }
                 }
             }
         }
@@ -221,11 +334,18 @@ impl Generator {
                 }
             })
             .collect();
-
-        quote! {
-            fn is_empty(&self) -> bool {
-                    #(#is_empty) &&*
-                }
+        if is_empty.is_empty() {
+            quote! {
+                    fn is_empty(&self) -> bool {
+                        true
+                    }
+            }
+        } else {
+            quote! {
+                    fn is_empty(&self) -> bool {
+                        #(#is_empty) &&*
+                    }
+            }
         }
     }
 

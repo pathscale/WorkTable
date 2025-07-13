@@ -9,6 +9,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use std::fmt::Debug;
 use std::fs;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
 
@@ -101,7 +102,7 @@ where
     SecondaryIndexEvents:
         Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send,
     PrimaryKeyGenState: Clone + Debug + Send,
-    AvailableIndexes: Clone + Copy + Debug + Send,
+    AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send,
 {
     async fn apply_operation(
         &mut self,
