@@ -66,8 +66,8 @@ use tokio::task;
 #[tokio::main(worker_threads = 8)]
 async fn main() {
     // Init Worktable
-    let config = PersistenceConfig::new("data", "data");
-    let my_table = Arc::new(S5TraceWorkTable::new(config).await.unwrap());
+    let config = PersistenceConfig::new("examples/data", "examples/data");
+    let my_table = Arc::new(S5TraceWorkTable::load_from_file(config).await.unwrap());
 
     let total: u64 = 1_000_000;
     let tasks = 8;
