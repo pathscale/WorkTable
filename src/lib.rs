@@ -51,7 +51,7 @@ pub mod prelude {
     };
     pub use derive_more::{From, Into};
     pub use indexset::{
-        cdc::change::ChangeEvent as IndexChangeEvent,
+        cdc::change::{ChangeEvent as IndexChangeEvent, Id as IndexChangeEventId},
         core::{multipair::MultiPair as IndexMultiPair, pair::Pair as IndexPair},
     };
     pub use ordered_float::OrderedFloat;

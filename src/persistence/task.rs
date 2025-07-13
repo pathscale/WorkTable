@@ -1,6 +1,7 @@
 use data_bucket::page::PageId;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,13 +33,14 @@ worktable! (
 
 const MAX_PAGE_AMOUNT: usize = 16;
 
-pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     queue_inner_wt: Arc<QueueInnerWorkTable>,
+    phantom_data: PhantomData<AvailableIndexes>,
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-    QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
+    QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 where
     PrimaryKeyGenState: Debug,
     PrimaryKey: Debug,
@@ -48,6 +50,7 @@ where
         Self {
             operations: OptimizedVec::with_capacity(256),
             queue_inner_wt,
+            phantom_data: PhantomData,
         }
     }
 
@@ -92,11 +95,11 @@ where
     pub async fn collect_batch_from_op_id(
         &mut self,
         op_id: OperationId,
-    ) -> eyre::Result<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>
+    ) -> eyre::Result<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>>
     where
         PrimaryKeyGenState: Clone,
         PrimaryKey: Clone,
-        SecondaryKeys: Clone + Default + TableSecondaryIndexEventsOps,
+        SecondaryKeys: Clone + Default + TableSecondaryIndexEventsOps<AvailableIndexes>,
     {
         let mut ops_set = HashSet::new();
         let mut used_page_ids = HashSet::new();
@@ -290,17 +293,18 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
 }
 
 #[derive(Debug)]
-pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
     #[allow(dead_code)]
     engine_task_handle: tokio::task::AbortHandle,
     queue: Arc<Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     analyzer_inner_wt: Arc<QueueInnerWorkTable>,
     analyzer_in_progress: Arc<AtomicBool>,
     progress_notify: Arc<Notify>,
+    phantom_data: PhantomData<AvailableIndexes>,
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-    PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
+    PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
     pub fn apply_operation(&self, op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) {
         self.queue.push(op);
@@ -308,11 +312,19 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
 
     pub fn run_engine<E>(mut engine: E) -> Self
     where
-        E: PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> + Send + 'static,
-        SecondaryKeys:
-            Clone + Debug + Default + TableSecondaryIndexEventsOps + Send + Sync + 'static,
+        E: PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
+            + Send
+            + 'static,
+        SecondaryKeys: Clone
+            + Debug
+            + Default
+            + TableSecondaryIndexEventsOps<AvailableIndexes>
+            + Send
+            + Sync
+            + 'static,
         PrimaryKeyGenState: Clone + Debug + Send + Sync + 'static,
         PrimaryKey: Clone + Debug + Send + Sync + 'static,
+        AvailableIndexes: Send + Sync + 'static,
     {
         let queue = Arc::new(Queue::new());
         let progress_notify = Arc::new(Notify::new());
@@ -371,6 +383,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             analyzer_inner_wt,
             analyzer_in_progress,
             progress_notify,
+            phantom_data: PhantomData,
         }
     }
 

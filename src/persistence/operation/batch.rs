@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use data_bucket::page::PageId;
@@ -71,10 +72,11 @@ impl From<QueueInnerRow> for BatchInnerRow {
 }
 
 #[derive(Debug)]
-pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents> {
+pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes> {
     ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>,
     info_wt: BatchInnerWorkTable,
     prepared_index_evs: Option<PreparedIndexEvents<PrimaryKey, SecondaryEvents>>,
+    phantom_data: PhantomData<AvailableIndexes>,
 }
 
 #[derive(Debug)]
@@ -83,8 +85,8 @@ pub struct PreparedIndexEvents<PrimaryKey, SecondaryEvents> {
     secondary_evs: SecondaryEvents,
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
-    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes>
+    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes>
 where
     PrimaryKeyGenState: Debug + Clone,
     PrimaryKey: Debug + Clone,
@@ -100,16 +102,17 @@ where
             ops,
             info_wt,
             prepared_index_evs: None,
+            phantom_data: PhantomData,
         }
     }
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
-    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes>
+    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes>
 where
     PrimaryKeyGenState: Debug + Clone,
     PrimaryKey: Debug + Clone,
-    SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps,
+    SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
 {
     fn remove_operations_from_events(
         &mut self,

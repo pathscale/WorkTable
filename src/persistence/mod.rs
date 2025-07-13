@@ -19,7 +19,13 @@ pub use space::{
 use std::future::Future;
 pub use task::PersistenceTask;
 
-pub trait PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents> {
+pub trait PersistenceEngineOps<
+    PrimaryKeyGenState,
+    PrimaryKey,
+    SecondaryIndexEvents,
+    AvailableIndexes,
+>
+{
     fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
@@ -27,6 +33,11 @@ pub trait PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEve
 
     fn apply_batch_operation(
         &mut self,
-        batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
+        batch_op: BatchOperation<
+            PrimaryKeyGenState,
+            PrimaryKey,
+            SecondaryIndexEvents,
+            AvailableIndexes,
+        >,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
 }
