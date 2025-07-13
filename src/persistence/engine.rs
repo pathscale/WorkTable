@@ -101,7 +101,7 @@ where
     SecondaryIndexEvents:
         Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send,
     PrimaryKeyGenState: Clone + Debug + Send,
-    AvailableIndexes: Send,
+    AvailableIndexes: Clone + Copy + Debug + Send,
 {
     async fn apply_operation(
         &mut self,

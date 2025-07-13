@@ -45,6 +45,7 @@ where
     PrimaryKeyGenState: Debug,
     PrimaryKey: Debug,
     SecondaryKeys: Debug,
+    AvailableIndexes: Debug + Copy + Clone,
 {
     pub fn new(queue_inner_wt: Arc<QueueInnerWorkTable>) -> Self {
         Self {
@@ -324,7 +325,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             + 'static,
         PrimaryKeyGenState: Clone + Debug + Send + Sync + 'static,
         PrimaryKey: Clone + Debug + Send + Sync + 'static,
-        AvailableIndexes: Send + Sync + 'static,
+        AvailableIndexes: Copy + Clone + Debug + Send + Sync + 'static,
     {
         let queue = Arc::new(Queue::new());
         let progress_notify = Arc::new(Notify::new());

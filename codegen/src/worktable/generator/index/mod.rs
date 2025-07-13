@@ -158,7 +158,7 @@ impl Generator {
             }
         } else {
             quote! {
-                #[derive(Debug, Clone)]
+                #[derive(Debug, Clone, Copy)]
                 pub enum #avt_type_ident {
                     #(#indexes)*
                 }

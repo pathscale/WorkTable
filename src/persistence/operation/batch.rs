@@ -31,7 +31,7 @@ worktable! (
         pos: usize,
     },
     indexes: {
-        operation_id_idx: operation_id,
+        operation_id_idx: operation_id unique,
         page_id_idx: page_id,
         link_idx: link,
         op_type_idx: op_type,
@@ -96,8 +96,6 @@ where
         ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>,
         info_wt: BatchInnerWorkTable,
     ) -> Self {
-        let ixd = ops.len() - 40;
-
         Self {
             ops,
             info_wt,
@@ -113,63 +111,113 @@ where
     PrimaryKeyGenState: Debug + Clone,
     PrimaryKey: Debug + Clone,
     SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
+    AvailableIndexes: Debug + Clone + Copy,
 {
     fn remove_operations_from_events(
         &mut self,
         invalid_events: PreparedIndexEvents<PrimaryKey, SecondaryEvents>,
-    ) {
+    ) -> HashSet<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>> {
         let mut removed_ops = HashSet::new();
 
         for ev in &invalid_events.primary_evs {
-            let operation_pos_rev = self
-                .ops
-                .iter()
-                .rev()
-                .position(|op| {
-                    if let Some(evs) = op.primary_key_events() {
-                        for inner_ev in evs {
-                            if inner_ev.id() == ev.id() {
-                                return true;
-                            }
+            let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
+                if let Some(evs) = op.primary_key_events() {
+                    for inner_ev in evs {
+                        if inner_ev.id() == ev.id() {
+                            return true;
                         }
-                        false
-                    } else {
-                        false
                     }
-                })
-                .expect("Should exist as event was returned from validation");
+                    false
+                } else {
+                    false
+                }
+            }) else {
+                println!("Last ops");
+                for op in &self.ops {
+                    println!("{:?}", op)
+                }
+                panic!("Should exist as event was returned from validation")
+            };
             let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
             removed_ops.insert(op);
         }
-
-        println!("Found some ops");
-        for op in removed_ops {
-            println!("{:?}", op);
+        for (index, id) in invalid_events.secondary_evs.iter_event_ids() {
+            let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
+                let evs = op.secondary_key_events();
+                if evs.contains_event(index, id) {
+                    true
+                } else {
+                    false
+                }
+            }) else {
+                println!("Last ops");
+                for op in &self.ops {
+                    println!("{:?}", op)
+                }
+                panic!("Should exist as event was returned from validation")
+            };
+            let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
+            removed_ops.insert(op);
         }
+        for op in &removed_ops {
+            let pk = self
+                .info_wt
+                .select_by_operation_id(op.operation_id())
+                .expect("exists as all should be inserted on prepare step")
+                .id;
+            self.info_wt.delete_without_lock(pk.into()).unwrap();
+            let prepared_evs = self.prepared_index_evs.as_mut().expect("should be set before 0 iteration");
+            if let Some(primary_evs) = op.primary_key_events() {
+                for ev in primary_evs {
+                    let pos = prepared_evs.primary_evs.binary_search_by(|inner_ev| inner_ev.id().cmp(&ev.id())).expect("should exist as all operations has unique events sets");
+                    prepared_evs.primary_evs.remove(pos);
+                }
+            }
+        }
+        println!("Ops to remove");
+        for op in &removed_ops {
+            println!("{:?}", op)
+        }
+
+        removed_ops
     }
 
     pub fn validate(
         &mut self,
     ) -> eyre::Result<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>> {
-        let mut prepared_evs = self.prepare_indexes_evs()?;
-        let primary_invalid_events = validate_events(&mut prepared_evs.primary_evs);
-        let secondary_invalid_events = prepared_evs.secondary_evs.validate();
+        let mut valid = false;
+        let mut iteration = 0;
+        
+        self.prepared_index_evs = Some(self.prepare_indexes_evs()?);
 
-        let valid = if SecondaryEvents::is_unit() {
-            primary_invalid_events.is_empty()
-        } else {
-            primary_invalid_events.is_empty() && secondary_invalid_events.is_empty()
-        };
+        while !valid {
+            println!("Iteration: {:?}", iteration);
+            let prepared_evs = self.prepared_index_evs.as_mut().expect("should be set before 0 iteration");
+            let primary_invalid_events = validate_events(&mut prepared_evs.primary_evs);
+            let secondary_invalid_events = prepared_evs.secondary_evs.validate();
 
-        println!("{:?}", primary_invalid_events);
-        println!("{:?}", secondary_invalid_events);
+            valid = if SecondaryEvents::is_unit() {
+                primary_invalid_events.is_empty()
+            } else {
+                primary_invalid_events.is_empty() && secondary_invalid_events.is_empty()
+            };
 
-        self.prepared_index_evs = Some(prepared_evs);
-        let events_to_remove = PreparedIndexEvents {
-            primary_evs: primary_invalid_events,
-            secondary_evs: secondary_invalid_events,
-        };
-        self.remove_operations_from_events(events_to_remove);
+            if valid {
+                break;
+            }
+
+            println!("{:?}", primary_invalid_events);
+            println!("{:?}", secondary_invalid_events);
+
+            let events_to_remove = PreparedIndexEvents {
+                primary_evs: primary_invalid_events,
+                secondary_evs: secondary_invalid_events,
+            };
+            self.remove_operations_from_events(events_to_remove);
+
+            
+            iteration += 1;
+        }
 
         panic!("just");
 
