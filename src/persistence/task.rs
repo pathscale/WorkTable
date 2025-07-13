@@ -221,7 +221,8 @@ where
         }
 
         let mut op = BatchOperation::new(ops, info_wt);
-        let _ = op.validate();
+        let invalid_for_this_batch_ops = op.validate().await?;
+        self.extend_from_iter(invalid_for_this_batch_ops.into_iter())?;
 
         Ok(op)
     }

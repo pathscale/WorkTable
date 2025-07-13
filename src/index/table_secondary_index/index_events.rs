@@ -4,6 +4,9 @@ pub trait TableSecondaryIndexEventsOps<AvailableIndexes> {
     fn extend(&mut self, another: Self)
     where
         Self: Sized;
+    fn remove(&mut self, another: &Self)
+    where
+        Self: Sized;
     fn iter_event_ids(&self) -> impl Iterator<Item = (AvailableIndexes, change::Id)>;
     fn contains_event(&self, index: AvailableIndexes, id: change::Id) -> bool {
         false

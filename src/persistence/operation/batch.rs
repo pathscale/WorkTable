@@ -5,6 +5,12 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use crate::persistence::operation::util::MAX_CHECK_DEPTH;
+use crate::persistence::space::{BatchChangeEvent, BatchData};
+use crate::persistence::task::{QueueInnerRow, QueueInnerWorkTable};
+use crate::persistence::OperationType;
+use crate::prelude::*;
+use crate::prelude::{From, Order, SelectQueryExecutor};
 use data_bucket::page::PageId;
 use data_bucket::{Link, SizeMeasurable};
 use derive_more::Display;
@@ -13,12 +19,6 @@ use indexset::core::pair::Pair;
 use rkyv::{Archive, Deserialize, Serialize};
 use uuid::Uuid;
 use worktable_codegen::{worktable, MemStat};
-
-use crate::persistence::space::{BatchChangeEvent, BatchData};
-use crate::persistence::task::{QueueInnerRow, QueueInnerWorkTable};
-use crate::persistence::OperationType;
-use crate::prelude::*;
-use crate::prelude::{From, Order, SelectQueryExecutor};
 
 worktable! (
     name: BatchInner,
@@ -120,44 +120,41 @@ where
         let mut removed_ops = HashSet::new();
 
         for ev in &invalid_events.primary_evs {
-            let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
-                if let Some(evs) = op.primary_key_events() {
-                    for inner_ev in evs {
-                        if inner_ev.id() == ev.id() {
-                            return true;
+            let operation_pos_rev = self
+                .ops
+                .iter()
+                .rev()
+                .position(|op| {
+                    if let Some(evs) = op.primary_key_events() {
+                        for inner_ev in evs {
+                            if inner_ev.id() == ev.id() {
+                                return true;
+                            }
                         }
+                        false
+                    } else {
+                        false
                     }
-                    false
-                } else {
-                    false
-                }
-            }) else {
-                println!("Last ops");
-                for op in &self.ops {
-                    println!("{:?}", op)
-                }
-                panic!("Should exist as event was returned from validation")
-            };
+                })
+                .expect("Should exist as event was returned from validation");
             let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
             removed_ops.insert(op);
         }
         for (index, id) in invalid_events.secondary_evs.iter_event_ids() {
-            let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
-                let evs = op.secondary_key_events();
-                if evs.contains_event(index, id) {
-                    true
-                } else {
-                    false
-                }
-            }) else {
-                println!("Last ops");
-                for op in &self.ops {
-                    println!("{:?}", op)
-                }
-                panic!("Should exist as event was returned from validation")
+            if let Some(operation_pos_rev) =
+                self.ops.iter().take(MAX_CHECK_DEPTH).rev().position(|op| {
+                    let evs = op.secondary_key_events();
+                    if evs.contains_event(index, id) {
+                        true
+                    } else {
+                        false
+                    }
+                })
+            {
+                let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
+                removed_ops.insert(op);
             };
-            let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
-            removed_ops.insert(op);
+            // else it was already removed with primary
         }
         for op in &removed_ops {
             let pk = self
@@ -166,33 +163,41 @@ where
                 .expect("exists as all should be inserted on prepare step")
                 .id;
             self.info_wt.delete_without_lock(pk.into()).unwrap();
-            let prepared_evs = self.prepared_index_evs.as_mut().expect("should be set before 0 iteration");
+            let prepared_evs = self
+                .prepared_index_evs
+                .as_mut()
+                .expect("should be set before 0 iteration");
             if let Some(primary_evs) = op.primary_key_events() {
                 for ev in primary_evs {
-                    let pos = prepared_evs.primary_evs.binary_search_by(|inner_ev| inner_ev.id().cmp(&ev.id())).expect("should exist as all operations has unique events sets");
-                    prepared_evs.primary_evs.remove(pos);
+                    if let Ok(pos) = prepared_evs
+                        .primary_evs
+                        .binary_search_by(|inner_ev| inner_ev.id().cmp(&ev.id()))
+                    {
+                        prepared_evs.primary_evs.remove(pos);
+                    }
                 }
             }
-        }
-        println!("Ops to remove");
-        for op in &removed_ops {
-            println!("{:?}", op)
+            let op_secondary = op.secondary_key_events();
+            prepared_evs.secondary_evs.remove(op_secondary);
         }
 
         removed_ops
     }
 
-    pub fn validate(
+    pub async fn validate(
         &mut self,
     ) -> eyre::Result<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>> {
         let mut valid = false;
         let mut iteration = 0;
-        
+
         self.prepared_index_evs = Some(self.prepare_indexes_evs()?);
+        let mut ops_to_remove = vec![];
 
         while !valid {
-            println!("Iteration: {:?}", iteration);
-            let prepared_evs = self.prepared_index_evs.as_mut().expect("should be set before 0 iteration");
+            let prepared_evs = self
+                .prepared_index_evs
+                .as_mut()
+                .expect("should be set before 0 iteration");
             let primary_invalid_events = validate_events(&mut prepared_evs.primary_evs);
             let secondary_invalid_events = prepared_evs.secondary_evs.validate();
 
@@ -206,22 +211,22 @@ where
                 break;
             }
 
-            println!("{:?}", primary_invalid_events);
-            println!("{:?}", secondary_invalid_events);
-
             let events_to_remove = PreparedIndexEvents {
                 primary_evs: primary_invalid_events,
                 secondary_evs: secondary_invalid_events,
             };
-            self.remove_operations_from_events(events_to_remove);
-
-            
+            let ops = self.remove_operations_from_events(events_to_remove);
+            ops_to_remove.extend(ops);
             iteration += 1;
         }
 
-        panic!("just");
+        for (pos, op) in self.ops.iter().enumerate() {
+            let op_id = op.operation_id();
+            let q = PosByOpIdQuery { pos };
+            self.info_wt.update_pos_by_op_id(q, op_id).await?
+        }
 
-        Ok(vec![])
+        Ok(ops_to_remove)
     }
 
     fn prepare_indexes_evs(
@@ -230,14 +235,7 @@ where
         let mut primary_evs = vec![];
         let mut secondary_evs = SecondaryEvents::default();
 
-        let mut rows = self.info_wt.select_all().execute()?;
-        rows.sort_by(|l, r| l.operation_id.cmp(&r.operation_id));
-        for row in rows {
-            let pos = row.pos;
-            let op = self
-                .ops
-                .get(pos)
-                .expect("pos should be correct as was set while batch build");
+        for op in &self.ops {
             if let Some(evs) = op.primary_key_events() {
                 primary_evs.extend(evs.iter().cloned())
             }

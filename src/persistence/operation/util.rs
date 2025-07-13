@@ -3,6 +3,8 @@ use indexset::cdc::change::{self, ChangeEvent};
 use indexset::core::pair::Pair;
 use std::fmt::Debug;
 
+pub const MAX_CHECK_DEPTH: usize = 30;
+
 pub fn validate_events<T>(
     evs: &mut Vec<ChangeEvent<Pair<T, Link>>>,
 ) -> Vec<ChangeEvent<Pair<T, Link>>>
@@ -28,8 +30,6 @@ where
 }
 
 fn validate_events_iteration<T>(evs: &Vec<ChangeEvent<Pair<T, Link>>>) -> (Vec<change::Id>, usize) {
-    const MAX_CHECK_DEPTH: usize = 16;
-
     let mut last_ev_id = evs
         .last()
         .expect("Events should not be empty at this point")

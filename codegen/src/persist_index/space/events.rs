@@ -36,6 +36,7 @@ impl Generator {
         let avt_index_ident = name_generator.get_available_indexes_ident();
 
         let extend_fn = self.gen_space_secondary_index_events_extend_fn();
+        let remove_fn = self.gen_space_secondary_index_events_remove_fn();
         let iter_event_ids_fn = self.gen_space_secondary_index_events_iter_event_ids_fn();
         let contains_event_fn = self.gen_space_secondary_index_events_contains_event_fn();
         let sort_fn = self.gen_space_secondary_index_events_sort_fn();
@@ -46,6 +47,7 @@ impl Generator {
         quote! {
             impl TableSecondaryIndexEventsOps<#avt_index_ident> for #ident {
                 #extend_fn
+                #remove_fn
                 #iter_event_ids_fn
                 #contains_event_fn
                 #sort_fn
@@ -91,6 +93,33 @@ impl Generator {
         quote! {
             fn extend(&mut self, another: #ident) {
                     #(#fields_extend)*
+                }
+        }
+    }
+
+    fn gen_space_secondary_index_events_remove_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let ident = name_generator.get_space_secondary_index_events_ident();
+
+        let fields_remove: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                quote! {
+                    for ev in &another.#i {
+                        if let Ok(pos) = self.#i
+                            .binary_search_by(|inner_ev| inner_ev.id().cmp(&ev.id())) {
+                            self.#i.remove(pos);
+                        }
+
+                    }
+                }
+            })
+            .collect();
+
+        quote! {
+            fn remove(&mut self, another: &#ident) {
+                    #(#fields_remove)*
                 }
         }
     }
