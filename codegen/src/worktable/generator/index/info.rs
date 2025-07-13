@@ -1,6 +1,5 @@
 use crate::name_generator::{is_float, WorktableNameGenerator};
 use crate::worktable::generator::Generator;
-use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
 use quote::quote;
 

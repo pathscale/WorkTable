@@ -50,20 +50,21 @@ impl Generator {
         let extend_fn = self.gen_space_secondary_index_events_extend_fn();
         let sort_fn = self.gen_space_secondary_index_events_sort_fn();
         let validate_fn = self.gen_space_secondary_index_events_validate_fn();
+        let is_empty_fn = self.gen_space_secondary_index_events_is_empty_fn();
+        let is_unit_fn = self.gen_space_secondary_index_events_is_unit_fn();
 
         quote! {
             impl TableSecondaryIndexEventsOps for #ident {
                 #extend_fn
                 #sort_fn
                 #validate_fn
+                #is_empty_fn
+                #is_unit_fn
             }
         }
     }
 
     fn gen_space_secondary_index_events_sort_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let ident = name_generator.get_space_secondary_index_events_ident();
-
         let fields_sort: Vec<_> = self
             .field_types
             .keys()
@@ -131,6 +132,42 @@ impl Generator {
                     Self {
                         #(#fields_init)*
                     }
+                }
+        }
+    }
+
+    fn gen_space_secondary_index_events_is_empty_fn(&self) -> TokenStream {
+        let is_empty: Vec<_> = self
+            .field_types
+            .keys()
+            .map(|i| {
+                quote! {
+                    self.#i.is_empty()
+                }
+            })
+            .collect();
+
+        quote! {
+            fn is_empty(&self) -> bool {
+                    #(#is_empty) &&*
+                }
+        }
+    }
+
+    fn gen_space_secondary_index_events_is_unit_fn(&self) -> TokenStream {
+        let is_unit = if self.field_types.len() == 0 {
+            quote! {
+                true
+            }
+        } else {
+            quote! {
+                false
+            }
+        };
+
+        quote! {
+            fn is_unit() -> bool {
+                    #is_unit
                 }
         }
     }

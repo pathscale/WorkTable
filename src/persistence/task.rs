@@ -96,7 +96,7 @@ where
     where
         PrimaryKeyGenState: Clone,
         PrimaryKey: Clone,
-        SecondaryKeys: Clone,
+        SecondaryKeys: Clone + Default + TableSecondaryIndexEventsOps,
     {
         let mut ops_set = HashSet::new();
         let mut used_page_ids = HashSet::new();
@@ -216,7 +216,10 @@ where
             info_wt.update_pos_by_op_id(q, op_id).await?;
         }
 
-        Ok(BatchOperation::new(ops, info_wt))
+        let mut op = BatchOperation::new(ops, info_wt);
+        let _ = op.validate();
+
+        Ok(op)
     }
 
     pub fn len(&self) -> usize {
@@ -306,7 +309,8 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
     pub fn run_engine<E>(mut engine: E) -> Self
     where
         E: PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> + Send + 'static,
-        SecondaryKeys: Clone + Debug + Send + Sync + 'static,
+        SecondaryKeys:
+            Clone + Debug + Default + TableSecondaryIndexEventsOps + Send + Sync + 'static,
         PrimaryKeyGenState: Clone + Debug + Send + Sync + 'static,
         PrimaryKey: Clone + Debug + Send + Sync + 'static,
     {

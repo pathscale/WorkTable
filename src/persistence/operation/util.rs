@@ -1,10 +1,14 @@
 use data_bucket::Link;
 use indexset::cdc::change::{self, ChangeEvent};
 use indexset::core::pair::Pair;
+use std::fmt::Debug;
 
 pub fn validate_events<T>(
     evs: &mut Vec<ChangeEvent<Pair<T, Link>>>,
-) -> Vec<ChangeEvent<Pair<T, Link>>> {
+) -> Vec<ChangeEvent<Pair<T, Link>>>
+where
+    T: Debug,
+{
     let mut removed_events = vec![];
     let mut finish_condition = false;
 
@@ -37,7 +41,7 @@ fn validate_events_iteration<T>(evs: &Vec<ChangeEvent<Pair<T, Link>>>) -> (Vec<c
 
     while !error_flag && check_depth < MAX_CHECK_DEPTH {
         if let Some(next_ev) = rev_evs_iter.next().map(|ev| ev.id()) {
-            if next_ev.inner() == last_ev_id.inner() + 1 {
+            if next_ev.inner() + 1 == last_ev_id.inner() {
                 check_depth += 1;
                 last_ev_id = next_ev;
                 evs_before_error.push(last_ev_id);

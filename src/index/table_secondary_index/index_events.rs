@@ -6,4 +6,6 @@ pub trait TableSecondaryIndexEventsOps {
     fn validate(&mut self) -> Self
     where
         Self: Sized;
+    fn is_empty(&self) -> bool;
+    fn is_unit() -> bool;
 }

@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 
 use data_bucket::Link;
 use derive_more::Display;
@@ -13,6 +13,27 @@ pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Insert(InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>),
     Update(UpdateOperation<SecondaryKeys>),
     Delete(DeleteOperation<PrimaryKey, SecondaryKeys>),
+}
+
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Hash
+    for Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Hash::hash(&self.operation_id(), state)
+    }
+}
+
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> PartialEq
+    for Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.operation_id().eq(&other.operation_id())
+    }
+}
+
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Eq
+    for Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+{
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>

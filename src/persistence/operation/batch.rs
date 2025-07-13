@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -39,6 +39,9 @@ worktable! (
         update: {
             PosByOpId(pos) by operation_id,
         },
+        delete: {
+            ByOpId() by operation_id,
+        }
     }
 );
 
@@ -68,27 +71,27 @@ impl From<QueueInnerRow> for BatchInnerRow {
 }
 
 #[derive(Debug)]
-pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
-    ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents> {
+    ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>,
     info_wt: BatchInnerWorkTable,
-    prepared_index_evs: Option<PreparedIndexEvents<PrimaryKey, SecondaryKeys>>,
+    prepared_index_evs: Option<PreparedIndexEvents<PrimaryKey, SecondaryEvents>>,
 }
 
 #[derive(Debug)]
-pub struct PreparedIndexEvents<PrimaryKey, SecondaryKeys> {
+pub struct PreparedIndexEvents<PrimaryKey, SecondaryEvents> {
     primary_evs: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
-    secondary_evs: SecondaryKeys,
+    secondary_evs: SecondaryEvents,
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
+    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
 where
     PrimaryKeyGenState: Debug + Clone,
     PrimaryKey: Debug + Clone,
-    SecondaryKeys: Debug,
+    SecondaryEvents: Debug,
 {
     pub fn new(
-        ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+        ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>,
         info_wt: BatchInnerWorkTable,
     ) -> Self {
         let ixd = ops.len() - 40;
@@ -101,29 +104,80 @@ where
     }
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
+    BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>
 where
     PrimaryKeyGenState: Debug + Clone,
     PrimaryKey: Debug + Clone,
-    SecondaryKeys: Debug + Default + Clone + TableSecondaryIndexEventsOps,
+    SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps,
 {
+    fn remove_operations_from_events(
+        &mut self,
+        invalid_events: PreparedIndexEvents<PrimaryKey, SecondaryEvents>,
+    ) {
+        let mut removed_ops = HashSet::new();
+
+        for ev in &invalid_events.primary_evs {
+            let operation_pos_rev = self
+                .ops
+                .iter()
+                .rev()
+                .position(|op| {
+                    if let Some(evs) = op.primary_key_events() {
+                        for inner_ev in evs {
+                            if inner_ev.id() == ev.id() {
+                                return true;
+                            }
+                        }
+                        false
+                    } else {
+                        false
+                    }
+                })
+                .expect("Should exist as event was returned from validation");
+            let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
+            removed_ops.insert(op);
+        }
+
+        println!("Found some ops");
+        for op in removed_ops {
+            println!("{:?}", op);
+        }
+    }
+
     pub fn validate(
         &mut self,
-    ) -> eyre::Result<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>> {
+    ) -> eyre::Result<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>> {
         let mut prepared_evs = self.prepare_indexes_evs()?;
-
         let primary_invalid_events = validate_events(&mut prepared_evs.primary_evs);
         let secondary_invalid_events = prepared_evs.secondary_evs.validate();
 
+        let valid = if SecondaryEvents::is_unit() {
+            primary_invalid_events.is_empty()
+        } else {
+            primary_invalid_events.is_empty() && secondary_invalid_events.is_empty()
+        };
+
+        println!("{:?}", primary_invalid_events);
+        println!("{:?}", secondary_invalid_events);
+
         self.prepared_index_evs = Some(prepared_evs);
+        let events_to_remove = PreparedIndexEvents {
+            primary_evs: primary_invalid_events,
+            secondary_evs: secondary_invalid_events,
+        };
+        self.remove_operations_from_events(events_to_remove);
+
+        panic!("just");
 
         Ok(vec![])
     }
 
-    fn prepare_indexes_evs(&self) -> eyre::Result<PreparedIndexEvents<PrimaryKey, SecondaryKeys>> {
+    fn prepare_indexes_evs(
+        &self,
+    ) -> eyre::Result<PreparedIndexEvents<PrimaryKey, SecondaryEvents>> {
         let mut primary_evs = vec![];
-        let mut secondary_evs = SecondaryKeys::default();
+        let mut secondary_evs = SecondaryEvents::default();
 
         let mut rows = self.info_wt.select_all().execute()?;
         rows.sort_by(|l, r| l.operation_id.cmp(&r.operation_id));
@@ -164,7 +218,7 @@ where
         }))
     }
 
-    pub fn get_indexes_evs(&self) -> eyre::Result<(BatchChangeEvent<PrimaryKey>, SecondaryKeys)> {
+    pub fn get_indexes_evs(&self) -> eyre::Result<(BatchChangeEvent<PrimaryKey>, SecondaryEvents)> {
         if let Some(evs) = &self.prepared_index_evs {
             Ok((evs.primary_evs.clone(), evs.secondary_evs.clone()))
         } else {
