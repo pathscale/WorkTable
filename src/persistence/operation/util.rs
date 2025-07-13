@@ -24,12 +24,12 @@ where
         }
     }
 
-    removed_events.sort_by(|ev1, ev2| ev2.id().cmp(&ev1.id()));
+    removed_events.sort_by_key(|ev2| std::cmp::Reverse(ev2.id()));
 
     removed_events
 }
 
-fn validate_events_iteration<T>(evs: &Vec<ChangeEvent<Pair<T, Link>>>) -> (Vec<change::Id>, usize) {
+fn validate_events_iteration<T>(evs: &[ChangeEvent<Pair<T, Link>>]) -> (Vec<change::Id>, usize) {
     let Some(mut last_ev_id) = evs.last().map(|ev| ev.id()) else {
         return (vec![], 0);
     };
@@ -41,12 +41,10 @@ fn validate_events_iteration<T>(evs: &Vec<ChangeEvent<Pair<T, Link>>>) -> (Vec<c
     while !error_flag && check_depth < MAX_CHECK_DEPTH {
         if let Some(next_ev) = rev_evs_iter.next().map(|ev| ev.id()) {
             if last_ev_id.is_next_for(next_ev) || last_ev_id == next_ev {
-                println!("{:?} {:?}, ok", last_ev_id, next_ev);
                 check_depth += 1;
                 last_ev_id = next_ev;
                 evs_before_error.push(last_ev_id);
             } else {
-                println!("{:?} {:?}, err", last_ev_id, next_ev);
                 error_flag = true
             }
         } else {

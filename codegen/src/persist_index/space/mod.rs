@@ -1,10 +1,9 @@
 mod events;
 mod index;
 
-use proc_macro2::{Literal, TokenStream};
+use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::name_generator::{is_unsized, WorktableNameGenerator};
 use crate::persist_index::generator::Generator;
 
 impl Generator {

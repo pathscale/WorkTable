@@ -6,7 +6,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::in_memory::{RowWrapper, StorableRow};
 use crate::mem_stat::MemStat;
-use crate::{TableSecondaryIndex, TableSecondaryIndexInfo, WorkTable};
+use crate::{TableSecondaryIndexInfo, WorkTable};
 
 #[derive(Debug)]
 pub struct SystemInfo {

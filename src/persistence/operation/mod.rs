@@ -1,4 +1,5 @@
 mod batch;
+#[allow(clippy::module_inception)]
 mod operation;
 mod util;
 
@@ -11,8 +12,7 @@ use derive_more::Display;
 use rkyv::{Archive, Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::prelude::*;
-use crate::prelude::{From, SelectQueryExecutor};
+use crate::prelude::From;
 
 pub use batch::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, PosByOpIdQuery};
 pub use operation::{DeleteOperation, InsertOperation, Operation, UpdateOperation};

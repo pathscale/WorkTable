@@ -350,7 +350,7 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_is_unit_fn(&self) -> TokenStream {
-        let is_unit = if self.field_types.len() == 0 {
+        let is_unit = if self.field_types.is_empty() {
             quote! {
                 true
             }

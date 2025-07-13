@@ -1,7 +1,8 @@
-use crate::name_generator::{is_float, WorktableNameGenerator};
-use crate::worktable::generator::Generator;
 use proc_macro2::TokenStream;
 use quote::quote;
+
+use crate::name_generator::WorktableNameGenerator;
+use crate::worktable::generator::Generator;
 
 impl Generator {
     pub fn gen_secondary_index_info_impl_def(&mut self) -> TokenStream {
@@ -64,8 +65,8 @@ impl Generator {
         let is_empty = self
             .columns
             .indexes
-            .iter()
-            .map(|(i, idx)| {
+            .values()
+            .map(|idx| {
                 let index_field_name = &idx.name;
                 quote! {
                     self.#index_field_name.len() == 0

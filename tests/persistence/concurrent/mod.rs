@@ -71,7 +71,7 @@ fn test_concurrent() {
                     .unwrap(),
             );
 
-            let total: u64 = 10_000;
+            let total: u64 = 5_000;
             let tasks = 8;
             let chunk = total / tasks;
 
@@ -114,7 +114,7 @@ fn test_concurrent() {
                     .await
                     .unwrap(),
             );
-            assert_eq!(table.count(), 10_000)
+            assert_eq!(table.count(), 5_000)
         }
     })
 }

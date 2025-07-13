@@ -1,5 +1,3 @@
-use convert_case::Case::Pascal;
-use data_bucket::page::PageId;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -7,6 +5,8 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+use data_bucket::page::PageId;
 use tokio::sync::Notify;
 use worktable_codegen::worktable;
 
@@ -67,7 +67,6 @@ where
     AvailableIndexes: Debug + Hash + Eq,
 {
     pub fn merge(&mut self, another: Self) {
-        println!("Before merge {:?}", self);
         if another.primary_id != IndexChangeEventId::default() {
             self.primary_id = another.primary_id
         }
@@ -76,7 +75,6 @@ where
                 self.secondary_ids.insert(index, id);
             }
         }
-        println!("After merge {:?}", self);
     }
 }
 
@@ -428,18 +426,16 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
                     if let Err(e) = batch_op {
                         tracing::warn!("Error collecting batch operation: {}", e);
-                    } else {
-                        if let Some(batch_op) = batch_op.unwrap() {
-                            let res = engine.apply_batch_operation(batch_op).await;
-                            if let Err(e) = res {
-                                tracing::warn!(
-                                    "Persistence engine failed while applying batch op: {}",
-                                    e
-                                );
-                            }
-                        } else {
-                            tokio::time::sleep(Duration::from_millis(500)).await;
+                    } else if let Some(batch_op) = batch_op.unwrap() {
+                        let res = engine.apply_batch_operation(batch_op).await;
+                        if let Err(e) = res {
+                            tracing::warn!(
+                                "Persistence engine failed while applying batch op: {}",
+                                e
+                            );
                         }
+                    } else {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                     }
                 }
             }
