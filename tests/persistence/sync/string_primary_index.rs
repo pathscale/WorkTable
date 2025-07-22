@@ -1,3 +1,4 @@
+use std::time::Duration;
 use worktable::prelude::*;
 use worktable_codegen::worktable;
 
