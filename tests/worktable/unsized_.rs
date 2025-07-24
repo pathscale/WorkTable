@@ -179,6 +179,45 @@ async fn test_update_string_by_non_unique() {
     assert!(empty_links.contains(&second_link))
 }
 
+#[tokio::test]
+async fn update_many_times() {
+    let table = TestWorkTable::default();
+    for i in 0..100 {
+        let row = TestRow {
+            id: table.get_next_pk().into(),
+            test: i + 1,
+            another: 1,
+            exchange: format!("test_{i}"),
+        };
+        let _ = table.insert(row.clone()).unwrap();
+    }
+    let mut i_state = HashMap::new();
+    for _ in 0..1000 {
+        let val = fastrand::u64(..);
+        let id_to_update = fastrand::u64(0..=99);
+        table
+            .update_exchange_by_id(
+                ExchangeByIdQuery {
+                    exchange: format!("test_{val}"),
+                },
+                id_to_update.into(),
+            )
+            .await
+            .unwrap();
+        {
+            i_state
+                .entry(id_to_update as i64 + 1)
+                .and_modify(|v| *v = format!("test_{val}"))
+                .or_insert(format!("test_{val}"));
+        }
+    }
+
+    for (test, val) in i_state {
+        let row = table.select_by_test(test).unwrap();
+        assert_eq!(row.exchange, val)
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_parallel() {
     let table = Arc::new(TestWorkTable::default());

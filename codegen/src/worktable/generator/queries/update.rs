@@ -56,22 +56,26 @@ impl Generator {
         let diff_process = self.gen_process_diffs_on_index(idents.as_slice(), Some(&idents));
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
+        let full_row_lock = self.gen_full_lock_for_update();
         let size_check = if self.columns.is_sized {
             quote! {}
         } else {
             quote! {
                 if bytes.len() >= link.length as usize {
+                    lock.unlock();  // Releases locks
+                    let lock = {
+                       #full_row_lock
+                    };
                     self.delete_without_lock(pk.clone())?;
                     self.insert(row)?;
 
-                    lock.unlock();  // Releases locks
-                    self.0.lock_map.remove(&pk); // Removes locks
+                    lock.unlock();
+                    self.0.lock_map.remove_with_lock_check(&link); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
             }
         };
-        let full_row_lock = self.gen_full_lock_for_update();
 
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
@@ -239,7 +243,9 @@ impl Generator {
                     let lock = {
                         #full_row_lock
                     };
-                    let mut row_old = self.select(pk.clone()).expect("should not be deleted by other thread");
+
+                    let mut row_old = self.0.data.select(link)?;
+                    let pk = row_old.get_primary_key().clone();
                     #(#row_updates)*
                     self.delete_without_lock(pk.clone())?;
                     self.insert(row_old)?;
@@ -287,7 +293,7 @@ impl Generator {
         let avt_type_ident = name_generator.get_available_type_ident();
         let diff_container = if idx_idents.is_some() {
             quote! {
-                let row_old = self.select(pk.clone()).unwrap();
+                let row_old = self.0.data.select(link)?;
                 let row_new = row.clone();
                 let updated_bytes: Vec<u8> = vec![];
                 let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
@@ -464,7 +470,7 @@ impl Generator {
                 let mut need_to_reinsert = false;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    let op_lock = locks.remove(link).expect("should not be deleted as links are unique");
+                    let op_lock = locks.remove(&link).expect("should not be deleted as links are unique");
                     op_lock.unlock();
                     let lock = {
                         #full_row_lock
@@ -477,7 +483,7 @@ impl Generator {
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&link); // Removes locks
                 } else {
-                    links_to_unlock.insert(link, locks.remove(link).expect("should not be deleted as links are unique"))
+                    links_to_unlock.insert(link, locks.remove(&link).expect("should not be deleted as links are unique"));
                 }
             }
         } else {
@@ -503,13 +509,14 @@ impl Generator {
 
                 let mut locks = std::collections::HashMap::new();
                 for link in links.iter() {
+                    let link = *link;
                     let op_lock = {
                         #custom_lock
                     };
                     locks.insert(link, op_lock);
                 }
 
-                let mut links_to_unlock = std::collections::HashMap::new();
+                let mut links_to_unlock: std::collections::HashMap<_, std::sync::Arc<Lock>> = std::collections::HashMap::new();
                 let op_id = OperationId::Multi(uuid::Uuid::now_v7());
                 for link in links.into_iter() {
                     let pk = self.0.data.select(link)?.get_primary_key().clone();
