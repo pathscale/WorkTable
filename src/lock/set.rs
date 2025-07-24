@@ -26,11 +26,7 @@ impl<LockType> LockMap<LockType> {
         }
     }
 
-    pub fn insert(
-        &self,
-        key: Link,
-        lock: Arc<RwLock<LockType>>,
-    ) -> Option<Arc<RwLock<LockType>>> {
+    pub fn insert(&self, key: Link, lock: Arc<RwLock<LockType>>) -> Option<Arc<RwLock<LockType>>> {
         self.set.write().insert(key, lock)
     }
 
@@ -48,7 +44,7 @@ impl<LockType> LockMap<LockType> {
     {
         let mut set = self.set.write();
         let remove = if let Some(lock) = set.get(key) {
-            !lock.is_locked()
+            !lock.read().is_locked()
         } else {
             false
         };

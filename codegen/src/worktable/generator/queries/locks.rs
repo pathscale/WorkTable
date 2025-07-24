@@ -9,13 +9,6 @@ use crate::worktable::generator::Generator;
 use crate::worktable::model::Operation;
 
 impl WorktableNameGenerator {
-    pub fn get_update_query_lock_await_ident(snake_case_name: &String) -> Ident {
-        Ident::new(
-            format!("lock_await_update_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        )
-    }
-
     pub fn get_update_query_lock_ident(snake_case_name: &String) -> Ident {
         Ident::new(
             format!("lock_update_{snake_case_name}").as_str(),
@@ -23,30 +16,9 @@ impl WorktableNameGenerator {
         )
     }
 
-    pub fn get_update_query_unlock_ident(snake_case_name: &String) -> Ident {
-        Ident::new(
-            format!("unlock_update_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        )
-    }
-
-    pub fn get_update_in_place_query_lock_await_ident(snake_case_name: &String) -> Ident {
-        Ident::new(
-            format!("lock_await_update_in_place_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        )
-    }
-
     pub fn get_update_in_place_query_lock_ident(snake_case_name: &String) -> Ident {
         Ident::new(
             format!("lock_update_in_place_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        )
-    }
-
-    pub fn get_update_in_place_query_unlock_ident(snake_case_name: &String) -> Ident {
-        Ident::new(
-            format!("unlock_update_in_place_{snake_case_name}").as_str(),
             Span::mixed_site(),
         )
     }
@@ -81,25 +53,14 @@ impl Generator {
                     .from_case(Case::Pascal)
                     .to_case(Case::Snake);
 
-                let lock_await_ident =
-                    WorktableNameGenerator::get_update_in_place_query_lock_await_ident(
-                        &snake_case_name,
-                    );
                 let lock_ident =
                     WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
-                let unlock_ident = WorktableNameGenerator::get_update_in_place_query_unlock_ident(
-                    &snake_case_name,
-                );
 
                 let columns = &updates.get(name).as_ref().expect("exists").columns;
-                let lock_await_fn = Self::gen_rows_lock_await_fn(columns, lock_await_ident);
                 let lock_fn = Self::gen_rows_lock_fn(columns, lock_ident);
-                let unlock_fn = Self::gen_rows_unlock_fn(columns, unlock_ident);
 
                 quote! {
                     #lock_fn
-                    #lock_await_fn
-                    #unlock_fn
                 }
             })
             .collect::<Vec<_>>();
@@ -118,48 +79,20 @@ impl Generator {
                     .from_case(Case::Pascal)
                     .to_case(Case::Snake);
 
-                let lock_await_ident =
-                    WorktableNameGenerator::get_update_query_lock_await_ident(&snake_case_name);
                 let lock_ident =
                     WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
-                let unlock_ident =
-                    WorktableNameGenerator::get_update_query_unlock_ident(&snake_case_name);
 
                 let columns = &updates.get(name).as_ref().expect("exists").columns;
-                let lock_await_fn = Self::gen_rows_lock_await_fn(columns, lock_await_ident);
                 let lock_fn = Self::gen_rows_lock_fn(columns, lock_ident);
-                let unlock_fn = Self::gen_rows_unlock_fn(columns, unlock_ident);
 
                 quote! {
                     #lock_fn
-                    #lock_await_fn
-                    #unlock_fn
                 }
             })
             .collect::<Vec<_>>();
 
         quote! {
             #(#fns)*
-        }
-    }
-
-    fn gen_rows_unlock_fn(columns: &[Ident], ident: Ident) -> TokenStream {
-        let inner = columns
-            .iter()
-            .map(|col| {
-                let col = Ident::new(format!("{col}_lock").as_str(), Span::mixed_site());
-                quote! {
-                    if let Some(#col) = &self.#col {
-                        #col.unlock();
-                    }
-                }
-            })
-            .collect::<Vec<_>>();
-
-        quote! {
-            pub fn #ident(&self) {
-                #(#inner)*
-            }
         }
     }
 
@@ -187,29 +120,6 @@ impl Generator {
         }
     }
 
-    fn gen_rows_lock_await_fn(columns: &[Ident], ident: Ident) -> TokenStream {
-        let inner = columns
-            .iter()
-            .map(|col| {
-                let col = Ident::new(format!("{col}_lock").as_str(), Span::mixed_site());
-                quote! {
-                    if let Some(lock) = &self.#col {
-                        futures.push(lock.as_ref());
-                    }
-                }
-            })
-            .collect::<Vec<_>>();
-
-        quote! {
-            pub async fn #ident(&self) {
-                let mut futures = Vec::new();
-
-                #(#inner)*
-                futures::future::join_all(futures).await;
-            }
-        }
-    }
-
     pub fn gen_full_lock_for_update(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let lock_ident = name_generator.get_lock_type_ident();
@@ -228,8 +138,12 @@ impl Generator {
                 let mut lock = std::sync::Arc::new(ParkingRwLock::new(lock));
                 let mut guard = lock.write();
                 if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
-                    let old_lock_guard = old_lock.read();
-                    guard.merge(&*old_lock_guard);
+                    let mut old_lock_guard = old_lock.write();
+                    let locks = guard.merge(&mut *old_lock_guard);
+                    drop(old_lock_guard);
+                    drop(guard);
+
+                    futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
                 }
 
                 op_lock
@@ -256,9 +170,11 @@ impl Generator {
                 let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
                 let mut guard = lock.write();
                 if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
-                    let old_lock_guard = old_lock.read();
-                    let locks = guard.merge(&*old_lock_guard);
+                    let mut old_lock_guard = old_lock.write();
+                    let locks = guard.merge(&mut *old_lock_guard);
                     drop(old_lock_guard);
+                    drop(guard);
+
                     futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
                 }
 

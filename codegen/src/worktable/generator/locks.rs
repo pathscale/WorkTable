@@ -168,19 +168,20 @@ impl Generator {
             .map(|col| {
                 let col = Ident::new(format!("{col}_lock").as_str(), Span::mixed_site());
                 quote! {
-                     if let Some(#col) = &other.#col {
+                    if let Some(#col) = &other.#col {
                         if self.#col.is_none() {
                             self.#col = Some(#col.clone());
                         } else {
                             set.insert(#col.clone());
                         }
-                     }
+                    }
+                    other.#col = self.#col.clone();
                 }
             })
             .collect();
 
         quote! {
-            fn merge(&mut self, other: &Self) -> std::collections::HashSet<std::sync::Arc<Lock>> {
+            fn merge(&mut self, other: &mut Self) -> std::collections::HashSet<std::sync::Arc<Lock>> {
                 let mut set = std::collections::HashSet::new();
                 #(#rows)*
                 set

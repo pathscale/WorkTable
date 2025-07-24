@@ -12,7 +12,7 @@ pub trait RowLock {
     /// Locks full [`RowLock`].
     fn lock(&mut self, id: u16) -> (HashSet<Arc<Lock>>, Arc<Lock>);
     /// Merges two [`RowLock`]'s.
-    fn merge(&mut self, other: &Self) -> HashSet<Arc<Lock>>
+    fn merge(&mut self, other: &mut Self) -> HashSet<Arc<Lock>>
     where
         Self: Sized;
 }
