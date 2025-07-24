@@ -41,18 +41,37 @@ impl Generator {
 
         quote! {
             pub async fn delete(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
-                if let Some(lock) = self.0.lock_map.get(&pk) {
-                    lock.lock_await().await;   // Waiting for all locks released
-                }
+                let link = self.0
+                    .pk_map
+                    .get(&pk)
+                    .map(|v| v.get().value)
+                    .ok_or(WorkTableError::NotFound)?;
+                let lock = {
+                    let lock_id = self.0.lock_map.next_id();
+                    if let Some(lock) = self.0.lock_map.get(&link) {
+                        let mut lock_guard = lock.write();
+                        let (locks, op_lock) = lock_guard.lock(lock_id);
+                        drop(lock_guard);
+                        futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
 
-                let lock_id = self.0.lock_map.next_id();
-                let lock = std::sync::Arc::new(#lock_ident::with_lock(lock_id.into()));   //Creates new LockType with None
-                self.0.lock_map.insert(pk.clone(), lock.clone()); // adds LockType to LockMap
+                        op_lock
+                    } else {
+                        let (lock, op_lock) = #lock_ident::with_lock(lock_id);
+                        let mut lock = std::sync::Arc::new(ParkingRwLock::new(lock));
+                        let mut guard = lock.write();
+                        if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                            let old_lock_guard = old_lock.read();
+                            guard.merge(&*old_lock_guard);
+                        }
+
+                        op_lock
+                    }
+                };
 
                 #delete_logic
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove(&pk); // Removes locks
+                self.0.lock_map.remove_with_lock_check(&link); // Removes locks
 
                 core::result::Result::Ok(())
             }

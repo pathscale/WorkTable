@@ -51,7 +51,7 @@ pub struct WorkTable<
 
     pub pk_gen: PkGen,
 
-    pub lock_map: LockMap<LockType, PrimaryKey>,
+    pub lock_map: LockMap<LockType>,
 
     pub table_name: &'static str,
 
@@ -285,36 +285,4 @@ pub enum WorkTableError {
     AlreadyExists,
     SerializeError,
     PagesError(in_memory::PagesExecutionError),
-}
-
-#[cfg(test)]
-mod tests {
-    // mod eyre {
-    //     use eyre::*;
-    //     use worktable_codegen::worktable;
-    //
-    //     use crate::prelude::*;
-    //
-    //     worktable! (
-    //         name: Test,
-    //         columns: {
-    //             id: u64 primary_key,
-    //             test: u64
-    //         }
-    //     );
-    //
-    //     #[test]
-    //     fn test() {
-    //         let table = TestWorkTable::default();
-    //         let row = TestRow {
-    //             id: 1,
-    //             test: 1,
-    //         };
-    //         let pk = table.insert::<{ crate::table::tests::tuple_primary_key::TestRow::ROW_SIZE }>(row.clone()).unwrap();
-    //         let selected_row = table.select(pk).unwrap();
-    //
-    //         assert_eq!(selected_row, row);
-    //         assert!(table.select((1, 0).into()).is_none())
-    //     }
-    // }
 }

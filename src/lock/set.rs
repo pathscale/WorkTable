@@ -2,30 +2,23 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
+use crate::lock::RowLock;
+use data_bucket::Link;
 use parking_lot::RwLock;
 
 #[derive(Debug)]
-pub struct LockMap<LockType, PkType>
-where
-    PkType: std::hash::Hash + Ord,
-{
-    set: RwLock<HashMap<PkType, Arc<LockType>>>,
+pub struct LockMap<LockType> {
+    set: RwLock<HashMap<Link, Arc<RwLock<LockType>>>>,
     next_id: AtomicU16,
 }
 
-impl<LockType, PkType> Default for LockMap<LockType, PkType>
-where
-    PkType: std::hash::Hash + Ord,
-{
+impl<LockType> Default for LockMap<LockType> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<LockType, PkType> LockMap<LockType, PkType>
-where
-    PkType: std::hash::Hash + Ord,
-{
+impl<LockType> LockMap<LockType> {
     pub fn new() -> Self {
         Self {
             set: RwLock::new(HashMap::new()),
@@ -33,27 +26,35 @@ where
         }
     }
 
-    pub fn insert(&self, key: PkType, lock: Arc<LockType>) -> Option<Arc<LockType>> {
+    pub fn insert(
+        &self,
+        key: Link,
+        lock: Arc<RwLock<LockType>>,
+    ) -> Option<Arc<RwLock<LockType>>> {
         self.set.write().insert(key, lock)
     }
 
-    pub fn get(&self, key: &PkType) -> Option<Arc<LockType>> {
+    pub fn get(&self, key: &Link) -> Option<Arc<RwLock<LockType>>> {
         self.set.read().get(key).cloned()
     }
 
-    pub fn remove(&self, key: &PkType) {
+    pub fn remove(&mut self, key: &Link) {
         self.set.write().remove(key);
     }
 
-    pub fn remove_with_lock_check(&self, key: &PkType, lock: Arc<LockType>)
+    pub fn remove_with_lock_check(&self, key: &Link)
     where
-        PkType: Clone,
+        LockType: RowLock,
     {
         let mut set = self.set.write();
-        if let Some(l) = set.remove(key) {
-            if !Arc::ptr_eq(&l, &lock) {
-                set.insert(key.clone(), l);
-            }
+        let remove = if let Some(lock) = set.get(key) {
+            !lock.is_locked()
+        } else {
+            false
+        };
+
+        if remove {
+            set.remove(key);
         }
     }
 

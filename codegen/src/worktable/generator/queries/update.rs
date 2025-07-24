@@ -76,20 +76,33 @@ impl Generator {
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
-                if let Some(lock) = self.0.lock_map.get(&pk) {
-                    lock.lock_await().await;   // Waiting for all locks released
-                }
-
-                let lock_id = self.0.lock_map.next_id();
-                let lock = std::sync::Arc::new(#lock_ident::with_lock(lock_id.into()));   //Creates new LockType with Locks
-                self.0.lock_map.insert(pk.clone(), lock.clone()); // adds LockType to LockMap
-
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let link = self.0
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
+                let lock = {
+                    let lock_id = self.0.lock_map.next_id();
+                    if let Some(lock) = self.0.lock_map.get(&link) {
+                        let mut lock_guard = lock.write();
+                        let (locks, op_lock) = lock_guard.lock(lock_id);
+                        drop(lock_guard);
+                        futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
+
+                        op_lock
+                    } else {
+                        let (lock, op_lock) = #lock_ident::with_lock(lock_id);
+                        let mut lock = std::sync::Arc::new(ParkingRwLock::new(lock));
+                        let mut guard = lock.write();
+                        if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                            let old_lock_guard = old_lock.read();
+                            guard.merge(&*old_lock_guard);
+                        }
+
+                        op_lock
+                    }
+                };
+                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 #size_check
 
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
@@ -103,7 +116,7 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove(&pk); // Removes locks
+                self.0.lock_map.remove_with_lock_check(&link); // Removes locks
 
                 #persist_call
 
@@ -367,10 +380,6 @@ impl Generator {
             Span::mixed_site(),
         );
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
-
-        let lock_await_ident =
-            WorktableNameGenerator::get_update_query_lock_await_ident(&snake_case_name);
-        let unlock_ident = WorktableNameGenerator::get_update_query_unlock_ident(&snake_case_name);
         let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
@@ -389,22 +398,37 @@ impl Generator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
-                if let Some(lock) = self.0.lock_map.get(&pk) {
-                    lock.#lock_await_ident().await;   // Waiting for all locks released
-                }
-                let lock_id = self.0.lock_map.next_id();
-                let mut lock = #lock_type_ident::new(lock_id.into());   //Creates new LockType with None
-                lock.#lock_ident();
-                let lock = std::sync::Arc::new(lock);
-                self.0.lock_map.insert(pk.clone(), lock.clone());
-
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
                 let link = self.0
                         .pk_map
                         .get(&pk)
                         .map(|v| v.get().value)
                         .ok_or(WorkTableError::NotFound)?;
+
+                let lock = {
+                    let lock_id = self.0.lock_map.next_id();
+                    if let Some(lock) = self.0.lock_map.get(&link) {
+                        let mut lock_guard = lock.write();
+                        let (locks, op_lock) = lock_guard.#lock_ident(lock_id);
+                        drop(lock_guard);
+                        futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
+
+                        op_lock
+                    } else {
+                        let mut lock = #lock_type_ident::new();
+                        let (_, op_lock) = lock.#lock_ident(lock_id);
+                        let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
+                        let mut guard = lock.write();
+                        if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                            let old_lock_guard = old_lock.read();
+                            guard.merge(&*old_lock_guard);
+                        }
+
+                        op_lock
+                    }
+                };
+
+                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
@@ -415,8 +439,8 @@ impl Generator {
                     #(#row_updates)*
                 }).map_err(WorkTableError::PagesError)? };
 
-                lock.#unlock_ident();
-                self.0.lock_map.remove_with_lock_check(&pk, lock);
+                lock.unlock();
+                self.0.lock_map.remove_with_lock_check(&link);
 
                 #persist_call
 
@@ -586,10 +610,6 @@ impl Generator {
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
-
-        let lock_await_ident =
-            WorktableNameGenerator::get_update_query_lock_await_ident(&snake_case_name);
-        let unlock_ident = WorktableNameGenerator::get_update_query_unlock_ident(&snake_case_name);
         let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
@@ -628,16 +648,30 @@ impl Generator {
                     .get(#by)
                     .map(|kv| kv.get().value)
                     .ok_or(WorkTableError::NotFound)?;
-                let pk = self.0.data.select(link)?.get_primary_key();
 
-                if let Some(lock) = self.0.lock_map.get(&pk) {
-                    lock.#lock_await_ident().await;
-                }
-                let lock_id = self.0.lock_map.next_id();
-                let mut lock = #lock_type_ident::new(lock_id.into());
-                lock.#lock_ident();
-                let lock = std::sync::Arc::new(lock);
-                self.0.lock_map.insert(pk.clone(), lock.clone());
+                let lock = {
+                    let lock_id = self.0.lock_map.next_id();
+                    if let Some(lock) = self.0.lock_map.get(&link) {
+                        let mut lock_guard = lock.write();
+                        let (locks, op_lock) = lock_guard.#lock_ident(lock_id);
+                        drop(lock_guard);
+
+                        futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
+
+                        op_lock
+                    } else {
+                        let mut lock = #lock_type_ident::new();
+                        let (_, op_lock) = lock.#lock_ident(lock_id);
+                        let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
+                        let mut guard = lock.write();
+                        if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                            let old_lock_guard = old_lock.read();
+                            guard.merge(&*old_lock_guard);
+                        }
+
+                        op_lock
+                    }
+                };
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
@@ -650,8 +684,8 @@ impl Generator {
                     }).map_err(WorkTableError::PagesError)?;
                 }
 
-                lock.#unlock_ident();
-                self.0.lock_map.remove_with_lock_check(&pk, lock);
+                lock.unlock();
+                self.0.lock_map.remove_with_lock_check(&link);
 
                 #persist_call
 

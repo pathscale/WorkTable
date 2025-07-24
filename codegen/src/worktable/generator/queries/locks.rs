@@ -169,16 +169,20 @@ impl Generator {
             .map(|col| {
                 let col = Ident::new(format!("{col}_lock").as_str(), Span::mixed_site());
                 quote! {
-                    if self.#col.is_none() {
-                        self.#col = Some(std::sync::Arc::new(Lock::new()));
+                    if let Some(lock) = &self.#col {
+                        set.insert(lock.clone());
                     }
+                    self.#col = Some(new_lock.clone());
                 }
             })
             .collect::<Vec<_>>();
 
         quote! {
-            pub fn #ident(&mut self) {
+            pub fn #ident(&mut self, id: u16) -> (std::collections::HashSet< std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
+                let mut set = std::collections::HashSet::new();
+                let new_lock = std::sync::Arc::new(Lock::new(id));
                 #(#inner)*
+                (set, new_lock)
             }
         }
     }
