@@ -1,12 +1,10 @@
 mod row_lock;
 mod set;
 
-use std::collections::HashSet;
 use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use derive_more::From;
@@ -56,7 +54,7 @@ impl Lock {
     }
 
     pub fn is_locked(&self) -> bool {
-        self.locked.load(Ordering::Release)
+        self.locked.load(Ordering::Acquire)
     }
 }
 

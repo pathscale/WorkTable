@@ -175,35 +175,6 @@ where
         Ok((link, bytes))
     }
 
-    fn retry_insert(
-        &self,
-        general_row: <Row as StorableRow>::WrappedRow,
-    ) -> Result<Link, ExecutionError>
-    where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-    {
-        let pages = self.pages.read().unwrap();
-        let current_page = page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
-        let page = &pages[current_page];
-
-        let res = page
-            .save_row(&general_row)
-            .map_err(ExecutionError::DataPageError);
-        if let Ok(link) = res {
-            self.row_count.fetch_add(1, Ordering::Relaxed);
-            Ok(link)
-        } else {
-            res
-        }
-    }
-
     fn add_next_page(&self, tried_page: usize) {
         let mut pages = self.pages.write().expect("lock should be not poisoned");
         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {

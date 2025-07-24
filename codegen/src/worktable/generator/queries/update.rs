@@ -34,7 +34,6 @@ impl Generator {
     fn gen_full_row_update(&mut self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_ident = name_generator.get_row_type_ident();
-        let lock_ident = name_generator.get_lock_type_ident();
 
         let row_updates = self
             .columns
@@ -72,6 +71,7 @@ impl Generator {
                 }
             }
         };
+        let full_row_lock = self.gen_full_lock_for_update();
 
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
@@ -82,25 +82,7 @@ impl Generator {
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
                 let lock = {
-                    let lock_id = self.0.lock_map.next_id();
-                    if let Some(lock) = self.0.lock_map.get(&link) {
-                        let mut lock_guard = lock.write();
-                        let (locks, op_lock) = lock_guard.lock(lock_id);
-                        drop(lock_guard);
-                        futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
-
-                        op_lock
-                    } else {
-                        let (lock, op_lock) = #lock_ident::with_lock(lock_id);
-                        let mut lock = std::sync::Arc::new(ParkingRwLock::new(lock));
-                        let mut guard = lock.write();
-                        if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
-                            let old_lock_guard = old_lock.read();
-                            guard.merge(&*old_lock_guard);
-                        }
-
-                        op_lock
-                    }
+                    #full_row_lock
                 };
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 #size_check
@@ -235,9 +217,7 @@ impl Generator {
                 .map(|f| {
                     let fn_ident = Ident::new(format!("get_{f}_size").as_str(), Span::call_site());
                     quote! {
-                        if !need_to_reinsert {
-                            need_to_reinsert = archived_row.#fn_ident() > self.#fn_ident(link)?
-                        }
+                        need_to_reinsert |= archived_row.#fn_ident() > self.#fn_ident(link)?;
                     }
                 })
                 .collect();
@@ -249,18 +229,23 @@ impl Generator {
                     }
                 })
                 .collect::<Vec<_>>();
+            let full_row_lock = self.gen_full_lock_for_update();
 
             quote! {
                 let mut need_to_reinsert = false;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    let mut row_old = self.select(pk.clone()).unwrap();
+                    lock.unlock();
+                    let lock = {
+                        #full_row_lock
+                    };
+                    let mut row_old = self.select(pk.clone()).expect("should not be deleted by other thread");
                     #(#row_updates)*
                     self.delete_without_lock(pk.clone())?;
                     self.insert(row_old)?;
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove(&pk); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&link); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -372,9 +357,6 @@ impl Generator {
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
         let pk_ident = &self.pk.as_ref().unwrap().ident;
-        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
-        let lock_type_ident = name_generator.get_lock_type_ident();
-
         let method_ident = Ident::new(
             format!("update_{snake_case_name}").as_str(),
             Span::mixed_site(),
@@ -395,6 +377,7 @@ impl Generator {
         let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
+        let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
@@ -405,26 +388,7 @@ impl Generator {
                         .ok_or(WorkTableError::NotFound)?;
 
                 let lock = {
-                    let lock_id = self.0.lock_map.next_id();
-                    if let Some(lock) = self.0.lock_map.get(&link) {
-                        let mut lock_guard = lock.write();
-                        let (locks, op_lock) = lock_guard.#lock_ident(lock_id);
-                        drop(lock_guard);
-                        futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
-
-                        op_lock
-                    } else {
-                        let mut lock = #lock_type_ident::new();
-                        let (_, op_lock) = lock.#lock_ident(lock_id);
-                        let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
-                        let mut guard = lock.write();
-                        if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
-                            let old_lock_guard = old_lock.read();
-                            guard.merge(&*old_lock_guard);
-                        }
-
-                        op_lock
-                    }
+                    #custom_lock
                 };
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
@@ -458,9 +422,6 @@ impl Generator {
         idx_idents: Option<&Vec<Ident>>,
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
-        let lock_type_ident = name_generator.get_lock_type_ident();
-
         let method_ident = Ident::new(
             format!("update_{snake_case_name}").as_str(),
             Span::mixed_site(),
@@ -468,10 +429,6 @@ impl Generator {
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
-
-        let lock_await_ident =
-            WorktableNameGenerator::get_update_query_lock_await_ident(&snake_case_name);
-        let unlock_ident = WorktableNameGenerator::get_update_query_unlock_ident(&snake_case_name);
         let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
@@ -489,9 +446,7 @@ impl Generator {
                 .map(|f| {
                     let fn_ident = Ident::new(format!("get_{f}_size").as_str(), Span::call_site());
                     quote! {
-                        if !need_to_reinsert {
-                            need_to_reinsert = archived_row.#fn_ident() > self.#fn_ident(link)?
-                        }
+                        need_to_reinsert |= archived_row.#fn_ident() > self.#fn_ident(link)?;
                     }
                 })
                 .collect();
@@ -503,21 +458,26 @@ impl Generator {
                     }
                 })
                 .collect::<Vec<_>>();
+            let full_row_lock = self.gen_full_lock_for_update();
 
             quote! {
                 let mut need_to_reinsert = false;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    let mut row_old = self.select(pk.clone()).unwrap();
+                    let op_lock = locks.remove(link).expect("should not be deleted as links are unique");
+                    op_lock.unlock();
+                    let lock = {
+                        #full_row_lock
+                    };
+                    let mut row_old = self.select(pk.clone()).expect("should not be deleted by other thread");
                     #(#row_updates)*
                     self.delete_without_lock(pk.clone())?;
                     self.insert(row_old)?;
 
-                    let lock = self.0.lock_map.get(&pk).expect("was inserted before and not deleted");
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove(&pk); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&link); // Removes locks
                 } else {
-                    links_to_unlock.push(link)
+                    links_to_unlock.insert(link, locks.remove(link).expect("should not be deleted as links are unique"))
                 }
             }
         } else {
@@ -535,27 +495,21 @@ impl Generator {
                 &by
             }
         };
+        let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
                 let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| *l).collect();
 
+                let mut locks = std::collections::HashMap::new();
                 for link in links.iter() {
-                    let pk = self.0.data.select(*link)?.get_primary_key();
-                    if let Some(lock) = self.0.lock_map.get(&pk) {
-                        lock.#lock_await_ident().await;
-                    }
+                    let op_lock = {
+                        #custom_lock
+                    };
+                    locks.insert(link, op_lock);
                 }
 
-                for link in links.iter() {
-                    let pk = self.0.data.select(*link)?.get_primary_key();
-                    let lock_id = self.0.lock_map.next_id();
-                    let mut lock = #lock_type_ident::new(lock_id.into());
-                    lock.#lock_ident();
-                    self.0.lock_map.insert(pk.clone(), std::sync::Arc::new(lock));
-                }
-
-                let mut links_to_unlock = vec![];
+                let mut links_to_unlock = std::collections::HashMap::new();
                 let op_id = OperationId::Multi(uuid::Uuid::now_v7());
                 for link in links.into_iter() {
                     let pk = self.0.data.select(link)?.get_primary_key().clone();
@@ -579,12 +533,9 @@ impl Generator {
 
                     #persist_call
                 }
-                for link in links_to_unlock.iter() {
-                    let pk = self.0.data.select(*link)?.get_primary_key();
-                    if let Some(lock) = self.0.lock_map.get(&pk) {
-                        lock.#unlock_ident();
-                        self.0.lock_map.remove_with_lock_check(&pk, lock);
-                    }
+                for (link, lock) in links_to_unlock {
+                    lock.unlock();
+                    self.0.lock_map.remove_with_lock_check(&link);
                 }
                 core::result::Result::Ok(())
             }
@@ -600,9 +551,6 @@ impl Generator {
         idx_idents: Option<&Vec<Ident>>,
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
-        let lock_type_ident = name_generator.get_lock_type_ident();
-
         let method_ident = Ident::new(
             format!("update_{snake_case_name}").as_str(),
             Span::mixed_site(),
@@ -633,6 +581,7 @@ impl Generator {
                 &by
             }
         };
+        let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -650,27 +599,7 @@ impl Generator {
                     .ok_or(WorkTableError::NotFound)?;
 
                 let lock = {
-                    let lock_id = self.0.lock_map.next_id();
-                    if let Some(lock) = self.0.lock_map.get(&link) {
-                        let mut lock_guard = lock.write();
-                        let (locks, op_lock) = lock_guard.#lock_ident(lock_id);
-                        drop(lock_guard);
-
-                        futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
-
-                        op_lock
-                    } else {
-                        let mut lock = #lock_type_ident::new();
-                        let (_, op_lock) = lock.#lock_ident(lock_id);
-                        let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
-                        let mut guard = lock.write();
-                        if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
-                            let old_lock_guard = old_lock.read();
-                            guard.merge(&*old_lock_guard);
-                        }
-
-                        op_lock
-                    }
+                    #custom_lock
                 };
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());

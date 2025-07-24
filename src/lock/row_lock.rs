@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::lock::Lock;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 pub trait RowLock {
@@ -10,9 +10,9 @@ pub trait RowLock {
     where
         Self: Sized;
     /// Locks full [`RowLock`].
-    fn lock(&self, id: u16) -> (HashSet<Arc<Lock>>, Arc<Lock>);
+    fn lock(&mut self, id: u16) -> (HashSet<Arc<Lock>>, Arc<Lock>);
     /// Merges two [`RowLock`]'s.
-    fn merge(&mut self, other: &Self)
+    fn merge(&mut self, other: &Self) -> HashSet<Arc<Lock>>
     where
         Self: Sized;
 }

@@ -150,7 +150,7 @@ impl Generator {
             .collect();
 
         quote! {
-             fn lock(&self, id: u16) -> (std::collections::HashSet<std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
+             fn lock(&mut self, id: u16) -> (std::collections::HashSet<std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
                 let mut set = std::collections::HashSet::new();
                 let lock = std::sync::Arc::new(Lock::new(id));
                 #(#rows)*
@@ -170,7 +170,9 @@ impl Generator {
                 quote! {
                      if let Some(#col) = &other.#col {
                         if self.#col.is_none() {
-                            self.#col = Some(#col.clone())
+                            self.#col = Some(#col.clone());
+                        } else {
+                            set.insert(#col.clone());
                         }
                      }
                 }
@@ -178,8 +180,10 @@ impl Generator {
             .collect();
 
         quote! {
-            fn merge(&mut self, other: &Self) {
+            fn merge(&mut self, other: &Self) -> std::collections::HashSet<std::sync::Arc<Lock>> {
+                let mut set = std::collections::HashSet::new();
                 #(#rows)*
+                set
             }
         }
     }

@@ -209,4 +209,61 @@ impl Generator {
             }
         }
     }
+
+    pub fn gen_full_lock_for_update(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let lock_ident = name_generator.get_lock_type_ident();
+
+        quote! {
+            let lock_id = self.0.lock_map.next_id();
+            if let Some(lock) = self.0.lock_map.get(&link) {
+                let mut lock_guard = lock.write();
+                let (locks, op_lock) = lock_guard.lock(lock_id);
+                drop(lock_guard);
+                futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
+
+                op_lock
+            } else {
+                let (lock, op_lock) = #lock_ident::with_lock(lock_id);
+                let mut lock = std::sync::Arc::new(ParkingRwLock::new(lock));
+                let mut guard = lock.write();
+                if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                    let old_lock_guard = old_lock.read();
+                    guard.merge(&*old_lock_guard);
+                }
+
+                op_lock
+            }
+        }
+    }
+
+    pub fn gen_custom_lock_for_update(&self, ident: Ident) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let lock_ident = name_generator.get_lock_type_ident();
+
+        quote! {
+            let lock_id = self.0.lock_map.next_id();
+            if let Some(lock) = self.0.lock_map.get(&link) {
+                let mut lock_guard = lock.write();
+                let (locks, op_lock) = lock_guard.#ident(lock_id);
+                drop(lock_guard);
+                futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
+
+                op_lock
+            } else {
+                let mut lock = #lock_ident::new();
+                let (_, op_lock) = lock.#ident(lock_id);
+                let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
+                let mut guard = lock.write();
+                if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                    let old_lock_guard = old_lock.read();
+                    let locks = guard.merge(&*old_lock_guard);
+                    drop(old_lock_guard);
+                    futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
+                }
+
+                op_lock
+            }
+        }
+    }
 }
