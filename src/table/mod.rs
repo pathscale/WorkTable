@@ -277,6 +277,111 @@ where
 
         Ok((pk, op))
     }
+
+    /// Reinserts provided row with updating indexes and saving it's data in new
+    /// place. Is used to not delete and insert because this situation causes
+    /// a possible gap when row doesn't exist.
+    ///
+    /// For reinsert it's ok that part of indexes will lead to old row and other
+    /// part is for new row. Goal is to make `PrimaryKey` of the row always
+    /// acceptable. As for reinsert `PrimaryKey` will be same for both old and
+    /// new [`Link`]'s, goal will be achieved.
+    pub fn reinsert(&self, row: Row) -> Result<PrimaryKey, WorkTableError>
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+        LockType: 'static,
+    {
+        let pk = row.get_primary_key().clone();
+        let old_link = self
+            .pk_map
+            .get(&pk)
+            .map(|v| v.get().value)
+            .ok_or(WorkTableError::NotFound)?;
+        let new_link = self
+            .data
+            .insert(row.clone())
+            .map_err(WorkTableError::PagesError)?;
+        // we can not check for existence here.
+        self.pk_map.insert(pk.clone(), new_link);
+        self.indexes
+            .reinsert_row(row, new_link)
+            .map_err(|_| WorkTableError::SecondaryIndexError)?;
+        self.data
+            .delete(old_link)
+            .map_err(WorkTableError::PagesError)?;
+
+        Ok(pk)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn reinsert_cdc<SecondaryEvents>(
+        &self,
+        row: Row,
+    ) -> Result<
+        (
+            PrimaryKey,
+            Operation<<PkGen as PrimaryKeyGeneratorState>::State, PrimaryKey, SecondaryEvents>,
+        ),
+        WorkTableError,
+    >
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        PrimaryKey: Clone,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
+            + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
+        PkGen: PrimaryKeyGeneratorState,
+        AvailableIndexes: Debug,
+    {
+        let pk = row.get_primary_key().clone();
+        let old_link = self
+            .pk_map
+            .get(&pk)
+            .map(|v| v.get().value)
+            .ok_or(WorkTableError::NotFound)?;
+        let (new_link, bytes) = self
+            .data
+            .insert_cdc(row.clone())
+            .map_err(WorkTableError::PagesError)?;
+        // we can not check for existence here.
+        let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
+        let secondary_keys_events = self
+            .indexes
+            .reinsert_row_cdc(row, new_link)
+            .map_err(|_| WorkTableError::SecondaryIndexError)?;
+        self.data
+            .delete(old_link)
+            .map_err(WorkTableError::PagesError)?;
+
+        let op = Operation::Insert(InsertOperation {
+            id: OperationId::Single(Uuid::now_v7()),
+            pk_gen_state: self.pk_gen.get_state(),
+            primary_key_events,
+            secondary_keys_events,
+            bytes,
+            link: new_link,
+        });
+
+        Ok((pk, op))
+    }
 }
 
 #[derive(Debug, Display, Error, From)]
@@ -284,5 +389,6 @@ pub enum WorkTableError {
     NotFound,
     AlreadyExists,
     SerializeError,
+    SecondaryIndexError,
     PagesError(in_memory::PagesExecutionError),
 }

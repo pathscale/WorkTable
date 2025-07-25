@@ -15,6 +15,7 @@ pub use info::TableSecondaryIndexInfo;
 
 pub trait TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> {
     fn save_row(&self, row: Row, link: Link) -> Result<(), IndexError<AvailableIndexes>>;
+    fn reinsert_row(&self, row: Row, link: Link) -> eyre::Result<()>;
 
     fn delete_row(&self, row: Row, link: Link) -> Result<(), IndexError<AvailableIndexes>>;
 
@@ -39,6 +40,10 @@ where
     AvailableIndexes: 'static,
 {
     fn save_row(&self, _: Row, _: Link) -> Result<(), IndexError<AvailableIndexes>> {
+        Ok(())
+    }
+
+    fn reinsert_row(&self, _: Row, _: Link) -> eyre::Result<()> {
         Ok(())
     }
 

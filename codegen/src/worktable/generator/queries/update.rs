@@ -66,8 +66,7 @@ impl Generator {
                     let lock = {
                        #full_row_lock
                     };
-                    self.delete_without_lock(pk.clone())?;
-                    self.insert(row)?;
+                    self.reinsert(row)?;
 
                     lock.unlock();
                     self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
@@ -249,8 +248,7 @@ impl Generator {
                     let mut row_old = self.0.data.select(link)?;
                     let pk = row_old.get_primary_key().clone();
                     #(#row_updates)*
-                    self.delete_without_lock(pk.clone())?;
-                    self.insert(row_old)?;
+                    self.reinsert(row_old)?;
 
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
@@ -479,8 +477,7 @@ impl Generator {
                     };
                     let mut row_old = self.select(pk.clone()).expect("should not be deleted by other thread");
                     #(#row_updates)*
-                    self.delete_without_lock(pk.clone())?;
-                    self.insert(row_old)?;
+                    self.reinsert(row_old)?;
 
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&pk); // Removes locks

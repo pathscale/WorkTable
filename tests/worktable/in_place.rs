@@ -117,7 +117,7 @@ async fn test_update_in_place_and_usual_multithread() -> eyre::Result<()> {
     let shared = table.clone();
     let shared_val_state = val_state.clone();
     let h = tokio::spawn(async move {
-        for _ in 0..10_000 {
+        for _ in 0..50_000 {
             let val = fastrand::i64(..);
             let id_to_update = fastrand::u64(0..=99);
             shared

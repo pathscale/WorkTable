@@ -4,29 +4,20 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
-use indexset::concurrent::set::BTreeSet;
 use parking_lot::RwLock;
 
 use crate::lock::RowLock;
 
 #[derive(Debug)]
-pub struct LockMap<LockType, PrimaryKey>
-where
-    PrimaryKey: Ord + Clone + 'static,
-{
+pub struct LockMap<LockType, PrimaryKey> {
     map: RwLock<HashMap<PrimaryKey, Arc<RwLock<LockType>>>>,
-    reinsert_set: BTreeSet<PrimaryKey>,
     next_id: AtomicU16,
 }
 
-impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey>
-where
-    PrimaryKey: Debug + Ord + Clone + Send + 'static,
-{
+impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey> {
     fn default() -> Self {
         Self {
             map: RwLock::new(HashMap::new()),
-            reinsert_set: BTreeSet::new(),
             next_id: AtomicU16::default(),
         }
     }
@@ -34,7 +25,7 @@ where
 
 impl<LockType, PrimaryKey> LockMap<LockType, PrimaryKey>
 where
-    PrimaryKey: Hash + Eq + Debug + Ord + Clone + Send + 'static,
+    PrimaryKey: Hash + Eq + Debug + Clone,
 {
     pub fn insert(
         &self,
@@ -66,18 +57,6 @@ where
         if remove {
             set.remove(key);
         }
-    }
-
-    pub fn mark_reinsert(&self, pk: PrimaryKey) {
-        self.reinsert_set.insert(pk);
-    }
-
-    pub fn is_reinsert(&self, pk: &PrimaryKey) -> bool {
-        self.reinsert_set.contains(pk)
-    }
-
-    pub fn finish_reinsert(&self, pk: &PrimaryKey) {
-        self.reinsert_set.remove(pk);
     }
 
     pub fn next_id(&self) -> u16 {
