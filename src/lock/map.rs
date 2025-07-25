@@ -10,7 +10,7 @@ use crate::lock::RowLock;
 
 #[derive(Debug)]
 pub struct LockMap<LockType, PrimaryKey> {
-    map: RwLock<HashMap<PrimaryKey, Arc<RwLock<LockType>>>>,
+    map: RwLock<HashMap<PrimaryKey, Arc<tokio::sync::RwLock<LockType>>>>,
     next_id: AtomicU16,
 }
 
@@ -30,12 +30,12 @@ where
     pub fn insert(
         &self,
         key: PrimaryKey,
-        lock: Arc<RwLock<LockType>>,
-    ) -> Option<Arc<RwLock<LockType>>> {
+        lock: Arc<tokio::sync::RwLock<LockType>>,
+    ) -> Option<Arc<tokio::sync::RwLock<LockType>>> {
         self.map.write().insert(key, lock)
     }
 
-    pub fn get(&self, key: &PrimaryKey) -> Option<Arc<RwLock<LockType>>> {
+    pub fn get(&self, key: &PrimaryKey) -> Option<Arc<tokio::sync::RwLock<LockType>>> {
         self.map.read().get(key).cloned()
     }
 
@@ -43,13 +43,14 @@ where
         self.map.write().remove(key);
     }
 
-    pub fn remove_with_lock_check(&self, key: &PrimaryKey)
+    #[allow(clippy::await_holding_lock)]
+    pub async fn remove_with_lock_check(&self, key: &PrimaryKey)
     where
         LockType: RowLock,
     {
         let mut set = self.map.write();
         let remove = if let Some(lock) = set.get(key) {
-            !lock.read().is_locked()
+            !lock.read().await.is_locked()
         } else {
             false
         };

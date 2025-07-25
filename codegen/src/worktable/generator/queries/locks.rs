@@ -111,7 +111,8 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            pub fn #ident(&mut self, id: u16) -> (std::collections::HashSet< std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
+            #[allow(clippy::mutable_key_type)]
+            pub fn #ident(&mut self, id: u16) -> (std::collections::HashSet<std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
                 let mut set = std::collections::HashSet::new();
                 let new_lock = std::sync::Arc::new(Lock::new(id));
                 #(#inner)*
@@ -127,18 +128,21 @@ impl Generator {
         quote! {
             let lock_id = self.0.lock_map.next_id();
             if let Some(lock) = self.0.lock_map.get(&pk) {
-                let mut lock_guard = lock.write();
+                let mut lock_guard = lock.write().await;
+                #[allow(clippy::mutable_key_type)]
                 let (locks, op_lock) = lock_guard.lock(lock_id);
                 drop(lock_guard);
                 futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
 
                 op_lock
             } else {
+                #[allow(clippy::mutable_key_type)]
                 let (lock, op_lock) = #lock_ident::with_lock(lock_id);
-                let mut lock = std::sync::Arc::new(ParkingRwLock::new(lock));
-                let mut guard = lock.write();
+                let mut lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
+                let mut guard = lock.write().await;
                 if let Some(old_lock) = self.0.lock_map.insert(pk.clone(), lock.clone()) {
-                    let mut old_lock_guard = old_lock.write();
+                    let mut old_lock_guard = old_lock.write().await;
+                    #[allow(clippy::mutable_key_type)]
                     let locks = guard.merge(&mut *old_lock_guard);
                     drop(old_lock_guard);
                     drop(guard);
@@ -158,7 +162,8 @@ impl Generator {
         quote! {
             let lock_id = self.0.lock_map.next_id();
             if let Some(lock) = self.0.lock_map.get(&pk) {
-                let mut lock_guard = lock.write();
+                let mut lock_guard = lock.write().await;
+                #[allow(clippy::mutable_key_type)]
                 let (locks, op_lock) = lock_guard.#ident(lock_id);
                 drop(lock_guard);
                 futures::future::join_all(locks.iter().map(|l| l.as_ref()).collect::<Vec<_>>()).await;
@@ -166,11 +171,13 @@ impl Generator {
                 op_lock
             } else {
                 let mut lock = #lock_ident::new();
+                #[allow(clippy::mutable_key_type)]
                 let (_, op_lock) = lock.#ident(lock_id);
-                let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
-                let mut guard = lock.write();
+                let lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
+                let mut guard = lock.write().await;
                 if let Some(old_lock) = self.0.lock_map.insert(pk.clone(), lock.clone()) {
-                    let mut old_lock_guard = old_lock.write();
+                    let mut old_lock_guard = old_lock.write().await;
+                    #[allow(clippy::mutable_key_type)]
                     let locks = guard.merge(&mut *old_lock_guard);
                     drop(old_lock_guard);
                     drop(guard);

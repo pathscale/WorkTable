@@ -150,6 +150,7 @@ impl Generator {
             .collect();
 
         quote! {
+            #[allow(clippy::mutable_key_type)]
              fn lock(&mut self, id: u16) -> (std::collections::HashSet<std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
                 let mut set = std::collections::HashSet::new();
                 let lock = std::sync::Arc::new(Lock::new(id));
@@ -181,6 +182,7 @@ impl Generator {
             .collect();
 
         quote! {
+            #[allow(clippy::mutable_key_type)]
             fn merge(&mut self, other: &mut Self) -> std::collections::HashSet<std::sync::Arc<Lock>> {
                 let mut set = std::collections::HashSet::new();
                 #(#rows)*

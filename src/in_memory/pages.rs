@@ -90,10 +90,6 @@ where
         }
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
     pub fn insert(&self, row: Row) -> Result<Link, ExecutionError>
     where
         Row: Archive

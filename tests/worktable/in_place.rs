@@ -121,7 +121,7 @@ async fn test_update_in_place_and_usual_multithread() -> eyre::Result<()> {
             let val = fastrand::i64(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_val_by_id_in_place(|v| *v = val.into(), id_to_update.into())
+                .update_val_by_id_in_place(|v| *v = val.into(), id_to_update)
                 .await
                 .unwrap();
             {

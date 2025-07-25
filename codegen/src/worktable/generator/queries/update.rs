@@ -69,7 +69,7 @@ impl Generator {
                     self.reinsert(row)?;
 
                     lock.unlock();
-                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -103,7 +103,7 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
+                self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
 
                 #persist_call
 
@@ -251,7 +251,7 @@ impl Generator {
                     self.reinsert(row_old)?;
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -410,7 +410,7 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&pk);
+                self.0.lock_map.remove_with_lock_check(&pk).await;
 
                 #persist_call
 
@@ -480,7 +480,7 @@ impl Generator {
                     self.reinsert(row_old)?;
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
                 } else {
                     pk_to_unlock.insert(pk.clone(), locks.remove(&pk).expect("should not be deleted as links are unique"));
                 }
@@ -541,7 +541,7 @@ impl Generator {
                 }
                 for (pk, lock) in pk_to_unlock {
                     lock.unlock();
-                    self.0.lock_map.remove_with_lock_check(&pk);
+                    self.0.lock_map.remove_with_lock_check(&pk).await;
                 }
                 core::result::Result::Ok(())
             }
@@ -621,7 +621,7 @@ impl Generator {
                 }
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&pk);
+                self.0.lock_map.remove_with_lock_check(&pk).await;
 
                 #persist_call
 

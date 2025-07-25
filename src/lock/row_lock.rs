@@ -10,8 +10,10 @@ pub trait RowLock {
     where
         Self: Sized;
     /// Locks full [`RowLock`].
+    #[allow(clippy::mutable_key_type)]
     fn lock(&mut self, id: u16) -> (HashSet<Arc<Lock>>, Arc<Lock>);
     /// Merges two [`RowLock`]'s.
+    #[allow(clippy::mutable_key_type)]
     fn merge(&mut self, other: &mut Self) -> HashSet<Arc<Lock>>
     where
         Self: Sized;
