@@ -134,7 +134,7 @@ impl Generator {
                     };
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&link);
+                self.0.lock_map.remove_with_lock_check(&pk);
 
                 Ok(())
             }

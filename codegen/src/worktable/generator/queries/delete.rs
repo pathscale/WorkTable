@@ -41,19 +41,20 @@ impl Generator {
 
         quote! {
             pub async fn delete(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
+                let lock = {
+                    #full_row_lock
+                };
+
                 let link = self.0
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
-                let lock = {
-                    #full_row_lock
-                };
 
                 #delete_logic
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove_with_lock_check(&link); // Removes locks
+                self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                 core::result::Result::Ok(())
             }

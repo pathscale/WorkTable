@@ -70,7 +70,7 @@ impl Generator {
                     self.insert(row)?;
 
                     lock.unlock();
-                    self.0.lock_map.remove_with_lock_check(&link); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -80,14 +80,16 @@ impl Generator {
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
+                let lock = {
+                    #full_row_lock
+                };
+
                 let link = self.0
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
-                let lock = {
-                    #full_row_lock
-                };
+
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 #size_check
 
@@ -102,7 +104,7 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove_with_lock_check(&link); // Removes locks
+                self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                 #persist_call
 
@@ -251,7 +253,7 @@ impl Generator {
                     self.insert(row_old)?;
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove_with_lock_check(&link); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -387,15 +389,15 @@ impl Generator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
+                let lock = {
+                    #custom_lock
+                };
+
                 let link = self.0
                         .pk_map
                         .get(&pk)
                         .map(|v| v.get().value)
                         .ok_or(WorkTableError::NotFound)?;
-
-                let lock = {
-                    #custom_lock
-                };
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
@@ -410,7 +412,7 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&link);
+                self.0.lock_map.remove_with_lock_check(&pk);
 
                 #persist_call
 
@@ -470,7 +472,7 @@ impl Generator {
                 let mut need_to_reinsert = false;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    let op_lock = locks.remove(&link).expect("should not be deleted as links are unique");
+                    let op_lock = locks.remove(&pk).expect("should not be deleted as links are unique");
                     op_lock.unlock();
                     let lock = {
                         #full_row_lock
@@ -481,9 +483,9 @@ impl Generator {
                     self.insert(row_old)?;
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove_with_lock_check(&link); // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
                 } else {
-                    links_to_unlock.insert(link, locks.remove(&link).expect("should not be deleted as links are unique"));
+                    pk_to_unlock.insert(pk.clone(), locks.remove(&pk).expect("should not be deleted as links are unique"));
                 }
             }
         } else {
@@ -509,14 +511,14 @@ impl Generator {
 
                 let mut locks = std::collections::HashMap::new();
                 for link in links.iter() {
-                    let link = *link;
+                    let pk = self.0.data.select(*link)?.get_primary_key().clone();
                     let op_lock = {
                         #custom_lock
                     };
-                    locks.insert(link, op_lock);
+                    locks.insert(pk, op_lock);
                 }
 
-                let mut links_to_unlock: std::collections::HashMap<_, std::sync::Arc<Lock>> = std::collections::HashMap::new();
+                let mut pk_to_unlock: std::collections::HashMap<_, std::sync::Arc<Lock>> = std::collections::HashMap::new();
                 let op_id = OperationId::Multi(uuid::Uuid::now_v7());
                 for link in links.into_iter() {
                     let pk = self.0.data.select(link)?.get_primary_key().clone();
@@ -540,9 +542,9 @@ impl Generator {
 
                     #persist_call
                 }
-                for (link, lock) in links_to_unlock {
+                for (pk, lock) in pk_to_unlock {
                     lock.unlock();
-                    self.0.lock_map.remove_with_lock_check(&link);
+                    self.0.lock_map.remove_with_lock_check(&pk);
                 }
                 core::result::Result::Ok(())
             }
@@ -604,6 +606,7 @@ impl Generator {
                     .get(#by)
                     .map(|kv| kv.get().value)
                     .ok_or(WorkTableError::NotFound)?;
+                let pk = self.0.data.select(link)?.get_primary_key().clone();
 
                 let lock = {
                     #custom_lock
@@ -621,7 +624,7 @@ impl Generator {
                 }
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&link);
+                self.0.lock_map.remove_with_lock_check(&pk);
 
                 #persist_call
 

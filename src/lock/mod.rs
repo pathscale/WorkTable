@@ -1,5 +1,5 @@
+mod map;
 mod row_lock;
-mod set;
 
 use std::future::Future;
 use std::hash::{Hash, Hasher};
@@ -10,8 +10,8 @@ use std::task::{Context, Poll};
 use derive_more::From;
 use futures::task::AtomicWaker;
 
+pub use map::LockMap;
 pub use row_lock::RowLock;
-pub use set::LockMap;
 
 #[derive(Debug)]
 pub struct Lock {

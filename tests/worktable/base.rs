@@ -1,7 +1,8 @@
-use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+use parking_lot::Mutex;
 use worktable::prelude::*;
 use worktable::worktable;
 

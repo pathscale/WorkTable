@@ -126,7 +126,7 @@ impl Generator {
 
         quote! {
             let lock_id = self.0.lock_map.next_id();
-            if let Some(lock) = self.0.lock_map.get(&link) {
+            if let Some(lock) = self.0.lock_map.get(&pk) {
                 let mut lock_guard = lock.write();
                 let (locks, op_lock) = lock_guard.lock(lock_id);
                 drop(lock_guard);
@@ -137,7 +137,7 @@ impl Generator {
                 let (lock, op_lock) = #lock_ident::with_lock(lock_id);
                 let mut lock = std::sync::Arc::new(ParkingRwLock::new(lock));
                 let mut guard = lock.write();
-                if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                if let Some(old_lock) = self.0.lock_map.insert(pk.clone(), lock.clone()) {
                     let mut old_lock_guard = old_lock.write();
                     let locks = guard.merge(&mut *old_lock_guard);
                     drop(old_lock_guard);
@@ -157,7 +157,7 @@ impl Generator {
 
         quote! {
             let lock_id = self.0.lock_map.next_id();
-            if let Some(lock) = self.0.lock_map.get(&link) {
+            if let Some(lock) = self.0.lock_map.get(&pk) {
                 let mut lock_guard = lock.write();
                 let (locks, op_lock) = lock_guard.#ident(lock_id);
                 drop(lock_guard);
@@ -169,7 +169,7 @@ impl Generator {
                 let (_, op_lock) = lock.#ident(lock_id);
                 let lock = std::sync::Arc::new(ParkingRwLock::new(lock));
                 let mut guard = lock.write();
-                if let Some(old_lock) = self.0.lock_map.insert(link, lock.clone()) {
+                if let Some(old_lock) = self.0.lock_map.insert(pk.clone(), lock.clone()) {
                     let mut old_lock_guard = old_lock.write();
                     let locks = guard.merge(&mut *old_lock_guard);
                     drop(old_lock_guard);

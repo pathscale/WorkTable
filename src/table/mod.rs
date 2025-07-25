@@ -51,7 +51,7 @@ pub struct WorkTable<
 
     pub pk_gen: PkGen,
 
-    pub lock_map: LockMap<LockType>,
+    pub lock_map: LockMap<LockType, PrimaryKey>,
 
     pub table_name: &'static str,
 
@@ -82,7 +82,7 @@ impl<
         DATA_LENGTH,
     >
 where
-    PrimaryKey: Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
     SecondaryIndexes: Default,
     PkGen: Default,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
@@ -95,7 +95,7 @@ where
             pk_map: IndexMap::default(),
             indexes: SecondaryIndexes::default(),
             pk_gen: Default::default(),
-            lock_map: LockMap::new(),
+            lock_map: LockMap::default(),
             table_name: "",
             pk_phantom: PhantomData,
         }
