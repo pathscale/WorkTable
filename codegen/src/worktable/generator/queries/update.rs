@@ -66,7 +66,8 @@ impl Generator {
                     let lock = {
                        #full_row_lock
                     };
-                    self.reinsert(row)?;
+                    let row_old = self.0.data.select(link)?;
+                    self.reinsert(row_old, row)?;
 
                     lock.unlock();
                     self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
@@ -230,7 +231,7 @@ impl Generator {
                 .iter()
                 .map(|i| {
                     quote! {
-                        row_old.#i = row.#i;
+                        row_new.#i = row.#i;
                     }
                 })
                 .collect::<Vec<_>>();
@@ -245,10 +246,11 @@ impl Generator {
                         #full_row_lock
                     };
 
-                    let mut row_old = self.0.data.select(link)?;
+                    let row_old = self.0.data.select(link)?;
+                    let mut row_new = row_old.clone();
                     let pk = row_old.get_primary_key().clone();
                     #(#row_updates)*
-                    self.reinsert(row_old)?;
+                    self.reinsert(row_old, row_new)?;
 
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
@@ -460,7 +462,7 @@ impl Generator {
                 .iter()
                 .map(|i| {
                     quote! {
-                        row_old.#i = row.#i.clone();
+                        row_new.#i = row.#i.clone();
                     }
                 })
                 .collect::<Vec<_>>();
@@ -475,9 +477,10 @@ impl Generator {
                     let lock = {
                         #full_row_lock
                     };
-                    let mut row_old = self.select(pk.clone()).expect("should not be deleted by other thread");
+                    let row_old = self.select(pk.clone()).expect("should not be deleted by other thread");
+                    let mut row_new = row_old.clone();
                     #(#row_updates)*
-                    self.reinsert(row_old)?;
+                    self.reinsert(row_old, row_new)?;
 
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks

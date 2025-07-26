@@ -94,8 +94,12 @@ impl Generator {
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
                 quote! {
-                    let (_, events) = self.#index_field_name.insert_cdc(row.#i.clone(), link);
-                    let #index_field_name = events.into_iter().map(|ev| ev.into()).collect();
+                    let (_, events) = self.#index_field_name.insert_cdc(row_new.#i.clone(), link_new);
+                    let mut #index_field_name: Vec<_> = events.into_iter().map(|ev| ev.into()).collect();
+                    if row_new.#i != row_old.#i {
+                        let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row_old.#i.clone(), link_old);
+                        #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
+                    }
                 }
             })
             .collect::<Vec<_>>();
@@ -107,7 +111,7 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            fn reinsert_row_cdc(&self, row: #row_type_ident, link: Link) -> eyre::Result<#events_ident> {
+            fn reinsert_row_cdc(&self, row_old: #row_type_ident, link_old: Link, row_new: #row_type_ident, link_new: Link) -> eyre::Result<#events_ident> {
                 #(#reinsert_rows)*
                 core::result::Result::Ok(
                     #events_ident {

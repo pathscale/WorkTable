@@ -116,13 +116,21 @@ impl Generator {
                     }
                 };
                 quote! {
-                     self.#index_field_name.insert(#row.clone(), link);
+                    let row = &row_new;
+                    let val_new = #row.clone();
+                    self.#index_field_name.insert(val_new.clone(), link_new);
+
+                    let row = &row_old;
+                    let val_old = #row.clone();
+                    if val_new != val_old {
+                        TableIndex::remove(&self.#index_field_name, val_old, link_old);
+                    }
                 }
             })
             .collect::<Vec<_>>();
 
         quote! {
-            fn reinsert_row(&self, row: #row_type_ident, link: Link) -> eyre::Result<()> {
+            fn reinsert_row(&self, row_old: #row_type_ident, link_old: Link, row_new: #row_type_ident, link_new: Link) -> eyre::Result<()> {
                 #(#reinsert_rows)*
                 core::result::Result::Ok(())
             }

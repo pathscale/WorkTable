@@ -142,18 +142,18 @@ impl Generator {
 
         let reinsert = if self.is_persist {
             quote! {
-                let (pk, op) = self.0.reinsert_cdc(row)?;
+                let (pk, op) = self.0.reinsert_cdc(row_old, row_new)?;
                 self.2.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {
             quote! {
-                self.0.reinsert(row)
+                self.0.reinsert(row_old, row_new)
             }
         };
 
         quote! {
-            pub fn reinsert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+            pub fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
                 #reinsert
             }
         }

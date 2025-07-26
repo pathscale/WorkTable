@@ -286,7 +286,7 @@ where
     /// part is for new row. Goal is to make `PrimaryKey` of the row always
     /// acceptable. As for reinsert `PrimaryKey` will be same for both old and
     /// new [`Link`]'s, goal will be achieved.
-    pub fn reinsert(&self, row: Row) -> Result<PrimaryKey, WorkTableError>
+    pub fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
             + Clone
@@ -302,7 +302,7 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
         LockType: 'static,
     {
-        let pk = row.get_primary_key().clone();
+        let pk = row_new.get_primary_key().clone();
         let old_link = self
             .pk_map
             .get(&pk)
@@ -310,12 +310,12 @@ where
             .ok_or(WorkTableError::NotFound)?;
         let new_link = self
             .data
-            .insert(row.clone())
+            .insert(row_new.clone())
             .map_err(WorkTableError::PagesError)?;
         // we can not check for existence here.
         self.pk_map.insert(pk.clone(), new_link);
         self.indexes
-            .reinsert_row(row, new_link)
+            .reinsert_row(row_old, old_link, row_new, new_link)
             .map_err(|_| WorkTableError::SecondaryIndexError)?;
         self.data
             .delete(old_link)
@@ -327,7 +327,8 @@ where
     #[allow(clippy::type_complexity)]
     pub fn reinsert_cdc<SecondaryEvents>(
         &self,
-        row: Row,
+        row_old: Row,
+        row_new: Row,
     ) -> Result<
         (
             PrimaryKey,
@@ -351,7 +352,7 @@ where
         PkGen: PrimaryKeyGeneratorState,
         AvailableIndexes: Debug,
     {
-        let pk = row.get_primary_key().clone();
+        let pk = row_new.get_primary_key().clone();
         let old_link = self
             .pk_map
             .get(&pk)
@@ -359,13 +360,13 @@ where
             .ok_or(WorkTableError::NotFound)?;
         let (new_link, bytes) = self
             .data
-            .insert_cdc(row.clone())
+            .insert_cdc(row_new.clone())
             .map_err(WorkTableError::PagesError)?;
         // we can not check for existence here.
         let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
         let secondary_keys_events = self
             .indexes
-            .reinsert_row_cdc(row, new_link)
+            .reinsert_row_cdc(row_old, old_link, row_new, new_link)
             .map_err(|_| WorkTableError::SecondaryIndexError)?;
         self.data
             .delete(old_link)
