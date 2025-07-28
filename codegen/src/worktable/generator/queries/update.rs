@@ -246,6 +246,12 @@ impl Generator {
                         #full_row_lock
                     };
 
+                    let link = self.0
+                        .pk_map
+                        .get(&pk)
+                        .map(|v| v.get().value)
+                        .ok_or(WorkTableError::NotFound)?;
+
                     let row_old = self.0.data.select(link)?;
                     let mut row_new = row_old.clone();
                     let pk = row_old.get_primary_key().clone();
