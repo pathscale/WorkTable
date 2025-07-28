@@ -49,7 +49,7 @@ impl Lock {
     }
 
     pub fn unlock(&self) {
-        self.locked.store(false, Ordering::Release);
+        self.locked.store(false, Ordering::Relaxed);
         let guard = self.wakers.lock();
         for w in guard.iter() {
             w.wake()
@@ -57,15 +57,11 @@ impl Lock {
     }
 
     pub fn lock(&self) {
-        self.locked.store(true, Ordering::Release);
-        let guard = self.wakers.lock();
-        for w in guard.iter() {
-            w.wake()
-        }
+        self.locked.store(true, Ordering::Relaxed);
     }
 
     pub fn is_locked(&self) -> bool {
-        self.locked.load(Ordering::Acquire)
+        self.locked.load(Ordering::Relaxed)
     }
 
     pub fn wait(&self) -> LockWait {
@@ -89,13 +85,13 @@ impl Future for LockWait {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if !self.locked.load(Ordering::Acquire) {
+        if !self.locked.load(Ordering::Relaxed) {
             return Poll::Ready(());
         }
 
-        self.as_ref().waker.register(cx.waker());
+        self.waker.register(cx.waker());
 
-        if self.locked.load(Ordering::Acquire) {
+        if self.locked.load(Ordering::Relaxed) {
             Poll::Pending
         } else {
             Poll::Ready(())

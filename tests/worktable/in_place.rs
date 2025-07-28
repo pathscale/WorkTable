@@ -1,7 +1,8 @@
-use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+use parking_lot::Mutex;
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -104,7 +105,7 @@ async fn test_update_val_by_id_two_thread() -> eyre::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
+async fn test_update_val_and_val2_by_id_four_thread() -> eyre::Result<()> {
     let table = Arc::new(TestWorkTable::default());
     let row = TestRow {
         id: table.get_next_pk().0,
@@ -153,6 +154,58 @@ async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
     let row = table.select(pk).unwrap();
     assert_eq!(row.val, 20_000);
     assert_eq!(row.val2, 20_000);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
+    let table = Arc::new(TestWorkTable::default());
+    let row = TestRow {
+        id: table.get_next_pk().0,
+        val: 0,
+        val1: 0,
+        val2: 0,
+        another: "another".to_string(),
+        something: 0,
+    };
+    let pk = table.insert(row)?;
+    let shared_table = table.clone();
+    let h1 = tokio::spawn(async move {
+        for _ in 0..10_000 {
+            shared_table
+                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .await
+                .unwrap()
+        }
+    });
+    let shared_table = table.clone();
+    let h2 = tokio::spawn(async move {
+        for _ in 0..10_000 {
+            shared_table
+                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .await
+                .unwrap()
+        }
+    });
+    let shared_table = table.clone();
+    let h3 = tokio::spawn(async move {
+        for _ in 0..10_000 {
+            shared_table
+                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .await
+                .unwrap()
+        }
+    });
+    for _ in 0..10_000 {
+        table
+            .update_val_by_id_in_place(|val| *val += 1, pk.0)
+            .await?
+    }
+    h1.await?;
+    h2.await?;
+    h3.await?;
+    let row = table.select(pk).unwrap();
+    assert_eq!(row.val, 40_000);
     Ok(())
 }
 
