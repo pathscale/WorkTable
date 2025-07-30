@@ -60,6 +60,7 @@ fn insert_when_pk_exists() {
         attr4: "Attributee".to_string(),
     };
     assert!(table.insert(next_row.clone()).is_err());
+    assert_eq!(table.select(pk.clone()).unwrap(), row);
     assert!(table
         .0
         .indexes

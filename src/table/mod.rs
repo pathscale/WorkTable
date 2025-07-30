@@ -183,12 +183,8 @@ where
             .data
             .insert(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        if self
-            .pk_map
-            .insert(pk.clone(), link)
-            .map_or(Ok(()), |_| Err(WorkTableError::AlreadyExists))
-            .is_err()
-        {
+        if let Some(existed_link) = self.pk_map.insert(pk.clone(), link) {
+            self.pk_map.insert(pk.clone(), existed_link);
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists);
         };
@@ -251,7 +247,8 @@ where
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
         let (exists, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), link);
-        if exists.is_some() {
+        if let Some(existed_link) = exists {
+            self.pk_map.insert(pk.clone(), existed_link);
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists);
         }
@@ -329,6 +326,11 @@ where
             .data
             .insert(row_new.clone())
             .map_err(WorkTableError::PagesError)?;
+        unsafe {
+            self.data
+                .with_mut_ref(new_link, |r| r.unghost())
+                .map_err(WorkTableError::PagesError)?
+        }
         // we can not check for existence here.
         self.pk_map.insert(pk.clone(), new_link);
         self.indexes
@@ -337,11 +339,6 @@ where
         self.data
             .delete(old_link)
             .map_err(WorkTableError::PagesError)?;
-        unsafe {
-            self.data
-                .with_mut_ref(new_link, |r| r.unghost())
-                .map_err(WorkTableError::PagesError)?
-        }
 
         Ok(pk)
     }
@@ -385,6 +382,11 @@ where
             .data
             .insert_cdc(row_new.clone())
             .map_err(WorkTableError::PagesError)?;
+        unsafe {
+            self.data
+                .with_mut_ref(new_link, |r| r.unghost())
+                .map_err(WorkTableError::PagesError)?
+        }
         // we can not check for existence here.
         let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
         let secondary_keys_events = self
@@ -394,11 +396,6 @@ where
         self.data
             .delete(old_link)
             .map_err(WorkTableError::PagesError)?;
-        unsafe {
-            self.data
-                .with_mut_ref(new_link, |r| r.unghost())
-                .map_err(WorkTableError::PagesError)?
-        }
         let bytes = self
             .data
             .select_raw(new_link)
