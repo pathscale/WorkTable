@@ -242,7 +242,7 @@ impl Generator {
                 return Ok(())
             };
 
-            let data = self.0.data.select(link).map_err(WorkTableError::PagesError)?;
+            let data = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
             #func
 
             let mut ind = false;
@@ -257,7 +257,7 @@ impl Generator {
                     }
                 };
                 if let Some((key, link)) = next {
-                    let data = self.0.data.select(link).map_err(WorkTableError::PagesError)?;
+                    let data = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
                    #func
                     k = key
                 } else {
