@@ -20,7 +20,7 @@ pub trait TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> {
         link_old: Link,
         row_new: Row,
         link_new: Link,
-    ) -> eyre::Result<()>;
+    ) -> Result<(), IndexError<AvailableIndexes>>;
 
     fn delete_row(&self, row: Row, link: Link) -> Result<(), IndexError<AvailableIndexes>>;
 
@@ -48,7 +48,13 @@ where
         Ok(())
     }
 
-    fn reinsert_row(&self, _: Row, _: Link, _: Row, _: Link) -> eyre::Result<()> {
+    fn reinsert_row(
+        &self,
+        _: Row,
+        _: Link,
+        _: Row,
+        _: Link,
+    ) -> Result<(), IndexError<AvailableIndexes>> {
         Ok(())
     }
 

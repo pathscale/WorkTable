@@ -16,7 +16,7 @@ pub trait TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, Available
         link_old: Link,
         row_new: Row,
         link_new: Link,
-    ) -> eyre::Result<SecondaryEvents>;
+    ) -> Result<SecondaryEvents, IndexError<AvailableIndexes>>;
     fn delete_row_cdc(
         &self,
         row: Row,

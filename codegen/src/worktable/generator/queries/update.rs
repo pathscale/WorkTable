@@ -67,8 +67,14 @@ impl Generator {
                        #full_row_lock
                     };
                     let row_old = self.0.data.select_non_ghosted(link)?;
-                    self.reinsert(row_old, row)?;
+                    if let Err(e) = self.reinsert(row_old, row) {
+                        self.0.update_state.remove(&pk);
+                        lock.unlock();
 
+                        return Err(e);
+                    }
+
+                    self.0.update_state.remove(&pk);
                     lock.unlock();
                     self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
 
@@ -90,6 +96,9 @@ impl Generator {
                     .map(|v| v.get().value)
                     .ok_or(WorkTableError::NotFound)?;
 
+                let row_old = self.0.data.select_non_ghosted(link)?;
+                self.0.update_state.insert(pk.clone(), row_old);
+
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 #size_check
 
@@ -102,6 +111,8 @@ impl Generator {
                 unsafe { self.0.data.with_mut_ref(link, move |archived| {
                     #(#row_updates)*
                 }).map_err(WorkTableError::PagesError)? };
+
+                self.0.update_state.remove(&pk);
 
                 lock.unlock();  // Releases locks
                 self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
@@ -250,7 +261,12 @@ impl Generator {
                     let mut row_new = row_old.clone();
                     let pk = row_old.get_primary_key().clone();
                     #(#row_updates)*
-                    self.reinsert(row_old, row_new)?;
+                    if let Err(e) = self.reinsert(row_old, row_new) {
+                        self.0.update_state.remove(&pk);
+                        lock.unlock();
+
+                        return Err(e);
+                    }
 
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
@@ -483,7 +499,12 @@ impl Generator {
                     let row_old = self.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
-                    self.reinsert(row_old, row_new)?;
+                    if let Err(e) = self.reinsert(row_old, row_new) {
+                        self.0.update_state.remove(&pk);
+                        lock.unlock();
+
+                        return Err(e);
+                    }
 
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks

@@ -252,8 +252,7 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
         PkGen: PrimaryKeyGeneratorState,
-        AvailableIndexes: Debug,
-        AvailableIndexes: AvailableIndex,
+        AvailableIndexes: Debug + AvailableIndex,
     {
         let pk = row.get_primary_key().clone();
         let (link, _) = self
@@ -326,6 +325,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
+        AvailableIndexes: Debug + AvailableIndex,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
         LockType: 'static,
     {
@@ -345,15 +345,39 @@ where
                 .map_err(WorkTableError::PagesError)?
         }
         // we can not check for existence here.
-        self.pk_map.insert(pk.clone(), new_link);
-        self.indexes
-            .reinsert_row(row_old, old_link, row_new, new_link)
-            .map_err(|_| WorkTableError::SecondaryIndexError)?;
-        self.data
-            .delete(old_link)
-            .map_err(WorkTableError::PagesError)?;
+        if self.pk_map.checked_insert(pk.clone(), new_link).is_some() {
+            let indexes_res =
+                self.indexes
+                    .reinsert_row(row_old, old_link, row_new.clone(), new_link);
+            if let Err(e) = indexes_res {
+                return match e {
+                    IndexError::AlreadyExists {
+                        at,
+                        inserted_already,
+                    } => {
+                        self.pk_map.remove(&pk);
+                        self.indexes
+                            .delete_from_indexes(row_new, new_link, inserted_already)?;
+                        self.data
+                            .delete(new_link)
+                            .map_err(WorkTableError::PagesError)?;
 
-        Ok(pk)
+                        Err(WorkTableError::AlreadyExists(at.to_string()))
+                    }
+                    IndexError::NotFound => Err(WorkTableError::NotFound),
+                };
+            }
+            self.data
+                .delete(old_link)
+                .map_err(WorkTableError::PagesError)?;
+            Ok(pk)
+        } else {
+            // primary key violated.
+            self.data
+                .delete(new_link)
+                .map_err(WorkTableError::PagesError)?;
+            Err(WorkTableError::AlreadyExists("Primary".to_string()))
+        }
     }
 
     #[allow(clippy::type_complexity)]
@@ -383,7 +407,7 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
         PkGen: PrimaryKeyGeneratorState,
-        AvailableIndexes: Debug,
+        AvailableIndexes: Debug + AvailableIndex,
     {
         let pk = row_new.get_primary_key().clone();
         let old_link = self
@@ -400,30 +424,54 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        // we can not check for existence here.
-        let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
-        let secondary_keys_events = self
-            .indexes
-            .reinsert_row_cdc(row_old, old_link, row_new, new_link)
-            .map_err(|_| WorkTableError::SecondaryIndexError)?;
-        self.data
-            .delete(old_link)
-            .map_err(WorkTableError::PagesError)?;
-        let bytes = self
-            .data
-            .select_raw(new_link)
-            .map_err(WorkTableError::PagesError)?;
+        if let Some(primary_key_events) = self.pk_map.checked_insert_cdc(pk.clone(), new_link) {
+            let indexes_res =
+                self.indexes
+                    .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
+            if let Err(e) = indexes_res {
+                return match e {
+                    IndexError::AlreadyExists {
+                        at,
+                        inserted_already,
+                    } => {
+                        self.pk_map.remove(&pk);
+                        self.indexes
+                            .delete_from_indexes(row_new, new_link, inserted_already)?;
+                        self.data
+                            .delete(new_link)
+                            .map_err(WorkTableError::PagesError)?;
 
-        let op = Operation::Insert(InsertOperation {
-            id: OperationId::Single(Uuid::now_v7()),
-            pk_gen_state: self.pk_gen.get_state(),
-            primary_key_events,
-            secondary_keys_events,
-            bytes,
-            link: new_link,
-        });
+                        Err(WorkTableError::AlreadyExists(at.to_string()))
+                    }
+                    IndexError::NotFound => Err(WorkTableError::NotFound),
+                };
+            }
 
-        Ok((pk, op))
+            self.data
+                .delete(old_link)
+                .map_err(WorkTableError::PagesError)?;
+            let bytes = self
+                .data
+                .select_raw(new_link)
+                .map_err(WorkTableError::PagesError)?;
+
+            let op = Operation::Insert(InsertOperation {
+                id: OperationId::Single(Uuid::now_v7()),
+                pk_gen_state: self.pk_gen.get_state(),
+                primary_key_events,
+                secondary_keys_events: indexes_res.expect("was checked just before"),
+                bytes,
+                link: new_link,
+            });
+
+            Ok((pk, op))
+        } else {
+            // primary key violated.
+            self.data
+                .delete(new_link)
+                .map_err(WorkTableError::PagesError)?;
+            Err(WorkTableError::AlreadyExists("Primary".to_string()))
+        }
     }
 }
 

@@ -68,8 +68,7 @@ impl Generator {
                     }
                 };
                 quote! {
-                    if let Some(link) = self.#index_field_name.insert(#row.clone(), link) {
-                        self.#index_field_name.insert(#row, link);
+                    if self.#index_field_name.insert_checked(#row.clone(), link).is_none() {
                         return Err(IndexError::AlreadyExists {
                             at: #available_index_ident::#index_variant,
                             inserted_already: inserted_indexes.clone(),
@@ -92,6 +91,7 @@ impl Generator {
     fn gen_reinsert_row_index_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type_ident = name_generator.get_row_type_ident();
+        let available_index_ident = name_generator.get_available_indexes_ident();
 
         let reinsert_rows = self
             .columns
@@ -99,6 +99,11 @@ impl Generator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
+                let camel_case_name = index_field_name
+                    .to_string()
+                    .from_case(Case::Snake)
+                    .to_case(Case::Pascal);
+                let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 let row = if is_float(
                     self.columns
                         .columns_map
@@ -129,7 +134,13 @@ impl Generator {
                 quote! {
                     let row = &row_new;
                     let val_new = #row.clone();
-                    self.#index_field_name.insert(val_new.clone(), link_new);
+                    if self.#index_field_name.insert_checked(val_new.clone(), link_new).is_none() {
+                        return Err(IndexError::AlreadyExists {
+                            at: #available_index_ident::#index_variant,
+                            inserted_already: inserted_indexes.clone(),
+                        })
+                    }
+                    inserted_indexes.push(#available_index_ident::#index_variant);
 
                     let row = &row_old;
                     let val_old = #row.clone();
@@ -139,7 +150,14 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            fn reinsert_row(&self, row_old: #row_type_ident, link_old: Link, row_new: #row_type_ident, link_new: Link) -> eyre::Result<()> {
+            fn reinsert_row(&self,
+                row_old: #row_type_ident,
+                link_old: Link,
+                row_new: #row_type_ident,
+                link_new: Link
+            ) -> core::result::Result<(), IndexError<#available_index_ident>>
+            {
+                let mut inserted_indexes: Vec<#available_index_ident> = vec![];
                 #(#reinsert_rows)*
                 core::result::Result::Ok(())
             }

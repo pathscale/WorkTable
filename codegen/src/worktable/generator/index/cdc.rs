@@ -49,15 +49,14 @@ impl Generator {
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
                 quote! {
-                    let (exists, events) = self.#index_field_name.insert_cdc(row.#i.clone(), link);
-                    if let Some(link) = exists {
-                        self.#index_field_name.insert_cdc(row.#i, link);
+                    let #index_field_name = if let Some(events) = self.#index_field_name.insert_checked_cdc(row.#i.clone(), link) {
+                        events.into_iter().map(|ev| ev.into()).collect()
+                    } else {
                         return Err(IndexError::AlreadyExists {
                             at: #available_index_ident::#index_variant,
                             inserted_already: inserted_indexes.clone(),
                         });
-                    }
-                    let #index_field_name = events.into_iter().map(|ev| ev.into()).collect();
+                    };
                 }
             })
             .collect::<Vec<_>>();
@@ -86,6 +85,7 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type_ident = name_generator.get_row_type_ident();
         let events_ident = name_generator.get_space_secondary_index_events_ident();
+        let available_index_ident = name_generator.get_available_indexes_ident();
 
         let reinsert_rows = self
             .columns
@@ -93,6 +93,12 @@ impl Generator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
+                let camel_case_name = index_field_name
+                    .to_string()
+                    .from_case(Case::Snake)
+                    .to_case(Case::Pascal);
+                let index_variant: TokenStream = camel_case_name.parse().unwrap();
+
                 let remove = if idx.is_unique {
                     quote! {
                         if row_new.#i != row_old.#i {
@@ -107,8 +113,14 @@ impl Generator {
                     }
                 };
                 quote! {
-                    let (_, events) = self.#index_field_name.insert_cdc(row_new.#i.clone(), link_new);
-                    let mut #index_field_name: Vec<_> = events.into_iter().map(|ev| ev.into()).collect();
+                    let mut #index_field_name: Vec<_> = if let Some(events) = self.#index_field_name.insert_checked_cdc(row_new.#i.clone(), link_new) {
+                        events.into_iter().map(|ev| ev.into()).collect()
+                    } else {
+                        return Err(IndexError::AlreadyExists {
+                            at: #available_index_ident::#index_variant,
+                            inserted_already: inserted_indexes.clone(),
+                        });
+                    };
                     #remove
                 }
             })
@@ -121,7 +133,15 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            fn reinsert_row_cdc(&self, row_old: #row_type_ident, link_old: Link, row_new: #row_type_ident, link_new: Link) -> eyre::Result<#events_ident> {
+            fn reinsert_row_cdc(
+                &self,
+                row_old: #row_type_ident,
+                link_old: Link,
+                row_new: #row_type_ident,
+                link_new: Link
+            ) -> Result<#events_ident, IndexError<#available_index_ident>> {
+                let mut inserted_indexes: Vec<#available_index_ident> = vec![];
+
                 #(#reinsert_rows)*
                 core::result::Result::Ok(
                     #events_ident {
