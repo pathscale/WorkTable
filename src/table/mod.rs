@@ -41,7 +41,7 @@ pub struct WorkTable<
     const DATA_LENGTH: usize = INNER_PAGE_SIZE,
 > where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
-    Row: StorableRow,
+    Row: StorableRow + Send + Clone + 'static,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
 {
     pub data: DataPages<Row, DATA_LENGTH>,
@@ -53,6 +53,8 @@ pub struct WorkTable<
     pub pk_gen: PkGen,
 
     pub lock_map: LockMap<LockType, PrimaryKey>,
+
+    pub update_state: IndexMap<PrimaryKey, Row>,
 
     pub table_name: &'static str,
 
@@ -87,7 +89,7 @@ where
     SecondaryIndexes: Default,
     PkGen: Default,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
-    Row: StorableRow,
+    Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
     fn default() -> Self {
@@ -97,6 +99,7 @@ where
             indexes: SecondaryIndexes::default(),
             pk_gen: Default::default(),
             lock_map: LockMap::default(),
+            update_state: IndexMap::default(),
             table_name: "",
             pk_phantom: PhantomData,
         }
@@ -129,7 +132,7 @@ where
     Row: TableRow<PrimaryKey>,
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
-    Row: StorableRow,
+    Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
     pub fn get_next_pk(&self) -> PrimaryKey

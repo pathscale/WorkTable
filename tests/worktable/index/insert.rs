@@ -224,6 +224,8 @@ fn insert_when_unique_violated() {
     });
 
     for _ in 0..5000 {
+        let sel_row = table.select(row.id);
+        assert_eq!(sel_row, Some(row.clone()));
         let attr_1_rows = table.select_by_attr1(row.attr1.clone()).execute().unwrap();
         assert_eq!(attr_1_rows.len(), 1);
         assert_eq!(attr_1_rows.first().unwrap(), &row);
