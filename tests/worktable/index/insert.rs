@@ -233,3 +233,43 @@ fn insert_when_unique_violated() {
 
     h.join().unwrap();
 }
+
+#[test]
+fn insert_when_pk_violated() {
+    let table = Arc::new(TestWorkTable::default());
+
+    let row = TestRow {
+        id: table.get_next_pk().into(),
+        val: 13,
+        attr1: "Attribute".to_string(),
+        attr2: -128,
+        attr3: 123456789,
+        attr4: "Attribute4".to_string(),
+    };
+    let _ = table.insert(row.clone()).unwrap();
+
+    let id = row.id;
+
+    let shared = table.clone();
+    let h = thread::spawn(move || {
+        for _ in 0..5_000 {
+            let row = TestRow {
+                id,
+                val: 13,
+                attr1: "Attribute".to_string(),
+                attr2: 128,
+                attr3: 123456789,
+                attr4: "Attribute__4".to_string(),
+            };
+            assert!(shared.insert(row).is_err());
+        }
+    });
+
+    for _ in 0..5000 {
+        let sel_row = table.select(id);
+        assert!(sel_row.is_some());
+        assert_eq!(sel_row, Some(row.clone()))
+    }
+
+    h.join().unwrap();
+}

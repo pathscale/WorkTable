@@ -62,3 +62,7 @@ pub mod prelude {
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
     pub const WT_DATA_EXTENSION: &str = ".wt.data";
 }
+
+// TODO:
+// 1. add checked inserts to indexset to not insert/remove but just insert with violation error
+// 2. Add pre-update state storage to avoid ghost reads of updated data if it will be rolled back

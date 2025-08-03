@@ -154,8 +154,17 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link = self.pk_map.get(&pk).map(|v| v.get().value)?;
-        self.data.select(link).ok()
+        let link = self.pk_map.get(&pk).map(|v| v.get().value);
+        if let Some(link) = link {
+            self.data.select(link).ok()
+        } else {
+            println!(
+                "{:?} Unavailable in primary index, vals available {:?}",
+                pk,
+                self.pk_map.iter().collect::<Vec<_>>()
+            );
+            None
+        }
     }
 
     #[cfg_attr(
@@ -185,8 +194,7 @@ where
             .data
             .insert(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        if let Some(existed_link) = self.pk_map.insert(pk.clone(), link) {
-            self.pk_map.insert(pk.clone(), existed_link);
+        if self.pk_map.checked_insert(pk.clone(), link).is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
         };
@@ -249,9 +257,8 @@ where
             .data
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        let (exists, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), link);
-        if let Some(existed_link) = exists {
-            self.pk_map.insert(pk.clone(), existed_link);
+        let primary_key_events = self.pk_map.checked_insert_cdc(pk.clone(), link);
+        if primary_key_events.is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
         }
@@ -285,7 +292,7 @@ where
         let op = Operation::Insert(InsertOperation {
             id: OperationId::Single(Uuid::now_v7()),
             pk_gen_state: self.pk_gen.get_state(),
-            primary_key_events,
+            primary_key_events: primary_key_events.expect("should be checked before for existence"),
             secondary_keys_events: indexes_res.expect("was checked before"),
             bytes,
             link,
