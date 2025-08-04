@@ -102,7 +102,7 @@ impl Generator {
         quote! {
             impl Query<#ident> for #ident {
                 fn merge(self, row: #ident) -> #ident {
-                    row
+                    self
                 }
             }
         }

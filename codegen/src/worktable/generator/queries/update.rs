@@ -238,7 +238,7 @@ impl Generator {
                 .map(|f| {
                     let fn_ident = Ident::new(format!("get_{f}_size").as_str(), Span::call_site());
                     quote! {
-                        need_to_reinsert |= archived_row.#fn_ident() > self.#fn_ident(link)?;
+                        need_to_reinsert |= archived_row.#fn_ident() >= self.#fn_ident(link)?;
                     }
                 })
                 .collect();
@@ -253,7 +253,7 @@ impl Generator {
             let full_row_lock = self.gen_full_lock_for_update();
 
             quote! {
-                let mut need_to_reinsert = false;
+                let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
                     lock.unlock();
@@ -532,7 +532,7 @@ impl Generator {
                 .map(|f| {
                     let fn_ident = Ident::new(format!("get_{f}_size").as_str(), Span::call_site());
                     quote! {
-                        need_to_reinsert |= archived_row.#fn_ident() > self.#fn_ident(link)?;
+                        need_to_reinsert |= archived_row.#fn_ident() >= self.#fn_ident(link)?;
                     }
                 })
                 .collect();
@@ -547,7 +547,7 @@ impl Generator {
             let full_row_lock = self.gen_full_lock_for_update();
 
             quote! {
-                let mut need_to_reinsert = false;
+                let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
                     let op_lock = locks.remove(&pk).expect("should not be deleted as links are unique");
@@ -567,6 +567,8 @@ impl Generator {
 
                     lock.unlock();  // Releases locks
                     self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+
+                    continue;
                 } else {
                     pk_to_unlock.insert(pk.clone(), locks.remove(&pk).expect("should not be deleted as links are unique"));
                 }

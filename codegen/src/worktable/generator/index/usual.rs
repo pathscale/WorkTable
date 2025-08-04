@@ -95,7 +95,7 @@ impl Generator {
         let row_type_ident = name_generator.get_row_type_ident();
         let available_index_ident = name_generator.get_available_indexes_ident();
 
-        let reinsert_rows = self
+        let (insert_rows, remove_rows): (Vec<_>, Vec<_>) = self
             .columns
             .indexes
             .iter()
@@ -124,32 +124,43 @@ impl Generator {
                 };
                 let remove = if idx.is_unique {
                     quote! {
-                        if val_new != val_old {
+                        if val_new == val_old {
+                            self.#index_field_name.insert(val_new.clone(), link_new);
+                        } else {
                             TableIndex::remove(&self.#index_field_name, val_old, link_old);
                         }
                     }
                 } else {
                     quote! {
+                        self.#index_field_name.insert(val_new.clone(), link_new);
                         TableIndex::remove(&self.#index_field_name, val_old, link_old);
                     }
                 };
-                quote! {
+                let insert = quote! {
                     let row = &row_new;
                     let val_new = #row.clone();
-                    if self.#index_field_name.insert_checked(val_new.clone(), link_new).is_none() {
-                        return Err(IndexError::AlreadyExists {
-                            at: #available_index_ident::#index_variant,
-                            inserted_already: inserted_indexes.clone(),
-                        })
+                    let row = &row_old;
+                    let val_old = #row.clone();
+                    if val_new != val_old {
+                        if self.#index_field_name.insert_checked(val_new.clone(), link_new).is_none() {
+                            return Err(IndexError::AlreadyExists {
+                                at: #available_index_ident::#index_variant,
+                                inserted_already: inserted_indexes.clone(),
+                            })
+                        }
+                        inserted_indexes.push(#available_index_ident::#index_variant);
                     }
-                    inserted_indexes.push(#available_index_ident::#index_variant);
-
+                };
+                let remove = quote! {
+                    let row = &row_new;
+                    let val_new = #row.clone();
                     let row = &row_old;
                     let val_old = #row.clone();
                     #remove
-                }
+                };
+                (insert, remove)
             })
-            .collect::<Vec<_>>();
+            .unzip();
 
         quote! {
             fn reinsert_row(&self,
@@ -160,7 +171,8 @@ impl Generator {
             ) -> core::result::Result<(), IndexError<#available_index_ident>>
             {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
-                #(#reinsert_rows)*
+                #(#insert_rows)*
+                #(#remove_rows)*
                 core::result::Result::Ok(())
             }
         }

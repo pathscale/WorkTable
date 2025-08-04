@@ -28,7 +28,11 @@ where
     }
 
     fn insert_checked(&self, value: T, link: Link) -> Option<()> {
-        self.insert(value, link).map(|_| ())
+        if self.insert(value, link).is_some() {
+            None
+        } else {
+            Some(())
+        }
     }
 
     fn remove(&self, value: T, link: Link) -> Option<(T, Link)> {

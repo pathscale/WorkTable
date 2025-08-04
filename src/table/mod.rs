@@ -330,6 +330,9 @@ where
         LockType: 'static,
     {
         let pk = row_new.get_primary_key().clone();
+        if pk != row_old.get_primary_key() {
+            return Err(WorkTableError::PrimaryUpdateTry);
+        }
         let old_link = self
             .pk_map
             .get(&pk)
@@ -344,40 +347,32 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        // we can not check for existence here.
-        if self.pk_map.checked_insert(pk.clone(), new_link).is_some() {
-            let indexes_res =
-                self.indexes
-                    .reinsert_row(row_old, old_link, row_new.clone(), new_link);
-            if let Err(e) = indexes_res {
-                return match e {
-                    IndexError::AlreadyExists {
-                        at,
-                        inserted_already,
-                    } => {
-                        self.pk_map.remove(&pk);
-                        self.indexes
-                            .delete_from_indexes(row_new, new_link, inserted_already)?;
-                        self.data
-                            .delete(new_link)
-                            .map_err(WorkTableError::PagesError)?;
+        self.pk_map.insert(pk.clone(), new_link);
 
-                        Err(WorkTableError::AlreadyExists(at.to_string_value()))
-                    }
-                    IndexError::NotFound => Err(WorkTableError::NotFound),
-                };
-            }
-            self.data
-                .delete(old_link)
-                .map_err(WorkTableError::PagesError)?;
-            Ok(pk)
-        } else {
-            // primary key violated.
-            self.data
-                .delete(new_link)
-                .map_err(WorkTableError::PagesError)?;
-            Err(WorkTableError::AlreadyExists("Primary".to_string()))
+        let indexes_res = self
+            .indexes
+            .reinsert_row(row_old, old_link, row_new.clone(), new_link);
+        if let Err(e) = indexes_res {
+            return match e {
+                IndexError::AlreadyExists {
+                    at,
+                    inserted_already,
+                } => {
+                    self.indexes
+                        .delete_from_indexes(row_new, new_link, inserted_already)?;
+                    self.data
+                        .delete(new_link)
+                        .map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                }
+                IndexError::NotFound => Err(WorkTableError::NotFound),
+            };
         }
+        self.data
+            .delete(old_link)
+            .map_err(WorkTableError::PagesError)?;
+        Ok(pk)
     }
 
     #[allow(clippy::type_complexity)]
@@ -410,6 +405,9 @@ where
         AvailableIndexes: Debug + AvailableIndex,
     {
         let pk = row_new.get_primary_key().clone();
+        if pk != row_old.get_primary_key() {
+            return Err(WorkTableError::PrimaryUpdateTry);
+        }
         let old_link = self
             .pk_map
             .get(&pk)
@@ -424,54 +422,46 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        if let Some(primary_key_events) = self.pk_map.checked_insert_cdc(pk.clone(), new_link) {
-            let indexes_res =
-                self.indexes
-                    .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
-            if let Err(e) = indexes_res {
-                return match e {
-                    IndexError::AlreadyExists {
-                        at,
-                        inserted_already,
-                    } => {
-                        self.pk_map.remove(&pk);
-                        self.indexes
-                            .delete_from_indexes(row_new, new_link, inserted_already)?;
-                        self.data
-                            .delete(new_link)
-                            .map_err(WorkTableError::PagesError)?;
+        let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
+        let indexes_res =
+            self.indexes
+                .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
+        if let Err(e) = indexes_res {
+            return match e {
+                IndexError::AlreadyExists {
+                    at,
+                    inserted_already,
+                } => {
+                    self.indexes
+                        .delete_from_indexes(row_new, new_link, inserted_already)?;
+                    self.data
+                        .delete(new_link)
+                        .map_err(WorkTableError::PagesError)?;
 
-                        Err(WorkTableError::AlreadyExists(at.to_string_value()))
-                    }
-                    IndexError::NotFound => Err(WorkTableError::NotFound),
-                };
-            }
-
-            self.data
-                .delete(old_link)
-                .map_err(WorkTableError::PagesError)?;
-            let bytes = self
-                .data
-                .select_raw(new_link)
-                .map_err(WorkTableError::PagesError)?;
-
-            let op = Operation::Insert(InsertOperation {
-                id: OperationId::Single(Uuid::now_v7()),
-                pk_gen_state: self.pk_gen.get_state(),
-                primary_key_events,
-                secondary_keys_events: indexes_res.expect("was checked just before"),
-                bytes,
-                link: new_link,
-            });
-
-            Ok((pk, op))
-        } else {
-            // primary key violated.
-            self.data
-                .delete(new_link)
-                .map_err(WorkTableError::PagesError)?;
-            Err(WorkTableError::AlreadyExists("Primary".to_string()))
+                    Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                }
+                IndexError::NotFound => Err(WorkTableError::NotFound),
+            };
         }
+
+        self.data
+            .delete(old_link)
+            .map_err(WorkTableError::PagesError)?;
+        let bytes = self
+            .data
+            .select_raw(new_link)
+            .map_err(WorkTableError::PagesError)?;
+
+        let op = Operation::Insert(InsertOperation {
+            id: OperationId::Single(Uuid::now_v7()),
+            pk_gen_state: self.pk_gen.get_state(),
+            primary_key_events,
+            secondary_keys_events: indexes_res.expect("was checked just before"),
+            bytes,
+            link: new_link,
+        });
+
+        Ok((pk, op))
     }
 }
 
@@ -482,5 +472,6 @@ pub enum WorkTableError {
     AlreadyExists(#[error(not(source))] String),
     SerializeError,
     SecondaryIndexError,
+    PrimaryUpdateTry,
     PagesError(in_memory::PagesExecutionError),
 }

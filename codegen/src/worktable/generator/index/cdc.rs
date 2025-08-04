@@ -89,7 +89,7 @@ impl Generator {
         let events_ident = name_generator.get_space_secondary_index_events_ident();
         let available_index_ident = name_generator.get_available_indexes_ident();
 
-        let reinsert_rows = self
+        let (insert_rows, remove_rows): (Vec<_>, Vec<_>) = self
             .columns
             .indexes
             .iter()
@@ -103,31 +103,42 @@ impl Generator {
 
                 let remove = if idx.is_unique {
                     quote! {
-                        if row_new.#i != row_old.#i {
+                        if row_new.#i == row_old.#i {
+                            let events = self.#index_field_name.insert_cdc(row_new.#i.clone(), link_new).1;
+                            #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
+                        } else {
                             let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row_old.#i.clone(), link_old);
                             #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                         }
                     }
                 } else {
                     quote! {
+                        let events = self.#index_field_name.insert_cdc(row_new.#i.clone(), link_new).1;
+                        #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                         let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row_old.#i.clone(), link_old);
                         #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                     }
                 };
-                quote! {
-                    let mut #index_field_name: Vec<_> = if let Some(events) = self.#index_field_name.insert_checked_cdc(row_new.#i.clone(), link_new) {
-                        events.into_iter().map(|ev| ev.into()).collect()
+                let insert = quote! {
+                    let mut #index_field_name = if row_new.#i != row_old.#i {
+                        let #index_field_name: Vec<_> = if let Some(events) = self.#index_field_name.insert_checked_cdc(row_new.#i.clone(), link_new) {
+                            events.into_iter().map(|ev| ev.into()).collect()
+                        } else {
+                            return Err(IndexError::AlreadyExists {
+                                at: #available_index_ident::#index_variant,
+                                inserted_already: inserted_indexes.clone(),
+                            });
+                        };
+                        inserted_indexes.push(#available_index_ident::#index_variant);
+                        
+                        #index_field_name
                     } else {
-                        return Err(IndexError::AlreadyExists {
-                            at: #available_index_ident::#index_variant,
-                            inserted_already: inserted_indexes.clone(),
-                        });
+                        vec![]
                     };
-                    inserted_indexes.push(#available_index_ident::#index_variant);
-                    #remove
-                }
+                };
+                (insert, remove)
             })
-            .collect::<Vec<_>>();
+            .unzip();
         let idents = self
             .columns
             .indexes
@@ -145,7 +156,8 @@ impl Generator {
             ) -> Result<#events_ident, IndexError<#available_index_ident>> {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
 
-                #(#reinsert_rows)*
+                #(#insert_rows)*
+                #(#remove_rows)*
                 core::result::Result::Ok(
                     #events_ident {
                         #(#idents,)*

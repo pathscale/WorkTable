@@ -30,12 +30,13 @@ where
         (res, evs.into_iter().map(Into::into).collect())
     }
 
+    // TODO: refactor this to be more straightforward
     fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>> {
         let (res, evs) = self.insert_cdc(value, link);
         if res.is_some() {
-            Some(evs.into_iter().map(Into::into).collect())
-        } else {
             None
+        } else {
+            Some(evs.into_iter().map(Into::into).collect())
         }
     }
 
