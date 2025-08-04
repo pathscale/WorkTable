@@ -31,11 +31,17 @@ pub trait TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> {
         indexes: Vec<AvailableIndexes>,
     ) -> Result<(), IndexError<AvailableIndexes>>;
 
-    fn process_difference(
+    fn process_difference_insert(
         &self,
         link: Link,
         differences: HashMap<&str, Difference<AvailableTypes>>,
-    ) -> Result<(), WorkTableError>;
+    ) -> Result<(), IndexError<AvailableIndexes>>;
+
+    fn process_difference_remove(
+        &self,
+        link: Link,
+        differences: HashMap<&str, Difference<AvailableTypes>>,
+    ) -> Result<(), IndexError<AvailableIndexes>>;
 }
 
 impl<Row, AvailableTypes, AvailableIndexes>
@@ -71,11 +77,19 @@ where
         Ok(())
     }
 
-    fn process_difference(
+    fn process_difference_insert(
         &self,
         _: Link,
         _: HashMap<&str, Difference<AvailableTypes>>,
-    ) -> Result<(), WorkTableError> {
+    ) -> Result<(), IndexError<AvailableIndexes>> {
+        Ok(())
+    }
+
+    fn process_difference_remove(
+        &self,
+        _: Link,
+        _: HashMap<&str, Difference<AvailableTypes>>,
+    ) -> Result<(), IndexError<AvailableIndexes>> {
         Ok(())
     }
 }
@@ -98,7 +112,7 @@ where
             IndexError::AlreadyExists {
                 at,
                 inserted_already: _,
-            } => WorkTableError::AlreadyExists(at.to_string()),
+            } => WorkTableError::AlreadyExists(at.to_string_value()),
             IndexError::NotFound => WorkTableError::NotFound,
         }
     }

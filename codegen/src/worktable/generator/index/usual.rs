@@ -17,7 +17,8 @@ impl Generator {
         let save_row_fn = self.gen_save_row_index_fn();
         let reinsert_row_fn = self.gen_reinsert_row_index_fn();
         let delete_row_fn = self.gen_delete_row_index_fn();
-        let process_difference_fn = self.gen_process_difference_index_fn();
+        let process_difference_insert_fn = self.gen_process_difference_insert_index_fn();
+        let process_difference_remove_fn = self.gen_process_difference_remove_index_fn();
         let delete_from_indexes = self.gen_index_delete_from_indexes_fn();
 
         quote! {
@@ -25,7 +26,8 @@ impl Generator {
                 #save_row_fn
                 #reinsert_row_fn
                 #delete_row_fn
-                #process_difference_fn
+                #process_difference_insert_fn
+                #process_difference_remove_fn
                 #delete_from_indexes
             }
         }
@@ -214,13 +216,14 @@ impl Generator {
         }
     }
 
-    /// Generates `process_difference` function of `TableIndex` trait for index. It updates `Link` for all secondary indexes.
+    /// Generates `process_difference_remove` function of `TableIndex` trait for index. It updates `Link` for all secondary indexes.
     /// Uses HashMap<&str, Difference<AvaialableTypes>> for storing all changes
-    fn gen_process_difference_index_fn(&self) -> TokenStream {
+    fn gen_process_difference_remove_index_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();
+        let avt_index_ident = name_generator.get_available_indexes_ident();
 
-        let process_difference_rows = self.columns.indexes.iter().map(|(i, idx)| {
+        let process_difference_remove_rows = self.columns.indexes.iter().map(|(i, idx)| {
             let index_field_name = &idx.name;
             let diff_key = Literal::string(i.to_string().as_str());
 
@@ -228,12 +231,12 @@ impl Generator {
                 let type_str = t.to_string();
                 let variant_ident = Ident::new(&map_to_uppercase(&type_str), Span::mixed_site());
 
-                let (new_value_expr, old_value_expr) = if type_str == "String" {
-                    (quote! { new.to_string() }, quote! { old.to_string() })
+                let old_value_expr = if type_str == "String" {
+                    quote! { old.to_string() }
                 } else if is_float(type_str.as_str()) {
-                    (quote! { OrderedFloat(*new) }, quote! { OrderedFloat(*old) })
+                    quote! { OrderedFloat(*old) }
                 } else {
-                    (quote! { *new }, quote! { *old })
+                    quote! { *old }
                 };
 
                 quote! {
@@ -241,11 +244,6 @@ impl Generator {
                         if let #avt_type_ident::#variant_ident(old) = &diff.old {
                             let key_old = #old_value_expr;
                             TableIndex::remove(&self.#index_field_name, key_old, link);
-                        }
-
-                        if let #avt_type_ident::#variant_ident(new) = &diff.new {
-                            let key_new = #new_value_expr;
-                            TableIndex::insert(&self.#index_field_name, key_new, link);
                         }
                     }
                 }
@@ -255,12 +253,72 @@ impl Generator {
         });
 
         quote! {
-            fn process_difference(
+            fn process_difference_remove(
                 &self,
                 link: Link,
                 difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
-            ) -> core::result::Result<(), WorkTableError> {
-                #(#process_difference_rows)*
+            ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
+                #(#process_difference_remove_rows)*
+                core::result::Result::Ok(())
+            }
+        }
+    }
+
+    /// Generates `process_difference_insert` function of `TableIndex` trait for index. It updates `Link` for all secondary indexes.
+    /// Uses HashMap<&str, Difference<AvaialableTypes>> for storing all changes
+    fn gen_process_difference_insert_index_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let avt_type_ident = name_generator.get_available_type_ident();
+        let avt_index_ident = name_generator.get_available_indexes_ident();
+
+        let process_difference_insert_rows = self.columns.indexes.iter().map(|(i, idx)| {
+            let index_field_name = &idx.name;
+            let diff_key = Literal::string(i.to_string().as_str());
+
+            if let Some(t) = self.columns.columns_map.get(&idx.field) {
+                let type_str = t.to_string();
+                let variant_ident = Ident::new(&map_to_uppercase(&type_str), Span::mixed_site());
+                let camel_case_name = index_field_name
+                    .to_string()
+                    .from_case(Case::Snake)
+                    .to_case(Case::Pascal);
+                let index_variant: TokenStream = camel_case_name.parse().unwrap();
+
+                let new_value_expr = if type_str == "String" {
+                    quote! { new.to_string() }
+                } else if is_float(type_str.as_str()) {
+                    quote! { OrderedFloat(*new) }
+                } else {
+                    quote! { *new }
+                };
+
+                quote! {
+                    if let Some(diff) = difference.get(#diff_key) {
+                        if let #avt_type_ident::#variant_ident(new) = &diff.new {
+                            let key_new = #new_value_expr;
+                            if TableIndex::insert_checked(&self.#index_field_name, key_new, link).is_none() {
+                                return Err(IndexError::AlreadyExists {
+                                    at: #avt_index_ident::#index_variant,
+                                    inserted_already: inserted_indexes.clone(),
+                                })
+                            }
+                            inserted_indexes.push(#avt_index_ident::#index_variant);
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            }
+        });
+
+        quote! {
+            fn process_difference_insert(
+                &self,
+                link: Link,
+                difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
+            ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
+                let mut inserted_indexes: Vec<#avt_index_ident> = vec![];
+                #(#process_difference_insert_rows)*
                 core::result::Result::Ok(())
             }
         }

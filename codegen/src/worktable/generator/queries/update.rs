@@ -53,7 +53,9 @@ impl Generator {
             .map(|idx| idx.field.clone())
             .collect();
 
-        let diff_process = self.gen_process_diffs_on_index(idents.as_slice(), Some(&idents));
+        let diff_process_insert =
+            self.gen_process_diffs_insert_on_index(idents.as_slice(), Some(&idents));
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(Some(&idents));
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
@@ -105,12 +107,14 @@ impl Generator {
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
-                #diff_process
+                #diff_process_insert
                 #persist_op
 
                 unsafe { self.0.data.with_mut_ref(link, move |archived| {
                     #(#row_updates)*
                 }).map_err(WorkTableError::PagesError)? };
+
+                #diff_process_remove
 
                 self.0.update_state.remove(&pk);
 
@@ -302,7 +306,7 @@ impl Generator {
         }
     }
 
-    fn gen_process_diffs_on_index(
+    fn gen_process_diffs_insert_on_index(
         &self,
         idents: &[Ident],
         idx_idents: Option<&Vec<Ident>>,
@@ -350,7 +354,22 @@ impl Generator {
         let process_difference = if self.is_persist {
             if idx_idents.is_some() {
                 quote! {
-                    let secondary_keys_events = self.0.indexes.process_difference_cdc(link, diffs)?;
+                    let indexes_res = self.0.indexes.process_difference_insert_cdc(link, diffs.clone());
+                    if let Err(e) = indexes_res {
+                        return match e {
+                            IndexError::AlreadyExists {
+                                at,
+                                inserted_already,
+                            } => {
+                                self.0.indexes
+                                    .delete_from_indexes(row_new.merge(row_old.clone()), link, inserted_already)?;
+
+                                Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                            }
+                            IndexError::NotFound => Err(WorkTableError::NotFound),
+                        };
+                    }
+                    let mut secondary_keys_events = indexes_res.expect("was just checked for correctness");
                 }
             } else {
                 quote! {
@@ -359,7 +378,21 @@ impl Generator {
             }
         } else if idx_idents.is_some() {
             quote! {
-                self.0.indexes.process_difference(link, diffs)?;
+                let indexes_res = self.0.indexes.process_difference_insert(link, diffs.clone());
+                if let Err(e) = indexes_res {
+                    return match e {
+                        IndexError::AlreadyExists {
+                            at,
+                            inserted_already,
+                        } => {
+                            self.0.indexes
+                                .delete_from_indexes(row_new.merge(row_old.clone()), link, inserted_already)?;
+
+                            Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                        }
+                        IndexError::NotFound => Err(WorkTableError::NotFound),
+                    };
+                }
             }
         } else {
             quote! {}
@@ -368,6 +401,29 @@ impl Generator {
         quote! {
             #diff_container
             #(#diff)*
+            #process_difference
+        }
+    }
+
+    fn gen_process_diffs_remove_on_index(&self, idx_idents: Option<&Vec<Ident>>) -> TokenStream {
+        let process_difference = if self.is_persist {
+            if idx_idents.is_some() {
+                quote! {
+                    let secondary_keys_events_remove = self.0.indexes.process_difference_remove_cdc(link, diffs)?;
+                    op.extend_secondary_key_events(secondary_keys_events_remove);
+                }
+            } else {
+                quote! {}
+            }
+        } else if idx_idents.is_some() {
+            quote! {
+                self.0.indexes.process_difference_remove(link, diffs)?;
+            }
+        } else {
+            quote! {}
+        };
+
+        quote! {
             #process_difference
         }
     }
@@ -398,7 +454,8 @@ impl Generator {
             .collect::<Vec<_>>();
 
         let size_check = self.gen_size_check(unsized_fields, idents);
-        let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
@@ -423,12 +480,14 @@ impl Generator {
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
-                #diff_process
+                #diff_process_insert
                 #persist_op
 
                 unsafe { self.0.data.with_mut_ref(link, |archived| {
                     #(#row_updates)*
                 }).map_err(WorkTableError::PagesError)? };
+
+                #diff_process_remove
 
                 lock.unlock();
                 self.0.lock_map.remove_with_lock_check(&pk).await;
@@ -515,7 +574,8 @@ impl Generator {
         } else {
             quote! {}
         };
-        let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let by = if is_float(by_ident.to_string().as_str()) {
@@ -556,7 +616,7 @@ impl Generator {
                     };
 
                     #size_check
-                    #diff_process
+                    #diff_process_insert
                     #persist_op
 
                     unsafe {
@@ -564,6 +624,8 @@ impl Generator {
                             #(#row_updates)*
                         }).map_err(WorkTableError::PagesError)?;
                     }
+
+                    #diff_process_remove
 
                     #persist_call
                 }
@@ -603,7 +665,8 @@ impl Generator {
             })
             .collect::<Vec<_>>();
         let size_check = self.gen_size_check(unsized_fields, idents);
-        let diff_process = self.gen_process_diffs_on_index(idents, idx_idents);
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let by = if is_float(by_ident.to_string().as_str()) {
@@ -644,7 +707,7 @@ impl Generator {
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
-                #diff_process
+                #diff_process_insert
                 #persist_op
 
                 unsafe {
@@ -652,6 +715,8 @@ impl Generator {
                         #(#row_updates)*
                     }).map_err(WorkTableError::PagesError)?;
                 }
+
+                #diff_process_remove
 
                 lock.unlock();
                 self.0.lock_map.remove_with_lock_check(&pk).await;

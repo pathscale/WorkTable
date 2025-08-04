@@ -212,7 +212,7 @@ where
                     self.indexes
                         .delete_from_indexes(row, link, inserted_already)?;
 
-                    Err(WorkTableError::AlreadyExists(at.to_string()))
+                    Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
                 IndexError::NotFound => Err(WorkTableError::NotFound),
             };
@@ -276,7 +276,7 @@ where
                     self.indexes
                         .delete_from_indexes(row, link, inserted_already)?;
 
-                    Err(WorkTableError::AlreadyExists(at.to_string()))
+                    Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
                 IndexError::NotFound => Err(WorkTableError::NotFound),
             };
@@ -362,7 +362,7 @@ where
                             .delete(new_link)
                             .map_err(WorkTableError::PagesError)?;
 
-                        Err(WorkTableError::AlreadyExists(at.to_string()))
+                        Err(WorkTableError::AlreadyExists(at.to_string_value()))
                     }
                     IndexError::NotFound => Err(WorkTableError::NotFound),
                 };
@@ -441,7 +441,7 @@ where
                             .delete(new_link)
                             .map_err(WorkTableError::PagesError)?;
 
-                        Err(WorkTableError::AlreadyExists(at.to_string()))
+                        Err(WorkTableError::AlreadyExists(at.to_string_value()))
                     }
                     IndexError::NotFound => Err(WorkTableError::NotFound),
                 };
