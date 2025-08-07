@@ -10,17 +10,17 @@ use lockfree::stack::Stack;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
+    Archive, Deserialize, Portable, Serialize,
     api::high::HighDeserializer,
     rancor::Strategy,
-    ser::{allocator::ArenaHandle, sharing::Share, Serializer},
+    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
-    Archive, Deserialize, Portable, Serialize,
 };
 
 use crate::{
     in_memory::{
+        DATA_INNER_LENGTH, Data, DataExecutionError,
         row::{RowWrapper, StorableRow},
-        Data, DataExecutionError, DATA_INNER_LENGTH,
     },
     prelude::Link,
 };

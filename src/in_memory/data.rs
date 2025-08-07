@@ -3,20 +3,20 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use data_bucket::page::PageId;
 use data_bucket::page::INNER_PAGE_SIZE;
+use data_bucket::page::PageId;
 use data_bucket::{DataPage, GeneralPage};
 use derive_more::{Display, Error};
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
+    Archive, Deserialize, Portable, Serialize,
     api::high::HighDeserializer,
     rancor::Strategy,
     seal::Seal,
-    ser::{allocator::ArenaHandle, sharing::Share, Serializer},
+    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
     with::{AtomicLoad, Relaxed, Skip, Unsafe},
-    Archive, Deserialize, Portable, Serialize,
 };
 
 use crate::prelude::Link;
@@ -239,7 +239,7 @@ pub enum ExecutionError {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
-    use std::sync::{mpsc, Arc};
+    use std::sync::{Arc, mpsc};
     use std::thread;
 
     use rkyv::{Archive, Deserialize, Serialize};
