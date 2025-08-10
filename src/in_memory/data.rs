@@ -105,7 +105,14 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(row)
             .map_err(|_| ExecutionError::SerializeError)?;
-        let length = bytes.len() as u32;
+        let length = bytes.len();
+        if length > DATA_LENGTH {
+            return Err(ExecutionError::PageTooSmall {
+                need: length,
+                allowed: DATA_LENGTH,
+            });
+        }
+        let length = length as u32;
         let offset = self.free_offset.fetch_add(length, Ordering::AcqRel);
         if offset > DATA_LENGTH as u32 - length {
             return Err(ExecutionError::PageIsFull {
@@ -222,9 +229,13 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 /// Error that can appear on [`Data`] page operations.
 #[derive(Copy, Clone, Debug, Display, Error, PartialEq)]
 pub enum ExecutionError {
-    /// Error of trying to save row in [`Data`] page with not enough space left.
+    /// Error of trying to save a row in [`Data`] page with not enough space left.
     #[display("need {}, but {} left", need, left)]
     PageIsFull { need: u32, left: i64 },
+
+    /// Error of trying to save a row in [`Data`] page that has smaller size than required.
+    #[display("need {}, but {} allowed", need, allowed)]
+    PageTooSmall { need: usize, allowed: usize },
 
     /// Error of saving `Row` in [`Data`] page.
     SerializeError,
@@ -244,7 +255,7 @@ mod tests {
 
     use rkyv::{Archive, Deserialize, Serialize};
 
-    use crate::in_memory::data::{Data, INNER_PAGE_SIZE};
+    use crate::in_memory::data::{Data, ExecutionError, INNER_PAGE_SIZE};
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -308,7 +319,16 @@ mod tests {
         let new_row = TestRow { a: 20, b: 20 };
         let res = page.save_row(&new_row);
 
-        assert!(res.is_err());
+        assert!(matches!(res, Err(ExecutionError::PageIsFull { .. })));
+    }
+
+    #[test]
+    fn data_page_too_small() {
+        let page = Data::<TestRow, 1>::new(1.into());
+        let row = TestRow { a: 10, b: 20 };
+        let res = page.save_row(&row);
+
+        assert!(matches!(res, Err(ExecutionError::PageTooSmall { .. })));
     }
 
     #[test]

@@ -115,6 +115,7 @@ where
                         self.empty_links.push(link);
                     }
                     DataExecutionError::PageIsFull { .. }
+                    | DataExecutionError::PageTooSmall { .. }
                     | DataExecutionError::SerializeError
                     | DataExecutionError::DeserializeError => return Err(e.into()),
                 }
@@ -145,7 +146,8 @@ where
                             self.add_next_page(tried_page);
                         }
                     }
-                    DataExecutionError::SerializeError
+                    DataExecutionError::PageTooSmall { .. }
+                    | DataExecutionError::SerializeError
                     | DataExecutionError::DeserializeError
                     | DataExecutionError::InvalidLink => return Err(e.into()),
                 },
