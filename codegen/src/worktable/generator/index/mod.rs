@@ -2,7 +2,7 @@ mod cdc;
 mod info;
 mod usual;
 
-use crate::name_generator::{is_float, is_unsized, WorktableNameGenerator};
+use crate::name_generator::{WorktableNameGenerator, is_float, is_unsized};
 use crate::worktable::generator::Generator;
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
