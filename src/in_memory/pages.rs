@@ -18,6 +18,7 @@ use rkyv::{
 };
 
 use crate::in_memory::empty_links_registry::EmptyLinksRegistry;
+use crate::prelude::EmptyLinkRegistryOperation;
 use crate::{
     in_memory::{
         DATA_INNER_LENGTH, Data, DataExecutionError,
@@ -47,6 +48,13 @@ where
     last_page_id: AtomicU32,
 
     current_page_id: AtomicU32,
+}
+
+#[derive(Debug)]
+pub struct InsertCdcOutput {
+    pub link: Link,
+    pub data_bytes: Vec<u8>,
+    pub empty_link_registry_ops: Vec<EmptyLinkRegistryOperation>,
 }
 
 impl<Row, EmptyLinks, const DATA_LENGTH: usize> Default for DataPages<Row, EmptyLinks, DATA_LENGTH>
@@ -104,12 +112,32 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             > + SizeMeasurable,
     {
+        self.insert_inner(row).map(|r| r.0)
+    }
+
+    fn insert_inner(
+        &self,
+        row: Row,
+    ) -> Result<(Link, Vec<EmptyLinkRegistryOperation>), ExecutionError>
+    where
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            > + SizeMeasurable,
+    {
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
         if let Some(link) = self
             .empty_links
             .find_link_with_length(general_row.aligned_size() as u32)
         {
+            let mut empty_link_registry_ops = vec![];
+            empty_link_registry_ops.push(EmptyLinkRegistryOperation::Remove(link));
+
             let pages = self.pages.read().unwrap();
             let current_page: usize = page_id_mapper(link.page_id.into());
             let page = &pages[current_page];
@@ -117,13 +145,14 @@ where
             match unsafe { page.save_row_by_link(&general_row, link) } {
                 Ok((link, left_link)) => {
                     if let Some(link) = left_link {
+                        empty_link_registry_ops.push(EmptyLinkRegistryOperation::Add(link));
                         self.empty_links.add_empty_link(link)
                     }
-                    return Ok(link);
+                    return Ok((link, empty_link_registry_ops));
                 }
                 Err(e) => match e {
                     DataExecutionError::InvalidLink => {
-                        println!("Link back {:?}", link);
+                        empty_link_registry_ops.pop();
                         self.empty_links.add_empty_link(link);
                     }
                     DataExecutionError::PageIsFull { .. }
@@ -146,7 +175,7 @@ where
             match link {
                 Ok(link) => {
                     self.row_count.fetch_add(1, Ordering::Relaxed);
-                    return Ok(link);
+                    return Ok((link, vec![]));
                 }
                 Err(e) => match e {
                     DataExecutionError::PageIsFull { .. } => {
@@ -165,7 +194,7 @@ where
         }
     }
 
-    pub fn insert_cdc(&self, row: Row) -> Result<(Link, Vec<u8>), ExecutionError>
+    pub fn insert_cdc(&self, row: Row) -> Result<InsertCdcOutput, ExecutionError>
     where
         Row: Archive
             + for<'a> Serialize<
@@ -176,12 +205,16 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             > + SizeMeasurable,
     {
-        let link = self.insert(row.clone())?;
+        let (link, ops) = self.insert_inner(row.clone())?;
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         let bytes = rkyv::to_bytes(&general_row)
             .expect("should be ok as insert not failed")
             .into_vec();
-        Ok((link, bytes))
+        Ok(InsertCdcOutput {
+            link,
+            data_bytes: bytes,
+            empty_link_registry_ops: ops,
+        })
     }
 
     fn add_next_page(&self, tried_page: usize) {
@@ -322,9 +355,9 @@ where
         Ok(link)
     }
 
-    pub fn delete(&self, link: Link) -> Result<(), ExecutionError> {
+    pub fn delete(&self, link: Link) -> Result<Vec<EmptyLinkRegistryOperation>, ExecutionError> {
         self.empty_links.add_empty_link(link);
-        Ok(())
+        Ok(vec![EmptyLinkRegistryOperation::Add(link)])
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {

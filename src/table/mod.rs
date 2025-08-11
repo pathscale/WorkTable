@@ -4,7 +4,9 @@ pub mod system_info;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use crate::in_memory::{DataPages, EmptyLinksRegistry, GhostWrapper, RowWrapper, StorableRow};
+use crate::in_memory::{
+    DataPages, EmptyLinksRegistry, GhostWrapper, InsertCdcOutput, RowWrapper, StorableRow,
+};
 use crate::lock::LockMap;
 use crate::persistence::{InsertOperation, Operation};
 use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
@@ -262,10 +264,16 @@ where
         AvailableIndexes: Debug + AvailableIndex,
     {
         let pk = row.get_primary_key().clone();
-        let (link, _) = self
+        let output = self
             .data
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
+        let InsertCdcOutput {
+            link,
+            data_bytes: _,
+            empty_link_registry_ops,
+        } = output;
+
         let primary_key_events = self.pk_map.checked_insert_cdc(pk.clone(), link);
         if primary_key_events.is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
@@ -303,6 +311,7 @@ where
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events: primary_key_events.expect("should be checked before for existence"),
             secondary_keys_events: indexes_res.expect("was checked before"),
+            empty_link_registry_operations: empty_link_registry_ops,
             bytes,
             link,
         });
@@ -421,10 +430,15 @@ where
             .get(&pk)
             .map(|v| v.get().value)
             .ok_or(WorkTableError::NotFound)?;
-        let (new_link, _) = self
+        let output = self
             .data
             .insert_cdc(row_new.clone())
             .map_err(WorkTableError::PagesError)?;
+        let InsertCdcOutput {
+            link: new_link,
+            data_bytes: _,
+            mut empty_link_registry_ops,
+        } = output;
         unsafe {
             self.data
                 .with_mut_ref(new_link, |r| r.unghost())
@@ -453,9 +467,11 @@ where
             };
         }
 
-        self.data
+        let delete_ops = self
+            .data
             .delete(old_link)
             .map_err(WorkTableError::PagesError)?;
+        empty_link_registry_ops.extend(delete_ops);
         let bytes = self
             .data
             .select_raw(new_link)
@@ -466,6 +482,7 @@ where
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
             secondary_keys_events: indexes_res.expect("was checked just before"),
+            empty_link_registry_operations: empty_link_registry_ops,
             bytes,
             link: new_link,
         });

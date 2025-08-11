@@ -1,8 +1,9 @@
-use crate::remove_dir_if_exists;
 use std::time::Duration;
 
 use worktable::prelude::*;
 use worktable::worktable;
+
+use crate::remove_dir_if_exists;
 
 mod string_primary_index;
 mod string_re_read;
@@ -391,6 +392,52 @@ fn test_space_delete_query_sync() {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
             assert!(table.select(pk).is_none());
             assert_eq!(table.0.pk_gen.get_state(), pk + 1)
+        }
+    });
+}
+
+#[test]
+fn test_space_empty_links_available() {
+    let config =
+        PersistenceConfig::new("tests/data/sync/empty_links", "tests/data/sync/empty_links");
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/sync/empty_links".to_string()).await;
+
+        let pk = {
+            let table = TestSyncWorkTable::load_from_file(config.clone())
+                .await
+                .unwrap();
+            let row1 = TestSyncRow {
+                another: 42,
+                non_unique: 0,
+                field: 0.234,
+                id: table.get_next_pk().into(),
+            };
+            table.insert(row1.clone()).unwrap();
+            let row2 = TestSyncRow {
+                another: 43,
+                non_unique: 0,
+                field: 0.235,
+                id: table.get_next_pk().into(),
+            };
+            table.insert(row2.clone()).unwrap();
+            table.delete(row2.id.into()).await.unwrap();
+
+            table.wait_for_ops().await;
+            row1.id
+        };
+        {
+            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            assert!(table.select(pk).is_some());
+            assert_eq!(table.0.data.get_empty_links().len(), 1);
         }
     });
 }

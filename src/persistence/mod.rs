@@ -8,8 +8,8 @@ use crate::persistence::operation::BatchOperation;
 pub use engine::PersistenceEngine;
 pub use manager::PersistenceConfig;
 pub use operation::{
-    DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
-    validate_events,
+    DeleteOperation, EmptyLinkRegistryOperation, InsertOperation, Operation, OperationId,
+    OperationType, UpdateOperation, validate_events,
 };
 pub use space::{
     IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,

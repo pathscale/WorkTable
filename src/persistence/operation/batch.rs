@@ -363,6 +363,31 @@ where
         }
     }
 
+    pub fn get_empty_link_registry_ops(&self) -> eyre::Result<EmptyLinkOperationsState> {
+        let mut state = EmptyLinkOperationsState::default();
+        for row in self
+            .info_wt
+            .select_all()
+            .order_on(BatchInnerRowFields::OperationId, Order::Asc)
+            .execute()?
+        {
+            if row.op_type == OperationType::Update {
+                continue;
+            }
+            let pos = row.pos;
+            let op = self
+                .ops
+                .get(pos)
+                .expect("should be available as loaded from info table");
+            let evs = op
+                .empty_links_ops()
+                .expect("should be available as `Update` operations are sorted out");
+            state.append_ops(evs.iter());
+        }
+
+        Ok(state)
+    }
+
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {
         let mut data = HashMap::new();
         for link in self.info_wt.iter_links() {
@@ -390,5 +415,152 @@ where
         }
 
         Ok(data)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct EmptyLinkOperationsState {
+    pub add_set: HashSet<Link>,
+    pub remove_set: HashSet<Link>,
+}
+
+impl EmptyLinkOperationsState {
+    pub fn append_ops<'a>(&mut self, ops: impl Iterator<Item = &'a EmptyLinkRegistryOperation>) {
+        for op in ops {
+            match op {
+                EmptyLinkRegistryOperation::Add(link) => {
+                    if !self.remove_set.remove(&link) {
+                        self.add_set.insert(*link);
+                    }
+                }
+                EmptyLinkRegistryOperation::Remove(link) => {
+                    if !self.add_set.remove(&link) {
+                        self.remove_set.insert(*link);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn get_result_ops(self) -> Vec<EmptyLinkRegistryOperation> {
+        self.add_set
+            .into_iter()
+            .map(|l| EmptyLinkRegistryOperation::Add(l))
+            .chain(
+                self.remove_set
+                    .into_iter()
+                    .map(|l| EmptyLinkRegistryOperation::Remove(l)),
+            )
+            .collect()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.remove_set.is_empty() && self.add_set.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod empty_links_tests {
+    use std::collections::HashSet;
+
+    use data_bucket::Link;
+    use data_bucket::page::PageId;
+
+    use crate::persistence::operation::batch::EmptyLinkOperationsState;
+    use crate::prelude::EmptyLinkRegistryOperation;
+
+    fn gen_ops(len: usize, add: bool) -> Vec<EmptyLinkRegistryOperation> {
+        let mut ops = vec![];
+        let mut offset = 0;
+
+        for _ in 0..len {
+            let length = fastrand::u32(10..60);
+            let link = Link {
+                page_id: PageId::from(0),
+                offset,
+                length,
+            };
+            offset += length;
+            if add {
+                ops.push(EmptyLinkRegistryOperation::Add(link))
+            } else {
+                ops.push(EmptyLinkRegistryOperation::Remove(link))
+            }
+        }
+
+        ops
+    }
+
+    #[test]
+    fn test_links_collection_basic() {
+        let ops = vec![
+            EmptyLinkRegistryOperation::Add(Link {
+                page_id: PageId::from(0),
+                offset: 0,
+                length: 20,
+            }),
+            EmptyLinkRegistryOperation::Add(Link {
+                page_id: PageId::from(0),
+                offset: 20,
+                length: 60,
+            }),
+            EmptyLinkRegistryOperation::Remove(Link {
+                page_id: PageId::from(0),
+                offset: 20,
+                length: 60,
+            }),
+        ];
+
+        let mut state = EmptyLinkOperationsState::default();
+        state.append_ops(ops.iter());
+        let res = state.get_result_ops();
+
+        assert_eq!(res.len(), 1);
+        assert_eq!(res, vec![ops[0]])
+    }
+
+    #[test]
+    fn test_links_collection_random_remove() {
+        let add_ops = gen_ops(256, true);
+        let mut remove_ops = HashSet::new();
+        for _ in 0..64 {
+            let op_pos = fastrand::usize(0..256);
+            let mut op = add_ops[op_pos];
+            while !remove_ops.insert(EmptyLinkRegistryOperation::Remove(op.link())) {
+                let op_pos = fastrand::usize(0..256);
+                op = add_ops[op_pos];
+            }
+        }
+        assert_eq!(remove_ops.len(), 64);
+
+        let mut state = EmptyLinkOperationsState::default();
+        state.append_ops(add_ops.iter());
+        state.append_ops(remove_ops.iter());
+        let res = state.get_result_ops();
+
+        assert_eq!(res.len(), add_ops.len() - remove_ops.len());
+    }
+
+    #[test]
+    fn test_links_collection_random_add() {
+        let remove_ops = gen_ops(256, false);
+        let mut add_ops = HashSet::new();
+        for _ in 0..64 {
+            let op_pos = fastrand::usize(0..256);
+            let mut op = remove_ops[op_pos];
+            while !add_ops.insert(EmptyLinkRegistryOperation::Add(op.link())) {
+                let op_pos = fastrand::usize(0..256);
+                op = remove_ops[op_pos];
+            }
+        }
+        assert_eq!(add_ops.len(), 64);
+
+        let mut state = EmptyLinkOperationsState::default();
+        state.append_ops(remove_ops.iter());
+        state.append_ops(add_ops.iter());
+        let res = state.get_result_ops();
+
+        assert_eq!(res.len(), remove_ops.len() - add_ops.len());
     }
 }
