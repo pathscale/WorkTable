@@ -21,7 +21,10 @@ pub use table::*;
 pub use worktable_codegen::worktable;
 
 pub mod prelude {
-    pub use crate::in_memory::{Data, DataPages, GhostWrapper, Query, RowWrapper, StorableRow};
+    pub use crate::in_memory::{
+        Data, DataPages, EmptyLinksRegistry, GhostWrapper, Query, RowWrapper,
+        SizedEmptyLinkRegistry, StorableRow, UnsizedEmptyLinkRegistry,
+    };
     pub use crate::lock::LockMap;
     pub use crate::lock::{Lock, RowLock};
     pub use crate::mem_stat::MemStat;

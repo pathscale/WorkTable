@@ -4,7 +4,7 @@ pub mod system_info;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
+use crate::in_memory::{DataPages, EmptyLinksRegistry, GhostWrapper, RowWrapper, StorableRow};
 use crate::lock::LockMap;
 use crate::persistence::{InsertOperation, Operation};
 use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
@@ -13,7 +13,7 @@ use crate::{
     AvailableIndex, IndexError, IndexMap, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
     in_memory,
 };
-use data_bucket::{INNER_PAGE_SIZE, Link};
+use data_bucket::{INNER_PAGE_SIZE, Link, SizeMeasurable};
 use derive_more::{Display, Error, From};
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
@@ -32,6 +32,7 @@ use uuid::Uuid;
 pub struct WorkTable<
     Row,
     PrimaryKey,
+    EmptyLinks,
     AvailableTypes = (),
     AvailableIndexes = (),
     SecondaryIndexes = (),
@@ -44,7 +45,7 @@ pub struct WorkTable<
     Row: StorableRow + Send + Clone + 'static,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
 {
-    pub data: DataPages<Row, DATA_LENGTH>,
+    pub data: DataPages<Row, EmptyLinks, DATA_LENGTH>,
 
     pub pk_map: IndexMap<PrimaryKey, Link, PkNodeType>,
 
@@ -65,6 +66,7 @@ pub struct WorkTable<
 impl<
     Row,
     PrimaryKey,
+    EmptyLinks,
     AvailableTypes,
     AvailableIndexes,
     SecondaryIndexes,
@@ -76,6 +78,7 @@ impl<
     for WorkTable<
         Row,
         PrimaryKey,
+        EmptyLinks,
         AvailableTypes,
         AvailableIndexes,
         SecondaryIndexes,
@@ -86,6 +89,7 @@ impl<
     >
 where
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    EmptyLinks: Default + EmptyLinksRegistry,
     SecondaryIndexes: Default,
     PkGen: Default,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
@@ -109,6 +113,7 @@ where
 impl<
     Row,
     PrimaryKey,
+    EmptyLinks,
     AvailableTypes,
     AvailableIndexes,
     SecondaryIndexes,
@@ -120,6 +125,7 @@ impl<
     WorkTable<
         Row,
         PrimaryKey,
+        EmptyLinks,
         AvailableTypes,
         AvailableIndexes,
         SecondaryIndexes,
@@ -131,6 +137,7 @@ impl<
 where
     Row: TableRow<PrimaryKey>,
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    EmptyLinks: Default + EmptyLinksRegistry,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
@@ -184,7 +191,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
@@ -246,7 +253,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
@@ -321,7 +328,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
@@ -397,7 +404,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>

@@ -138,7 +138,11 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataRow")
     )]
-    pub unsafe fn save_row_by_link(&self, row: &Row, link: Link) -> Result<Link, ExecutionError>
+    pub unsafe fn save_row_by_link(
+        &self,
+        row: &Row,
+        mut link: Link,
+    ) -> Result<(Link, Option<Link>), ExecutionError>
     where
         Row: Archive
             + for<'a> Serialize<
@@ -147,15 +151,25 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     {
         let bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
         let length = bytes.len() as u32;
-        if length != link.length {
+
+        let link_left = if link.length > length {
+            link.length = length;
+            Some(Link {
+                page_id: link.page_id,
+                offset: link.offset + length,
+                length: link.length - length,
+            })
+        } else if link.length == length {
+            None
+        } else {
             return Err(ExecutionError::InvalidLink);
-        }
+        };
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[link.offset as usize..][..link.length as usize]
             .copy_from_slice(bytes.as_slice());
 
-        Ok(link)
+        Ok((link, link_left))
     }
 
     /// # Safety
@@ -302,7 +316,7 @@ mod tests {
         let new_row = TestRow { a: 20, b: 20 };
         let res = unsafe { page.save_row_by_link(&new_row, link) }.unwrap();
 
-        assert_eq!(res, link);
+        assert_eq!(res, (link, None));
 
         let inner_data = unsafe { &mut *page.inner_data.get() };
         let bytes = &inner_data[link.offset as usize..link.length as usize];

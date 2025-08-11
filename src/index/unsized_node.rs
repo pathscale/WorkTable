@@ -213,6 +213,12 @@ where
     {
         self.inner.deref().iter()
     }
+
+    fn drain(&mut self) -> Vec<T> {
+        // we can not change `length` and other fields as node will be removed
+        // after drain.
+        self.inner.drain(..).collect()
+    }
 }
 
 #[cfg(test)]
