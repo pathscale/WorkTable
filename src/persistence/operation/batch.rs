@@ -429,12 +429,12 @@ impl EmptyLinkOperationsState {
         for op in ops {
             match op {
                 EmptyLinkRegistryOperation::Add(link) => {
-                    if !self.remove_set.remove(&link) {
+                    if !self.remove_set.remove(link) {
                         self.add_set.insert(*link);
                     }
                 }
                 EmptyLinkRegistryOperation::Remove(link) => {
-                    if !self.add_set.remove(&link) {
+                    if !self.add_set.remove(link) {
                         self.remove_set.insert(*link);
                     }
                 }
@@ -446,11 +446,11 @@ impl EmptyLinkOperationsState {
     pub fn get_result_ops(self) -> Vec<EmptyLinkRegistryOperation> {
         self.add_set
             .into_iter()
-            .map(|l| EmptyLinkRegistryOperation::Add(l))
+            .map(EmptyLinkRegistryOperation::Add)
             .chain(
                 self.remove_set
                     .into_iter()
-                    .map(|l| EmptyLinkRegistryOperation::Remove(l)),
+                    .map(EmptyLinkRegistryOperation::Remove),
             )
             .collect()
     }
@@ -494,7 +494,7 @@ mod empty_links_tests {
 
     #[test]
     fn test_links_collection_basic() {
-        let ops = vec![
+        let ops = [
             EmptyLinkRegistryOperation::Add(Link {
                 page_id: PageId::from(0),
                 offset: 0,

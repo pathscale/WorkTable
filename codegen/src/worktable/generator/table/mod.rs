@@ -86,8 +86,8 @@ impl Generator {
         let row_types = &self
             .columns
             .columns_map
-            .iter()
-            .map(|(_, t)| t.to_string())
+            .values()
+            .map(|t| t.to_string())
             .collect::<Vec<_>>();
         let row_unsized = is_unsized_vec(row_types);
         let derive = if self.is_persist {

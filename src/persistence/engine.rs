@@ -179,7 +179,7 @@ where
                 empty_links
                     .iter()
                     .filter(|l| !empty_links_ops.remove_set.remove(*l))
-                    .map(|l| *l)
+                    .copied()
                     .collect::<Vec<_>>(),
             );
             std::mem::swap(&mut info.inner.empty_links_list, &mut links_to_add);

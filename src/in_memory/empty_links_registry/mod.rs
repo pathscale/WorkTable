@@ -24,4 +24,9 @@ pub trait EmptyLinksRegistry {
 
     /// Returns length of this [`EmptyLinksRegistry`].
     fn len(&self) -> usize;
+
+    /// Checks if this [`EmptyLinksRegistry`] is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
