@@ -1196,12 +1196,12 @@ async fn test_update_by_pk() {
 }
 
 //#[test]
-fn _bench() {
+fn bench() {
     let table = TestWorkTable::default();
 
-    let mut v = Vec::with_capacity(10000);
+    let mut v = Vec::with_capacity(100_000);
 
-    for i in 0..10000 {
+    for i in 0..100_000 {
         let row = TestRow {
             id: table.get_next_pk().into(),
             test: i + 1,

@@ -20,8 +20,6 @@ use data_bucket::{INNER_PAGE_SIZE, Link, SizeMeasurable};
 use derive_more::{Display, Error, From};
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
-#[cfg(feature = "perf_measurements")]
-use performance_measurement_codegen::performance_measurement;
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -153,10 +151,6 @@ where
     }
 
     /// Selects `Row` from table identified with provided primary key. Returns `None` if no value presented.
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "WorkTable")
-    )]
     pub fn select(&self, pk: PrimaryKey) -> Option<Row>
     where
         LockType: 'static,
@@ -180,10 +174,6 @@ where
         }
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "WorkTable")
-    )]
     pub fn insert(&self, row: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive

@@ -9,8 +9,6 @@ use data_bucket::{
     DataPage, DefaultSizeMeasurable, GeneralPage, SizeMeasurable, SizeMeasure, align,
 };
 use derive_more::{Display, Error};
-#[cfg(feature = "perf_measurements")]
-use performance_measurement_codegen::performance_measurement;
 use rkyv::{
     Archive, Deserialize, Portable, Serialize,
     api::high::HighDeserializer,
@@ -47,6 +45,10 @@ impl<const N: usize> DerefMut for AlignedBytes<N> {
     }
 }
 
+/// Value that represents size of the row which will be written just after this
+/// value.
+///
+/// `u64` is used to keep correct alignment
 #[derive(
     Archive,
     Copy,
@@ -63,7 +65,7 @@ impl<const N: usize> DerefMut for AlignedBytes<N> {
     SizeMeasure,
 )]
 #[rkyv(derive(Debug, PartialOrd, PartialEq, Eq, Ord))]
-pub struct RowLength(pub u32);
+pub struct RowLength(pub u64);
 
 #[derive(Archive, Deserialize, Debug, Serialize)]
 pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
@@ -112,10 +114,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         self.id = id;
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataRow")
-    )]
     pub fn save_row(&self, row: &Row) -> Result<Link, ExecutionError>
     where
         Row: Archive
@@ -126,7 +124,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(row)
             .map_err(|_| ExecutionError::SerializeError)?;
         let link_length = bytes.len();
-        let length_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&RowLength(link_length as u32))
+        let length_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&RowLength(link_length as u64))
             .map_err(|_| ExecutionError::SerializeError)?;
         let length = link_length + RowLength::default_aligned_size();
         if length > DATA_LENGTH {
@@ -160,10 +158,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     }
 
     #[allow(clippy::missing_safety_doc)]
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataRow")
-    )]
     pub unsafe fn save_row_by_link(
         &self,
         row: &Row,
@@ -219,10 +213,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(unsafe { rkyv::access_unchecked_mut::<<Row as Archive>::Archived>(&mut bytes[..]) })
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataRow")
-    )]
     pub fn get_row_ref(&self, link: Link) -> Result<&<Row as Archive>::Archived, ExecutionError>
     where
         Row: Archive,
@@ -236,10 +226,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(bytes) })
     }
 
-    //#[cfg_attr(
-    //    feature = "perf_measurements",
-    //    performance_measurement(prefix_name = "DataRow")
-    //)]
     pub fn get_row(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive,
@@ -291,7 +277,6 @@ pub enum ExecutionError {
 mod tests {
     use crate::in_memory::data::{Data, ExecutionError, INNER_PAGE_SIZE, RowLength};
     use data_bucket::DefaultSizeMeasurable;
-    use rkyv::util::AlignedVec;
     use rkyv::{Archive, Deserialize, Serialize};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, mpsc};
@@ -330,10 +315,7 @@ mod tests {
         );
 
         let inner_data = unsafe { &mut *page.inner_data.get() };
-        let mut bytes = AlignedVec::<8>::new();
-        bytes.extend_from_slice(
-            &inner_data[link.offset as usize..(link.offset + link.length) as usize],
-        );
+        let bytes = &inner_data[link.offset as usize..(link.offset + link.length) as usize];
         let archived = unsafe { rkyv::access_unchecked::<ArchivedTestRow>(&bytes) };
         assert_eq!(archived, &row)
     }
@@ -351,14 +333,14 @@ mod tests {
         assert_eq!(res, (link, None));
 
         let inner_data = unsafe { &mut *page.inner_data.get() };
-        let bytes = &inner_data[link.offset as usize..link.length as usize];
+        let bytes = &inner_data[link.offset as usize..(link.offset + link.length) as usize];
         let archived = unsafe { rkyv::access_unchecked::<ArchivedTestRow>(bytes) };
         assert_eq!(archived, &new_row)
     }
 
     #[test]
     fn data_page_full() {
-        let page = Data::<TestRow, 20>::new(1.into());
+        let page = Data::<TestRow, 24>::new(1.into());
         let row = TestRow { a: 10, b: 20 };
         let _ = page.save_row(&row).unwrap();
 

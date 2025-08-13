@@ -7,8 +7,6 @@ use std::{
 use data_bucket::SizeMeasurable;
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
-#[cfg(feature = "perf_measurements")]
-use performance_measurement_codegen::performance_measurement;
 use rkyv::{
     Archive, Deserialize, Portable, Serialize,
     api::high::HighDeserializer,
@@ -227,10 +225,6 @@ where
         }
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
     pub fn select(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive
@@ -270,10 +264,6 @@ where
         Ok(gen_row.get_inner())
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
     pub fn with_ref<Op, Res>(&self, link: Link, op: Op) -> Result<Res, ExecutionError>
     where
         Row: Archive
@@ -294,10 +284,6 @@ where
     }
 
     #[allow(clippy::missing_safety_doc)]
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
     pub unsafe fn with_mut_ref<Op, Res>(
         &self,
         link: Link,
@@ -409,14 +395,15 @@ pub enum ExecutionError {
 
 #[cfg(test)]
 mod tests {
+    use data_bucket::DefaultSizeMeasurable;
+    use rkyv::{Archive, Deserialize, Serialize};
     use std::collections::HashSet;
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, RwLock};
     use std::thread;
     use std::time::Instant;
 
-    use rkyv::{Archive, Deserialize, Serialize};
-
+    use crate::in_memory::data::RowLength;
     use crate::in_memory::pages::DataPages;
     use crate::in_memory::{PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::{
@@ -488,7 +475,7 @@ mod tests {
 
         assert_eq!(link.page_id, 1.into());
         assert_eq!(link.length, 24);
-        assert_eq!(link.offset, 0);
+        assert_eq!(link.offset, RowLength::default_aligned_size() as u32);
 
         assert_eq!(pages.row_count.load(Ordering::Relaxed), 1);
     }

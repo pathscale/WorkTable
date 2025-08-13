@@ -46,7 +46,7 @@ async fn test_index_table_of_contents_read_from_space() {
             99,
             Link {
                 page_id: 1.into(),
-                offset: 2352,
+                offset: 3144,
                 length: 24
             }
         )),
