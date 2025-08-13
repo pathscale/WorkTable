@@ -171,9 +171,10 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     {
         let bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
         let length = bytes.len() as u32;
+        let length_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&RowLength(length as u64))
+            .map_err(|_| ExecutionError::SerializeError)?;
 
         let link_left = if link.length > length {
-            link.length = length;
             Some(Link {
                 page_id: link.page_id,
                 offset: link.offset + length,
@@ -184,8 +185,11 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         } else {
             return Err(ExecutionError::InvalidLink);
         };
-
+        link.length = length;
         let inner_data = unsafe { &mut *self.inner_data.get() };
+        inner_data[link.offset as usize - RowLength::default_aligned_size()..]
+            [..RowLength::default_aligned_size()]
+            .copy_from_slice(length_bytes.as_slice());
         inner_data[link.offset as usize..][..link.length as usize]
             .copy_from_slice(bytes.as_slice());
 
@@ -275,8 +279,10 @@ pub enum ExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use crate::in_memory::data::{Data, ExecutionError, INNER_PAGE_SIZE, RowLength};
-    use data_bucket::DefaultSizeMeasurable;
+    use crate::in_memory::data::{
+        ArchivedRowLength, Data, ExecutionError, INNER_PAGE_SIZE, RowLength,
+    };
+    use data_bucket::{DefaultSizeMeasurable, Link};
     use rkyv::{Archive, Deserialize, Serialize};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, mpsc};
@@ -289,6 +295,15 @@ mod tests {
     struct TestRow {
         a: u64,
         b: u64,
+    }
+
+    #[derive(
+        Archive, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+    )]
+    #[rkyv(compare(PartialEq), derive(Debug))]
+    struct UnsizedTestRow {
+        a: u64,
+        b: String,
     }
 
     #[test]
@@ -336,6 +351,47 @@ mod tests {
         let bytes = &inner_data[link.offset as usize..(link.offset + link.length) as usize];
         let archived = unsafe { rkyv::access_unchecked::<ArchivedTestRow>(bytes) };
         assert_eq!(archived, &new_row)
+    }
+
+    #[test]
+    fn data_page_overwrite_row_unsized() {
+        let page = Data::<UnsizedTestRow>::new(1.into());
+        let row = UnsizedTestRow {
+            a: 10,
+            b: "SomeString__________2000".to_string(),
+        };
+
+        let link = page.save_row(&row).unwrap();
+
+        let new_row = UnsizedTestRow {
+            a: 20,
+            b: "SomeString".to_string(),
+        };
+        let (res_link, left_link) = unsafe { page.save_row_by_link(&new_row, link) }.unwrap();
+
+        assert_ne!(res_link, link);
+        assert_eq!(
+            left_link,
+            Some(Link {
+                page_id: link.page_id,
+                offset: 40,
+                length: 8
+            })
+        );
+        assert_eq!(left_link.unwrap().offset, res_link.offset + res_link.length);
+        assert_eq!(left_link.unwrap().length, link.length - res_link.length);
+
+        let inner_data = unsafe { &mut *page.inner_data.get() };
+        let bytes =
+            &inner_data[res_link.offset as usize..(res_link.offset + res_link.length) as usize];
+        let archived = unsafe { rkyv::access_unchecked::<ArchivedUnsizedTestRow>(bytes) };
+        assert_eq!(archived, &new_row);
+
+        let length_bytes = &inner_data[res_link.offset as usize - RowLength::default_aligned_size()
+            ..res_link.offset as usize];
+        let archived = unsafe { rkyv::access_unchecked::<ArchivedRowLength>(length_bytes) };
+        let length = rkyv::deserialize::<RowLength, rkyv::rancor::Error>(archived).unwrap();
+        assert_eq!(length.0 as u32, res_link.length);
     }
 
     #[test]
