@@ -230,6 +230,44 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(bytes) })
     }
 
+    pub fn get_next_lying_row_ref(
+        &self,
+        link: Link,
+    ) -> Result<(&<Row as Archive>::Archived, Link), ExecutionError>
+    where
+        Row: Archive,
+        <Row as Archive>::Archived: Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        if link.offset > self.free_offset.load(Ordering::Acquire)
+            || link.offset + link.length + RowLength::default_aligned_size() as u32
+                > self.free_offset.load(Ordering::Acquire)
+        {
+            return Err(ExecutionError::DeserializeError);
+        }
+
+        let inner_data = unsafe { &*self.inner_data.get() };
+        let length_bytes = &inner_data[(link.offset + link.length) as usize..]
+            [..RowLength::default_aligned_size()];
+        let archived =
+            unsafe { rkyv::access_unchecked::<<RowLength as Archive>::Archived>(length_bytes) };
+        let length = rkyv::deserialize::<RowLength, rkyv::rancor::Error>(archived)
+            .map_err(|_| ExecutionError::DeserializeError)?
+            .0;
+        let offset = (link.offset + link.length) as usize + RowLength::default_aligned_size();
+        let bytes = &inner_data[offset..][..length as usize];
+
+        let row_link = Link {
+            page_id: link.page_id,
+            offset: link.offset + link.length + RowLength::default_aligned_size() as u32,
+            length: length as u32,
+        };
+
+        Ok((
+            unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(bytes) },
+            row_link,
+        ))
+    }
+
     pub fn get_row(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive,
@@ -238,6 +276,19 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         let row = self.get_row_ref(link)?;
         rkyv::deserialize::<_, rkyv::rancor::Error>(row)
             .map_err(|_| ExecutionError::DeserializeError)
+    }
+
+    pub fn get_next_lying_row(&self, link: Link) -> Result<(Row, Link), ExecutionError>
+    where
+        Row: Archive,
+        <Row as Archive>::Archived: Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        let (row, row_link) = self.get_next_lying_row_ref(link)?;
+        Ok((
+            rkyv::deserialize::<_, rkyv::rancor::Error>(row)
+                .map_err(|_| ExecutionError::DeserializeError)?,
+            row_link,
+        ))
     }
 
     pub fn get_raw_row(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
@@ -279,14 +330,16 @@ pub enum ExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use crate::in_memory::data::{
-        ArchivedRowLength, Data, ExecutionError, INNER_PAGE_SIZE, RowLength,
-    };
-    use data_bucket::{DefaultSizeMeasurable, Link};
-    use rkyv::{Archive, Deserialize, Serialize};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, mpsc};
     use std::thread;
+
+    use data_bucket::{DefaultSizeMeasurable, Link};
+    use rkyv::{Archive, Deserialize, Serialize};
+
+    use crate::in_memory::data::{
+        ArchivedRowLength, Data, ExecutionError, INNER_PAGE_SIZE, RowLength,
+    };
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -499,6 +552,19 @@ mod tests {
         let link = page.save_row(&row).unwrap();
         let deserialized = page.get_row(link).unwrap();
         assert_eq!(deserialized, row)
+    }
+
+    #[test]
+    fn data_page_get_next_row() {
+        let page = Data::<TestRow>::new(1.into());
+        let row1 = TestRow { a: 10, b: 20 };
+        let link1 = page.save_row(&row1).unwrap();
+        let row2 = TestRow { a: 40, b: 50 };
+        let link2 = page.save_row(&row2).unwrap();
+
+        let (deserialized, res_link) = page.get_next_lying_row(link1).unwrap();
+        assert_eq!(deserialized, row2);
+        assert_eq!(res_link, link2)
     }
 
     #[test]
