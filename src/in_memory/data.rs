@@ -169,23 +169,28 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
     {
+        // links in this fn should be used from EmptyLinkRegistry (returned after `delete` method)
+
         let bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
         let length = bytes.len() as u32;
         let length_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&RowLength(length as u64))
             .map_err(|_| ExecutionError::SerializeError)?;
 
-        let link_left = if link.length > length {
+        let link_left = if link.length > length + RowLength::default_aligned_size() as u32 {
             Some(Link {
                 page_id: link.page_id,
-                offset: link.offset + length,
-                length: link.length - length,
+                offset: link.offset + length + RowLength::default_aligned_size() as u32,
+                length: link.length - (length + RowLength::default_aligned_size() as u32),
             })
-        } else if link.length == length {
+        } else if link.length == length + RowLength::default_aligned_size() as u32 {
             None
         } else {
             return Err(ExecutionError::InvalidLink);
         };
+
+        link.offset += RowLength::default_aligned_size() as u32;
         link.length = length;
+
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[link.offset as usize - RowLength::default_aligned_size()..]
             [..RowLength::default_aligned_size()]
@@ -301,6 +306,15 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(bytes.to_vec())
     }
 
+    pub fn delete_row(mut link: Link) -> Link {
+        // we don't remove data on delete, but we need to append space allocated
+        // for length bytes to link
+        link.offset -= RowLength::default_aligned_size() as u32;
+        link.length += RowLength::default_aligned_size() as u32;
+
+        link
+    }
+
     pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
         let data = unsafe { &*self.inner_data.get() };
         data.0
@@ -394,9 +408,10 @@ mod tests {
         let row = TestRow { a: 10, b: 20 };
 
         let link = page.save_row(&row).unwrap();
+        let res_link = Data::<TestRow>::delete_row(link);
 
         let new_row = TestRow { a: 20, b: 20 };
-        let res = unsafe { page.save_row_by_link(&new_row, link) }.unwrap();
+        let res = unsafe { page.save_row_by_link(&new_row, res_link) }.unwrap();
 
         assert_eq!(res, (link, None));
 
@@ -415,12 +430,13 @@ mod tests {
         };
 
         let link = page.save_row(&row).unwrap();
+        let res_link = Data::<TestRow>::delete_row(link);
 
         let new_row = UnsizedTestRow {
             a: 20,
             b: "SomeString".to_string(),
         };
-        let (res_link, left_link) = unsafe { page.save_row_by_link(&new_row, link) }.unwrap();
+        let (res_link, left_link) = unsafe { page.save_row_by_link(&new_row, res_link) }.unwrap();
 
         assert_ne!(res_link, link);
         assert_eq!(

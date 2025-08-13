@@ -35,7 +35,11 @@ pub struct Defragmentator<
     PkGen,
     NodeType,
     const DATA_LENGTH: usize,
-> {
+> where
+    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    Row: StorableRow + Send + Clone + 'static,
+    NodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+{
     /// [`WorkTable`] to work with.
     table: Arc<
         WorkTable<
@@ -118,7 +122,10 @@ where
         &self,
         mapped_links: HashMap<PageId, Vec<Link>>,
     ) -> eyre::Result<()> {
-        for (page_id, links) in mapped_links {
+        for (page_id, mut links) in mapped_links {
+            // sorting `Link`s in ascending order.
+            links.sort_by(|l1, l2| l1.offset.cmp(&l2.offset));
+
             let lock_id = self.lock_map.next_id();
             let lock = Arc::new(RwLock::new(Lock::new(lock_id)));
             self.lock_map.insert(page_id, lock).expect(
@@ -133,7 +140,7 @@ where
         let mut map = HashMap::new();
         for link in empty_links {
             map.entry(link.page_id)
-                .and_modify(|v| v.push(link))
+                .and_modify(|v: &mut Vec<_>| v.push(link))
                 .or_insert(vec![link]);
         }
         map

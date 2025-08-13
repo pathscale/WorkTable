@@ -199,7 +199,10 @@ async fn update_string() {
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link);
+    assert_eq!(
+        table.0.data.get_empty_links().first().unwrap(),
+        &Data::<TestRow>::delete_row(first_link)
+    );
     assert!(table.select(2).is_none())
 }
 

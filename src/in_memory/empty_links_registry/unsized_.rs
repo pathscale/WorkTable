@@ -1,6 +1,7 @@
-use data_bucket::Link;
+use data_bucket::{DefaultSizeMeasurable, Link};
 
 use crate::IndexMultiMap;
+use crate::in_memory::RowLength;
 use crate::in_memory::empty_links_registry::EmptyLinksRegistry;
 
 #[derive(Debug, Default)]
@@ -13,7 +14,7 @@ impl EmptyLinksRegistry for UnsizedEmptyLinkRegistry {
 
     fn find_link_with_length(&self, size: u32) -> Option<Link> {
         if let Some(link) = self.0.remove_max().map(|(_, l)| l) {
-            if link.length < size {
+            if link.length < size + RowLength::default_aligned_size() as u32 {
                 self.0.insert(link.length, link);
                 None
             } else {

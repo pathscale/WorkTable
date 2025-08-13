@@ -342,8 +342,9 @@ where
     }
 
     pub fn delete(&self, link: Link) -> Result<Vec<EmptyLinkRegistryOperation>, ExecutionError> {
-        self.empty_links.add_empty_link(link);
-        Ok(vec![EmptyLinkRegistryOperation::Add(link)])
+        let res_link = Data::<Row, DATA_LENGTH>::delete_row(link);
+        self.empty_links.add_empty_link(res_link);
+        Ok(vec![EmptyLinkRegistryOperation::Add(res_link)])
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
@@ -405,7 +406,7 @@ mod tests {
 
     use crate::in_memory::data::RowLength;
     use crate::in_memory::pages::DataPages;
-    use crate::in_memory::{PagesExecutionError, RowWrapper, StorableRow};
+    use crate::in_memory::{Data, PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::{
         EmptyLinksRegistry, SizeMeasurable, SizeMeasure, SizedEmptyLinkRegistry, align,
     };
@@ -536,9 +537,11 @@ mod tests {
 
         assert_eq!(
             pages.empty_links.find_link_with_length(link.length),
-            Some(link)
+            Some(Data::<TestRow>::delete_row(link))
         );
-        pages.empty_links.add_empty_link(link);
+        pages
+            .empty_links
+            .add_empty_link(Data::<TestRow>::delete_row(link));
 
         let row = TestRow { a: 20, b: 20 };
         let new_link = pages.insert(row).unwrap();
