@@ -1,4 +1,3 @@
-mod defragmentator;
 mod sized;
 mod unsized_;
 
