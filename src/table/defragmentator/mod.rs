@@ -23,8 +23,6 @@ use crate::prelude::{Lock, TablePrimaryKey};
 use crate::{TableRow, TableSecondaryIndex, WorkTable, WorkTableError};
 
 pub struct DefragmentatorTask {
-    task_handle: tokio::task::AbortHandle,
-
     /// Shared map for locking pages that are in defragmentation progress.
     lock: Arc<LockMap<Lock, PageId>>,
 
@@ -117,6 +115,36 @@ where
         > + SizeMeasurable,
     <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
 {
+    pub fn new(
+        table: Arc<
+            WorkTable<
+                Row,
+                PrimaryKey,
+                EmptyLinks,
+                AvailableTypes,
+                AvailableIndexes,
+                SecondaryIndexes,
+                LockType,
+                PkGen,
+                NodeType,
+                DATA_LENGTH,
+            >,
+        >,
+    ) -> (Self, DefragmentatorTask) {
+        let s = Self {
+            table,
+            lock_map: Arc::new(LockMap::default()),
+            notify: Arc::new(Notify::new()),
+        };
+
+        let t = DefragmentatorTask {
+            lock: s.lock_map.clone(),
+            notify: s.notify.clone(),
+        };
+
+        (s, t)
+    }
+
     fn defragment(&self) -> eyre::Result<()> {
         const SINGLE_LINK_RATIO_TRIGGER: f32 = 0.4;
 
@@ -249,6 +277,9 @@ where
 #[cfg(test)]
 mod tests {
     use crate::prelude::*;
+    use crate::table::defragmentator::Defragmentator;
+    use std::collections::HashSet;
+    use std::sync::Arc;
     use worktable_codegen::worktable;
 
     worktable! (
@@ -272,4 +303,37 @@ mod tests {
             }
         }
     );
+
+    #[tokio::test]
+    async fn test_defragmentation_logic() {
+        let table = Arc::new(TestWorkTable::default());
+
+        let mut pks = HashSet::new();
+
+        for i in 0..100 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: (i as u64) % 20,
+                exchange: format!("another_{i}"),
+            };
+            let pk = table.insert(row).unwrap();
+            pks.insert(pk.0);
+        }
+
+        let mut removed_pks = HashSet::new();
+        while removed_pks.len() != 30 {
+            let mut id = fastrand::u64(0..100);
+            while !removed_pks.insert(id) {
+                id = fastrand::u64(0..100);
+            }
+        }
+
+        for pk in removed_pks {
+            pks.remove(&pk);
+            table.delete(pk.into()).await.unwrap();
+        }
+
+        let (d, _) = Defragmentator::new(table.clone());
+    }
 }
