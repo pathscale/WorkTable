@@ -247,7 +247,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             || link.offset + link.length + RowLength::default_aligned_size() as u32
                 > self.free_offset.load(Ordering::Acquire)
         {
-            return Err(ExecutionError::DeserializeError);
+            return Err(ExecutionError::InvalidLink);
         }
 
         let inner_data = unsafe { &*self.inner_data.get() };
@@ -318,6 +318,10 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
         let data = unsafe { &*self.inner_data.get() };
         data.0
+    }
+
+    pub(crate) fn set_free_offset(&self, offset: u32) {
+        self.free_offset.store(offset, Ordering::Relaxed)
     }
 }
 
