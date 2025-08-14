@@ -105,6 +105,29 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Delete(_) => None,
         }
     }
+
+    pub fn empty_links_ops(&self) -> Option<&Vec<EmptyLinkRegistryOperation>> {
+        match &self {
+            Operation::Insert(insert) => Some(&insert.empty_link_registry_operations),
+            Operation::Delete(delete) => Some(&delete.empty_link_registry_operations),
+            Operation::Update(_) => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Hash, Eq)]
+pub enum EmptyLinkRegistryOperation {
+    Add(Link),
+    Remove(Link),
+}
+
+impl EmptyLinkRegistryOperation {
+    pub fn link(&self) -> Link {
+        match self {
+            EmptyLinkRegistryOperation::Add(l) => *l,
+            EmptyLinkRegistryOperation::Remove(l) => *l,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -112,6 +135,7 @@ pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
+    pub empty_link_registry_operations: Vec<EmptyLinkRegistryOperation>,
     pub pk_gen_state: PrimaryKeyGenState,
     pub bytes: Vec<u8>,
     pub link: Link,
@@ -130,5 +154,6 @@ pub struct DeleteOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
+    pub empty_link_registry_operations: Vec<EmptyLinkRegistryOperation>,
     pub link: Link,
 }

@@ -62,7 +62,10 @@ async fn test_update_string_full_row() {
             exchange: "bigger test to test string update".to_string(),
         }
     );
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
+    assert_eq!(
+        table.0.data.get_empty_links().first().unwrap(),
+        &Data::<TestRow>::delete_row(first_link)
+    )
 }
 
 #[tokio::test]
@@ -93,7 +96,10 @@ async fn test_update_string_by_unique() {
             exchange: "bigger test to test string update".to_string(),
         }
     );
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
+    assert_eq!(
+        table.0.data.get_empty_links().first().unwrap(),
+        &Data::<TestRow>::delete_row(first_link)
+    )
 }
 
 #[tokio::test]
@@ -124,7 +130,10 @@ async fn test_update_string_by_pk() {
             exchange: "bigger test to test string update".to_string(),
         }
     );
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
+    assert_eq!(
+        table.0.data.get_empty_links().first().unwrap(),
+        &Data::<TestRow>::delete_row(first_link)
+    )
 }
 
 #[tokio::test]
@@ -175,8 +184,8 @@ async fn test_update_string_by_non_unique() {
     );
     let empty_links = table.0.data.get_empty_links();
     assert_eq!(empty_links.len(), 2);
-    assert!(empty_links.contains(&first_link));
-    assert!(empty_links.contains(&second_link))
+    assert!(empty_links.contains(&Data::<TestRow>::delete_row(first_link)));
+    assert!(empty_links.contains(&Data::<TestRow>::delete_row(second_link)))
 }
 
 #[tokio::test]
@@ -350,7 +359,10 @@ async fn test_update_many_strings_by_unique() {
             other_srting: "other".to_string(),
         }
     );
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
+    assert_eq!(
+        table.0.data.get_empty_links().first().unwrap(),
+        &Data::<TestRow>::delete_row(first_link)
+    )
 }
 
 #[tokio::test]
@@ -386,7 +398,10 @@ async fn test_update_many_strings_by_pk() {
             other_srting: "other".to_string(),
         }
     );
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
+    assert_eq!(
+        table.0.data.get_empty_links().first().unwrap(),
+        &Data::<TestRow>::delete_row(first_link)
+    )
 }
 
 #[tokio::test]
@@ -449,8 +464,8 @@ async fn test_update_many_strings_by_non_unique() {
     );
     let empty_links = table.0.data.get_empty_links();
     assert_eq!(empty_links.len(), 2);
-    assert!(empty_links.contains(&first_link));
-    assert!(empty_links.contains(&second_link))
+    assert!(empty_links.contains(&Data::<TestRow>::delete_row(first_link)));
+    assert!(empty_links.contains(&Data::<TestRow>::delete_row(second_link)))
 }
 
 #[tokio::test]
@@ -513,8 +528,8 @@ async fn test_update_many_strings_by_string() {
     );
     let empty_links = table.0.data.get_empty_links();
     assert_eq!(empty_links.len(), 2);
-    assert!(empty_links.contains(&first_link));
-    assert!(empty_links.contains(&second_link))
+    assert!(empty_links.contains(&Data::<TestRow>::delete_row(first_link)));
+    assert!(empty_links.contains(&Data::<TestRow>::delete_row(second_link)))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

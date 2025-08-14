@@ -1,14 +1,13 @@
 use std::{
     fmt::Debug,
+    sync::Arc,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
-    sync::{Arc, RwLock},
 };
 
+use data_bucket::SizeMeasurable;
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
-use lockfree::stack::Stack;
-#[cfg(feature = "perf_measurements")]
-use performance_measurement_codegen::performance_measurement;
+use parking_lot::RwLock;
 use rkyv::{
     Archive, Deserialize, Portable, Serialize,
     api::high::HighDeserializer,
@@ -17,6 +16,8 @@ use rkyv::{
     util::AlignedVec,
 };
 
+use crate::in_memory::empty_links_registry::EmptyLinksRegistry;
+use crate::prelude::EmptyLinkRegistryOperation;
 use crate::{
     in_memory::{
         DATA_INNER_LENGTH, Data, DataExecutionError,
@@ -30,16 +31,15 @@ fn page_id_mapper(page_id: usize) -> usize {
 }
 
 #[derive(Debug)]
-pub struct DataPages<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
+pub struct DataPages<Row, EmptyLinks, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
 where
     Row: StorableRow,
 {
     /// Pages vector. Currently, not lock free.
     pages: RwLock<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
 
-    /// Stack with empty [`Link`]s. It stores [`Link`]s of rows that was deleted.
-    // TODO: Proper empty links registry + defragmentation
-    empty_links: Stack<Link>,
+    /// Registry with empty [`Link`]s. It stores [`Link`]s of rows that was deleted.
+    empty_links: EmptyLinks,
 
     /// Count of saved rows.
     row_count: AtomicU64,
@@ -49,8 +49,16 @@ where
     current_page_id: AtomicU32,
 }
 
-impl<Row, const DATA_LENGTH: usize> Default for DataPages<Row, DATA_LENGTH>
+#[derive(Debug)]
+pub struct InsertCdcOutput {
+    pub link: Link,
+    pub data_bytes: Vec<u8>,
+    pub empty_link_registry_ops: Vec<EmptyLinkRegistryOperation>,
+}
+
+impl<Row, EmptyLinks, const DATA_LENGTH: usize> Default for DataPages<Row, EmptyLinks, DATA_LENGTH>
 where
+    EmptyLinks: Default + EmptyLinksRegistry,
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
@@ -59,8 +67,9 @@ where
     }
 }
 
-impl<Row, const DATA_LENGTH: usize> DataPages<Row, DATA_LENGTH>
+impl<Row, EmptyLinks, const DATA_LENGTH: usize> DataPages<Row, EmptyLinks, DATA_LENGTH>
 where
+    EmptyLinks: Default + EmptyLinksRegistry,
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
@@ -68,7 +77,7 @@ where
         Self {
             // We are starting ID's from `1` because `0`'s page in file is info page.
             pages: RwLock::new(vec![Arc::new(Data::new(1.into()))]),
-            empty_links: Stack::new(),
+            empty_links: EmptyLinks::default(),
             row_count: AtomicU64::new(0),
             last_page_id: AtomicU32::new(1),
             current_page_id: AtomicU32::new(1),
@@ -83,7 +92,7 @@ where
             let last_page_id = vec.len();
             Self {
                 pages: RwLock::new(vec),
-                empty_links: Stack::new(),
+                empty_links: EmptyLinks::default(),
                 row_count: AtomicU64::new(0),
                 last_page_id: AtomicU32::new(last_page_id as u32),
                 current_page_id: AtomicU32::new(last_page_id as u32),
@@ -100,33 +109,62 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            > + SizeMeasurable,
+    {
+        self.insert_inner(row).map(|r| r.0)
+    }
+
+    fn insert_inner(
+        &self,
+        row: Row,
+    ) -> Result<(Link, Vec<EmptyLinkRegistryOperation>), ExecutionError>
+    where
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            > + SizeMeasurable,
     {
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
-        if let Some(link) = self.empty_links.pop() {
-            let pages = self.pages.read().unwrap();
+        if let Some(link) = self
+            .empty_links
+            .find_link_with_length(general_row.aligned_size() as u32)
+        {
+            let mut empty_link_registry_ops = vec![];
+            empty_link_registry_ops.push(EmptyLinkRegistryOperation::Remove(link));
+
+            let pages = self.pages.read();
             let current_page: usize = page_id_mapper(link.page_id.into());
             let page = &pages[current_page];
 
-            if let Err(e) = unsafe { page.save_row_by_link(&general_row, link) } {
-                match e {
+            match unsafe { page.save_row_by_link(&general_row, link) } {
+                Ok((link, left_link)) => {
+                    if let Some(link) = left_link {
+                        empty_link_registry_ops.push(EmptyLinkRegistryOperation::Add(link));
+                        self.empty_links.add_empty_link(link)
+                    }
+                    return Ok((link, empty_link_registry_ops));
+                }
+                Err(e) => match e {
                     DataExecutionError::InvalidLink => {
-                        self.empty_links.push(link);
+                        empty_link_registry_ops.pop();
+                        self.empty_links.add_empty_link(link);
                     }
                     DataExecutionError::PageIsFull { .. }
                     | DataExecutionError::PageTooSmall { .. }
                     | DataExecutionError::SerializeError
                     | DataExecutionError::DeserializeError => return Err(e.into()),
-                }
-            } else {
-                return Ok(link);
-            };
+                },
+            }
         }
 
         loop {
             let (link, tried_page) = {
-                let pages = self.pages.read().unwrap();
+                let pages = self.pages.read();
                 let current_page =
                     page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
                 let page = &pages[current_page];
@@ -136,7 +174,7 @@ where
             match link {
                 Ok(link) => {
                     self.row_count.fetch_add(1, Ordering::Relaxed);
-                    return Ok(link);
+                    return Ok((link, vec![]));
                 }
                 Err(e) => match e {
                     DataExecutionError::PageIsFull { .. } => {
@@ -155,7 +193,7 @@ where
         }
     }
 
-    pub fn insert_cdc(&self, row: Row) -> Result<(Link, Vec<u8>), ExecutionError>
+    pub fn insert_cdc(&self, row: Row) -> Result<InsertCdcOutput, ExecutionError>
     where
         Row: Archive
             + for<'a> Serialize<
@@ -164,18 +202,22 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
     {
-        let link = self.insert(row.clone())?;
+        let (link, ops) = self.insert_inner(row.clone())?;
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         let bytes = rkyv::to_bytes(&general_row)
             .expect("should be ok as insert not failed")
             .into_vec();
-        Ok((link, bytes))
+        Ok(InsertCdcOutput {
+            link,
+            data_bytes: bytes,
+            empty_link_registry_ops: ops,
+        })
     }
 
     fn add_next_page(&self, tried_page: usize) {
-        let mut pages = self.pages.write().expect("lock should be not poisoned");
+        let mut pages = self.pages.write();
         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
             let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -184,10 +226,6 @@ where
         }
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
     pub fn select(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive
@@ -197,9 +235,8 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
-            // - 1 is used because page ids are starting from 1.
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
         let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
@@ -215,9 +252,8 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
-            // - 1 is used because page ids are starting from 1.
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
         let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
@@ -227,10 +263,6 @@ where
         Ok(gen_row.get_inner())
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
     pub fn with_ref<Op, Res>(&self, link: Link, op: Op) -> Result<Res, ExecutionError>
     where
         Row: Archive
@@ -239,7 +271,7 @@ where
             >,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get::<usize>(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
@@ -251,10 +283,6 @@ where
     }
 
     #[allow(clippy::missing_safety_doc)]
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
     pub unsafe fn with_mut_ref<Op, Res>(
         &self,
         link: Link,
@@ -268,7 +296,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
@@ -299,24 +327,27 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         unsafe {
             page.save_row_by_link(&gen_row, link)
-                .map_err(ExecutionError::DataPageError)
+                .map_err(ExecutionError::DataPageError)?;
         }
+
+        Ok(link)
     }
 
-    pub fn delete(&self, link: Link) -> Result<(), ExecutionError> {
-        self.empty_links.push(link);
-        Ok(())
+    pub fn delete(&self, link: Link) -> Result<Vec<EmptyLinkRegistryOperation>, ExecutionError> {
+        let res_link = Data::<Row, DATA_LENGTH>::delete_row(link);
+        self.empty_links.add_empty_link(res_link);
+        Ok(vec![EmptyLinkRegistryOperation::Add(res_link)])
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
@@ -325,7 +356,7 @@ where
     }
 
     pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         pages
             .iter()
             .map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed)))
@@ -333,26 +364,33 @@ where
     }
 
     pub fn get_page_count(&self) -> usize {
-        self.pages.read().unwrap().len()
+        self.pages.read().len()
     }
 
     pub fn get_empty_links(&self) -> Vec<Link> {
-        let mut res = vec![];
-        for l in self.empty_links.pop_iter() {
-            res.push(l)
-        }
-
-        res
+        self.empty_links.as_vec()
     }
 
     pub fn with_empty_links(mut self, links: Vec<Link>) -> Self {
-        let stack = Stack::new();
+        let registry = EmptyLinks::default();
         for l in links {
-            stack.push(l)
+            registry.add_empty_link(l)
         }
-        self.empty_links = stack;
+        self.empty_links = registry;
 
         self
+    }
+
+    pub(crate) fn get_page(
+        &self,
+        id: PageId,
+    ) -> Result<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>, ExecutionError> {
+        let pages = self.pages.read();
+        let page = pages
+            .get(page_id_mapper(id.into()))
+            .ok_or(ExecutionError::PageNotFound(id))?;
+
+        Ok(page.clone())
     }
 }
 
@@ -370,19 +408,34 @@ pub enum ExecutionError {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::Ordering;
     use std::sync::{Arc, RwLock};
     use std::thread;
     use std::time::Instant;
 
-    use rkyv::with::{AtomicLoad, Relaxed};
+    use data_bucket::DefaultSizeMeasurable;
     use rkyv::{Archive, Deserialize, Serialize};
 
+    use crate::in_memory::data::RowLength;
     use crate::in_memory::pages::DataPages;
-    use crate::in_memory::{PagesExecutionError, RowWrapper, StorableRow};
+    use crate::in_memory::{Data, PagesExecutionError, RowWrapper, StorableRow};
+    use crate::prelude::{
+        EmptyLinksRegistry, SizeMeasurable, SizeMeasure, SizedEmptyLinkRegistry, align,
+    };
 
     #[derive(
-        Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+        Archive,
+        Copy,
+        Clone,
+        Deserialize,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+        Serialize,
+        SizeMeasure,
     )]
     struct TestRow {
         a: u64,
@@ -391,60 +444,58 @@ mod tests {
 
     /// General `Row` wrapper that is used to append general data for every `Inner`
     /// `Row`.
-    #[derive(Archive, Deserialize, Debug, Serialize)]
-    pub struct GeneralRow<Inner> {
+    #[derive(Archive, Deserialize, Debug, Serialize, SizeMeasure)]
+    struct GeneralRow {
         /// Inner generic `Row`.
-        pub inner: Inner,
+        pub inner: TestRow,
 
         /// Indicator for ghosted rows.
-        #[rkyv(with = AtomicLoad<Relaxed>)]
-        pub is_ghosted: AtomicBool,
+        pub is_ghosted: bool,
 
         /// Indicator for deleted rows.
-        #[rkyv(with = AtomicLoad<Relaxed>)]
-        pub deleted: AtomicBool,
+        pub deleted: bool,
     }
 
-    impl<Inner> RowWrapper<Inner> for GeneralRow<Inner> {
-        fn get_inner(self) -> Inner {
+    impl RowWrapper<TestRow> for GeneralRow {
+        fn get_inner(self) -> TestRow {
             self.inner
         }
 
         fn is_ghosted(&self) -> bool {
-            self.is_ghosted.load(Ordering::Relaxed)
+            self.is_ghosted
         }
 
         /// Creates new [`GeneralRow`] from `Inner`.
-        fn from_inner(inner: Inner) -> Self {
+        fn from_inner(inner: TestRow) -> Self {
             Self {
                 inner,
-                is_ghosted: AtomicBool::new(true),
-                deleted: AtomicBool::new(false),
+                is_ghosted: true,
+                deleted: false,
             }
         }
     }
 
     impl StorableRow for TestRow {
-        type WrappedRow = GeneralRow<TestRow>;
+        type WrappedRow = GeneralRow;
     }
 
     #[test]
     fn insert() {
-        let pages = DataPages::<TestRow>::new();
+        let pages = DataPages::<TestRow, SizedEmptyLinkRegistry>::new();
 
         let row = TestRow { a: 10, b: 20 };
         let link = pages.insert(row).unwrap();
 
         assert_eq!(link.page_id, 1.into());
         assert_eq!(link.length, 24);
-        assert_eq!(link.offset, 0);
+        assert_eq!(link.offset, RowLength::default_aligned_size() as u32);
 
         assert_eq!(pages.row_count.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn insert_many() {
-        let pages = DataPages::<TestRow>::new();
+        let pages = DataPages::<TestRow, SizedEmptyLinkRegistry>::new();
 
         for _ in 0..10_000 {
             let row = TestRow { a: 10, b: 20 };
@@ -457,7 +508,7 @@ mod tests {
 
     #[test]
     fn select() {
-        let pages = DataPages::<TestRow>::new();
+        let pages = DataPages::<TestRow, SizedEmptyLinkRegistry>::new();
 
         let row = TestRow { a: 10, b: 20 };
         let link = pages.insert(row).unwrap();
@@ -468,7 +519,7 @@ mod tests {
 
     #[test]
     fn select_non_ghosted() {
-        let pages = DataPages::<TestRow>::new();
+        let pages = DataPages::<TestRow, SizedEmptyLinkRegistry>::new();
 
         let row = TestRow { a: 10, b: 20 };
         let link = pages.insert(row).unwrap();
@@ -479,7 +530,7 @@ mod tests {
 
     #[test]
     fn update() {
-        let pages = DataPages::<TestRow>::new();
+        let pages = DataPages::<TestRow, SizedEmptyLinkRegistry>::new();
 
         let row = TestRow { a: 10, b: 20 };
         let link = pages.insert(row).unwrap();
@@ -490,14 +541,19 @@ mod tests {
 
     #[test]
     fn delete() {
-        let pages = DataPages::<TestRow>::new();
+        let pages = DataPages::<TestRow, SizedEmptyLinkRegistry>::new();
 
         let row = TestRow { a: 10, b: 20 };
         let link = pages.insert(row).unwrap();
         pages.delete(link).unwrap();
 
-        assert_eq!(pages.empty_links.pop(), Some(link));
-        pages.empty_links.push(link);
+        assert_eq!(
+            pages.empty_links.find_link_with_length(link.length),
+            Some(Data::<TestRow>::delete_row(link))
+        );
+        pages
+            .empty_links
+            .add_empty_link(Data::<TestRow>::delete_row(link));
 
         let row = TestRow { a: 20, b: 20 };
         let new_link = pages.insert(row).unwrap();
@@ -506,7 +562,7 @@ mod tests {
 
     #[test]
     fn insert_on_empty() {
-        let pages = DataPages::<TestRow>::new();
+        let pages = DataPages::<TestRow, SizedEmptyLinkRegistry>::new();
 
         let row = TestRow { a: 10, b: 20 };
         let link = pages.insert(row).unwrap();
@@ -519,7 +575,7 @@ mod tests {
 
     //#[test]
     fn _bench() {
-        let pages = Arc::new(DataPages::<TestRow>::new());
+        let pages = Arc::new(DataPages::<TestRow, SizedEmptyLinkRegistry>::new());
 
         let mut v = Vec::new();
 

@@ -77,7 +77,7 @@ impl Generator {
             quote! {
                 let secondary_keys_events = self.0.indexes.delete_row_cdc(row, link)?;
                 let (_, primary_key_events) = TableIndexCdc::remove_cdc(&self.0.pk_map, pk.clone(), link);
-                self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
+                let empty_link_registry_ops = self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
                 let mut op: Operation<
                     <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                     #pk_ident,
@@ -86,6 +86,7 @@ impl Generator {
                     id: uuid::Uuid::now_v7().into(),
                     secondary_keys_events,
                     primary_key_events,
+                    empty_link_registry_operations: empty_link_registry_ops,
                     link,
                 });
                 self.2.apply_operation(op);

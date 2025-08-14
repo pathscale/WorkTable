@@ -49,7 +49,7 @@ async fn test_primary_index_parse() {
 
     let mut key = 1;
     let length = 24;
-    let mut offset = 0;
+    let mut offset = 8;
     let page_id = 1.into();
 
     for val in &index.inner.index_values[..index.inner.current_length as usize] {
@@ -64,7 +64,7 @@ async fn test_primary_index_parse() {
         );
 
         key += 1;
-        offset += length;
+        offset += length + 8;
     }
 }
 
@@ -86,7 +86,7 @@ async fn test_another_idx_index_parse() {
 
     let mut key = 1;
     let length = 24;
-    let mut offset = 0;
+    let mut offset = 8;
     let page_id = 1.into();
 
     for val in &index.inner.index_values[..index.inner.current_length as usize] {
@@ -101,7 +101,7 @@ async fn test_another_idx_index_parse() {
         );
 
         key += 1;
-        offset += length;
+        offset += length + 8;
     }
 }
 
@@ -121,7 +121,7 @@ async fn test_data_parse() {
     assert_eq!(data.header.previous_id, 0.into());
     assert_eq!(data.header.next_id, 0.into());
     assert_eq!(data.header.page_type, PageType::Data);
-    assert_eq!(data.header.data_length, 2376);
+    assert_eq!(data.header.data_length, 3168);
 }
 
 #[tokio::test]

@@ -85,7 +85,7 @@ impl Generator {
             };
 
         quote! {
-            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq, MemStat)]
+            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq, MemStat, SizeMeasure)]
             #custom_derives
             #[rkyv(derive(Debug))]
             #[repr(C)]

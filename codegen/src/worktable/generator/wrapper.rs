@@ -24,7 +24,7 @@ impl Generator {
         let wrapper_ident = name_generator.get_wrapper_type_ident();
 
         quote! {
-            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize)]
+            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize, SizeMeasure)]
             #[repr(C)]
             pub struct #wrapper_ident {
                 inner: #row_ident,

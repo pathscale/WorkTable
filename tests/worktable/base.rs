@@ -199,7 +199,10 @@ async fn update_string() {
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
-    assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link);
+    assert_eq!(
+        table.0.data.get_empty_links().first().unwrap(),
+        &Data::<TestRow>::delete_row(first_link)
+    );
     assert!(table.select(2).is_none())
 }
 
@@ -1199,9 +1202,9 @@ async fn test_update_by_pk() {
 fn _bench() {
     let table = TestWorkTable::default();
 
-    let mut v = Vec::with_capacity(10000);
+    let mut v = Vec::with_capacity(100_000);
 
-    for i in 0..10000 {
+    for i in 0..100_000 {
         let row = TestRow {
             id: table.get_next_pk().into(),
             test: i + 1,

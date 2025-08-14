@@ -83,6 +83,13 @@ impl Generator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
+        let row_types = &self
+            .columns
+            .columns_map
+            .values()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>();
+        let row_unsized = is_unsized_vec(row_types);
         let derive = if self.is_persist {
             if pk_types_unsized {
                 quote! {
@@ -108,6 +115,15 @@ impl Generator {
                 Vec<IndexPair<#primary_key_type, Link>>
             }
         };
+        let empty_links_type = if row_unsized {
+            quote! {
+                UnsizedEmptyLinkRegistry
+            }
+        } else {
+            quote! {
+                SizedEmptyLinkRegistry
+            }
+        };
 
         if self.config.as_ref().and_then(|c| c.page_size).is_some() {
             quote! {
@@ -116,6 +132,7 @@ impl Generator {
                     WorkTable<
                         #row_type,
                         #primary_key_type,
+                        #empty_links_type,
                         #avt_type_ident,
                         #avt_index_ident,
                         #index_type,
@@ -134,6 +151,7 @@ impl Generator {
                     WorkTable<
                         #row_type,
                         #primary_key_type,
+                        #empty_links_type,
                         #avt_type_ident,
                         #avt_index_ident,
                         #index_type,

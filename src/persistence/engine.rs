@@ -152,8 +152,8 @@ where
         >,
     ) -> eyre::Result<()> {
         let batch_data_op = batch_op.get_batch_data_op()?;
-
         let (pk_evs, secondary_evs) = batch_op.get_indexes_evs()?;
+        let mut empty_links_ops = batch_op.get_empty_link_registry_ops()?;
         {
             let mut futs = FuturesUnordered::new();
             futs.push(Either::Left(Either::Right(
@@ -167,12 +167,32 @@ where
                     .process_change_event_batch(secondary_evs),
             ));
 
-            while (futs.next().await).is_some() {}
+            while futs.next().await.is_some() {}
+        }
+
+        let mut need_to_save = false;
+        let info = self.data.get_mut_info();
+        if !empty_links_ops.is_empty() {
+            let mut links_to_add = empty_links_ops.add_set.into_iter().collect::<Vec<_>>();
+            let empty_links = &mut info.inner.empty_links_list;
+            links_to_add.extend(
+                empty_links
+                    .iter()
+                    .filter(|l| !empty_links_ops.remove_set.remove(*l))
+                    .copied()
+                    .collect::<Vec<_>>(),
+            );
+            std::mem::swap(&mut info.inner.empty_links_list, &mut links_to_add);
+
+            need_to_save = true;
         }
 
         if let Some(pk_gen_state_update) = batch_op.get_pk_gen_state()? {
-            let info = self.data.get_mut_info();
             info.inner.pk_gen_state = pk_gen_state_update;
+            need_to_save = true;
+        }
+
+        if need_to_save {
             self.data.save_info().await?;
         }
 

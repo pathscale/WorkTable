@@ -4,7 +4,7 @@ use indexset::core::pair::Pair;
 use prettytable::{Table, format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR, row};
 use std::fmt::{self, Debug, Display, Formatter};
 
-use crate::in_memory::{RowWrapper, StorableRow};
+use crate::in_memory::{EmptyLinksRegistry, RowWrapper, StorableRow};
 use crate::mem_stat::MemStat;
 use crate::{TableSecondaryIndexInfo, WorkTable};
 
@@ -48,6 +48,7 @@ impl Display for IndexKind {
 impl<
     Row,
     PrimaryKey,
+    EmptyLinks,
     AvailableTypes,
     AvailableIndexes,
     SecondaryIndexes,
@@ -59,6 +60,7 @@ impl<
     WorkTable<
         Row,
         PrimaryKey,
+        EmptyLinks,
         AvailableTypes,
         AvailableIndexes,
         SecondaryIndexes,
@@ -69,6 +71,7 @@ impl<
     >
 where
     PrimaryKey: Debug + Clone + Ord + Send + 'static + std::hash::Hash,
+    EmptyLinks: Default + EmptyLinksRegistry,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     NodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,

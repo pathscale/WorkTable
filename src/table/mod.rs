@@ -1,10 +1,13 @@
+mod defragmentator;
 pub mod select;
 pub mod system_info;
 
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
+use crate::in_memory::{
+    DataPages, EmptyLinksRegistry, GhostWrapper, InsertCdcOutput, RowWrapper, StorableRow,
+};
 use crate::lock::LockMap;
 use crate::persistence::{InsertOperation, Operation};
 use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
@@ -13,12 +16,10 @@ use crate::{
     AvailableIndex, IndexError, IndexMap, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
     in_memory,
 };
-use data_bucket::{INNER_PAGE_SIZE, Link};
+use data_bucket::{INNER_PAGE_SIZE, Link, SizeMeasurable};
 use derive_more::{Display, Error, From};
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
-#[cfg(feature = "perf_measurements")]
-use performance_measurement_codegen::performance_measurement;
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -32,6 +33,7 @@ use uuid::Uuid;
 pub struct WorkTable<
     Row,
     PrimaryKey,
+    EmptyLinks,
     AvailableTypes = (),
     AvailableIndexes = (),
     SecondaryIndexes = (),
@@ -44,7 +46,7 @@ pub struct WorkTable<
     Row: StorableRow + Send + Clone + 'static,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
 {
-    pub data: DataPages<Row, DATA_LENGTH>,
+    pub data: DataPages<Row, EmptyLinks, DATA_LENGTH>,
 
     pub pk_map: IndexMap<PrimaryKey, Link, PkNodeType>,
 
@@ -65,6 +67,7 @@ pub struct WorkTable<
 impl<
     Row,
     PrimaryKey,
+    EmptyLinks,
     AvailableTypes,
     AvailableIndexes,
     SecondaryIndexes,
@@ -76,6 +79,7 @@ impl<
     for WorkTable<
         Row,
         PrimaryKey,
+        EmptyLinks,
         AvailableTypes,
         AvailableIndexes,
         SecondaryIndexes,
@@ -86,6 +90,7 @@ impl<
     >
 where
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    EmptyLinks: Default + EmptyLinksRegistry,
     SecondaryIndexes: Default,
     PkGen: Default,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
@@ -109,6 +114,7 @@ where
 impl<
     Row,
     PrimaryKey,
+    EmptyLinks,
     AvailableTypes,
     AvailableIndexes,
     SecondaryIndexes,
@@ -120,6 +126,7 @@ impl<
     WorkTable<
         Row,
         PrimaryKey,
+        EmptyLinks,
         AvailableTypes,
         AvailableIndexes,
         SecondaryIndexes,
@@ -131,6 +138,7 @@ impl<
 where
     Row: TableRow<PrimaryKey>,
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    EmptyLinks: Default + EmptyLinksRegistry,
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
@@ -143,10 +151,6 @@ where
     }
 
     /// Selects `Row` from table identified with provided primary key. Returns `None` if no value presented.
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "WorkTable")
-    )]
     pub fn select(&self, pk: PrimaryKey) -> Option<Row>
     where
         LockType: 'static,
@@ -170,10 +174,6 @@ where
         }
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "WorkTable")
-    )]
     pub fn insert(&self, row: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
@@ -184,7 +184,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
@@ -246,7 +246,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
@@ -255,10 +255,16 @@ where
         AvailableIndexes: Debug + AvailableIndex,
     {
         let pk = row.get_primary_key().clone();
-        let (link, _) = self
+        let output = self
             .data
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
+        let InsertCdcOutput {
+            link,
+            data_bytes: _,
+            empty_link_registry_ops,
+        } = output;
+
         let primary_key_events = self.pk_map.checked_insert_cdc(pk.clone(), link);
         if primary_key_events.is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
@@ -296,6 +302,7 @@ where
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events: primary_key_events.expect("should be checked before for existence"),
             secondary_keys_events: indexes_res.expect("was checked before"),
+            empty_link_registry_operations: empty_link_registry_ops,
             bytes,
             link,
         });
@@ -321,7 +328,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
@@ -397,7 +404,7 @@ where
         <Row as StorableRow>::WrappedRow: Archive
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            > + SizeMeasurable,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
@@ -414,10 +421,15 @@ where
             .get(&pk)
             .map(|v| v.get().value)
             .ok_or(WorkTableError::NotFound)?;
-        let (new_link, _) = self
+        let output = self
             .data
             .insert_cdc(row_new.clone())
             .map_err(WorkTableError::PagesError)?;
+        let InsertCdcOutput {
+            link: new_link,
+            data_bytes: _,
+            mut empty_link_registry_ops,
+        } = output;
         unsafe {
             self.data
                 .with_mut_ref(new_link, |r| r.unghost())
@@ -446,9 +458,11 @@ where
             };
         }
 
-        self.data
+        let delete_ops = self
+            .data
             .delete(old_link)
             .map_err(WorkTableError::PagesError)?;
+        empty_link_registry_ops.extend(delete_ops);
         let bytes = self
             .data
             .select_raw(new_link)
@@ -459,6 +473,7 @@ where
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
             secondary_keys_events: indexes_res.expect("was checked just before"),
+            empty_link_registry_operations: empty_link_registry_ops,
             bytes,
             link: new_link,
         });
