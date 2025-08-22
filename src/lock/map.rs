@@ -44,13 +44,14 @@ where
     }
 
     #[allow(clippy::await_holding_lock)]
-    pub async fn remove_with_lock_check(&self, key: &PrimaryKey)
+    pub fn remove_with_lock_check(&self, key: &PrimaryKey)
     where
         LockType: RowLock,
     {
         let mut set = self.map.write();
         if let Some(lock) = set.get(key).cloned()
-            && let Ok(guard) = lock.try_read()
+            && let Ok(guard) = lock.try_write()
+            && Arc::strong_count(&lock) == 1
             && !guard.is_locked()
         {
             set.remove(key);
