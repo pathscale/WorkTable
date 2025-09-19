@@ -419,7 +419,6 @@ where
                 .map_err(WorkTableError::PagesError)?
         }
         let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
-        println!("{:?}", primary_key_events);
         let indexes_res =
             self.indexes
                 .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
