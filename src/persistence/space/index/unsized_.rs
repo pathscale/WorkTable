@@ -387,12 +387,14 @@ where
         &mut self,
         events: BatchChangeEvent<T>,
     ) -> eyre::Result<()> {
+        println!("{:?}", events);
         let mut pages: HashMap<PageId, _> = HashMap::new();
         for ev in events {
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. }
                 | ChangeEvent::RemoveAt { max_value, .. } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
+                    println!("{:?}", self.table_of_contents);
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
