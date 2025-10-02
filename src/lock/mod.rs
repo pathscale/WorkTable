@@ -8,10 +8,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
-use derive_more::From;
 use futures::task::AtomicWaker;
-pub use map::LockMap;
 use parking_lot::Mutex;
+
+pub use map::LockMap;
 pub use row_lock::RowLock;
 
 #[derive(Debug)]
