@@ -50,11 +50,7 @@ where
     }
 
     pub fn rebuild(&mut self) {
-        self.length = self
-            .inner
-            .last()
-            .expect("should not rebuild on empty node")
-            .aligned_size();
+        self.length = self.inner.last().map(|v| v.aligned_size()).unwrap_or(0);
         self.length += UNSIZED_HEADER_LENGTH as usize;
         for value in self.inner.iter() {
             self.length += value.aligned_size();
