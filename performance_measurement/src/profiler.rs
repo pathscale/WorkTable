@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use derive_more::Display;
 use lazy_static::lazy_static;
-use lockfree::map::Map;
+use lock_freedom::map::Map;
 
 lazy_static! {
     static ref GLOBAL_PERFORMANCE_MEASUREMENTS: Map<&'static str, PerformanceMeasurement> =

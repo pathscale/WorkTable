@@ -296,7 +296,7 @@ where
 
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
-    queue: lockfree::queue::Queue<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+    queue: lock_freedom::queue::Queue<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     notify: Notify,
     len: Arc<AtomicU16>,
 }
@@ -306,7 +306,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
 {
     pub fn new() -> Self {
         Self {
-            queue: lockfree::queue::Queue::new(),
+            queue: lock_freedom::queue::Queue::new(),
             notify: Notify::new(),
             len: Arc::new(AtomicU16::new(0)),
         }

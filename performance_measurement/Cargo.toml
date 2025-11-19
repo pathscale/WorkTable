@@ -8,4 +8,4 @@ description = "Package taht can be used to measuere function execution time"
 [dependencies]
 lazy_static = {version = "1.5.0"}
 derive_more = {version = "1.0.0", features = ["display"]}
-lockfree = {version = "0.5.1"}
+lock_freedom = "0.1"

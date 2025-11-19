@@ -6,7 +6,7 @@ use std::{
 
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
-use lockfree::stack::Stack;
+use lock_freedom::stack::Stack;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
