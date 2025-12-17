@@ -35,6 +35,12 @@ impl Hash for Lock {
     }
 }
 
+impl Drop for Lock {
+    fn drop(&mut self) {
+        self.unlock()
+    }
+}
+
 impl Lock {
     pub fn new(id: u16) -> Self {
         Self {

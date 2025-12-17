@@ -1,4 +1,5 @@
 mod data;
+mod empty_link_registry;
 mod pages;
 mod row;
 

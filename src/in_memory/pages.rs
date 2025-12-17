@@ -6,7 +6,6 @@ use std::{
 
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
-use lockfree::stack::Stack;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
@@ -17,6 +16,7 @@ use rkyv::{
     util::AlignedVec,
 };
 
+use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::{
     in_memory::{
         DATA_INNER_LENGTH, Data, DataExecutionError,
@@ -37,9 +37,7 @@ where
     /// Pages vector. Currently, not lock free.
     pages: RwLock<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
 
-    /// Stack with empty [`Link`]s. It stores [`Link`]s of rows that was deleted.
-    // TODO: Proper empty links registry + defragmentation
-    empty_links: Stack<Link>,
+    empty_links: EmptyLinkRegistry<DATA_LENGTH>,
 
     /// Count of saved rows.
     row_count: AtomicU64,
@@ -68,7 +66,7 @@ where
         Self {
             // We are starting ID's from `1` because `0`'s page in file is info page.
             pages: RwLock::new(vec![Arc::new(Data::new(1.into()))]),
-            empty_links: Stack::new(),
+            empty_links: EmptyLinkRegistry::<DATA_LENGTH>::default(),
             row_count: AtomicU64::new(0),
             last_page_id: AtomicU32::new(1),
             current_page_id: AtomicU32::new(1),
@@ -83,7 +81,7 @@ where
             let last_page_id = vec.len();
             Self {
                 pages: RwLock::new(vec),
-                empty_links: Stack::new(),
+                empty_links: EmptyLinkRegistry::default(),
                 row_count: AtomicU64::new(0),
                 last_page_id: AtomicU32::new(last_page_id as u32),
                 current_page_id: AtomicU32::new(last_page_id as u32),
@@ -104,24 +102,35 @@ where
     {
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
-        if let Some(link) = self.empty_links.pop() {
+        //println!("Popping empty link");
+        if let Some(link) = self.empty_links.pop_max() {
+            //println!("Empty link len {}", self.empty_links.len());
             let pages = self.pages.read().unwrap();
             let current_page: usize = page_id_mapper(link.page_id.into());
             let page = &pages[current_page];
 
-            if let Err(e) = unsafe { page.save_row_by_link(&general_row, link) } {
-                match e {
+            match unsafe { page.try_save_row_by_link(&general_row, link) } {
+                Ok((link, left_link)) => {
+                    if let Some(l) = left_link {
+                        //println!("Pushing empty link");
+                        self.empty_links.push(l);
+                        //println!("Pushed empty link");
+                    }
+                    return Ok(link);
+                }
+                // Ok(l) => return Ok(l),
+                Err(e) => match e {
                     DataExecutionError::InvalidLink => {
+                        //println!("Pushing empty link");
                         self.empty_links.push(link);
+                        //println!("Pushed empty link");
                     }
                     DataExecutionError::PageIsFull { .. }
                     | DataExecutionError::PageTooSmall { .. }
                     | DataExecutionError::SerializeError
                     | DataExecutionError::DeserializeError => return Err(e.into()),
-                }
-            } else {
-                return Ok(link);
-            };
+                },
+            }
         }
 
         loop {
@@ -311,7 +320,9 @@ where
     }
 
     pub fn delete(&self, link: Link) -> Result<(), ExecutionError> {
+        //println!("Pushing empty link");
         self.empty_links.push(link);
+        //println!("Pushed empty link");
         Ok(())
     }
 
@@ -337,20 +348,15 @@ where
     }
 
     pub fn get_empty_links(&self) -> Vec<Link> {
-        let mut res = vec![];
-        for l in self.empty_links.pop_iter() {
-            res.push(l)
-        }
-
-        res
+        self.empty_links.iter().collect()
     }
 
     pub fn with_empty_links(mut self, links: Vec<Link>) -> Self {
-        let stack = Stack::new();
+        let registry = EmptyLinkRegistry::default();
         for l in links {
-            stack.push(l)
+            registry.push(l)
         }
-        self.empty_links = stack;
+        self.empty_links = registry;
 
         self
     }
@@ -496,7 +502,7 @@ mod tests {
         let link = pages.insert(row).unwrap();
         pages.delete(link).unwrap();
 
-        assert_eq!(pages.empty_links.pop(), Some(link));
+        assert_eq!(pages.empty_links.pop_max(), Some(link));
         pages.empty_links.push(link);
 
         let row = TestRow { a: 20, b: 20 };
