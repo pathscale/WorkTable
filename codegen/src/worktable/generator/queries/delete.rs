@@ -36,7 +36,7 @@ impl Generator {
     fn gen_full_row_delete(&mut self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_ident = name_generator.get_primary_key_type_ident();
-        let delete_logic = self.gen_delete_logic();
+        let delete_logic = self.gen_delete_logic(true);
         let full_row_lock = self.gen_full_lock_for_update();
 
         quote! {
@@ -58,7 +58,7 @@ impl Generator {
     fn gen_full_row_delete_without_lock(&mut self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_ident = name_generator.get_primary_key_type_ident();
-        let delete_logic = self.gen_delete_logic();
+        let delete_logic = self.gen_delete_logic(false);
 
         quote! {
             pub fn delete_without_lock(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
@@ -68,7 +68,7 @@ impl Generator {
         }
     }
 
-    fn gen_delete_logic(&self) -> TokenStream {
+    fn gen_delete_logic(&self, is_locked: bool) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_ident = name_generator.get_primary_key_type_ident();
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
@@ -97,15 +97,33 @@ impl Generator {
                 self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
             }
         };
-
-        quote! {
-            let link = self.0
-                    .pk_map
-                    .get(&pk)
-                    .map(|v| v.get().value)
-                    .ok_or(WorkTableError::NotFound)?;
-            let row = self.select(pk.clone()).unwrap();
-            #process
+        if is_locked {
+            quote! {
+                let link = match self.0
+                        .pk_map
+                        .get(&pk)
+                        .map(|v| v.get().value)
+                        .ok_or(WorkTableError::NotFound) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        lock.unlock();  // Releases locks
+                        self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                        return Err(e);
+                    }
+                };
+                let row = self.select(pk.clone()).unwrap();
+                #process
+            }
+        } else {
+            quote! {
+                let link = self.0
+                        .pk_map
+                        .get(&pk)
+                        .map(|v| v.get().value)
+                        .ok_or(WorkTableError::NotFound)?;
+                let row = self.select(pk.clone()).unwrap();
+                #process
+            }
         }
     }
 
