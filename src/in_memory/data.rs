@@ -158,6 +158,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(link)
     }
 
+    #[allow(clippy::missing_safety_doc)]
     pub unsafe fn try_save_row_by_link(
         &self,
         row: &Row,

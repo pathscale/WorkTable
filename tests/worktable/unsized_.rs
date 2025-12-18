@@ -951,7 +951,7 @@ async fn upsert_parallel() {
                 some_string: format!("some_{val}"),
                 other_srting: format!("other_{id_to_update}"),
             };
-            let _ = shared.upsert(row.clone()).await.unwrap();
+            shared.upsert(row.clone()).await.unwrap();
             {
                 let mut guard = shared_e_state.lock();
                 guard

@@ -5,7 +5,7 @@ use indexset::concurrent::set::BTreeSet;
 use parking_lot::FairMutex;
 
 /// A link wrapper that implements `Ord` based on absolute index calculation.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct IndexOrdLink<const DATA_LENGTH: usize = DATA_INNER_LENGTH>(pub Link);
 
 impl<const DATA_LENGTH: usize> IndexOrdLink<DATA_LENGTH> {
@@ -59,7 +59,13 @@ impl<const DATA_LENGTH: usize> IndexOrdLink<DATA_LENGTH> {
 
 impl<const DATA_LENGTH: usize> PartialOrd for IndexOrdLink<DATA_LENGTH> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.absolute_index().cmp(&other.absolute_index()))
+        Some(self.cmp(other))
+    }
+}
+
+impl<const DATA_LENGTH: usize> Ord for IndexOrdLink<DATA_LENGTH> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.absolute_index().cmp(&other.absolute_index())
     }
 }
 
@@ -82,7 +88,7 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
 
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     pub fn push(&self, link: Link) {
-        let mut index_ord_link = IndexOrdLink(link.clone());
+        let mut index_ord_link = IndexOrdLink(link);
         let _g = self.op_lock.lock();
 
         {
@@ -144,10 +150,6 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         Some(index_ord_link.0)
     }
 
-    pub fn len(&self) -> usize {
-        self.index_ord_links.len()
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = Link> + '_ {
         self.index_ord_links.iter().map(|l| l.0)
     }
@@ -179,9 +181,9 @@ mod tests {
             length: 200,
         };
 
-        registry.push(link1.clone());
-        registry.push(link2.clone());
-        registry.push(link3.clone());
+        registry.push(link1);
+        registry.push(link2);
+        registry.push(link3);
 
         // After inserting link1 and link2, they should be united
         let united_link = Link {
