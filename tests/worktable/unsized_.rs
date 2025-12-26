@@ -1,9 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -174,9 +173,13 @@ async fn test_update_string_by_non_unique() {
         }
     );
     let empty_links = table.0.data.get_empty_links();
-    assert_eq!(empty_links.len(), 2);
-    assert!(empty_links.contains(&first_link));
-    assert!(empty_links.contains(&second_link))
+    assert_eq!(empty_links.len(), 1);
+    let l = Link {
+        page_id: first_link.page_id,
+        offset: first_link.offset,
+        length: first_link.length + second_link.length,
+    };
+    assert!(empty_links.contains(&l))
 }
 
 #[tokio::test]
@@ -448,9 +451,13 @@ async fn test_update_many_strings_by_non_unique() {
         }
     );
     let empty_links = table.0.data.get_empty_links();
-    assert_eq!(empty_links.len(), 2);
-    assert!(empty_links.contains(&first_link));
-    assert!(empty_links.contains(&second_link))
+    assert_eq!(empty_links.len(), 1);
+    let l = Link {
+        page_id: first_link.page_id,
+        offset: first_link.offset,
+        length: first_link.length + second_link.length,
+    };
+    assert!(empty_links.contains(&l));
 }
 
 #[tokio::test]
@@ -512,9 +519,13 @@ async fn test_update_many_strings_by_string() {
         }
     );
     let empty_links = table.0.data.get_empty_links();
-    assert_eq!(empty_links.len(), 2);
-    assert!(empty_links.contains(&first_link));
-    assert!(empty_links.contains(&second_link))
+    assert_eq!(empty_links.len(), 1);
+    let l = Link {
+        page_id: first_link.page_id,
+        offset: first_link.offset,
+        length: first_link.length + second_link.length,
+    };
+    assert!(empty_links.contains(&l));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -771,6 +782,70 @@ async fn update_parallel_more_strings_with_select_non_unique() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn delete_parallel() {
+    let table = Arc::new(TestMoreStringsWorkTable::default());
+    let deleted_state = Arc::new(Mutex::new(HashSet::new()));
+    for i in 0..1000 {
+        let e_val = fastrand::u8(0..100);
+        let s_val = fastrand::u8(0..100);
+        let row = TestMoreStringsRow {
+            id: table.get_next_pk().into(),
+            test: i + 1,
+            another: 1,
+            exchange: format!("test_{e_val}"),
+            some_string: format!("some_{s_val}"),
+            other_srting: format!("other_{i}"),
+        };
+        let _ = table.insert(row.clone()).unwrap();
+    }
+    let shared = table.clone();
+    let h1 = tokio::spawn(async move {
+        for i in 1_000..6_000 {
+            let e_val = fastrand::u8(0..100);
+            let s_val = fastrand::u8(0..100);
+            let row = TestMoreStringsRow {
+                id: shared.get_next_pk().into(),
+                test: i + 1,
+                another: 1,
+                exchange: format!("test_{e_val}"),
+                some_string: format!("some_{s_val}"),
+                other_srting: format!("other_{i}"),
+            };
+            let _ = shared.insert(row.clone()).unwrap();
+        }
+    });
+    let shared = table.clone();
+    let shared_deleted_state = deleted_state.clone();
+    let h2 = tokio::spawn(async move {
+        for _ in 0..1_000 {
+            let id_to_update = fastrand::u64(0..1000);
+            let _ = shared.delete(id_to_update.into()).await;
+            {
+                let mut guard = shared_deleted_state.lock();
+                guard.insert(id_to_update);
+            }
+        }
+    });
+    for _ in 0..5_000 {
+        let val = fastrand::u8(0..100);
+        let vals = table
+            .select_by_exchange(format!("test_{val}"))
+            .execute()
+            .unwrap();
+        for v in vals {
+            assert_eq!(v.exchange, format!("test_{val}"))
+        }
+    }
+    h1.await.unwrap();
+    h2.await.unwrap();
+
+    for id in deleted_state.lock_arc().iter() {
+        let row = table.select(*id);
+        assert!(row.is_none())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn update_parallel_more_strings_with_select_unique() {
     let table = Arc::new(TestMoreStringsWorkTable::default());
     let e_state = Arc::new(Mutex::new(HashMap::new()));
@@ -843,8 +918,58 @@ async fn update_parallel_more_strings_with_select_unique() {
         let row = table.select(*id).unwrap();
         assert_eq!(&row.exchange, e)
     }
-    for (id, a) in a_state.lock_arc().iter() {
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn upsert_parallel() {
+    let table = Arc::new(TestMoreStringsWorkTable::default());
+    let e_state = Arc::new(Mutex::new(HashMap::new()));
+    for i in 0..1000 {
+        let e_val = fastrand::u8(0..100);
+        let s_val = fastrand::u8(0..100);
+        let row = TestMoreStringsRow {
+            id: table.get_next_pk().into(),
+            test: i,
+            another: 1,
+            exchange: format!("test_{e_val}"),
+            some_string: format!("some_{s_val}"),
+            other_srting: format!("other_{i}"),
+        };
+        let _ = table.insert(row.clone()).unwrap();
+    }
+    let shared = table.clone();
+    let shared_e_state = e_state.clone();
+    let h1 = tokio::spawn(async move {
+        for _ in 0..4_000 {
+            let val = fastrand::u8(0..100);
+            let id_to_update = fastrand::u64(0..1000);
+            let row = TestMoreStringsRow {
+                id: id_to_update,
+                test: id_to_update as i64,
+                another: 1,
+                exchange: format!("test_{val}"),
+                some_string: format!("some_{val}"),
+                other_srting: format!("other_{id_to_update}"),
+            };
+            shared.upsert(row.clone()).await.unwrap();
+            {
+                let mut guard = shared_e_state.lock();
+                guard
+                    .entry(id_to_update)
+                    .and_modify(|v| *v = format!("test_{val}"))
+                    .or_insert(format!("test_{val}"));
+            }
+        }
+    });
+    for _ in 0..20_000 {
+        let val = fastrand::i64(0..1000);
+        let res = table.select_by_test(val);
+        assert!(res.is_some())
+    }
+    h1.await.unwrap();
+
+    for (id, e) in e_state.lock_arc().iter() {
         let row = table.select(*id).unwrap();
-        assert_eq!(&row.another, a)
+        assert_eq!(&row.exchange, e)
     }
 }

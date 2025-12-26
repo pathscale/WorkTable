@@ -158,6 +158,43 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(link)
     }
 
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn try_save_row_by_link(
+        &self,
+        row: &Row,
+        mut link: Link,
+    ) -> Result<(Link, Option<Link>), ExecutionError>
+    where
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+    {
+        let bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
+        let length = bytes.len() as u32;
+        if length > link.length {
+            return Err(ExecutionError::InvalidLink);
+        }
+
+        let link_diff = link.length - length;
+        let link_left = if link_diff > 0 {
+            link.length -= link_diff;
+            Some(Link {
+                page_id: link.page_id,
+                offset: link.offset + link.length,
+                length: link_diff,
+            })
+        } else {
+            None
+        };
+
+        let inner_data = unsafe { &mut *self.inner_data.get() };
+        inner_data[link.offset as usize..][..link.length as usize]
+            .copy_from_slice(bytes.as_slice());
+
+        Ok((link, link_left))
+    }
+
     /// # Safety
     /// This function is `unsafe` because it returns a mutable reference to an archived row.
     /// The caller must ensure that there are no other references to the same data

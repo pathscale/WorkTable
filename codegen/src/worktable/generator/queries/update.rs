@@ -92,11 +92,19 @@ impl Generator {
                     #full_row_lock
                 };
 
-                let link = self.0
+                let link = match self.0
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value)
-                    .ok_or(WorkTableError::NotFound)?;
+                    .ok_or(WorkTableError::NotFound) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        lock.unlock();
+                        self.0.lock_map.remove_with_lock_check(&pk).await;
+
+                        return Err(e);
+                    }
+                };
 
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 self.0.update_state.insert(pk.clone(), row_old);
@@ -469,11 +477,19 @@ impl Generator {
                     #custom_lock
                 };
 
-                let link = self.0
+                let link = match self.0
                         .pk_map
                         .get(&pk)
                         .map(|v| v.get().value)
-                        .ok_or(WorkTableError::NotFound)?;
+                        .ok_or(WorkTableError::NotFound) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        lock.unlock();
+                        self.0.lock_map.remove_with_lock_check(&pk).await;
+
+                        return Err(e);
+                    }
+                };
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
@@ -702,10 +718,18 @@ impl Generator {
                     #custom_lock
                 };
 
-                let link = self.0.indexes.#index
+                let link = match self.0.indexes.#index
                     .get(#by)
                     .map(|kv| kv.get().value)
-                    .ok_or(WorkTableError::NotFound)?;
+                    .ok_or(WorkTableError::NotFound) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        lock.unlock();
+                        self.0.lock_map.remove_with_lock_check(&pk).await;
+
+                        return Err(e);
+                    }
+                };
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
