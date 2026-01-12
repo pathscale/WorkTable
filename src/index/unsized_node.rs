@@ -114,7 +114,7 @@ where
         split
     }
 
-    fn need_to_split(&self, _: usize, value: &T) -> bool {
+    fn need_to_split(&self, _: usize) -> bool {
         let final_length = self.length + value.aligned_size();
         final_length >= self.length_capacity && self.inner.len() > 1
     }
@@ -199,10 +199,6 @@ where
 
     fn max(&self) -> Option<&T> {
         self.inner.last()
-    }
-
-    fn pre_max(&self) -> Option<&T> {
-        self.inner.pre_max()
     }
 
     fn min(&self) -> Option<&T> {
