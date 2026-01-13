@@ -201,10 +201,6 @@ where
         self.inner.last()
     }
 
-    fn pre_max(&self) -> Option<&T> {
-        self.inner.pre_max()
-    }
-
     fn min(&self) -> Option<&T> {
         self.inner.first()
     }
