@@ -347,6 +347,10 @@ where
         self.empty_links.iter().collect()
     }
 
+    pub fn empty_links_registry(&self) -> &EmptyLinkRegistry<DATA_LENGTH> {
+        &self.empty_links
+    }
+
     pub fn with_empty_links(mut self, links: Vec<Link>) -> Self {
         let registry = EmptyLinkRegistry::default();
         for l in links {

@@ -12,7 +12,7 @@ use futures::task::AtomicWaker;
 use parking_lot::Mutex;
 
 pub use map::LockMap;
-pub use row_lock::RowLock;
+pub use row_lock::{FullRowLock, RowLock};
 
 #[derive(Debug)]
 pub struct Lock {

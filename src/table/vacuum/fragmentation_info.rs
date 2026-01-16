@@ -1,17 +1,26 @@
 use std::collections::HashMap;
 
+use data_bucket::Link;
 use data_bucket::page::PageId;
 
 use crate::in_memory::EmptyLinkRegistry;
 
+/// Fragmentation info for a single data [`Page`].
+///
+/// [`Page`]: crate::in_memory::Data
 #[derive(Debug, Copy, Clone)]
 pub struct PageFragmentationInfo<const DATA_LENGTH: usize> {
     pub page_id: PageId,
     pub empty_bytes: u32,
+    /// Ratio of filled bytes to empty bytes. Higher means more utilized.
     pub filled_empty_ratio: f64,
 }
 
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
+    pub fn get_page_empty_links(&self, page_id: PageId) -> Vec<Link> {
+        self.page_links_map.get(&page_id).map(|(_, link)| *link).collect()
+    }
+
     pub fn get_per_page_info(&self) -> Vec<PageFragmentationInfo<DATA_LENGTH>> {
         let mut page_empty_bytes: HashMap<PageId, u32> = HashMap::new();
 
