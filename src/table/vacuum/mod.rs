@@ -20,6 +20,7 @@ use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
 use crate::lock::{FullRowLock, LockMap};
 use crate::prelude::TablePrimaryKey;
 use crate::vacuum::fragmentation_info::PageFragmentationInfo;
+use crate::vacuum::lock::VacuumLock;
 use crate::{AvailableIndex, IndexMap, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 
 #[derive(Debug)]
@@ -38,7 +39,7 @@ pub struct EmptyDataVacuum<
     PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
 {
     data_pages: DataPages<Row, DATA_LENGTH>,
-    vacuum_lock: Arc<LockMap<FullRowLock, Link>>,
+    vacuum_lock: Arc<VacuumLock>,
 
     primary_index: Arc<IndexMap<PrimaryKey, Link, PkNodeType>>,
     secondary_indexes: Arc<SecondaryIndexes>,
@@ -85,7 +86,18 @@ where
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
     AvailableIndexes: Debug + AvailableIndex,
 {
-    // fn defragment_page(&self, info: PageFragmentationInfo<DATA_LENGTH>)
+    async fn defragment_page(&self, info: PageFragmentationInfo<DATA_LENGTH>) {
+        let lock = self.vacuum_lock.lock_page(info.page_id);
+
+        let mut page_empty_links = self
+            .data_pages
+            .empty_links_registry()
+            .page_links_map
+            .get(&info.page_id)
+            .map(|(_, l)| *l)
+            .collect::<Vec<_>>();
+        page_empty_links.sort_by(|l1, l2| l1.offset.cmp(&l2.offset));
+    }
 
     // pub fn new(data_pages: DataPages<Row, DATA_LENGTH>) -> Self {
     //     Self {

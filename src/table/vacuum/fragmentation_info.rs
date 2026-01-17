@@ -18,7 +18,10 @@ pub struct PageFragmentationInfo<const DATA_LENGTH: usize> {
 
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     pub fn get_page_empty_links(&self, page_id: PageId) -> Vec<Link> {
-        self.page_links_map.get(&page_id).map(|(_, link)| *link).collect()
+        self.page_links_map
+            .get(&page_id)
+            .map(|(_, link)| *link)
+            .collect()
     }
 
     pub fn get_per_page_info(&self) -> Vec<PageFragmentationInfo<DATA_LENGTH>> {

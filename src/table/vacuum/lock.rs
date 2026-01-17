@@ -15,7 +15,7 @@ pub struct VacuumLock {
 
 impl VacuumLock {
     /// Locks a page, returning the [`FullRowLock`].
-    pub async fn lock_page(&self, page_id: PageId) -> Arc<tokio::sync::RwLock<FullRowLock>> {
+    pub fn lock_page(&self, page_id: PageId) -> Arc<tokio::sync::RwLock<FullRowLock>> {
         if let Some(lock) = self.per_page_lock.get(&page_id) {
             return lock;
         }
@@ -27,7 +27,7 @@ impl VacuumLock {
     }
 
     /// Locks a [`Link`], returning the [`FullRowLock`].
-    pub async fn lock_link(&self, link: Link) -> Arc<tokio::sync::RwLock<FullRowLock>> {
+    pub fn lock_link(&self, link: Link) -> Arc<tokio::sync::RwLock<FullRowLock>> {
         if let Some(lock) = self.per_link_lock.get(&link) {
             return lock;
         }
@@ -96,7 +96,7 @@ mod tests {
         let vacuum_lock = VacuumLock::default();
         let page_id = PageId::from(1);
 
-        let _lock = vacuum_lock.lock_page(page_id).await;
+        let _lock = vacuum_lock.lock_page(page_id);
 
         assert!(vacuum_lock.is_page_locked(&page_id));
     }
@@ -106,7 +106,7 @@ mod tests {
         let vacuum_lock = VacuumLock::default();
         let page_id = PageId::from(1);
 
-        let lock = vacuum_lock.lock_page(page_id).await;
+        let lock = vacuum_lock.lock_page(page_id);
         let _write_guard = lock.write().await;
 
         assert!(vacuum_lock.is_page_locked(&page_id));
@@ -133,7 +133,7 @@ mod tests {
             length: 100,
         };
 
-        let _lock = vacuum_lock.lock_link(link).await;
+        let _lock = vacuum_lock.lock_link(link);
 
         assert!(vacuum_lock.is_link_locked(&link));
     }
@@ -147,7 +147,7 @@ mod tests {
             length: 100,
         };
 
-        let _lock = vacuum_lock.lock_page(link.page_id).await;
+        let _lock = vacuum_lock.lock_page(link.page_id);
 
         assert!(vacuum_lock.is_link_locked(&link));
     }
@@ -161,7 +161,7 @@ mod tests {
             length: 100,
         };
 
-        let lock = vacuum_lock.lock_link(link).await;
+        let lock = vacuum_lock.lock_link(link);
         let _write_guard = lock.write().await;
 
         assert!(vacuum_lock.is_link_locked(&link));
@@ -172,8 +172,8 @@ mod tests {
         let vacuum_lock = VacuumLock::default();
         let page_id = PageId::from(1);
 
-        let lock1 = vacuum_lock.lock_page(page_id).await;
-        let lock2 = vacuum_lock.lock_page(page_id).await;
+        let lock1 = vacuum_lock.lock_page(page_id);
+        let lock2 = vacuum_lock.lock_page(page_id);
 
         // Same pointer = same lock instance
         assert!(Arc::ptr_eq(&lock1, &lock2));
@@ -188,8 +188,8 @@ mod tests {
             length: 100,
         };
 
-        let lock1 = vacuum_lock.lock_link(link).await;
-        let lock2 = vacuum_lock.lock_link(link).await;
+        let lock1 = vacuum_lock.lock_link(link);
+        let lock2 = vacuum_lock.lock_link(link);
 
         assert!(Arc::ptr_eq(&lock1, &lock2));
     }
