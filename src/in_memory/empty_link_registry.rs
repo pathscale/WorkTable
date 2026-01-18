@@ -1,11 +1,14 @@
 use crate::in_memory::DATA_INNER_LENGTH;
 use data_bucket::Link;
+use data_bucket::page::PageId;
+use derive_more::Into;
 use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::concurrent::set::BTreeSet;
 use parking_lot::FairMutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A link wrapper that implements `Ord` based on absolute index calculation.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Into)]
 pub struct IndexOrdLink<const DATA_LENGTH: usize = DATA_INNER_LENGTH>(pub Link);
 
 impl<const DATA_LENGTH: usize> IndexOrdLink<DATA_LENGTH> {
@@ -73,6 +76,11 @@ impl<const DATA_LENGTH: usize> Ord for IndexOrdLink<DATA_LENGTH> {
 pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     index_ord_links: BTreeSet<IndexOrdLink<DATA_LENGTH>>,
     length_ord_links: BTreeMultiMap<u32, Link>,
+
+    pub page_links_map: BTreeMultiMap<PageId, Link>,
+
+    sum_links_len: AtomicU32,
+
     op_lock: FairMutex<()>,
 }
 
@@ -81,12 +89,32 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
         Self {
             index_ord_links: BTreeSet::new(),
             length_ord_links: BTreeMultiMap::new(),
+            page_links_map: BTreeMultiMap::new(),
+            sum_links_len: Default::default(),
             op_lock: Default::default(),
         }
     }
 }
 
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
+    fn remove_link<L: Into<Link>>(&self, link: L) {
+        let link = link.into();
+        self.index_ord_links.remove(&IndexOrdLink(link));
+        self.length_ord_links.remove(&link.length, &link);
+        self.page_links_map.remove(&link.page_id, &link);
+
+        self.sum_links_len.fetch_sub(link.length, Ordering::AcqRel);
+    }
+
+    fn insert_link<L: Into<Link>>(&self, link: L) {
+        let link = link.into();
+        self.index_ord_links.insert(IndexOrdLink(link));
+        self.length_ord_links.insert(link.length, link);
+        self.page_links_map.insert(link.page_id, link);
+
+        self.sum_links_len.fetch_add(link.length, Ordering::AcqRel);
+    }
+
     pub fn push(&self, link: Link) {
         let mut index_ord_link = IndexOrdLink(link);
         let _g = self.op_lock.lock();
@@ -101,9 +129,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
                     drop(iter);
 
                     // Remove left neighbor
-                    self.index_ord_links.remove(&possible_left_neighbor);
-                    self.length_ord_links
-                        .remove(&possible_left_neighbor.0.length, &possible_left_neighbor.0);
+                    self.remove_link(possible_left_neighbor);
 
                     index_ord_link = united_link;
                 }
@@ -120,38 +146,34 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
                     drop(iter);
 
                     // Remove right neighbor
-                    self.index_ord_links.remove(&possible_right_neighbor);
-                    self.length_ord_links.remove(
-                        &possible_right_neighbor.0.length,
-                        &possible_right_neighbor.0,
-                    );
+                    self.remove_link(possible_right_neighbor);
 
                     index_ord_link = united_link;
                 }
             }
         }
 
-        self.index_ord_links.insert(index_ord_link);
-        self.length_ord_links
-            .insert(index_ord_link.0.length, index_ord_link.0);
+        self.insert_link(index_ord_link);
     }
 
     pub fn pop_max(&self) -> Option<Link> {
         let _g = self.op_lock.lock();
 
         let mut iter = self.length_ord_links.iter().rev();
-        let (len, max_length_link) = iter.next()?;
-        let index_ord_link = IndexOrdLink(*max_length_link);
+        let (_, max_length_link) = iter.next()?;
         drop(iter);
 
-        self.length_ord_links.remove(len, max_length_link);
-        self.index_ord_links.remove(&index_ord_link);
+        self.remove_link(*max_length_link);
 
-        Some(index_ord_link.0)
+        Some(*max_length_link)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Link> + '_ {
         self.index_ord_links.iter().map(|l| l.0)
+    }
+
+    pub fn get_empty_links_size_bytes(&self) -> u32 {
+        self.sum_links_len.load(Ordering::Acquire)
     }
 }
 
@@ -160,7 +182,237 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_empty_link_registry_insert_and_pop() {
+    fn test_unite_with_right_neighbor() {
+        let left = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let right = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 100,
+            length: 50,
+        });
+
+        let united = left.unite_with_right_neighbor(&right).unwrap();
+        assert_eq!(united.0.page_id, 1.into());
+        assert_eq!(united.0.offset, 0);
+        assert_eq!(united.0.length, 150);
+    }
+
+    #[test]
+    fn test_unite_with_left_neighbor() {
+        let left = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let right = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 100,
+            length: 50,
+        });
+
+        let united = right.unite_with_left_neighbor(&left).unwrap();
+        assert_eq!(united.0.page_id, 1.into());
+        assert_eq!(united.0.offset, 0);
+        assert_eq!(united.0.length, 150);
+    }
+
+    #[test]
+    fn test_unite_fails_on_gap() {
+        let link1 = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let link2 = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 200,
+            length: 50,
+        });
+
+        assert!(link1.unite_with_right_neighbor(&link2).is_none());
+        assert!(link2.unite_with_left_neighbor(&link1).is_none());
+    }
+
+    #[test]
+    fn test_unite_fails_on_different_pages() {
+        let link1 = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let link2 = IndexOrdLink::<DATA_INNER_LENGTH>(Link {
+            page_id: 2.into(),
+            offset: 100,
+            length: 50,
+        });
+
+        assert!(link1.unite_with_right_neighbor(&link2).is_none());
+        assert!(link2.unite_with_left_neighbor(&link1).is_none());
+    }
+
+    #[test]
+    fn test_index_ord_link_ordering() {
+        const TEST_DATA_LENGTH: usize = 1000;
+
+        let link1 = IndexOrdLink::<TEST_DATA_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let link2 = IndexOrdLink::<TEST_DATA_LENGTH>(Link {
+            page_id: 1.into(),
+            offset: 100,
+            length: 50,
+        });
+
+        let link3 = IndexOrdLink::<TEST_DATA_LENGTH>(Link {
+            page_id: 2.into(),
+            offset: 0,
+            length: 200,
+        });
+
+        assert!(link1 < link2);
+        assert!(link2 < link3);
+        assert!(link1 < link3);
+    }
+
+    #[test]
+    fn test_push_merges_both_sides() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        let left = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        };
+
+        let middle = Link {
+            page_id: 1.into(),
+            offset: 100,
+            length: 50,
+        };
+
+        let right = Link {
+            page_id: 1.into(),
+            offset: 150,
+            length: 75,
+        };
+
+        registry.push(left);
+        registry.push(right);
+        registry.push(middle);
+
+        let result = registry.pop_max().unwrap();
+        assert_eq!(result.page_id, 1.into());
+        assert_eq!(result.offset, 0);
+        assert_eq!(result.length, 225);
+    }
+
+    #[test]
+    fn test_push_non_adjacent_no_merge() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        let link1 = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        };
+
+        let link2 = Link {
+            page_id: 1.into(),
+            offset: 200,
+            length: 50,
+        };
+
+        registry.push(link1);
+        registry.push(link2);
+
+        let pop1 = registry.pop_max().unwrap();
+        let pop2 = registry.pop_max().unwrap();
+
+        assert_eq!(pop1.length, 100);
+        assert_eq!(pop2.length, 50);
+    }
+
+    #[test]
+    fn test_pop_max_returns_largest() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        let small = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 50,
+        };
+
+        let large = Link {
+            page_id: 1.into(),
+            offset: 100,
+            length: 200,
+        };
+
+        let medium = Link {
+            page_id: 1.into(),
+            offset: 300,
+            length: 100,
+        };
+
+        registry.push(small);
+        registry.push(large);
+        registry.push(medium);
+
+        assert_eq!(registry.pop_max().unwrap().length, 200);
+        assert_eq!(registry.pop_max().unwrap().length, 100);
+        assert_eq!(registry.pop_max().unwrap().length, 50);
+    }
+
+    #[test]
+    fn test_iter_returns_all_links() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        let link1 = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        };
+
+        let link2 = Link {
+            page_id: 2.into(),
+            offset: 0,
+            length: 150,
+        };
+
+        let link3 = Link {
+            page_id: 3.into(),
+            offset: 0,
+            length: 200,
+        };
+
+        registry.push(link1);
+        registry.push(link2);
+        registry.push(link3);
+
+        let links: Vec<Link> = registry.iter().collect();
+        assert_eq!(links.len(), 3);
+    }
+
+    #[test]
+    fn test_empty_registry() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        assert_eq!(registry.pop_max(), None);
+        assert_eq!(registry.iter().count(), 0);
+    }
+
+    #[test]
+    fn test_sum_links_counter() {
         let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
 
         let link1 = Link {
@@ -175,25 +427,13 @@ mod tests {
             length: 150,
         };
 
-        let link3 = Link {
-            page_id: 2.into(),
-            offset: 0,
-            length: 200,
-        };
-
         registry.push(link1);
+        assert_eq!(registry.sum_links_len.load(Ordering::Acquire), 100);
+
         registry.push(link2);
-        registry.push(link3);
+        assert_eq!(registry.sum_links_len.load(Ordering::Acquire), 250);
 
-        // After inserting link1 and link2, they should be united
-        let united_link = Link {
-            page_id: 1.into(),
-            offset: 0,
-            length: 250,
-        };
-
-        assert_eq!(registry.pop_max(), Some(united_link));
-        assert_eq!(registry.pop_max(), Some(link3));
-        assert_eq!(registry.pop_max(), None);
+        registry.pop_max();
+        assert_eq!(registry.sum_links_len.load(Ordering::Acquire), 0);
     }
 }

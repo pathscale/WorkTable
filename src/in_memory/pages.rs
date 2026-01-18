@@ -102,9 +102,7 @@ where
     {
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
-        //println!("Popping empty link");
         if let Some(link) = self.empty_links.pop_max() {
-            //println!("Empty link len {}", self.empty_links.len());
             let pages = self.pages.read().unwrap();
             let current_page: usize = page_id_mapper(link.page_id.into());
             let page = &pages[current_page];
@@ -112,9 +110,7 @@ where
             match unsafe { page.try_save_row_by_link(&general_row, link) } {
                 Ok((link, left_link)) => {
                     if let Some(l) = left_link {
-                        //println!("Pushing empty link");
                         self.empty_links.push(l);
-                        //println!("Pushed empty link");
                     }
                     return Ok(link);
                 }
@@ -349,6 +345,10 @@ where
 
     pub fn get_empty_links(&self) -> Vec<Link> {
         self.empty_links.iter().collect()
+    }
+
+    pub fn empty_links_registry(&self) -> &EmptyLinkRegistry<DATA_LENGTH> {
+        &self.empty_links
     }
 
     pub fn with_empty_links(mut self, links: Vec<Link>) -> Self {

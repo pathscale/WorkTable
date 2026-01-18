@@ -1,5 +1,6 @@
 pub mod select;
 pub mod system_info;
+pub mod vacuum;
 
 use std::fmt::Debug;
 use std::marker::PhantomData;
