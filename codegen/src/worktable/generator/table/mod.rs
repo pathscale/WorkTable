@@ -101,11 +101,11 @@ impl Generator {
         };
         let node_type = if pk_types_unsized {
             quote! {
-                UnsizedNode<IndexPair<#primary_key_type, Link>>
+                UnsizedNode<IndexPair<#primary_key_type, OffsetEqLink>>
             }
         } else {
             quote! {
-                Vec<IndexPair<#primary_key_type, Link>>
+                Vec<IndexPair<#primary_key_type, OffsetEqLink>>
             }
         };
 

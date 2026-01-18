@@ -35,7 +35,7 @@ pub mod prelude {
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
-    pub use crate::util::{OrderedF32Def, OrderedF64Def};
+    pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
         AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
         TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
@@ -62,7 +62,3 @@ pub mod prelude {
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
     pub const WT_DATA_EXTENSION: &str = ".wt.data";
 }
-
-// TODO:
-// 1. add checked inserts to indexset to not insert/remove but just insert with violation error
-// 2. Add pre-update state storage to avoid ghost reads of updated data if it will be rolled back

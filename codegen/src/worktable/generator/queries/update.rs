@@ -95,7 +95,7 @@ impl Generator {
                 let link = match self.0
                     .pk_map
                     .get(&pk)
-                    .map(|v| v.get().value)
+                    .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound) {
                     Ok(l) => l,
                     Err(e) => {
@@ -480,7 +480,7 @@ impl Generator {
                 let link = match self.0
                         .pk_map
                         .get(&pk)
-                        .map(|v| v.get().value)
+                        .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound) {
                     Ok(l) => l,
                     Err(e) => {
@@ -710,7 +710,7 @@ impl Generator {
 
                 let link = self.0.indexes.#index
                     .get(#by)
-                    .map(|kv| kv.get().value)
+                    .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound)?;
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
 
@@ -720,7 +720,7 @@ impl Generator {
 
                 let link = match self.0.indexes.#index
                     .get(#by)
-                    .map(|kv| kv.get().value)
+                    .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound) {
                     Ok(l) => l,
                     Err(e) => {

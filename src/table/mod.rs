@@ -10,11 +10,12 @@ use crate::lock::LockMap;
 use crate::persistence::{InsertOperation, Operation};
 use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
+use crate::util::OffsetEqLink;
 use crate::{
     AvailableIndex, IndexError, IndexMap, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-    in_memory,
+    convert_change_events, in_memory,
 };
-use data_bucket::{INNER_PAGE_SIZE, Link};
+use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
@@ -38,16 +39,16 @@ pub struct WorkTable<
     SecondaryIndexes = (),
     LockType = (),
     PkGen = <PrimaryKey as TablePrimaryKey>::Generator,
-    PkNodeType = Vec<Pair<PrimaryKey, Link>>,
+    PkNodeType = Vec<Pair<PrimaryKey, OffsetEqLink>>,
     const DATA_LENGTH: usize = INNER_PAGE_SIZE,
 > where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
-    PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink>> + Send + 'static,
 {
     pub data: DataPages<Row, DATA_LENGTH>,
 
-    pub pk_map: IndexMap<PrimaryKey, Link, PkNodeType>,
+    pub pk_map: IndexMap<PrimaryKey, OffsetEqLink, PkNodeType>,
 
     pub indexes: SecondaryIndexes,
 
@@ -89,7 +90,7 @@ where
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
     SecondaryIndexes: Default,
     PkGen: Default,
-    PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink>> + Send + 'static,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
@@ -132,7 +133,7 @@ impl<
 where
     Row: TableRow<PrimaryKey>,
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
-    PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink>> + Send + 'static,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
@@ -158,7 +159,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link = self.pk_map.get(&pk).map(|v| v.get().value);
+        let link = self.pk_map.get(&pk).map(|v| v.get().value.into());
         if let Some(link) = link {
             self.data.select(link).ok()
         } else {
@@ -193,7 +194,11 @@ where
             .data
             .insert(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        if self.pk_map.checked_insert(pk.clone(), link).is_none() {
+        if self
+            .pk_map
+            .checked_insert(pk.clone(), OffsetEqLink(link))
+            .is_none()
+        {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
         };
@@ -255,11 +260,14 @@ where
             .data
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        let primary_key_events = self.pk_map.checked_insert_cdc(pk.clone(), link);
-        if primary_key_events.is_none() {
+        let primary_key_events = self
+            .pk_map
+            .checked_insert_cdc(pk.clone(), OffsetEqLink(link));
+        let Some(primary_key_events) = primary_key_events else {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
-        }
+        };
+        let primary_key_events = convert_change_events(primary_key_events);
         let indexes_res = self.indexes.save_row_cdc(row.clone(), link);
         if let Err(e) = indexes_res {
             return match e {
@@ -290,7 +298,7 @@ where
         let op = Operation::Insert(InsertOperation {
             id: OperationId::Single(Uuid::now_v7()),
             pk_gen_state: self.pk_gen.get_state(),
-            primary_key_events: primary_key_events.expect("should be checked before for existence"),
+            primary_key_events,
             secondary_keys_events: indexes_res.expect("was checked before"),
             bytes,
             link,
@@ -307,6 +315,8 @@ where
     /// part is for new row. Goal is to make `PrimaryKey` of the row always
     /// acceptable. As for reinsert `PrimaryKey` will be same for both old and
     /// new [`Link`]'s, goal will be achieved.
+    ///
+    /// [`Link`]: data_bucket::Link
     pub fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
@@ -332,7 +342,7 @@ where
         let old_link = self
             .pk_map
             .get(&pk)
-            .map(|v| v.get().value)
+            .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
         let new_link = self
             .data
@@ -343,7 +353,7 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        self.pk_map.insert(pk.clone(), new_link);
+        self.pk_map.insert(pk.clone(), OffsetEqLink(new_link));
 
         let indexes_res = self
             .indexes
@@ -354,7 +364,7 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.pk_map.insert(pk.clone(), old_link);
+                    self.pk_map.insert(pk.clone(), OffsetEqLink(old_link));
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data
@@ -408,7 +418,7 @@ where
         let old_link = self
             .pk_map
             .get(&pk)
-            .map(|v| v.get().value)
+            .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
         let (new_link, _) = self
             .data
@@ -419,7 +429,8 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
+        let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), OffsetEqLink(new_link));
+        let primary_key_events = convert_change_events(primary_key_events);
         let indexes_res =
             self.indexes
                 .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
@@ -429,7 +440,7 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.pk_map.insert(pk.clone(), old_link);
+                    self.pk_map.insert(pk.clone(), OffsetEqLink(old_link));
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data

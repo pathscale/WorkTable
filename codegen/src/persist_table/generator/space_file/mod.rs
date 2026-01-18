@@ -159,18 +159,34 @@ impl Generator {
         let pk_map = if self.attributes.pk_unsized {
             let pk_ident = &self.pk_ident;
             quote! {
-                let pk_map = IndexMap::<#pk_ident, Link, UnsizedNode<_>>::with_maximum_node_size(#const_name);
+                let pk_map = IndexMap::<#pk_ident, OffsetEqLink, UnsizedNode<_>>::with_maximum_node_size(#const_name);
                 for page in self.primary_index.1 {
-                    let node = page.inner.get_node();
+                    let node = page
+                        .inner
+                        .get_node()
+                        .into_iter()
+                        .map(|p| IndexPair {
+                            key: p.key,
+                            value: p.value.into(),
+                        })
+                        .collect();
                     pk_map.attach_node(UnsizedNode::from_inner(node, #const_name));
                 }
             }
         } else {
             quote! {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                let pk_map = IndexMap::with_maximum_node_size(size);
+                let pk_map = IndexMap::<_, OffsetEqLink>::with_maximum_node_size(size);
                 for page in self.primary_index.1 {
-                    let node = page.inner.get_node();
+                    let node = page
+                        .inner
+                        .get_node()
+                        .into_iter()
+                        .map(|p| IndexPair {
+                            key: p.key,
+                            value: p.value.into(),
+                        })
+                        .collect();
                     pk_map.attach_node(node);
                 }
             }

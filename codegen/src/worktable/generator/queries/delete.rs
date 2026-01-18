@@ -102,7 +102,7 @@ impl Generator {
                 let link = match self.0
                         .pk_map
                         .get(&pk)
-                        .map(|v| v.get().value)
+                        .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound) {
                     Ok(l) => l,
                     Err(e) => {
@@ -119,7 +119,7 @@ impl Generator {
                 let link = self.0
                         .pk_map
                         .get(&pk)
-                        .map(|v| v.get().value)
+                        .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound)?;
                 let row = self.select(pk.clone()).unwrap();
                 #process
@@ -197,7 +197,7 @@ impl Generator {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 let rows_to_update = self.0.indexes.#index.get(#by).map(|kv| kv.1).collect::<Vec<_>>();
                 for link in rows_to_update {
-                    let row = self.0.data.select_non_ghosted(*link).map_err(WorkTableError::PagesError)?;
+                    let row = self.0.data.select_non_ghosted((*link).into()).map_err(WorkTableError::PagesError)?;
                     self.delete(row.get_primary_key()).await?;
                 }
                 core::result::Result::Ok(())
@@ -217,7 +217,7 @@ impl Generator {
         };
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
-                let row_to_update = self.0.indexes.#index.get(#by).map(|v| v.get().value);
+                let row_to_update = self.0.indexes.#index.get(#by).map(|v| v.get().value.into());
                 if let Some(link) = row_to_update {
                     let row = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
                     self.delete(row.get_primary_key()).await?;

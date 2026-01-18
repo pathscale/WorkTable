@@ -125,15 +125,15 @@ impl Generator {
                 let remove = if idx.is_unique {
                     quote! {
                         if val_new == val_old {
-                            self.#index_field_name.insert(val_new.clone(), link_new);
+                            TableIndex::insert(&self.#index_field_name, val_new.clone(), link_new);
                         } else {
-                            TableIndex::remove(&self.#index_field_name, val_old, link_old);
+                            TableIndex::remove(&self.#index_field_name, &val_old, link_old);
                         }
                     }
                 } else {
                     quote! {
-                        self.#index_field_name.insert(val_new.clone(), link_new);
-                        TableIndex::remove(&self.#index_field_name, val_old, link_old);
+                        TableIndex::insert(&self.#index_field_name, val_new.clone(), link_new);
+                        TableIndex::remove(&self.#index_field_name, &val_old, link_old);
                     }
                 };
                 let insert = if idx.is_unique {
@@ -212,14 +212,8 @@ impl Generator {
                         row.#i
                     }
                 };
-                if idx.is_unique {
-                    quote! {
-                        self.#index_field_name.remove(&#row);
-                    }
-                } else {
-                    quote! {
-                        self.#index_field_name.remove(&#row, &link);
-                    }
+                quote! {
+                    TableIndex::remove(&self.#index_field_name, &#row, link);
                 }
             })
             .collect::<Vec<_>>();
@@ -259,7 +253,7 @@ impl Generator {
                     if let Some(diff) = difference.get(#diff_key) {
                         if let #avt_type_ident::#variant_ident(old) = &diff.old {
                             let key_old = #old_value_expr;
-                            TableIndex::remove(&self.#index_field_name, key_old, link);
+                            TableIndex::remove(&self.#index_field_name, &key_old, link);
                         }
                     }
                 }
@@ -372,19 +366,10 @@ impl Generator {
                         row.#i
                     }
                 };
-                let delete = if idx.is_unique {
-                    quote! {
-                        self.#index_field_name.remove(&#row);
-                    }
-                } else {
-                    quote! {
-                        self.#index_field_name.remove(&#row, &link);
-                    }
-                };
 
                 quote! {
                     #avt_index_ident::#index_variant => {
-                        #delete
+                        TableIndex::remove(&self.#index_field_name, &#row, link);
                     },
                 }
             })

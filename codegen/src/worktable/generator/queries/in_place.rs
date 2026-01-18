@@ -116,7 +116,7 @@ impl Generator {
                     .0
                     .pk_map
                     .get(&pk)
-                    .map(|v| v.get().value)
+                    .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound)?;
                 unsafe {
                     self.0

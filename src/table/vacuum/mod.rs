@@ -17,7 +17,6 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Serialize};
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
-use crate::lock::{FullRowLock, LockMap};
 use crate::prelude::TablePrimaryKey;
 use crate::vacuum::fragmentation_info::PageFragmentationInfo;
 use crate::vacuum::lock::VacuumLock;

@@ -60,16 +60,16 @@ impl Generator {
                 let res = if idx.is_unique {
                     if is_unsized(&t.to_string()) {
                         quote! {
-                            #i: IndexMap<#t, Link, UnsizedNode<IndexPair<#t, Link>>>
+                            #i: IndexMap<#t, OffsetEqLink, UnsizedNode<IndexPair<#t, OffsetEqLink>>>
                         }
                     } else {
-                        quote! {#i: IndexMap<#t, Link>}
+                        quote! {#i: IndexMap<#t, OffsetEqLink>}
                     }
                 } else {
                     if is_unsized(&t.to_string()) {
-                        quote! {#i: IndexMultiMap<#t, Link, UnsizedNode<IndexMultiPair<#t, Link>>>}
+                        quote! {#i: IndexMultiMap<#t, OffsetEqLink, UnsizedNode<IndexMultiPair<#t, OffsetEqLink>>>}
                     } else {
-                        quote! {#i: IndexMultiMap<#t, Link>}
+                        quote! {#i: IndexMultiMap<#t, OffsetEqLink>}
                     }
                 };
                 Ok::<_, syn::Error>(res)

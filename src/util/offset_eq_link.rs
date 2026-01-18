@@ -4,13 +4,14 @@
 //! based on its absolute index within the data pages, rather than on the
 //! raw `Link` fields.
 
-use data_bucket::Link;
+use data_bucket::{Link, SizeMeasurable};
+use derive_more::From;
 
 use crate::in_memory::DATA_INNER_LENGTH;
 use crate::prelude::Into;
 
 /// A link wrapper that implements `Eq` based on absolute index.
-#[derive(Copy, Clone, Debug, Into)]
+#[derive(Copy, Clone, Debug, Default, Into, From)]
 pub struct OffsetEqLink<const DATA_LENGTH: usize = DATA_INNER_LENGTH>(pub Link);
 
 impl<const DATA_LENGTH: usize> OffsetEqLink<DATA_LENGTH> {
@@ -46,6 +47,36 @@ impl<const DATA_LENGTH: usize> PartialEq for OffsetEqLink<DATA_LENGTH> {
 }
 
 impl<const DATA_LENGTH: usize> Eq for OffsetEqLink<DATA_LENGTH> {}
+
+impl<const DATA_LENGTH: usize> std::ops::Deref for OffsetEqLink<DATA_LENGTH> {
+    type Target = Link;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<const DATA_LENGTH: usize> AsRef<Link> for OffsetEqLink<DATA_LENGTH> {
+    fn as_ref(&self) -> &Link {
+        &self.0
+    }
+}
+
+impl<const DATA_LENGTH: usize> PartialEq<Link> for OffsetEqLink<DATA_LENGTH> {
+    fn eq(&self, other: &Link) -> bool {
+        self.0.eq(other)
+    }
+}
+
+impl<const DATA_LENGTH: usize> SizeMeasurable for OffsetEqLink<DATA_LENGTH> {
+    fn aligned_size(&self) -> usize {
+        self.0.aligned_size()
+    }
+
+    fn align() -> Option<usize> {
+        Link::align()
+    }
+}
 
 #[cfg(test)]
 mod tests {

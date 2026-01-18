@@ -238,7 +238,7 @@ impl Generator {
 
     fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
         quote! {
-            let first = self.0.pk_map.iter().next().map(|(k, v)| (k.clone(), *v));
+            let first = self.0.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
             let Some((mut k, link)) = first else {
                 return Ok(())
             };
@@ -250,11 +250,11 @@ impl Generator {
             while !ind {
                 let next = {
                     let mut iter = self.0.pk_map.range(k.clone()..);
-                    let next = iter.next().map(|(k, v)| (k.clone(), *v)).filter(|(key, _)| key != &k);
+                    let next = iter.next().map(|(k, v)| (k.clone(), v.0)).filter(|(key, _)| key != &k);
                     if next.is_some() {
                         next
                     } else {
-                        iter.next().map(|(k, v)| (k.clone(), *v))
+                        iter.next().map(|(k, v)| (k.clone(), v.0))
                     }
                 };
                 if let Some((key, link)) = next {
