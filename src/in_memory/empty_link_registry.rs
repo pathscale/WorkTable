@@ -368,8 +368,7 @@ mod tests {
         registry.push(large);
         registry.push(medium);
 
-        assert_eq!(registry.pop_max().unwrap().length, 200);
-        assert_eq!(registry.pop_max().unwrap().length, 100);
+        assert_eq!(registry.pop_max().unwrap().length, 300); // two links were united
         assert_eq!(registry.pop_max().unwrap().length, 50);
     }
 

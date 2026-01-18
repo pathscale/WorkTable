@@ -104,7 +104,7 @@ impl Generator {
                 let rows = self.0.indexes.#field_ident
                     .get(#by)
                     .into_iter()
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted((*link).into()).ok())
+                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok())
                     .filter(move |r| &r.#row_field_ident == &by);
 
                 SelectQueryBuilder::new(rows)

@@ -197,7 +197,7 @@ impl Generator {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 let rows_to_update = self.0.indexes.#index.get(#by).map(|kv| kv.1).collect::<Vec<_>>();
                 for link in rows_to_update {
-                    let row = self.0.data.select_non_ghosted((*link).into()).map_err(WorkTableError::PagesError)?;
+                    let row = self.0.data.select_non_ghosted(link.0).map_err(WorkTableError::PagesError)?;
                     self.delete(row.get_primary_key()).await?;
                 }
                 core::result::Result::Ok(())

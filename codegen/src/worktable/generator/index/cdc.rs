@@ -104,7 +104,7 @@ impl Generator {
                 let remove = if idx.is_unique {
                     quote! {
                         if row_new.#i == row_old.#i {
-                            let events = self.#index_field_name.insert_cdc(row_new.#i.clone(), link_new).1;
+                            let events = TableIndexCdc::insert_cdc(&self.#index_field_name, row_new.#i.clone(), link_new).1;
                             #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                         } else {
                             let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row_old.#i.clone(), link_old);
@@ -113,7 +113,7 @@ impl Generator {
                     }
                 } else {
                     quote! {
-                        let events = self.#index_field_name.insert_cdc(row_new.#i.clone(), link_new).1;
+                        let events = TableIndexCdc::insert_cdc(&self.#index_field_name, row_new.#i.clone(), link_new).1;
                         #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                         let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row_old.#i.clone(), link_old);
                         #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());

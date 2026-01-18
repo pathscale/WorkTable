@@ -16,7 +16,7 @@ pub struct OffsetEqLink<const DATA_LENGTH: usize = DATA_INNER_LENGTH>(pub Link);
 
 impl<const DATA_LENGTH: usize> OffsetEqLink<DATA_LENGTH> {
     /// Calculates the absolute index of the link.
-    fn absolute_index(&self) -> u64 {
+    pub fn absolute_index(&self) -> u64 {
         let page_id: u32 = self.0.page_id.into();
         (page_id as u64 * DATA_LENGTH as u64) + self.0.offset as u64
     }

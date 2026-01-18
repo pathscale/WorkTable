@@ -386,7 +386,7 @@ async fn delete_and_insert_less() {
     let pk = table.insert(updated.clone()).unwrap();
     let new_link = table.0.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
 
-    assert_ne!(link, new_link)
+    assert_ne!(link.0, new_link.0)
 }
 
 #[tokio::test]

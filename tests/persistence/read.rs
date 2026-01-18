@@ -28,7 +28,7 @@ async fn test_info_parse() {
     assert_eq!(info.inner.page_count, 1);
     assert_eq!(info.inner.name, "TestPersist");
     assert_eq!(info.inner.pk_gen_state, 0);
-    assert_eq!(info.inner.empty_links_list, vec![]);
+    assert_eq!(info.inner.empty_links_list, Vec::<Link>::new());
 }
 
 #[tokio::test]

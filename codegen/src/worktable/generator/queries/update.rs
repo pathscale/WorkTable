@@ -609,7 +609,7 @@ impl Generator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
-                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| *l).collect();
+                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
 
                 let mut locks = std::collections::HashMap::new();
                 for link in links.iter() {
@@ -620,7 +620,7 @@ impl Generator {
                     locks.insert(pk, op_lock);
                 }
 
-                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| *l).collect();
+                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
                 let mut pk_to_unlock: std::collections::HashMap<_, std::sync::Arc<Lock>> = std::collections::HashMap::new();
                 let op_id = OperationId::Multi(uuid::Uuid::now_v7());
                 for link in links.into_iter() {
