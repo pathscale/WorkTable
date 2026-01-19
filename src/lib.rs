@@ -38,9 +38,9 @@ pub mod prelude {
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
         AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
-        TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-        TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UnsizedNode, WorkTable,
-        WorkTableError,
+        PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
+        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UnsizedNode,
+        WorkTable, WorkTableError,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE,

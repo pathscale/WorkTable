@@ -76,7 +76,7 @@ impl Generator {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
                     #index_size
-                    inner.pk_map = IndexMap::with_maximum_node_size(size);
+                    inner.primary_index.pk_map = IndexMap::with_maximum_node_size(size);
                     let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
                     let engine: #engine = PersistenceEngine::from_table_files_path(table_files_path).await?;
                     core::result::Result::Ok(Self(
@@ -168,7 +168,7 @@ impl Generator {
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 let need_to_update = {
-                    if let Some(_) = self.0.pk_map.get(&pk)
+                    if let Some(_) = self.0.primary_index.pk_map.get(&pk)
                     {
                         true
                     } else {
@@ -238,7 +238,7 @@ impl Generator {
 
     fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
         quote! {
-            let first = self.0.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
+            let first = self.0.primary_index.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
             let Some((mut k, link)) = first else {
                 return Ok(())
             };
@@ -249,7 +249,7 @@ impl Generator {
             let mut ind = false;
             while !ind {
                 let next = {
-                    let mut iter = self.0.pk_map.range(k.clone()..);
+                    let mut iter = self.0.primary_index.pk_map.range(k.clone()..);
                     let next = iter.next().map(|(k, v)| (k.clone(), v.0)).filter(|(key, _)| key != &k);
                     if next.is_some() {
                         next
@@ -273,7 +273,7 @@ impl Generator {
     fn gen_table_count_fn(&self) -> TokenStream {
         quote! {
             pub fn count(&self) -> usize {
-                let count = self.0.pk_map.len();
+                let count = self.0.primary_index.pk_map.len();
                 count
             }
         }

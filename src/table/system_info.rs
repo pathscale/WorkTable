@@ -53,8 +53,8 @@ impl<
     SecondaryIndexes,
     LockType,
     PkGen,
-    NodeType,
     const DATA_LENGTH: usize,
+    NodeType,
 >
     WorkTable<
         Row,
@@ -64,19 +64,19 @@ impl<
         SecondaryIndexes,
         LockType,
         PkGen,
-        NodeType,
         DATA_LENGTH,
+        NodeType,
     >
 where
     PrimaryKey: Debug + Clone + Ord + Send + 'static + std::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
-    NodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink>> + Send + 'static,
+    NodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
     SecondaryIndexes: MemStat + TableSecondaryIndexInfo,
 {
     pub fn system_info(&self) -> SystemInfo {
         let page_count = self.data.get_page_count();
-        let row_count = self.pk_map.len();
+        let row_count = self.primary_index.pk_map.len();
 
         let empty_links = self.data.get_empty_links().len();
 

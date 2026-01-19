@@ -114,7 +114,7 @@ impl Generator {
                 };
                 let link = self
                     .0
-                    .pk_map
+                    .primary_index.pk_map
                     .get(&pk)
                     .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound)?;

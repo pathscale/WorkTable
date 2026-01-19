@@ -93,7 +93,7 @@ impl Generator {
                 };
 
                 let link = match self.0
-                    .pk_map
+                    .primary_index.pk_map
                     .get(&pk)
                     .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound) {
@@ -478,7 +478,7 @@ impl Generator {
                 };
 
                 let link = match self.0
-                        .pk_map
+                        .primary_index.pk_map
                         .get(&pk)
                         .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound) {

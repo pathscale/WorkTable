@@ -38,7 +38,7 @@ async fn test_update_string_full_row() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     table
         .update(TestRow {
@@ -74,7 +74,7 @@ async fn test_update_string_by_unique() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     let row = ExchangeByTestQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -105,7 +105,7 @@ async fn test_update_string_by_pk() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     let row = ExchangeByIdQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -136,7 +136,7 @@ async fn test_update_string_by_non_unique() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row1.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
@@ -144,7 +144,7 @@ async fn test_update_string_by_non_unique() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row2.clone()).unwrap();
-    let second_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let second_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     let row = ExchangeByAbotherQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -329,7 +329,7 @@ async fn test_update_many_strings_by_unique() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     let row = ExchangeAndSomeByTestQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -368,7 +368,7 @@ async fn test_update_many_strings_by_pk() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     let row = ExchangeAndSomeByIdQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -404,7 +404,7 @@ async fn test_update_many_strings_by_non_unique() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row1.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
     let row2 = TestMoreStringsRow {
         id: table.get_next_pk().into(),
         test: 2,
@@ -414,7 +414,7 @@ async fn test_update_many_strings_by_non_unique() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row2.clone()).unwrap();
-    let second_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let second_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     let row = ExchangeAndSomeByAnotherQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -472,7 +472,7 @@ async fn test_update_many_strings_by_string() {
         other_srting: "other er".to_string(),
     };
     let pk = table.insert(row1.clone()).unwrap();
-    let first_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
     let row2 = TestMoreStringsRow {
         id: table.get_next_pk().into(),
         test: 2,
@@ -482,7 +482,7 @@ async fn test_update_many_strings_by_string() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row2.clone()).unwrap();
-    let second_link = table.0.pk_map.get(&pk).unwrap().get().value;
+    let second_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
 
     let row = SomeOtherByExchangeQuery {
         other_srting: "bigger test to test string update".to_string(),

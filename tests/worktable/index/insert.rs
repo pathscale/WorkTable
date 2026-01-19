@@ -131,12 +131,13 @@ fn insert_when_secondary_unique_exists() {
             .indexes
             .attr2_idx
             .get(&row.attr2)
-            .map(|r| r.get().value),
+            .map(|r| r.get().value.0),
         table
             .0
+            .primary_index
             .pk_map
             .get(&TestPrimaryKey(row.id))
-            .map(|r| r.get().value)
+            .map(|r| r.get().value.0)
     );
 }
 
@@ -188,12 +189,13 @@ fn insert_when_secondary_unique_string_exists() {
             .indexes
             .attr4_idx
             .get(&row.attr4)
-            .map(|r| r.get().value),
+            .map(|r| r.get().value.0),
         table
             .0
+            .primary_index
             .pk_map
             .get(&TestPrimaryKey(row.id))
-            .map(|r| r.get().value)
+            .map(|r| r.get().value.0)
     );
 }
 

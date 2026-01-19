@@ -105,7 +105,7 @@ impl Generator {
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
                     let mut pages = vec![];
-                    for node in self.0.pk_map.iter_nodes() {
+                    for node in self.0.primary_index.pk_map.iter_nodes() {
                         let page = UnsizedIndexPage::from_node(node.lock_arc().as_ref());
                         pages.push(page);
                     }
@@ -118,7 +118,7 @@ impl Generator {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                     let mut pages = vec![];
-                    for node in self.0.pk_map.iter_nodes() {
+                    for node in self.0.primary_index.pk_map.iter_nodes() {
                         let page = IndexPage::from_node(node.lock_arc().as_ref(), size);
                         pages.push(page);
                     }
