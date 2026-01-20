@@ -2,10 +2,6 @@ mod fragmentation_info;
 mod lock;
 mod page;
 
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::Arc;
-
 use data_bucket::Link;
 use data_bucket::page::PageId;
 use indexset::core::node::NodeLike;
@@ -16,6 +12,10 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Serialize};
+use std::fmt::Debug;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
@@ -89,9 +89,8 @@ where
     AvailableIndexes: Debug + AvailableIndex,
 {
     async fn defragment_page(&self, info: PageFragmentationInfo<DATA_LENGTH>) {
-        let mut page_empty_links = self
-            .data_pages
-            .empty_links_registry()
+        let registry = self.data_pages.empty_links_registry();
+        let mut page_empty_links = registry
             .page_links_map
             .get(&info.page_id)
             .map(|(_, l)| *l)
@@ -104,11 +103,13 @@ where
         let Some(mut current_empty) = empty_links_iter.next() else {
             return;
         };
+        registry.remove_link(current_empty);
 
         let Some(mut next_empty) = empty_links_iter.next() else {
             self.shift_data_in_range(current_empty, None);
             return;
         };
+        registry.remove_link(next_empty);
 
         loop {
             let offset = self.shift_data_in_range(current_empty, Some(next_empty.offset));
@@ -116,6 +117,7 @@ where
             let new_next = empty_links_iter.next();
             match new_next {
                 Some(link) => {
+                    registry.remove_link(link);
                     current_empty = Link {
                         page_id: next_empty.page_id,
                         offset,
@@ -164,6 +166,10 @@ where
             entry_offset += link_value.length;
             self.update_index_after_move(pk.clone(), link_value, new_link);
         }
+
+        // Is safe as page is locked now and we can get here only if end_offset
+        // is not set so we are shifting till page end.
+        page.free_offset.store(entry_offset, Ordering::Release);
 
         entry_offset
     }
@@ -461,6 +467,62 @@ mod tests {
         vacuum.defragment_page(*info).await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_insert_after_free_offset_update() {
+        let table = TestWorkTable::default();
+
+        let mut original_ids = HashMap::new();
+        for i in 0..8 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("original{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            original_ids.insert(id, row);
+        }
+
+        let ids_to_delete = original_ids.keys().take(3).cloned().collect::<Vec<_>>();
+        for id in &ids_to_delete {
+            table.delete((*id).into()).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
+        let info = per_page_info
+            .first()
+            .expect("at least one page should exist");
+        vacuum.defragment_page(*info).await;
+
+        let mut new_ids = HashMap::new();
+        for i in 0..3 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: 100 + i,
+                another: (100 + i) as u64,
+                exchange: format!("new{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            new_ids.insert(id, row);
+        }
+
+        for (id, expected) in original_ids
+            .into_iter()
+            .filter(|(i, _)| !ids_to_delete.contains(i))
+        {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+
+        for (id, expected) in new_ids {
             let row = table.select(id);
             assert_eq!(row, Some(expected));
         }

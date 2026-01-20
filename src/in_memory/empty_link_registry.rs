@@ -97,7 +97,7 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
 }
 
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
-    fn remove_link<L: Into<Link>>(&self, link: L) {
+    pub fn remove_link<L: Into<Link>>(&self, link: L) {
         let link = link.into();
         self.index_ord_links.remove(&IndexOrdLink(link));
         self.length_ord_links.remove(&link.length, &link);
