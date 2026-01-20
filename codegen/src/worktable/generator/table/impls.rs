@@ -62,21 +62,27 @@ impl Generator {
                 })
                 .collect::<Vec<_>>();
             let pk_types_unsized = is_unsized_vec(pk_types);
-            let index_size = if pk_types_unsized {
+            let index_setup = if pk_types_unsized {
                 quote! {
-                    let size = #const_name;
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name),
+                        reverse_pk_map: IndexMap::new(),
+                    });
                 }
             } else {
                 quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: IndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
+                        reverse_pk_map: IndexMap::new(),
+                    });
                 }
             };
             quote! {
                 pub async fn new(config: PersistenceConfig) -> eyre::Result<Self> {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
-                    #index_size
-                    inner.primary_index.pk_map = IndexMap::with_maximum_node_size(size);
+                    #index_setup
                     let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
                     let engine: #engine = PersistenceEngine::from_table_files_path(table_files_path).await?;
                     core::result::Result::Ok(Self(

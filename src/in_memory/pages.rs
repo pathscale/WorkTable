@@ -1,11 +1,12 @@
 use std::{
     fmt::Debug,
+    sync::Arc,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
-    sync::{Arc, RwLock},
 };
 
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
+use parking_lot::RwLock;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
@@ -103,7 +104,7 @@ where
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
         if let Some(link) = self.empty_links.pop_max() {
-            let pages = self.pages.read().unwrap();
+            let pages = self.pages.read();
             let current_page: usize = page_id_mapper(link.page_id.into());
             let page = &pages[current_page];
 
@@ -131,7 +132,7 @@ where
 
         loop {
             let (link, tried_page) = {
-                let pages = self.pages.read().unwrap();
+                let pages = self.pages.read();
                 let current_page =
                     page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
                 let page = &pages[current_page];
@@ -180,7 +181,7 @@ where
     }
 
     fn add_next_page(&self, tried_page: usize) {
-        let mut pages = self.pages.write().expect("lock should be not poisoned");
+        let mut pages = self.pages.write();
         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
             let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -202,7 +203,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             // - 1 is used because page ids are starting from 1.
             .get(page_id_mapper(link.page_id.into()))
@@ -220,7 +221,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             // - 1 is used because page ids are starting from 1.
             .get(page_id_mapper(link.page_id.into()))
@@ -244,7 +245,7 @@ where
             >,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get::<usize>(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
@@ -273,7 +274,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
@@ -304,7 +305,7 @@ where
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
     {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
@@ -323,7 +324,7 @@ where
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
@@ -331,8 +332,17 @@ where
             .map_err(ExecutionError::DataPageError)
     }
 
+    pub fn get_page(
+        &self,
+        page_id: PageId,
+    ) -> Option<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>> {
+        let pages = self.pages.read();
+        let page = pages.get(page_id_mapper(page_id.into()))?;
+        Some(page.clone())
+    }
+
     pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
-        let pages = self.pages.read().unwrap();
+        let pages = self.pages.read();
         pages
             .iter()
             .map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed)))
@@ -340,7 +350,7 @@ where
     }
 
     pub fn get_page_count(&self) -> usize {
-        self.pages.read().unwrap().len()
+        self.pages.read().len()
     }
 
     pub fn get_empty_links(&self) -> Vec<Link> {
@@ -376,11 +386,12 @@ pub enum ExecutionError {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, RwLock};
     use std::thread;
     use std::time::Instant;
 
+    use parking_lot::RwLock;
     use rkyv::with::{AtomicLoad, Relaxed};
     use rkyv::{Archive, Deserialize, Serialize};
 
@@ -567,7 +578,7 @@ mod tests {
                 for i in 0..1000 {
                     let row = TestRow { a: i, b: j * i + 1 };
 
-                    let mut pages = pages_shared.write().unwrap();
+                    let mut pages = pages_shared.write();
                     pages.insert(row);
                 }
             });
@@ -598,7 +609,7 @@ mod tests {
                 for i in 0..1000 {
                     let row = TestRow { a: i, b: j * i + 1 };
 
-                    let mut pages = pages_shared.write().unwrap();
+                    let mut pages = pages_shared.write();
                     pages.push(row);
                 }
             });

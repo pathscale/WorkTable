@@ -257,6 +257,37 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(bytes.to_vec())
     }
 
+    /// Moves data within the page from one location to another.
+    /// Used for defragmentation - shifts data left to fill gaps.
+    ///
+    /// # Safety
+    /// Caller must ensure:
+    /// - Both `from` and `to` links are valid and point to the same page
+    /// - `from.length` equals `to.length`
+    /// - No other references exist during this operation
+    pub unsafe fn move_from_to(&self, from: Link, to: Link) -> Result<(), ExecutionError> {
+        if from.length != to.length {
+            return Err(ExecutionError::InvalidLink);
+        }
+
+        let inner_data = unsafe { &mut *self.inner_data.get() };
+        let src_offset = from.offset as usize;
+        let dst_offset = to.offset as usize;
+        let length = from.length as usize;
+
+        // Use ptr::copy for overlapping memory regions (safe for shifting left)
+        // When moving left (dst_offset < src_offset), this works correctly
+        unsafe {
+            std::ptr::copy(
+                inner_data.as_ptr().add(src_offset),
+                inner_data.as_mut_ptr().add(dst_offset),
+                length,
+            );
+        }
+
+        Ok(())
+    }
+
     pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
         let data = unsafe { &*self.inner_data.get() };
         data.0
@@ -293,6 +324,7 @@ mod tests {
     use rkyv::{Archive, Deserialize, Serialize};
 
     use crate::in_memory::data::{Data, ExecutionError, INNER_PAGE_SIZE};
+    use crate::prelude::Link;
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -498,5 +530,48 @@ mod tests {
         for link in links {
             let _ = shared.get_row(link).unwrap();
         }
+    }
+
+    #[test]
+    fn move_from_to() {
+        let page = Data::<TestRow>::new(1.into());
+
+        let row1 = TestRow { a: 100, b: 200 };
+        let link1 = page.save_row(&row1).unwrap();
+        assert_eq!(link1.offset, 0);
+
+        let row2 = TestRow { a: 300, b: 400 };
+        let link2 = page.save_row(&row2).unwrap();
+        assert_eq!(link2.offset, 16);
+
+        let new_link = Link {
+            page_id: link2.page_id,
+            offset: 0,
+            length: link2.length,
+        };
+
+        unsafe { page.move_from_to(link2, new_link).unwrap() };
+
+        let moved_row = page.get_row(new_link).unwrap();
+        assert_eq!(moved_row, row2);
+    }
+
+    #[test]
+    fn move_from_to_different_lengths() {
+        let page = Data::<TestRow>::new(1.into());
+
+        let from = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 16,
+        };
+        let to = Link {
+            page_id: 1.into(),
+            offset: 32,
+            length: 8,
+        };
+
+        let result = unsafe { page.move_from_to(from, to) };
+        assert!(matches!(result, Err(ExecutionError::InvalidLink)));
     }
 }

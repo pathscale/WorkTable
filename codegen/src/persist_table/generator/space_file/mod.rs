@@ -224,9 +224,9 @@ impl Generator {
                 #primary_index_init
 
                 let table = WorkTable {
-                    data,
-                    primary_index,
-                    indexes,
+                    data: std::sync::Arc::new(data),
+                    primary_index: std::sync::Arc::new(primary_index),
+                    indexes: std::sync::Arc::new(indexes),
                     pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
                     lock_map: LockMap::default(),
                     update_state: IndexMap::default(),

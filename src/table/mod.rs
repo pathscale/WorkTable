@@ -2,9 +2,6 @@ pub mod select;
 pub mod system_info;
 pub mod vacuum;
 
-use std::fmt::Debug;
-use std::marker::PhantomData;
-
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
 use crate::lock::LockMap;
 use crate::persistence::{InsertOperation, Operation};
@@ -28,6 +25,9 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
+use std::fmt::Debug;
+use std::marker::PhantomData;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -46,11 +46,11 @@ pub struct WorkTable<
     Row: StorableRow + Send + Clone + 'static,
     PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
 {
-    pub data: DataPages<Row, DATA_LENGTH>,
+    pub data: Arc<DataPages<Row, DATA_LENGTH>>,
 
-    pub primary_index: PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>,
+    pub primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
 
-    pub indexes: SecondaryIndexes,
+    pub indexes: Arc<SecondaryIndexes>,
 
     pub pk_gen: PkGen,
 
@@ -76,16 +76,16 @@ impl<
     PkNodeType,
 > Default
     for WorkTable<
-    Row,
-    PrimaryKey,
-    AvailableTypes,
-    AvailableIndexes,
-    SecondaryIndexes,
-    LockType,
-    PkGen,
-    DATA_LENGTH,
-    PkNodeType,
->
+        Row,
+        PrimaryKey,
+        AvailableTypes,
+        AvailableIndexes,
+        SecondaryIndexes,
+        LockType,
+        PkGen,
+        DATA_LENGTH,
+        PkNodeType,
+    >
 where
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
     SecondaryIndexes: Default,
@@ -96,9 +96,9 @@ where
 {
     fn default() -> Self {
         Self {
-            data: DataPages::new(),
-            primary_index: PrimaryIndex::default(),
-            indexes: SecondaryIndexes::default(),
+            data: Arc::new(DataPages::new()),
+            primary_index: Arc::new(PrimaryIndex::default()),
+            indexes: Arc::new(SecondaryIndexes::default()),
             pk_gen: Default::default(),
             lock_map: LockMap::default(),
             update_state: IndexMap::default(),
@@ -159,7 +159,11 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link = self.primary_index.pk_map.get(&pk).map(|v| v.get().value.into());
+        let link = self
+            .primary_index
+            .pk_map
+            .get(&pk)
+            .map(|v| v.get().value.into());
         if let Some(link) = link {
             self.data.select(link).ok()
         } else {
@@ -195,7 +199,8 @@ where
             .insert(row.clone())
             .map_err(WorkTableError::PagesError)?;
         if self
-            .primary_index.pk_map
+            .primary_index
+            .pk_map
             .checked_insert(pk.clone(), OffsetEqLink(link))
             .is_none()
         {
@@ -261,7 +266,8 @@ where
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
         let primary_key_events = self
-            .primary_index.pk_map
+            .primary_index
+            .pk_map
             .checked_insert_cdc(pk.clone(), OffsetEqLink(link));
         let Some(primary_key_events) = primary_key_events else {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
@@ -340,7 +346,8 @@ where
             return Err(WorkTableError::PrimaryUpdateTry);
         }
         let old_link = self
-            .primary_index.pk_map
+            .primary_index
+            .pk_map
             .get(&pk)
             .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
@@ -353,7 +360,9 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        self.primary_index.pk_map.insert(pk.clone(), OffsetEqLink(new_link));
+        self.primary_index
+            .pk_map
+            .insert(pk.clone(), OffsetEqLink(new_link));
 
         let indexes_res = self
             .indexes
@@ -364,7 +373,9 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.primary_index.pk_map.insert(pk.clone(), OffsetEqLink(old_link));
+                    self.primary_index
+                        .pk_map
+                        .insert(pk.clone(), OffsetEqLink(old_link));
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data
@@ -416,7 +427,8 @@ where
             return Err(WorkTableError::PrimaryUpdateTry);
         }
         let old_link = self
-            .primary_index.pk_map
+            .primary_index
+            .pk_map
             .get(&pk)
             .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
@@ -429,7 +441,10 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        let (_, primary_key_events) = self.primary_index.pk_map.insert_cdc(pk.clone(), OffsetEqLink(new_link));
+        let (_, primary_key_events) = self
+            .primary_index
+            .pk_map
+            .insert_cdc(pk.clone(), OffsetEqLink(new_link));
         let primary_key_events = convert_change_events(primary_key_events);
         let indexes_res =
             self.indexes
@@ -440,7 +455,9 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.primary_index.pk_map.insert(pk.clone(), OffsetEqLink(old_link));
+                    self.primary_index
+                        .pk_map
+                        .insert(pk.clone(), OffsetEqLink(old_link));
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data
