@@ -307,4 +307,162 @@ mod tests {
             assert_eq!(row, Some(expected));
         }
     }
+
+    #[tokio::test]
+    async fn test_vacuum_shift_data_last_records() {
+        let table = TestWorkTable::default();
+
+        let mut ids = HashMap::new();
+        for i in 0..10 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.insert(id, row);
+        }
+
+        let last_two_ids = ids.keys().skip(8).take(2).cloned().collect::<Vec<_>>();
+
+        table.delete(last_two_ids[1].into()).await.unwrap();
+        table.delete(last_two_ids[0].into()).await.unwrap();
+
+        let vacuum = create_vacuum(&table);
+
+        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
+        let info = per_page_info
+            .first()
+            .expect("at least one page should exist");
+        vacuum.defragment_page(*info).await;
+
+        for (id, expected) in ids
+            .into_iter()
+            .filter(|(i, _)| *i != last_two_ids[0] && *i != last_two_ids[1])
+        {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_shift_data_multiple_gaps() {
+        let table = TestWorkTable::default();
+
+        let mut ids = HashMap::new();
+        for i in 0..15 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.insert(id, row);
+        }
+
+        let ids_to_delete = [1, 3, 5, 7].map(|idx| ids.keys().cloned().nth(idx).unwrap());
+
+        for id in &ids_to_delete {
+            table.delete((*id).into()).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+
+        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
+        let info = per_page_info
+            .first()
+            .expect("at least one page should exist");
+        vacuum.defragment_page(*info).await;
+
+        for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_shift_data_single_record_left() {
+        let table = TestWorkTable::default();
+
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.push((id, row));
+        }
+
+        let remaining_id = ids[0].0;
+
+        for (id, _) in ids.iter().skip(1) {
+            table.delete((*id).into()).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+
+        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
+        let info = per_page_info
+            .first()
+            .expect("at least one page should exist");
+        vacuum.defragment_page(*info).await;
+
+        let row = table.select(remaining_id);
+        assert_eq!(row, Some(ids[0].1.clone()));
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_shift_data_variable_string_lengths() {
+        let table = TestWorkTable::default();
+
+        let mut ids = HashMap::new();
+        let strings = vec![
+            "a",
+            "bbbb",
+            "cccccc",
+            "dddddddd",
+            "eeeeeeeeee",
+            "ffffffffffff",
+            "gggggggggggggg",
+        ];
+
+        for (i, s) in strings.iter().enumerate() {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i as i64,
+                another: i as u64,
+                exchange: s.to_string(),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.insert(id, row);
+        }
+
+        let ids_to_delete = ids.keys().take(3).cloned().collect::<Vec<_>>();
+
+        for id in &ids_to_delete {
+            table.delete((*id).into()).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+
+        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
+        let info = per_page_info
+            .first()
+            .expect("at least one page should exist");
+        vacuum.defragment_page(*info).await;
+
+        for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
 }
