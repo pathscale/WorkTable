@@ -12,6 +12,7 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Serialize};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -88,6 +89,34 @@ where
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
     AvailableIndexes: Debug + AvailableIndex,
 {
+    async fn defragment(&self) {
+        let per_page_info = self.data_pages.empty_links_registry().get_per_page_info();
+        let mut in_migration_pages = vec![];
+        let mut defragmented_pages = VecDeque::new();
+
+        let mut info_iter = per_page_info.into_iter();
+        while let Some(info) = info_iter.next() {
+            let page_id = info.page_id;
+            if let Some(id) = defragmented_pages.pop_front() {
+                self.move_data_from(page_id, id)
+            } else {
+                self.defragment_page(info).await;
+                defragmented_pages.push_back(page_id);
+            }
+        }
+    }
+
+    async fn move_data_from(&self, from: PageId, to: PageId) {
+        let from_lock = self.vacuum_lock.lock_page(from);
+        let to_lock = self.vacuum_lock.lock_page(to);
+
+        let to_page = self
+            .data_pages
+            .get_page(to)
+            .expect("should exist as link exists");
+        let to_free_space = to_page.free_space();
+    }
+
     async fn defragment_page(&self, info: PageFragmentationInfo<DATA_LENGTH>) {
         let registry = self.data_pages.empty_links_registry();
         let mut page_empty_links = registry
@@ -97,7 +126,7 @@ where
             .collect::<Vec<_>>();
         page_empty_links.sort_by(|l1, l2| l1.offset.cmp(&l2.offset));
 
-        let _lock = self.vacuum_lock.lock_page(info.page_id);
+        let lock = self.vacuum_lock.lock_page(info.page_id);
         let mut empty_links_iter = page_empty_links.into_iter();
 
         let Some(mut current_empty) = empty_links_iter.next() else {
@@ -131,18 +160,33 @@ where
                 }
             }
         }
+
+        let l = lock.read().await;
+        l.unlock();
     }
 
-    pub fn shift_data_in_range(&self, start_link: Link, end_offset: Option<u32>) -> u32 {
+    fn shift_data_in_range(&self, start_link: Link, end_offset: Option<u32>) -> u32 {
         let page_id = start_link.page_id;
         let page = self
             .data_pages
             .get_page(page_id)
             .expect("should exist as link exists");
         let start_link = OffsetEqLink::<_>(start_link);
-        let mut range_iter = self.primary_index.reverse_pk_map.range(start_link..);
-        let mut entry_offset = start_link.0.offset;
+        let range = if let Some(offset) = end_offset {
+            let end = OffsetEqLink::<_>(Link {
+                page_id,
+                offset,
+                length: 0,
+            });
+            self.primary_index.reverse_pk_map.range(start_link..end)
+        } else {
+            self.primary_index.reverse_pk_map.range(start_link..)
+        }
+        .map(|(l, pk)| (*l, pk.clone()))
+        .collect::<Vec<_>>();
+        let mut range_iter = range.into_iter();
 
+        let mut entry_offset = start_link.0.offset;
         while let Some((link, pk)) = range_iter.next() {
             let link_value = link.0;
 
@@ -243,7 +287,7 @@ mod tests {
     async fn test_vacuum_shift_data_in_range_single_gap() {
         let table = TestWorkTable::default();
 
-        let mut ids = HashMap::new();
+        let mut ids = Vec::new();
         for i in 0..10 {
             let row = TestRow {
                 id: table.get_next_pk().into(),
@@ -253,10 +297,10 @@ mod tests {
             };
             let id = row.id;
             table.insert(row.clone()).unwrap();
-            ids.insert(id, row);
+            ids.push((id, row));
         }
 
-        let first_two_ids = ids.keys().take(2).cloned().collect::<Vec<_>>();
+        let first_two_ids = ids.iter().take(2).map(|(i, _)| *i).collect::<Vec<_>>();
 
         table.delete(first_two_ids[0].into()).await.unwrap();
         table.delete(first_two_ids[1].into()).await.unwrap();

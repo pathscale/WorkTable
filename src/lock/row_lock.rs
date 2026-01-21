@@ -27,6 +27,12 @@ pub struct FullRowLock {
     l: Arc<Lock>,
 }
 
+impl FullRowLock {
+    pub fn unlock(&self) {
+        self.l.unlock();
+    }
+}
+
 impl RowLock for FullRowLock {
     fn is_locked(&self) -> bool {
         self.l.is_locked()

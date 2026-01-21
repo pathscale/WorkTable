@@ -91,10 +91,7 @@ where
         let offset_link = OffsetEqLink(link);
         let (res, evs) = self.pk_map.insert_cdc(value.clone(), offset_link);
         let res_link = res.map(|l| l.0);
-
-        // Update reverse index based on result
         if let Some(res) = res {
-            // Old value existed, remove it from reverse index
             self.reverse_pk_map.remove(&res);
         }
         self.reverse_pk_map.insert(offset_link, value);
@@ -111,11 +108,9 @@ where
         let res = self.pk_map.checked_insert_cdc(value.clone(), offset_link);
 
         if let Some(evs) = res {
-            // Insert was successful, update reverse index
             self.reverse_pk_map.insert(offset_link, value);
             Some(convert_change_events(evs))
         } else {
-            // Key already existed
             None
         }
     }

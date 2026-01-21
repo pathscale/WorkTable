@@ -9,8 +9,8 @@ use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
-    AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableRow, TableSecondaryIndex,
-    TableSecondaryIndexCdc, convert_change_events, in_memory,
+    AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow,
+    TableSecondaryIndex, TableSecondaryIndexCdc, convert_change_events, in_memory,
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
@@ -200,8 +200,7 @@ where
             .map_err(WorkTableError::PagesError)?;
         if self
             .primary_index
-            .pk_map
-            .checked_insert(pk.clone(), OffsetEqLink(link))
+            .insert_checked(pk.clone(), link)
             .is_none()
         {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
@@ -214,7 +213,7 @@ where
                     inserted_already,
                 } => {
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
-                    self.primary_index.pk_map.remove(&pk);
+                    self.primary_index.remove(&pk, link);
                     self.indexes
                         .delete_from_indexes(row, link, inserted_already)?;
 
@@ -265,10 +264,7 @@ where
             .data
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        let primary_key_events = self
-            .primary_index
-            .pk_map
-            .checked_insert_cdc(pk.clone(), OffsetEqLink(link));
+        let primary_key_events = self.primary_index.insert_checked_cdc(pk.clone(), link);
         let Some(primary_key_events) = primary_key_events else {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
@@ -282,7 +278,7 @@ where
                     inserted_already,
                 } => {
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
-                    self.primary_index.pk_map.remove(&pk);
+                    self.primary_index.remove(&pk, link);
                     self.indexes
                         .delete_from_indexes(row, link, inserted_already)?;
 
@@ -360,9 +356,7 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        self.primary_index
-            .pk_map
-            .insert(pk.clone(), OffsetEqLink(new_link));
+        self.primary_index.insert(pk.clone(), new_link);
 
         let indexes_res = self
             .indexes
@@ -373,9 +367,7 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.primary_index
-                        .pk_map
-                        .insert(pk.clone(), OffsetEqLink(old_link));
+                    self.primary_index.insert(pk.clone(), old_link);
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data
@@ -441,10 +433,7 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        let (_, primary_key_events) = self
-            .primary_index
-            .pk_map
-            .insert_cdc(pk.clone(), OffsetEqLink(new_link));
+        let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
         let primary_key_events = convert_change_events(primary_key_events);
         let indexes_res =
             self.indexes
@@ -455,9 +444,7 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.primary_index
-                        .pk_map
-                        .insert(pk.clone(), OffsetEqLink(old_link));
+                    self.primary_index.insert(pk.clone(), old_link);
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data

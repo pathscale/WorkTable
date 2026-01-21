@@ -288,9 +288,42 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(())
     }
 
+    /// Saves raw serialized bytes to the end of the page.
+    /// Used for moving already-serialized data without re-serialization.
+    pub fn save_raw_row(&self, data: &[u8]) -> Result<Link, ExecutionError> {
+        let length = data.len();
+        if length > DATA_LENGTH {
+            return Err(ExecutionError::PageTooSmall {
+                need: length,
+                allowed: DATA_LENGTH,
+            });
+        }
+        let length = length as u32;
+        let offset = self.free_offset.fetch_add(length, Ordering::AcqRel);
+        if offset > DATA_LENGTH as u32 - length {
+            return Err(ExecutionError::PageIsFull {
+                need: length,
+                left: DATA_LENGTH as i64 - offset as i64,
+            });
+        }
+
+        let inner_data = unsafe { &mut *self.inner_data.get() };
+        inner_data[offset as usize..][..length as usize].copy_from_slice(data);
+
+        Ok(Link {
+            page_id: self.id,
+            offset,
+            length,
+        })
+    }
+
     pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
         let data = unsafe { &*self.inner_data.get() };
         data.0
+    }
+
+    pub fn free_space(&self) -> usize {
+        DATA_LENGTH.saturating_sub(self.free_offset.load(Ordering::Acquire) as usize)
     }
 }
 
@@ -348,12 +381,16 @@ mod tests {
         let page = Data::<TestRow>::new(1.into());
         let row = TestRow { a: 10, b: 20 };
 
+        let initial_free = page.free_space();
+        assert!(initial_free > 0);
+
         let link = page.save_row(&row).unwrap();
         assert_eq!(link.page_id, page.id);
         assert_eq!(link.length, 16);
         assert_eq!(link.offset, 0);
 
         assert_eq!(page.free_offset.load(Ordering::Relaxed), link.length);
+        assert_eq!(page.free_space(), initial_free - link.length as usize);
 
         let inner_data = unsafe { &mut *page.inner_data.get() };
         let bytes = &inner_data[link.offset as usize..link.length as usize];
@@ -440,6 +477,9 @@ mod tests {
     fn data_page_save_many_rows() {
         let page = Data::<TestRow>::new(1.into());
 
+        let initial_free = page.free_space();
+        let mut total_used = 0;
+
         let mut rows = Vec::new();
         let mut links = Vec::new();
         for i in 1..10 {
@@ -450,8 +490,11 @@ mod tests {
             rows.push(row);
 
             let link = page.save_row(&row);
+            total_used += link.as_ref().unwrap().length as usize;
             links.push(link)
         }
+
+        assert_eq!(page.free_space(), initial_free - total_used);
 
         let inner_data = unsafe { &mut *page.inner_data.get() };
 
@@ -573,5 +616,83 @@ mod tests {
 
         let result = unsafe { page.move_from_to(from, to) };
         assert!(matches!(result, Err(ExecutionError::InvalidLink)));
+    }
+
+    #[test]
+    fn save_raw_row_appends_to_page() {
+        let page = Data::<TestRow>::new(1.into());
+        let row = TestRow { a: 42, b: 99 };
+
+        let link = page.save_row(&row).unwrap();
+        let raw_data = page.get_raw_row(link).unwrap();
+
+        let new_link = page.save_raw_row(&raw_data).unwrap();
+
+        assert_eq!(new_link.page_id, page.id);
+        assert_eq!(new_link.length, link.length);
+        assert_eq!(new_link.offset, link.length);
+
+        let retrieved = page.get_row(new_link).unwrap();
+        assert_eq!(retrieved, row);
+    }
+
+    #[test]
+    fn save_raw_row_page_too_small() {
+        let page = Data::<TestRow, 16>::new(1.into());
+        let data = vec![0u8; 32];
+
+        let result = page.save_raw_row(&data);
+        assert!(matches!(result, Err(ExecutionError::PageTooSmall { .. })));
+    }
+
+    #[test]
+    fn save_raw_row_page_full() {
+        let page = Data::<TestRow, 16>::new(1.into());
+        let row = TestRow { a: 1, b: 2 };
+        let _ = page.save_row(&row).unwrap();
+
+        let data = vec![0u8; 16];
+        let result = page.save_raw_row(&data);
+        assert!(matches!(result, Err(ExecutionError::PageIsFull { .. })));
+    }
+
+    #[test]
+    fn save_raw_row_move_between_pages() {
+        let page1 = Data::<TestRow>::new(1.into());
+        let page2 = Data::<TestRow>::new(2.into());
+
+        let original = TestRow { a: 123, b: 456 };
+        let link1 = page1.save_row(&original).unwrap();
+
+        let raw = page1.get_raw_row(link1).unwrap();
+        let link2 = page2.save_raw_row(&raw).unwrap();
+
+        let retrieved = page2.get_row(link2).unwrap();
+        assert_eq!(retrieved, original);
+    }
+
+    #[test]
+    fn save_raw_row_multiple_entries() {
+        let page = Data::<TestRow>::new(1.into());
+        let row = TestRow { a: 77, b: 88 };
+
+        let link = page.save_row(&row).unwrap();
+        let raw_data = page.get_raw_row(link).unwrap();
+        let row_size = link.length as usize;
+
+        let initial_free = page.free_space();
+
+        let mut links = vec![link];
+        for i in 0..5 {
+            let new_link = page.save_raw_row(&raw_data).unwrap();
+            links.push(new_link);
+            let expected_free = initial_free - ((i + 1) as usize * row_size);
+            assert_eq!(page.free_space(), expected_free);
+        }
+
+        for link in links {
+            let retrieved = page.get_row(link).unwrap();
+            assert_eq!(retrieved, row);
+        }
     }
 }
