@@ -92,21 +92,47 @@ where
     async fn defragment(&self) {
         let per_page_info = self.data_pages.empty_links_registry().get_per_page_info();
         let mut in_migration_pages = vec![];
+        let mut free_pages = vec![];
         let mut defragmented_pages = VecDeque::new();
 
         let mut info_iter = per_page_info.into_iter();
         while let Some(info) = info_iter.next() {
             let page_id = info.page_id;
             if let Some(id) = defragmented_pages.pop_front() {
-                self.move_data_from(page_id, id)
+                match self.move_data_from(page_id, id).await {
+                    (true, true) => {
+                        // from moved fully and on to no more space
+                        free_pages.push(page_id);
+                    }
+                    (true, false) => {
+                        // from moved fully but to has space
+                        defragmented_pages.push_back(id);
+                    }
+                    (false, true) => {
+                        // from was not moved but to have NO space
+                        in_migration_pages.push(page_id);
+                    }
+                    (false, false) => unreachable!(
+                        "at least one of two situations should appear to break from while cycle"
+                    ),
+                }
             } else {
                 self.defragment_page(info).await;
                 defragmented_pages.push_back(page_id);
             }
         }
+
+        for in_migration_pages in in_migration_pages {
+            let page_start = Link {
+                page_id: in_migration_pages,
+                offset: 0,
+                length: 0,
+            };
+            self.shift_data_in_range(page_start, None);
+        }
     }
 
-    async fn move_data_from(&self, from: PageId, to: PageId) {
+    async fn move_data_from(&self, from: PageId, to: PageId) -> (bool, bool) {
         let from_lock = self.vacuum_lock.lock_page(from);
         let to_lock = self.vacuum_lock.lock_page(to);
 
@@ -114,7 +140,63 @@ where
             .data_pages
             .get_page(to)
             .expect("should exist as link exists");
+        let from_page = self
+            .data_pages
+            .get_page(from)
+            .expect("should exist as link exists");
         let to_free_space = to_page.free_space();
+
+        let page_start = OffsetEqLink::<_>(Link {
+            page_id: from,
+            offset: 0,
+            length: 0,
+        });
+
+        let mut range = self.primary_index.reverse_pk_map.range(page_start..);
+        let mut sum_links_len = 0;
+        let mut links = vec![];
+        let mut from_page_will_be_moved = false;
+        let mut to_page_will_be_filled = false;
+
+        loop {
+            let Some((next, pk)) = range.next() else {
+                from_page_will_be_moved = true;
+                break;
+            };
+
+            if sum_links_len + next.length > to_free_space as u32 {
+                to_page_will_be_filled = true;
+                if range.next().is_none() {
+                    from_page_will_be_moved = true;
+                }
+                break;
+            }
+            sum_links_len += next.length;
+            links.push((*next, pk.clone()));
+        }
+
+        drop(range);
+
+        for (from_link, pk) in links {
+            let raw_data = from_page
+                .get_raw_row(from_link.0)
+                .expect("link is not bigger than free offset");
+            let new_link = to_page
+                .save_raw_row(&raw_data)
+                .expect("page is not full as checked on links collection");
+            self.update_index_after_move(pk, from_link.0, new_link);
+        }
+
+        {
+            let g = from_lock.read().await;
+            g.unlock()
+        }
+        {
+            let g = to_lock.read().await;
+            g.unlock()
+        }
+
+        (from_page_will_be_moved, to_page_will_be_filled)
     }
 
     async fn defragment_page(&self, info: PageFragmentationInfo<DATA_LENGTH>) {
@@ -155,7 +237,12 @@ where
                     next_empty = link;
                 }
                 None => {
-                    self.shift_data_in_range(next_empty, None);
+                    let from = Link {
+                        page_id: next_empty.page_id,
+                        offset,
+                        length: next_empty.length + (next_empty.offset - offset),
+                    };
+                    self.shift_data_in_range(from, None);
                     break;
                 }
             }
@@ -180,7 +267,12 @@ where
             });
             self.primary_index.reverse_pk_map.range(start_link..end)
         } else {
-            self.primary_index.reverse_pk_map.range(start_link..)
+            let end = OffsetEqLink::<_>(Link {
+                page_id: page_id.next(),
+                offset: 0,
+                length: 0,
+            });
+            self.primary_index.reverse_pk_map.range(start_link..end)
         }
         .map(|(l, pk)| (*l, pk.clone()))
         .collect::<Vec<_>>();
@@ -211,9 +303,11 @@ where
             self.update_index_after_move(pk.clone(), link_value, new_link);
         }
 
-        // Is safe as page is locked now and we can get here only if end_offset
-        // is not set so we are shifting till page end.
-        page.free_offset.store(entry_offset, Ordering::Release);
+        if end_offset.is_none() {
+            // Is safe as page is locked now and we can get here only if end_offset
+            // is not set so we are shifting till page end.
+            page.free_offset.store(entry_offset, Ordering::Release);
+        }
 
         entry_offset
     }
@@ -247,7 +341,7 @@ mod tests {
     use crate::vacuum::EmptyDataVacuum;
     use crate::vacuum::lock::VacuumLock;
 
-    worktable! (
+    worktable!(
         name: Test,
         columns: {
             id: u64 primary_key autoincrement,
@@ -306,12 +400,7 @@ mod tests {
         table.delete(first_two_ids[1].into()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-
-        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
-        let info = per_page_info
-            .first()
-            .expect("at least one page should exist");
-        vacuum.defragment_page(*info).await;
+        vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().skip(2) {
             let row = table.select(id);
@@ -342,12 +431,7 @@ mod tests {
         table.delete(ids_to_delete[1].into()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-
-        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
-        let info = per_page_info
-            .first()
-            .expect("at least one page should exist");
-        vacuum.defragment_page(*info).await;
+        vacuum.defragment().await;
 
         for (id, expected) in ids
             .into_iter()
@@ -381,12 +465,7 @@ mod tests {
         table.delete(last_two_ids[0].into()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-
-        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
-        let info = per_page_info
-            .first()
-            .expect("at least one page should exist");
-        vacuum.defragment_page(*info).await;
+        vacuum.defragment().await;
 
         for (id, expected) in ids
             .into_iter()
@@ -421,12 +500,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-
-        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
-        let info = per_page_info
-            .first()
-            .expect("at least one page should exist");
-        vacuum.defragment_page(*info).await;
+        vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
             let row = table.select(id);
@@ -458,12 +532,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-
-        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
-        let info = per_page_info
-            .first()
-            .expect("at least one page should exist");
-        vacuum.defragment_page(*info).await;
+        vacuum.defragment().await;
 
         let row = table.select(remaining_id);
         assert_eq!(row, Some(ids[0].1.clone()));
@@ -503,12 +572,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-
-        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
-        let info = per_page_info
-            .first()
-            .expect("at least one page should exist");
-        vacuum.defragment_page(*info).await;
+        vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
             let row = table.select(id);
@@ -539,11 +603,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        let per_page_info = table.0.data.empty_links_registry().get_per_page_info();
-        let info = per_page_info
-            .first()
-            .expect("at least one page should exist");
-        vacuum.defragment_page(*info).await;
+        vacuum.defragment().await;
 
         let mut new_ids = HashMap::new();
         for i in 0..3 {
@@ -567,6 +627,73 @@ mod tests {
         }
 
         for (id, expected) in new_ids {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_multi_page_data_migration() {
+        let table = TestWorkTable::default();
+
+        let mut ids = Vec::new();
+        // row is ~40 bytes so ~409 rows per page
+        for i in 0..500 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.push((id, row));
+        }
+
+        let ids_to_delete: Vec<_> = ids.iter().map(|(i, _)| *i).take(20).collect();
+        for id in &ids_to_delete {
+            table.delete((*id).into()).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+        vacuum.defragment().await;
+
+        for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_multi_page_alternating_deletes() {
+        let table = TestWorkTable::default();
+
+        let mut ids = Vec::new();
+        // row is ~40 bytes so ~409 rows per page
+        for i in 0..500 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.push((id, row));
+        }
+
+        let ids_to_delete: Vec<_> = ids.iter().step_by(20).map(|(id, _)| *id).collect();
+        for id in &ids_to_delete {
+            table.delete((*id).into()).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+        vacuum.defragment().await;
+
+        for (id, expected) in ids
+            .into_iter()
+            .filter(|(id, _)| !ids_to_delete.contains(id))
+        {
             let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
