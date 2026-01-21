@@ -1,9 +1,3 @@
-use std::{
-    fmt::Debug,
-    sync::Arc,
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
-};
-
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
 use parking_lot::RwLock;
@@ -15,6 +9,12 @@ use rkyv::{
     rancor::Strategy,
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
+};
+use std::collections::VecDeque;
+use std::{
+    fmt::Debug,
+    sync::Arc,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
@@ -39,6 +39,8 @@ where
     pages: RwLock<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
 
     empty_links: EmptyLinkRegistry<DATA_LENGTH>,
+
+    empty_pages: Arc<RwLock<VecDeque<PageId>>>,
 
     /// Count of saved rows.
     row_count: AtomicU64,
@@ -68,6 +70,7 @@ where
             // We are starting ID's from `1` because `0`'s page in file is info page.
             pages: RwLock::new(vec![Arc::new(Data::new(1.into()))]),
             empty_links: EmptyLinkRegistry::<DATA_LENGTH>::default(),
+            empty_pages: Default::default(),
             row_count: AtomicU64::new(0),
             last_page_id: AtomicU32::new(1),
             current_page_id: AtomicU32::new(1),
@@ -83,6 +86,7 @@ where
             Self {
                 pages: RwLock::new(vec),
                 empty_links: EmptyLinkRegistry::default(),
+                empty_pages: Default::default(),
                 row_count: AtomicU64::new(0),
                 last_page_id: AtomicU32::new(last_page_id as u32),
                 current_page_id: AtomicU32::new(last_page_id as u32),
@@ -118,9 +122,7 @@ where
                 // Ok(l) => return Ok(l),
                 Err(e) => match e {
                     DataExecutionError::InvalidLink => {
-                        //println!("Pushing empty link");
                         self.empty_links.push(link);
-                        //println!("Pushed empty link");
                     }
                     DataExecutionError::PageIsFull { .. }
                     | DataExecutionError::PageTooSmall { .. }
@@ -149,7 +151,15 @@ where
                         if tried_page
                             == page_id_mapper(self.current_page_id.load(Ordering::Relaxed) as usize)
                         {
-                            self.add_next_page(tried_page);
+                            let mut g = self.empty_pages.write();
+                            if let Some(page_id) = g.pop_front() {
+                                let _pages = self.pages.write();
+                                self.current_page_id
+                                    .store(page_id.into(), Ordering::Release);
+                            } else {
+                                drop(g);
+                                self.add_next_page(tried_page);
+                            }
                         }
                     }
                     DataExecutionError::PageTooSmall { .. }
@@ -186,7 +196,7 @@ where
             let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
 
             pages.push(Arc::new(Data::new(index.into())));
-            self.current_page_id.fetch_add(1, Ordering::AcqRel);
+            self.current_page_id.store(index, Ordering::Release);
         }
     }
 
@@ -330,6 +340,16 @@ where
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
         page.get_raw_row(link)
             .map_err(ExecutionError::DataPageError)
+    }
+
+    pub fn mark_page_empty(&self, page_id: PageId) {
+        let mut g = self.empty_pages.write();
+        g.push_back(page_id);
+    }
+
+    pub fn get_empty_pages(&self) -> Vec<PageId> {
+        let g = self.empty_pages.read();
+        g.iter().map(|p| *p).collect()
     }
 
     pub fn get_page(

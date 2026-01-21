@@ -2,6 +2,12 @@ mod fragmentation_info;
 mod lock;
 mod page;
 
+use std::collections::VecDeque;
+use std::fmt::Debug;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
 use data_bucket::Link;
 use data_bucket::page::PageId;
 use indexset::core::node::NodeLike;
@@ -12,19 +18,12 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Serialize};
-use std::collections::VecDeque;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
 use crate::vacuum::fragmentation_info::PageFragmentationInfo;
 use crate::vacuum::lock::VacuumLock;
-use crate::{
-    AvailableIndex, IndexMap, PrimaryIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-};
+use crate::{AvailableIndex, PrimaryIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 
 #[derive(Debug)]
 pub struct EmptyDataVacuum<
@@ -91,7 +90,7 @@ where
 {
     async fn defragment(&self) {
         let per_page_info = self.data_pages.empty_links_registry().get_per_page_info();
-        let mut in_migration_pages = vec![];
+        let mut in_migration_pages = VecDeque::new();
         let mut free_pages = vec![];
         let mut defragmented_pages = VecDeque::new();
 
@@ -106,19 +105,42 @@ where
                     }
                     (true, false) => {
                         // from moved fully but to has space
+                        free_pages.push(id);
                         defragmented_pages.push_back(id);
                     }
                     (false, true) => {
                         // from was not moved but to have NO space
-                        in_migration_pages.push(page_id);
+                        in_migration_pages.push_back(page_id);
                     }
                     (false, false) => unreachable!(
                         "at least one of two situations should appear to break from while cycle"
                     ),
                 }
             } else {
+                let page_id = info.page_id;
                 self.defragment_page(info).await;
-                defragmented_pages.push_back(page_id);
+                if let Some(id) = in_migration_pages.pop_front() {
+                    match self.move_data_from(id, page_id).await {
+                        (true, true) => {
+                            // from moved fully and on to no more space
+                            free_pages.push(id);
+                        }
+                        (true, false) => {
+                            // from moved fully but to has space
+                            free_pages.push(id);
+                            defragmented_pages.push_back(page_id);
+                        }
+                        (false, true) => {
+                            // from was not moved but to have NO space
+                            in_migration_pages.push_back(id);
+                        }
+                        (false, false) => unreachable!(
+                            "at least one of two situations should appear to break from while cycle"
+                        ),
+                    }
+                } else {
+                    defragmented_pages.push_back(page_id);
+                }
             }
         }
 
@@ -129,6 +151,10 @@ where
                 length: 0,
             };
             self.shift_data_in_range(page_start, None);
+        }
+
+        for id in free_pages {
+            self.data_pages.mark_page_empty(id)
         }
     }
 
@@ -152,7 +178,16 @@ where
             length: 0,
         });
 
-        let mut range = self.primary_index.reverse_pk_map.range(page_start..);
+        let page_end = OffsetEqLink::<_>(Link {
+            page_id: from.next(),
+            offset: 0,
+            length: 0,
+        });
+
+        let mut range = self
+            .primary_index
+            .reverse_pk_map
+            .range(page_start..page_end);
         let mut sum_links_len = 0;
         let mut links = vec![];
         let mut from_page_will_be_moved = false;
@@ -539,6 +574,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_vacuum_defragment_on_delete_last() {
+        let table = TestWorkTable::default();
+
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.push((id, row));
+        }
+
+        table.delete(ids.last().unwrap().0.into()).await.unwrap();
+
+        let vacuum = create_vacuum(&table);
+        vacuum.defragment().await;
+
+        for (id, expected) in ids.into_iter().take(4) {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
     async fn test_vacuum_shift_data_variable_string_lengths() {
         let table = TestWorkTable::default();
 
@@ -689,6 +752,74 @@ mod tests {
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
+
+        for (id, expected) in ids
+            .into_iter()
+            .filter(|(id, _)| !ids_to_delete.contains(id))
+        {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_multi_page_last() {
+        let table = TestWorkTable::default();
+
+        let mut ids = Vec::new();
+        // row is ~40 bytes so ~409 rows per page
+        for i in 0..500 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.push((id, row));
+        }
+
+        table.delete(ids.last().unwrap().0.into()).await.unwrap();
+
+        let vacuum = create_vacuum(&table);
+        vacuum.defragment().await;
+
+        for (id, expected) in ids.into_iter().take(499) {
+            let row = table.select(id);
+            assert_eq!(row, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vacuum_multi_page_free_page() {
+        let table = TestWorkTable::default();
+
+        let mut ids = Vec::new();
+        // row is ~40 bytes so ~409 rows per page
+        for i in 0..1000 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            ids.push((id, row));
+        }
+
+        let mut ids_to_delete: Vec<_> = ids.iter().skip(300).take(400).map(|(id, _)| *id).collect();
+        // remove last too to trigger vacuum for last page too.
+        ids_to_delete.push(ids.last().unwrap().0);
+        for id in &ids_to_delete {
+            table.delete((*id).into()).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+        vacuum.defragment().await;
+
+        assert!(table.0.data.get_empty_pages().len() > 0);
 
         for (id, expected) in ids
             .into_iter()
