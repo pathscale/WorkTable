@@ -40,11 +40,11 @@ async fn update_two_via_query_unique_indexes() {
     new_row.attr2 = attr2_new;
 
     // Check old idx removed
-    let updated = test_table.select_by_attr1(attr1_old.clone());
+    let updated = test_table.select_by_attr1(attr1_old.clone()).await;
     assert_eq!(updated, None);
-    let updated = test_table.select_by_attr2(attr2_old);
+    let updated = test_table.select_by_attr2(attr2_old).await;
     assert_eq!(updated, None);
-    let updated = test_table.select_by_attr3(attr3_old);
+    let updated = test_table.select_by_attr3(attr3_old).await;
     assert!(updated.is_some());
     assert_eq!(updated, Some(new_row))
 }
@@ -81,18 +81,18 @@ async fn update_with_reinsert_and_secondary_unique_violation() {
     );
 
     assert_eq!(
-        test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
+        test_table.select_by_attr1(row1.attr1.clone()).await.unwrap(),
         row1
     );
-    assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
-    assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
+    assert_eq!(test_table.select_by_attr2(row1.attr2).await.unwrap(), row1);
+    assert_eq!(test_table.select_by_attr3(row1.attr3).await.unwrap(), row1);
 
     assert_eq!(
-        test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
+        test_table.select_by_attr1(row2.attr1.clone()).await.unwrap(),
         row2
     );
-    assert_eq!(test_table.select_by_attr2(row2.attr2).unwrap(), row2);
-    assert_eq!(test_table.select_by_attr3(row2.attr3).unwrap(), row2);
+    assert_eq!(test_table.select_by_attr2(row2.attr2).await.unwrap(), row2);
+    assert_eq!(test_table.select_by_attr3(row2.attr3).await.unwrap(), row2);
 }
 
 #[tokio::test]
@@ -127,18 +127,18 @@ async fn update_with_secondary_unique_violation() {
     );
 
     assert_eq!(
-        test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
+        test_table.select_by_attr1(row1.attr1.clone()).await.unwrap(),
         row1
     );
-    assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
-    assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
+    assert_eq!(test_table.select_by_attr2(row1.attr2).await.unwrap(), row1);
+    assert_eq!(test_table.select_by_attr3(row1.attr3).await.unwrap(), row1);
 
     assert_eq!(
-        test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
+        test_table.select_by_attr1(row2.attr1.clone()).await.unwrap(),
         row2
     );
-    assert_eq!(test_table.select_by_attr2(row2.attr2).unwrap(), row2);
-    assert_eq!(test_table.select_by_attr3(row2.attr3).unwrap(), row2);
+    assert_eq!(test_table.select_by_attr2(row2.attr2).await.unwrap(), row2);
+    assert_eq!(test_table.select_by_attr3(row2.attr3).await.unwrap(), row2);
 }
 
 #[tokio::test]

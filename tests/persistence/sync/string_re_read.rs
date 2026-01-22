@@ -154,7 +154,7 @@ fn test_key_delete_scenario() {
                     .len(),
                 1
             );
-            assert!(table.select_by_second("second_again".to_string()).is_none());
+            assert!(table.select_by_second("second_again".to_string()).await.is_none());
             table
                 .insert(StringReReadRow {
                     first: "first".to_string(),
@@ -190,7 +190,7 @@ fn test_key_delete_scenario() {
                     .len(),
                 1
             );
-            assert!(table.select_by_second("second".to_string()).is_none());
+            assert!(table.select_by_second("second".to_string()).await.is_none());
         }
     })
 }
@@ -265,7 +265,7 @@ fn test_key_delete() {
                     .len(),
                 1
             );
-            assert!(table.select_by_second("second_again".to_string()).is_none())
+            assert!(table.select_by_second("second_again".to_string()).await.is_none())
         }
     })
 }
@@ -335,8 +335,8 @@ fn test_key_delete_all() {
                     .len(),
                 0
             );
-            assert!(table.select_by_second("second_again".to_string()).is_none());
-            assert!(table.select_by_second("second".to_string()).is_none())
+            assert!(table.select_by_second("second_again".to_string()).await.is_none());
+            assert!(table.select_by_second("second".to_string()).await.is_none())
         }
     })
 }
@@ -428,7 +428,7 @@ fn test_key_delete_all_and_insert() {
                     .len(),
                 1
             );
-            assert!(table.select_by_second("second".to_string()).is_some())
+            assert!(table.select_by_second("second".to_string()).await.is_some())
         }
     })
 }
@@ -502,7 +502,7 @@ fn test_key_delete_by_unique() {
                     .len(),
                 1
             );
-            assert!(table.select_by_second("second_again".to_string()).is_none())
+            assert!(table.select_by_second("second_again".to_string()).await.is_none())
         }
     })
 }
@@ -574,8 +574,8 @@ fn test_key_delete_by_non_unique() {
                     .len(),
                 0
             );
-            assert!(table.select_by_second("second".to_string()).is_none());
-            assert!(table.select_by_second("second_again".to_string()).is_none())
+            assert!(table.select_by_second("second".to_string()).await.is_none());
+            assert!(table.select_by_second("second_again".to_string()).await.is_none())
         }
     })
 }
@@ -633,7 +633,7 @@ fn test_big_amount_reread() {
                 .await
                 .unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1001);
-            assert!(table.select_by_second("second_last".to_string()).is_some());
+            assert!(table.select_by_second("second_last".to_string()).await.is_some());
         }
     })
 }
