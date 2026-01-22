@@ -149,6 +149,7 @@ where
             let pk = self
                 .info_wt
                 .select_by_operation_id(op.operation_id())
+                .await
                 .expect("exists as all should be inserted on prepare step")
                 .id;
             self.info_wt.delete_without_lock(pk.into()).await.unwrap();
