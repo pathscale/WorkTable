@@ -145,7 +145,7 @@ fn test_key_delete_scenario() {
                 .unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
-            assert!(table.select(pk).is_none());
+            assert!(table.select(pk).await.is_none());
             assert_eq!(
                 table
                     .select_by_first("first".to_string())
@@ -181,7 +181,7 @@ fn test_key_delete_scenario() {
                 .unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
-            assert!(table.select(pk0).is_none());
+            assert!(table.select(pk0).await.is_none());
             assert_eq!(
                 table
                     .select_by_first("first".to_string())
@@ -256,7 +256,7 @@ fn test_key_delete() {
                 .unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
-            assert!(table.select(pk).is_none());
+            assert!(table.select(pk).await.is_none());
             assert_eq!(
                 table
                     .select_by_first("first".to_string())
@@ -325,8 +325,8 @@ fn test_key_delete_all() {
                 .unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
-            assert!(table.select(pk0).is_none());
-            assert!(table.select(pk1).is_none());
+            assert!(table.select(pk0).await.is_none());
+            assert!(table.select(pk1).await.is_none());
             assert_eq!(
                 table
                     .select_by_first("first".to_string())
@@ -419,7 +419,7 @@ fn test_key_delete_all_and_insert() {
 
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
-            assert!(table.select(pk).is_some());
+            assert!(table.select(pk).await.is_some());
             assert_eq!(
                 table
                     .select_by_first("first".to_string())
@@ -493,7 +493,7 @@ fn test_key_delete_by_unique() {
                 .unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
-            assert!(table.select(pk).is_none());
+            assert!(table.select(pk).await.is_none());
             assert_eq!(
                 table
                     .select_by_first("first".to_string())
@@ -564,8 +564,8 @@ fn test_key_delete_by_non_unique() {
                 .unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
-            assert!(table.select(pk0).is_none());
-            assert!(table.select(pk1).is_none());
+            assert!(table.select(pk0).await.is_none());
+            assert!(table.select(pk1).await.is_none());
             assert_eq!(
                 table
                     .select_by_first("first".to_string())

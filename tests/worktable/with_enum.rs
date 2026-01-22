@@ -23,18 +23,18 @@ worktable! (
     }
 );
 
-#[test]
-fn insert() {
+#[tokio::test]
+async fn insert() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: 1,
         test: SomeEnum::First,
     };
     let pk = table.insert(row.clone()).unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }
 
 #[tokio::test]
@@ -50,8 +50,8 @@ async fn update() {
         test: SomeEnum::Second,
     };
     table.update(updated.clone()).await.unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }

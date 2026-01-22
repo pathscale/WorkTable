@@ -121,10 +121,10 @@ async fn update_spawn() {
         .await
         .unwrap()
         .unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }
 
 #[tokio::test]
@@ -149,10 +149,10 @@ async fn upsert_spawn() {
         .await
         .unwrap()
         .unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }
 
 #[tokio::test]
@@ -172,10 +172,10 @@ async fn update() {
         exchange: "test".to_string(),
     };
     table.update(updated.clone()).await.unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }
 
 #[tokio::test]
@@ -196,11 +196,11 @@ async fn update_string() {
         exchange: "much bigger test to make size of new row bigger than previous one".to_string(),
     };
     table.update(updated.clone()).await.unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
 
     assert_eq!(selected_row, updated);
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -279,7 +279,7 @@ async fn delete() {
         .map(|kv| kv.get().value)
         .unwrap();
     table.delete(pk.clone()).await.unwrap();
-    let selected_row = table.select(pk);
+    let selected_row = table.select(pk).await;
     assert!(selected_row.is_none());
     let selected_row = table.select_by_test(1);
     assert!(selected_row.is_none());
@@ -392,7 +392,7 @@ async fn delete_and_insert_less() {
         .map(|kv| kv.get().value)
         .unwrap();
     table.delete(pk.clone()).await.unwrap();
-    let selected_row = table.select(pk);
+    let selected_row = table.select(pk).await;
     assert!(selected_row.is_none());
 
     let updated = TestRow {
@@ -438,7 +438,7 @@ async fn delete_and_replace() {
         .map(|kv| kv.get().value)
         .unwrap();
     table.delete(pk.clone()).await.unwrap();
-    let selected_row = table.select(pk);
+    let selected_row = table.select(pk).await;
     assert!(selected_row.is_none());
 
     let updated = TestRow {
@@ -476,10 +476,10 @@ async fn upsert() {
         exchange: "test".to_string(),
     };
     table.upsert(updated.clone()).await.unwrap();
-    let selected_row = table.select(row.id).unwrap();
+    let selected_row = table.select(row.id).await.unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }
 
 #[test]
@@ -516,8 +516,8 @@ fn insert_exchange_same() {
     assert!(res.is_err())
 }
 
-#[test]
-fn select_by_exchange() {
+#[tokio::test]
+async fn select_by_exchange() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -542,8 +542,8 @@ fn select_by_exchange() {
     )
 }
 
-#[test]
-fn select_multiple_by_exchange() {
+#[tokio::test]
+async fn select_multiple_by_exchange() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -576,8 +576,8 @@ fn select_multiple_by_exchange() {
     )
 }
 
-#[test]
-fn select_by_test() {
+#[tokio::test]
+async fn select_by_test() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -592,8 +592,8 @@ fn select_by_test() {
     assert!(table.select_by_test(2).is_none())
 }
 
-#[test]
-fn select_all_test() {
+#[tokio::test]
+async fn select_all_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -617,8 +617,8 @@ fn select_all_test() {
     assert_eq!(&all[1], &row2)
 }
 
-#[test]
-fn select_all_range_test() {
+#[tokio::test]
+async fn select_all_range_test() {
     let table = TestWorkTable::default();
 
     let row1 = TestRow {
@@ -653,8 +653,8 @@ fn select_all_range_test() {
     assert_eq!(all.len(), 2);
 }
 
-#[test]
-fn select_all_range_inclusive_test() {
+#[tokio::test]
+async fn select_all_range_inclusive_test() {
     let table = TestWorkTable::default();
 
     let row1 = TestRow {
@@ -689,8 +689,8 @@ fn select_all_range_inclusive_test() {
     assert_eq!(all.len(), 2);
 }
 
-#[test]
-fn select_all_where_by_eq_string_test() {
+#[tokio::test]
+async fn select_all_where_by_eq_string_test() {
     let table = TestWorkTable::default();
 
     let row1 = TestRow {
@@ -722,8 +722,8 @@ fn select_all_where_by_eq_string_test() {
     assert_eq!(equal.len(), 1);
 }
 
-#[test]
-fn select_all_where_by_contains_string_test() {
+#[tokio::test]
+async fn select_all_where_by_contains_string_test() {
     let table = TestWorkTable::default();
 
     let row1 = TestRow {
@@ -758,8 +758,8 @@ fn select_all_where_by_contains_string_test() {
     assert_eq!(contains.len(), 3);
 }
 
-#[test]
-fn select_all_where_by_gt_string_number_test() {
+#[tokio::test]
+async fn select_all_where_by_gt_string_number_test() {
     let table = TestWorkTable::default();
 
     let row1 = TestRow {
@@ -791,8 +791,8 @@ fn select_all_where_by_gt_string_number_test() {
     assert_eq!(equal.len(), 2);
 }
 
-#[test]
-fn select_all_where_by_eq_string_number_test() {
+#[tokio::test]
+async fn select_all_where_by_eq_string_number_test() {
     let table = TestWorkTable::default();
 
     let row1 = TestRow {
@@ -824,8 +824,8 @@ fn select_all_where_by_eq_string_number_test() {
     assert_eq!(equal.len(), 2);
 }
 
-#[test]
-fn select_all_order_multiple_test() {
+#[tokio::test]
+async fn select_all_order_multiple_test() {
     let table = TestWorkTable::default();
 
     let row1 = TestRow {
@@ -864,8 +864,8 @@ fn select_all_order_multiple_test() {
     assert_eq!(&all[2], &row2);
 }
 
-#[test]
-fn select_all_limit_test() {
+#[tokio::test]
+async fn select_all_limit_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -898,8 +898,8 @@ fn select_all_limit_test() {
     assert_eq!(&all[1], &row2)
 }
 
-#[test]
-fn select_all_offset_test() {
+#[tokio::test]
+async fn select_all_offset_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -924,8 +924,8 @@ fn select_all_offset_test() {
     assert_eq!(all.len(), 0);
 }
 
-#[test]
-fn select_all_order_on_unique_test() {
+#[tokio::test]
+async fn select_all_order_on_unique_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -963,8 +963,8 @@ fn select_all_order_on_unique_test() {
     assert_eq!(&all[1].test, &2)
 }
 
-#[test]
-fn select_all_order_on_non_unique_test() {
+#[tokio::test]
+async fn select_all_order_on_non_unique_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -1002,8 +1002,8 @@ fn select_all_order_on_non_unique_test() {
     assert_eq!(&all[1].exchange, &"a_test".to_string())
 }
 
-#[test]
-fn select_all_order_two_test() {
+#[tokio::test]
+async fn select_all_order_two_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -1086,8 +1086,8 @@ fn select_by_order_on_test() {
     assert_eq!(&all[2].test, &97)
 }
 
-#[test]
-fn select_by_offset_test() {
+#[tokio::test]
+async fn select_by_offset_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -1231,8 +1231,8 @@ async fn test_update_by_pk() {
     )
 }
 
-//#[test]
-fn _bench() {
+//#[tokio::test]
+async fn _bench() {
     let table = TestWorkTable::default();
 
     let mut v = Vec::with_capacity(10000);
@@ -1250,6 +1250,6 @@ fn _bench() {
     }
 
     for a in v {
-        table.select(a).expect("TODO: panic message");
+        let _ = table.select(a).await.expect("TODO: panic message");
     }
 }

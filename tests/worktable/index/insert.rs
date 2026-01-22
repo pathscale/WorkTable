@@ -20,8 +20,8 @@ worktable!(
     }
 );
 
-#[test]
-fn insert() {
+#[tokio::test]
+async fn insert() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -32,14 +32,14 @@ fn insert() {
         attr4: "Attribute4".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select(2).is_none())
+    assert!(table.select(2).await.is_none())
 }
 
-#[test]
-fn insert_when_pk_exists() {
+#[tokio::test]
+async fn insert_when_pk_exists() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -60,7 +60,7 @@ fn insert_when_pk_exists() {
         attr4: "Attributee".to_string(),
     };
     assert!(table.insert(next_row.clone()).is_err());
-    assert_eq!(table.select(pk.clone()).unwrap(), row);
+    assert_eq!(table.select(pk.clone()).await.unwrap(), row);
     assert!(
         table
             .0
@@ -199,8 +199,8 @@ fn insert_when_secondary_unique_string_exists() {
     );
 }
 
-#[test]
-fn insert_when_unique_violated() {
+#[tokio::test]
+async fn insert_when_unique_violated() {
     let table = Arc::new(TestWorkTable::default());
 
     let row = TestRow {
@@ -232,7 +232,7 @@ fn insert_when_unique_violated() {
     });
 
     for _ in 0..5000 {
-        let sel_row = table.select(row.id);
+        let sel_row = table.select(row.id).await;
         assert_eq!(sel_row, Some(row.clone()));
         let attr_1_rows = table.select_by_attr1(row.attr1.clone()).execute().unwrap();
         assert_eq!(attr_1_rows.len(), 1);
@@ -291,8 +291,8 @@ fn insert_after_unique_violated() {
     }
 }
 
-#[test]
-fn insert_when_pk_violated() {
+#[tokio::test]
+async fn insert_when_pk_violated() {
     let table = Arc::new(TestWorkTable::default());
 
     let row = TestRow {
@@ -323,7 +323,7 @@ fn insert_when_pk_violated() {
     });
 
     for _ in 0..5000 {
-        let sel_row = table.select(id);
+        let sel_row = table.select(id).await;
         assert!(sel_row.is_some());
         assert_eq!(sel_row, Some(row.clone()))
     }

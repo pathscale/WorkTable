@@ -591,11 +591,11 @@ async fn update_parallel_more_strings() {
     h.await.unwrap();
 
     for (id, e) in e_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.exchange, e)
     }
     for (id, s) in s_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.some_string, s)
     }
 }
@@ -684,15 +684,15 @@ async fn update_parallel_more_strings_more_threads() {
     h2.await.unwrap();
 
     for (id, e) in e_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.exchange, e)
     }
     for (id, s) in s_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.some_string, s)
     }
     for (id, a) in a_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.another, a)
     }
 }
@@ -772,11 +772,11 @@ async fn update_parallel_more_strings_with_select_non_unique() {
     h2.await.unwrap();
 
     for (id, e) in e_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.exchange, e)
     }
     for (id, a) in a_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.another, a)
     }
 }
@@ -840,7 +840,7 @@ async fn delete_parallel() {
     h2.await.unwrap();
 
     for id in deleted_state.lock_arc().iter() {
-        let row = table.select(*id);
+        let row = table.select(*id).await;
         assert!(row.is_none())
     }
 }
@@ -915,7 +915,7 @@ async fn update_parallel_more_strings_with_select_unique() {
     h2.await.unwrap();
 
     for (id, e) in e_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.exchange, e)
     }
 }
@@ -969,7 +969,7 @@ async fn upsert_parallel() {
     h1.await.unwrap();
 
     for (id, e) in e_state.lock_arc().iter() {
-        let row = table.select(*id).unwrap();
+        let row = table.select(*id).await.unwrap();
         assert_eq!(&row.exchange, e)
     }
 }

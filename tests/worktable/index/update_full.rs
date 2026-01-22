@@ -310,7 +310,7 @@ async fn update_by_full_row_with_reinsert_and_primary_key_violation() {
     update.attr1 = "TEST_______________________1".to_string();
     assert!(test_table.update(update).await.is_err());
 
-    assert_eq!(test_table.select(row1.id).unwrap(), row1);
+    assert_eq!(test_table.select(row1.id).await.unwrap(), row1);
     assert_eq!(
         test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
         row1
@@ -318,7 +318,7 @@ async fn update_by_full_row_with_reinsert_and_primary_key_violation() {
     assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
     assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
 
-    assert_eq!(test_table.select(row2.id).unwrap(), row2);
+    assert_eq!(test_table.select(row2.id).await.unwrap(), row2);
     assert_eq!(
         test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
         row2
@@ -351,7 +351,7 @@ async fn update_by_full_row_with_reinsert_and_secondary_unique_violation() {
     update.attr1 = row2.attr1.clone();
     assert!(test_table.update(update).await.is_err());
 
-    assert_eq!(test_table.select(row1.id).unwrap(), row1);
+    assert_eq!(test_table.select(row1.id).await.unwrap(), row1);
     assert_eq!(
         test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
         row1
@@ -359,7 +359,7 @@ async fn update_by_full_row_with_reinsert_and_secondary_unique_violation() {
     assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
     assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
 
-    assert_eq!(test_table.select(row2.id).unwrap(), row2);
+    assert_eq!(test_table.select(row2.id).await.unwrap(), row2);
     assert_eq!(
         test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
         row2
@@ -392,7 +392,7 @@ async fn update_by_full_row_with_secondary_unique_violation() {
     update.attr2 = row2.attr2;
     assert!(test_table.update(update).await.is_err());
 
-    assert_eq!(test_table.select(row1.id).unwrap(), row1);
+    assert_eq!(test_table.select(row1.id).await.unwrap(), row1);
     assert_eq!(
         test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
         row1
@@ -400,7 +400,7 @@ async fn update_by_full_row_with_secondary_unique_violation() {
     assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
     assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
 
-    assert_eq!(test_table.select(row2.id).unwrap(), row2);
+    assert_eq!(test_table.select(row2.id).await.unwrap(), row2);
     assert_eq!(
         test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
         row2

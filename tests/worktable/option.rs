@@ -39,7 +39,7 @@ async fn update() {
         exchange: 1,
     };
     table.update(new_row.clone()).await.unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
     assert_eq!(selected_row, new_row);
 }
 
@@ -57,7 +57,7 @@ async fn update_by_another() {
         .update_test_by_another(TestByAnotherQuery { test: Some(1) }, 1)
         .await
         .unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
     assert_eq!(selected_row.test, Some(1));
 }
 
@@ -75,6 +75,6 @@ async fn update_by_exchange() {
         .update_test_by_exchange(TestByExchangeQuery { test: Some(1) }, 1)
         .await
         .unwrap();
-    let selected_row = table.select(pk).unwrap();
+    let selected_row = table.select(pk).await.unwrap();
     assert_eq!(selected_row.test, Some(1));
 }
