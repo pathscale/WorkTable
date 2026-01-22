@@ -6,6 +6,7 @@ mod fragmentation_info;
 mod manager;
 mod vacuum;
 
+pub use manager::{VacuumManager, VacuumManagerConfig};
 pub use vacuum::EmptyDataVacuum;
 
 /// Trait for unifying different [`WorkTable`] related [`EmptyDataVacuum`]'s.

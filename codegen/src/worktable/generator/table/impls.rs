@@ -302,8 +302,8 @@ impl Generator {
 
         if self.is_persist {
             quote! {
-                pub fn vacuum(&self) -> Box<dyn WorkTableVacuum> {
-                    Box::new(EmptyDataVacuum::<
+                pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
+                    std::sync::Arc::new(EmptyDataVacuum::<
                         _,
                         _,
                         _,
@@ -324,8 +324,8 @@ impl Generator {
             }
         } else {
             quote! {
-                pub fn vacuum(&self) -> Box<dyn WorkTableVacuum> {
-                    Box::new(EmptyDataVacuum::new(
+                pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
+                    std::sync::Arc::new(EmptyDataVacuum::new(
                         #table_name,
                         std::sync::Arc::clone(&self.0.data),
                         std::sync::Arc::clone(&self.0.lock_manager),

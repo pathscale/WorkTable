@@ -12,4 +12,5 @@ mod option;
 mod tuple_primary_key;
 mod unsized_;
 mod uuid;
+mod vacuum;
 mod with_enum;

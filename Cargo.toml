@@ -41,6 +41,7 @@ ordered-float = "5.0.0"
 parking_lot = "0.12.3"
 prettytable-rs = "^0.10"
 smart-default = "0.7.1"
+log = "0.4.29"
 
 [dev-dependencies]
 rand = "0.9.1"

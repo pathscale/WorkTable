@@ -45,12 +45,13 @@ impl FragmentationInfo {
             .map(|i| i.page_size)
             .unwrap_or(INNER_PAGE_SIZE);
         let total_empty_bytes: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
+        let filled_bytes = total_pages as u64 * page_size as u64;
         Self {
             page_size,
             table_name,
             total_pages,
             per_page_info,
-            overall_fragmentation_ratio: total_empty_bytes as f64 / page_size as f64,
+            overall_fragmentation_ratio: filled_bytes as f64 / total_empty_bytes as f64,
             total_empty_bytes,
         }
     }
