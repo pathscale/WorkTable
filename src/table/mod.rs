@@ -5,7 +5,7 @@ pub mod vacuum;
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
 use crate::lock::WorkTableLock;
 use crate::persistence::{InsertOperation, Operation};
-use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
+use crate::prelude::{Link, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
@@ -149,7 +149,7 @@ where
         feature = "perf_measurements",
         performance_measurement(prefix_name = "WorkTable")
     )]
-    pub fn select(&self, pk: PrimaryKey) -> Option<Row>
+    pub async fn select(&self, pk: PrimaryKey) -> Option<Row>
     where
         LockType: 'static,
         Row: Archive
@@ -159,11 +159,21 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link = self
+        let mut link: Option<Link> = self
             .primary_index
             .pk_map
             .get(&pk)
             .map(|v| v.get().value.into());
+        if let Some(l) = link {
+            if self.lock_manager.await_page_lock(l.page_id).await {
+                // We waited for vacuum to complete, need to re-lookup the link
+                link = self
+                    .primary_index
+                    .pk_map
+                    .get(&pk)
+                    .map(|v| v.get().value.into());
+            }
+        }
         if let Some(link) = link {
             self.data.select(link).ok()
         } else {
@@ -319,7 +329,7 @@ where
     /// new [`Link`]'s, goal will be achieved.
     ///
     /// [`Link`]: data_bucket::Link
-    pub fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
+    pub async fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
             + Clone
@@ -341,12 +351,21 @@ where
         if pk != row_old.get_primary_key() {
             return Err(WorkTableError::PrimaryUpdateTry);
         }
-        let old_link = self
+        let mut old_link: Link = self
             .primary_index
             .pk_map
             .get(&pk)
             .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
+        if self.lock_manager.await_page_lock(old_link.page_id).await {
+            // We waited for vacuum to complete, need to re-lookup the link
+            old_link = self
+                .primary_index
+                .pk_map
+                .get(&pk)
+                .map(|v| v.get().value.into())
+                .ok_or(WorkTableError::NotFound)?;
+        }
         let new_link = self
             .data
             .insert(row_new.clone())

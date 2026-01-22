@@ -113,9 +113,9 @@ impl Generator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
 
         quote! {
-            pub fn select<Pk>(&self, pk: Pk) -> Option<#row_type>
+            pub async fn select<Pk>(&self, pk: Pk) -> Option<#row_type>
             where #primary_key_type: From<Pk> {
-                self.0.select(pk.into())
+                self.0.select(pk.into()).await
             }
         }
     }
@@ -157,12 +157,12 @@ impl Generator {
             }
         } else {
             quote! {
-                self.0.reinsert(row_old, row_new)
+                self.0.reinsert(row_old, row_new).await
             }
         };
 
         quote! {
-            pub fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+            pub async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
                 #reinsert
             }
         }
@@ -298,16 +298,41 @@ impl Generator {
     fn gen_table_vacuum_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let table_name = name_generator.get_work_table_literal_name();
+        let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
 
-        quote! {
-            pub fn vacuum(&self) -> Box<dyn WorkTableVacuum> {
-                Box::new(EmptyDataVacuum::new(
-                    #table_name,
-                    std::sync::Arc::clone(&self.0.data),
-                    std::sync::Arc::clone(&self.0.lock_manager),
-                    std::sync::Arc::clone(&self.0.primary_index),
-                    std::sync::Arc::clone(&self.0.indexes),
-                ))
+        if self.is_persist {
+            quote! {
+                pub fn vacuum(&self) -> Box<dyn WorkTableVacuum> {
+                    Box::new(EmptyDataVacuum::<
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        #secondary_index_events
+                        >::new(
+                        #table_name,
+                        std::sync::Arc::clone(&self.0.data),
+                        std::sync::Arc::clone(&self.0.lock_manager),
+                        std::sync::Arc::clone(&self.0.primary_index),
+                        std::sync::Arc::clone(&self.0.indexes),
+                    ))
+                }
+            }
+        } else {
+            quote! {
+                pub fn vacuum(&self) -> Box<dyn WorkTableVacuum> {
+                    Box::new(EmptyDataVacuum::new(
+                        #table_name,
+                        std::sync::Arc::clone(&self.0.data),
+                        std::sync::Arc::clone(&self.0.lock_manager),
+                        std::sync::Arc::clone(&self.0.primary_index),
+                        std::sync::Arc::clone(&self.0.indexes),
+                    ))
+                }
             }
         }
     }

@@ -56,12 +56,18 @@ where
     /// Checks if a page is locked by vacuum operations and awaits the lock if it is.
     ///
     /// This should be called before any operation that accesses data on a specific page.
-    pub async fn await_page_lock(&self, page_id: PageId) {
+    ///
+    /// Returns `false` if not waited at all, `true` if waited.
+    pub async fn await_page_lock(&self, page_id: PageId) -> bool {
         if let Some(lock) = self.get_page_lock(page_id) {
             let guard = lock.read().await;
             let wait = guard.wait();
             drop(guard);
             wait.await;
+
+            true
+        } else {
+            false
         }
     }
 }

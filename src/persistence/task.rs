@@ -243,6 +243,7 @@ where
             let mut row: BatchInnerRow = self
                 .queue_inner_wt
                 .select(id)
+                .await
                 .expect("exists as Id exists")
                 .into();
             let op = self
@@ -253,7 +254,7 @@ where
             row.op_type = op.operation_type();
             ops.push(op);
             info_wt.insert(row)?;
-            self.queue_inner_wt.delete_without_lock(id.into())?
+            self.queue_inner_wt.delete_without_lock(id.into()).await?
         }
         // println!("New wt generated {:?}", start.elapsed());
         // return ops sorted by `OperationId`

@@ -269,12 +269,23 @@ where
         let mut empty_links_iter = page_empty_links.into_iter();
 
         let Some(mut current_empty) = empty_links_iter.next() else {
+            // TODO: create some kind of guard that will Drop himself
+            {
+                let l = lock.read().await;
+                l.unlock();
+                self.lock_manager.remove_page_lock(&info.page_id)
+            }
             return;
         };
         registry.remove_link(current_empty);
 
         let Some(mut next_empty) = empty_links_iter.next() else {
             self.shift_data_in_range(current_empty, None);
+            {
+                let l = lock.read().await;
+                l.unlock();
+                self.lock_manager.remove_page_lock(&info.page_id)
+            }
             return;
         };
         registry.remove_link(next_empty);
@@ -543,7 +554,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().skip(2) {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -577,7 +588,7 @@ mod tests {
             .into_iter()
             .filter(|(i, _)| *i != ids_to_delete[0] && *i != ids_to_delete[1])
         {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -611,7 +622,7 @@ mod tests {
             .into_iter()
             .filter(|(i, _)| *i != last_two_ids[0] && *i != last_two_ids[1])
         {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -643,7 +654,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -674,7 +685,7 @@ mod tests {
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
 
-        let row = table.select(remaining_id);
+        let row = table.select(remaining_id).await;
         assert_eq!(row, Some(ids[0].1.clone()));
     }
 
@@ -701,7 +712,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().take(4) {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -743,7 +754,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -790,12 +801,12 @@ mod tests {
             .into_iter()
             .filter(|(i, _)| !ids_to_delete.contains(i))
         {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
 
         for (id, expected) in new_ids {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -827,7 +838,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -862,7 +873,7 @@ mod tests {
             .into_iter()
             .filter(|(id, _)| !ids_to_delete.contains(id))
         {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -891,7 +902,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().take(499) {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }
@@ -930,7 +941,7 @@ mod tests {
             .into_iter()
             .filter(|(id, _)| !ids_to_delete.contains(id))
         {
-            let row = table.select(id);
+            let row = table.select(id).await;
             assert_eq!(row, Some(expected));
         }
     }

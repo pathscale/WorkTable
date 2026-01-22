@@ -61,7 +61,7 @@ impl Generator {
         let delete_logic = self.gen_delete_logic(false);
 
         quote! {
-            pub fn delete_without_lock(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
+            pub async fn delete_without_lock(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
                 #delete_logic
                 core::result::Result::Ok(())
             }
@@ -112,7 +112,7 @@ impl Generator {
                         return Err(e);
                     }
                 };
-                let row = self.select(pk.clone()).unwrap();
+                let row = self.select(pk.clone()).await.unwrap();
                 #process
             }
         } else {
@@ -123,7 +123,7 @@ impl Generator {
                         .get(&pk)
                         .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound)?;
-                let row = self.select(pk.clone()).unwrap();
+                let row = self.select(pk.clone()).await.unwrap();
                 #process
             }
         }

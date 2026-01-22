@@ -61,7 +61,7 @@ fn test_space_insert_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk).is_some());
+            assert!(table.select(pk).await.is_some());
             assert_eq!(table.0.pk_gen.get_state(), pk + 1)
         }
     });
