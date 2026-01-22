@@ -78,7 +78,7 @@ impl Generator {
 
                     self.0.update_state.remove(&pk);
                     lock.unlock();
-                    self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -127,7 +127,7 @@ impl Generator {
                 self.0.update_state.remove(&pk);
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                 #persist_call
 
@@ -281,7 +281,7 @@ impl Generator {
                     }
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -506,7 +506,7 @@ impl Generator {
                 #diff_process_remove
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&pk).await;
+                self.0.lock_map.remove_with_lock_check(&pk);
 
                 #persist_call
 
@@ -582,7 +582,7 @@ impl Generator {
                     }
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                    self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                     continue;
                 } else {
@@ -649,7 +649,7 @@ impl Generator {
                 }
                 for (pk, lock) in pk_to_unlock {
                     lock.unlock();
-                    self.0.lock_map.remove_with_lock_check(&pk).await;
+                    self.0.lock_map.remove_with_lock_check(&pk);
                 }
                 core::result::Result::Ok(())
             }
@@ -745,7 +745,7 @@ impl Generator {
                 #diff_process_remove
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&pk).await;
+                self.0.lock_map.remove_with_lock_check(&pk);
 
                 #persist_call
 

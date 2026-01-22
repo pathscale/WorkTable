@@ -48,7 +48,7 @@ impl Generator {
                 #delete_logic
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                self.0.lock_map.remove_with_lock_check(&pk); // Removes locks
 
                 core::result::Result::Ok(())
             }
