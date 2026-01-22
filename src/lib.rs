@@ -9,11 +9,6 @@ mod mem_stat;
 mod persistence;
 mod util;
 
-// mod ty;
-// mod value;
-//
-// pub use column::*;
-// pub use field::*;
 pub use index::*;
 pub use row::*;
 pub use table::*;
@@ -40,7 +35,7 @@ pub mod prelude {
         AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
         PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
         TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UnsizedNode,
-        WorkTable, WorkTableError,
+        WorkTable, WorkTableError, vacuum::EmptyDataVacuum, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE,

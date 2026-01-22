@@ -1,22 +1,74 @@
+//! Fragmentation analysis for vacuum operations.
+//!
+//! This module provides types and methods for analyzing data page fragmentation
+//! in [`WorkTable`]. Fragmentation information is used by the vacuum system to
+//! identify pages that need defragmentation or migration.
+//!
+//! # Overview
+//!
+//! - [`FragmentationInfo`] - Aggregated fragmentation metrics for an entire table
+//! - [`PageFragmentationInfo`] - Per-page fragmentation details
+//! - Extension methods on [`EmptyLinkRegistry`] for calculating fragmentation
+//!
+//! [`WorkTable`]: crate::table::WorkTable
+
 use std::collections::HashMap;
 
-use data_bucket::Link;
 use data_bucket::page::PageId;
+use data_bucket::{INNER_PAGE_SIZE, Link};
 
 use crate::in_memory::EmptyLinkRegistry;
 
-/// Fragmentation info for a single data [`Page`].
+/// Aggregated fragmentation information for a full [`WorkTable`].
+///
+/// [`WorkTable`]: crate::table::WorkTable
+#[derive(Debug, Clone)]
+pub struct FragmentationInfo {
+    pub table_name: &'static str,
+    pub total_pages: usize,
+    pub page_size: usize,
+    pub per_page_info: Vec<PageFragmentationInfo>,
+    pub overall_fragmentation_ratio: f64,
+    pub total_empty_bytes: u64,
+}
+
+impl FragmentationInfo {
+    /// Creates new fragmentation info from component parts of
+    /// [`PageFragmentationInfo`].
+    pub fn new(
+        table_name: &'static str,
+        total_pages: usize,
+        per_page_info: Vec<PageFragmentationInfo>,
+    ) -> Self {
+        let page_size = per_page_info
+            .first()
+            .map(|i| i.page_size)
+            .unwrap_or(INNER_PAGE_SIZE);
+        let total_empty_bytes: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
+        Self {
+            page_size,
+            table_name,
+            total_pages,
+            per_page_info,
+            overall_fragmentation_ratio: total_empty_bytes as f64 / page_size as f64,
+            total_empty_bytes,
+        }
+    }
+}
+
+/// Fragmentation information for a single data [`Page`].
 ///
 /// [`Page`]: crate::in_memory::Data
 #[derive(Debug, Copy, Clone)]
-pub struct PageFragmentationInfo<const DATA_LENGTH: usize> {
+pub struct PageFragmentationInfo {
     pub page_id: PageId,
+    pub page_size: usize,
     pub empty_bytes: u32,
-    /// Ratio of filled bytes to empty bytes. Higher means more utilized.
     pub filled_empty_ratio: f64,
 }
 
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
+    /// Returns all empty [`Link`]s for a specific page.
     pub fn get_page_empty_links(&self, page_id: PageId) -> Vec<Link> {
         self.page_links_map
             .get(&page_id)
@@ -24,7 +76,9 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             .collect()
     }
 
-    pub fn get_per_page_info(&self) -> Vec<PageFragmentationInfo<DATA_LENGTH>> {
+    /// Calculates [`PageFragmentationInfo`] information for all pages with
+    /// empty [`Link`]s.
+    pub fn get_per_page_info(&self) -> Vec<PageFragmentationInfo> {
         let mut page_empty_bytes: HashMap<PageId, u32> = HashMap::new();
 
         for (page_id, link) in self.page_links_map.iter() {
@@ -32,7 +86,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             *entry += link.length;
         }
 
-        let mut per_page_data: Vec<PageFragmentationInfo<DATA_LENGTH>> = page_empty_bytes
+        let mut per_page_data: Vec<PageFragmentationInfo> = page_empty_bytes
             .into_iter()
             .map(|(page_id, empty_bytes)| {
                 let filled_empty_ratio = if empty_bytes > 0 {
@@ -43,6 +97,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
                 };
 
                 PageFragmentationInfo {
+                    page_size: DATA_LENGTH,
                     page_id,
                     empty_bytes,
                     filled_empty_ratio,

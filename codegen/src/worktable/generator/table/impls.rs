@@ -21,6 +21,7 @@ impl Generator {
         let iter_with_async_fn = self.gen_table_iter_with_async_fn();
         let count_fn = self.gen_table_count_fn();
         let system_info_fn = self.gen_system_info_fn();
+        let vacuum_fn = self.gen_table_vacuum_fn();
 
         quote! {
             impl #ident {
@@ -35,6 +36,7 @@ impl Generator {
                 #iter_with_fn
                 #iter_with_async_fn
                 #system_info_fn
+                #vacuum_fn
             }
         }
     }
@@ -289,6 +291,23 @@ impl Generator {
         quote! {
             pub fn system_info(&self) -> SystemInfo {
                 self.0.system_info()
+            }
+        }
+    }
+
+    fn gen_table_vacuum_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let table_name = name_generator.get_work_table_literal_name();
+
+        quote! {
+            pub fn vacuum(&self) -> Box<dyn WorkTableVacuum> {
+                Box::new(EmptyDataVacuum::new(
+                    #table_name,
+                    std::sync::Arc::clone(&self.0.data),
+                    std::sync::Arc::clone(&self.0.lock_manager),
+                    std::sync::Arc::clone(&self.0.primary_index),
+                    std::sync::Arc::clone(&self.0.indexes),
+                ))
             }
         }
     }
