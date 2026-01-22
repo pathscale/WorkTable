@@ -3,7 +3,7 @@ pub mod system_info;
 pub mod vacuum;
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
-use crate::lock::LockMap;
+use crate::lock::WorkTableLock;
 use crate::persistence::{InsertOperation, Operation};
 use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
@@ -54,7 +54,7 @@ pub struct WorkTable<
 
     pub pk_gen: PkGen,
 
-    pub lock_map: LockMap<LockType, PrimaryKey>,
+    pub lock_manager: Arc<WorkTableLock<LockType, PrimaryKey>>,
 
     pub update_state: IndexMap<PrimaryKey, Row>,
 
@@ -100,7 +100,7 @@ where
             primary_index: Arc::new(PrimaryIndex::default()),
             indexes: Arc::new(SecondaryIndexes::default()),
             pk_gen: Default::default(),
-            lock_map: LockMap::default(),
+            lock_manager: Default::default(),
             update_state: IndexMap::default(),
             table_name: "",
             pk_phantom: PhantomData,

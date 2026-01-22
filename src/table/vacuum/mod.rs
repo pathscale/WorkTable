@@ -1,5 +1,4 @@
 mod fragmentation_info;
-mod lock;
 mod page;
 
 use std::collections::VecDeque;
@@ -20,9 +19,9 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Serialize};
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
+use crate::lock::WorkTableLock;
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
 use crate::vacuum::fragmentation_info::PageFragmentationInfo;
-use crate::vacuum::lock::VacuumLock;
 use crate::{AvailableIndex, PrimaryIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 
 #[derive(Debug)]
@@ -33,6 +32,7 @@ pub struct EmptyDataVacuum<
     SecondaryIndexes,
     AvailableTypes,
     AvailableIndexes,
+    LockType,
     const DATA_LENGTH: usize,
     SecondaryEvents = (),
 > where
@@ -41,7 +41,7 @@ pub struct EmptyDataVacuum<
     PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
 {
     data_pages: Arc<DataPages<Row, DATA_LENGTH>>,
-    vacuum_lock: Arc<VacuumLock>,
+    lock_manager: Arc<WorkTableLock<LockType, PrimaryKey>>,
 
     primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
     secondary_indexes: Arc<SecondaryIndexes>,
@@ -56,6 +56,7 @@ impl<
     SecondaryIndexes,
     AvailableTypes,
     AvailableIndexes,
+    LockType,
     const DATA_LENGTH: usize,
     SecondaryEvents,
 >
@@ -66,6 +67,7 @@ impl<
         SecondaryIndexes,
         AvailableTypes,
         AvailableIndexes,
+        LockType,
         DATA_LENGTH,
         SecondaryEvents,
     >
@@ -159,8 +161,8 @@ where
     }
 
     async fn move_data_from(&self, from: PageId, to: PageId) -> (bool, bool) {
-        let from_lock = self.vacuum_lock.lock_page(from);
-        let to_lock = self.vacuum_lock.lock_page(to);
+        let from_lock = self.lock_manager.lock_page(from);
+        let to_lock = self.lock_manager.lock_page(to);
 
         let to_page = self
             .data_pages
@@ -224,11 +226,13 @@ where
 
         {
             let g = from_lock.read().await;
-            g.unlock()
+            g.unlock();
+            self.lock_manager.remove_page_lock(&from)
         }
         {
             let g = to_lock.read().await;
-            g.unlock()
+            g.unlock();
+            self.lock_manager.remove_page_lock(&to)
         }
 
         (from_page_will_be_moved, to_page_will_be_filled)
@@ -243,7 +247,7 @@ where
             .collect::<Vec<_>>();
         page_empty_links.sort_by(|l1, l2| l1.offset.cmp(&l2.offset));
 
-        let lock = self.vacuum_lock.lock_page(info.page_id);
+        let lock = self.lock_manager.lock_page(info.page_id);
         let mut empty_links_iter = page_empty_links.into_iter();
 
         let Some(mut current_empty) = empty_links_iter.next() else {
@@ -283,8 +287,11 @@ where
             }
         }
 
-        let l = lock.read().await;
-        l.unlock();
+        {
+            let l = lock.read().await;
+            l.unlock();
+            self.lock_manager.remove_page_lock(&info.page_id)
+        }
     }
 
     fn shift_data_in_range(&self, start_link: Link, end_offset: Option<u32>) -> u32 {
@@ -374,7 +381,6 @@ mod tests {
     use crate::in_memory::{GhostWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;
     use crate::vacuum::EmptyDataVacuum;
-    use crate::vacuum::lock::VacuumLock;
 
     worktable!(
         name: Test,
@@ -401,11 +407,12 @@ mod tests {
         TestIndex,
         TestAvaiableTypes,
         TestAvailableIndexes,
+        TestLock,
         TEST_INNER_SIZE,
     > {
         EmptyDataVacuum {
             data_pages: Arc::clone(&table.0.data),
-            vacuum_lock: Arc::new(VacuumLock::default()),
+            lock_manager: Arc::clone(&table.0.lock_manager),
             primary_index: Arc::clone(&table.0.primary_index),
             secondary_indexes: Arc::clone(&table.0.indexes),
             phantom_data: PhantomData,

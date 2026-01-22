@@ -126,7 +126,7 @@ impl Generator {
                     };
 
                 lock.unlock();
-                self.0.lock_map.remove_with_lock_check(&pk).await;
+                self.0.lock_manager.row_locks.remove_with_lock_check(&pk);
 
                 Ok(())
             }
