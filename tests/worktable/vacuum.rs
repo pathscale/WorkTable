@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use worktable::prelude::*;
@@ -121,6 +122,66 @@ async fn vacuum_parallel_with_inserts() {
     }
     // Verify all inserted rows are accessible
     for (id, expected) in inserted_rows.iter() {
+        let row = table.select(*id).await;
+        assert_eq!(row, Some(expected.clone()));
+        let row = row.unwrap();
+        let by_value = table.select_by_value(row.value).await;
+        assert_eq!(by_value, Some(expected.clone()));
+    }
+
+    delete_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn vacuum_parallel_with_upserts() {
+    let mut config = VacuumManagerConfig::default();
+    config.check_interval = Duration::from_millis(5);
+    let vacuum_manager = Arc::new(VacuumManager::with_config(config));
+    let table = Arc::new(VacuumTestWorkTable::default());
+
+    // Insert 3000 rows
+    let mut rows = Vec::new();
+    for i in 0..3000 {
+        let row = VacuumTestRow {
+            id: table.get_next_pk().into(),
+            value: i,
+            data: format!("test_data_{}", i),
+        };
+        let id = row.id;
+        table.insert(row.clone()).unwrap();
+        rows.push((id, row));
+    }
+    let rows = Arc::new(rows);
+
+    let vacuum = table.vacuum();
+    vacuum_manager.register(vacuum);
+    let _h = vacuum_manager.run_vacuum_task();
+
+    let delete_table = table.clone();
+    let ids_to_delete: Arc<Vec<_>> = Arc::new(rows.iter().step_by(2).map(|p| p.0).collect());
+    let task_ids = ids_to_delete.clone();
+    let delete_task = tokio::spawn(async move {
+        for id in task_ids.iter() {
+            delete_table.delete((*id).into()).await.unwrap();
+        }
+    });
+
+    let mut row_state = rows.iter().cloned().collect::<HashMap<_, _>>();
+    for _ in 0..3000 {
+        let id = fastrand::u64(0..3000);
+        let i = fastrand::i64(0..3000);
+        let row = VacuumTestRow {
+            id,
+            value: id as i64,
+            data: format!("test_data_{}", i),
+        };
+        let id = row.id;
+        table.upsert(row.clone()).await.unwrap();
+        row_state.entry(id).and_modify(|r| *r = row);
+    }
+
+    // Verify all inserted rows are accessible
+    for (id, expected) in row_state.iter() {
         let row = table.select(*id).await;
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();

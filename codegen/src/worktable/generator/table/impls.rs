@@ -176,8 +176,7 @@ impl Generator {
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 let need_to_update = {
-                    if let Some(_) = self.0.primary_index.pk_map.get(&pk)
-                    {
+                    if let Some(link) = self.0.primary_index.pk_map.get(&pk) {
                         true
                     } else {
                         false

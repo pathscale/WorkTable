@@ -92,11 +92,13 @@ impl Generator {
                     #full_row_lock
                 };
 
-                let link = match self.0
-                    .primary_index.pk_map
+                let mut link: Link = match self.0
+                    .primary_index
+                    .pk_map
                     .get(&pk)
                     .map(|v| v.get().value.into())
-                    .ok_or(WorkTableError::NotFound) {
+                    .ok_or(WorkTableError::NotFound)
+                {
                     Ok(l) => l,
                     Err(e) => {
                         lock.unlock();
@@ -105,6 +107,16 @@ impl Generator {
                         return Err(e);
                     }
                 };
+
+                if self.0.lock_manager.await_page_lock(link.page_id).await {
+                    // We waited for vacuum to complete, need to re-lookup the link
+                    link = self.0
+                        .primary_index
+                        .pk_map
+                        .get(&pk)
+                        .map(|v| v.get().value.into())
+                        .expect("should be available as was found before vacuum");
+                }
 
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 self.0.update_state.insert(pk.clone(), row_old);
@@ -477,8 +489,9 @@ impl Generator {
                     #custom_lock
                 };
 
-                let link = match self.0
-                        .primary_index.pk_map
+                let mut link: Link = match self.0
+                        .primary_index
+                        .pk_map
                         .get(&pk)
                         .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound) {
@@ -490,6 +503,16 @@ impl Generator {
                         return Err(e);
                     }
                 };
+
+                if self.0.lock_manager.await_page_lock(link.page_id).await {
+                    // We waited for vacuum to complete, need to re-lookup the link
+                    link = self.0
+                        .primary_index
+                        .pk_map
+                        .get(&pk)
+                        .map(|v| v.get().value.into())
+                        .expect("should be available as was found before vacuum");
+                }
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
@@ -708,10 +731,21 @@ impl Generator {
                         .unseal_unchecked()
                 };
 
-                let link = self.0.indexes.#index
+                let mut link: Link = self.0.indexes
+                    .#index
                     .get(#by)
                     .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound)?;
+
+                if self.0.lock_manager.await_page_lock(link.page_id).await {
+                    // We waited for vacuum to complete, need to re-lookup the link
+                    link = self.0.indexes
+                        .#index
+                        .get(#by)
+                        .map(|v| v.get().value.into())
+                        .expect("should be available as was found before vacuum");
+                }
+
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
 
                 let lock = {

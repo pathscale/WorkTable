@@ -81,6 +81,7 @@ impl VacuumManager {
                     if let Some(vacuum) = vacuum_opt {
                         let info = vacuum.analyze_fragmentation();
 
+                        log::info!("vacuum info: {:?}", info);
                         // println!("vacuum info: {:?}", info);
                         if info.overall_fragmentation_ratio
                             < self.config.low_fragmentation_threshold
