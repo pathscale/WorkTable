@@ -56,7 +56,76 @@ async fn vacuum_parallel_with_selects() {
         for (id, expected) in rows.iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
             let row = table.select(*id).await;
             assert_eq!(row, Some(expected.clone()));
+            let row = row.unwrap();
+            let by_value = table.select_by_value(row.value).await;
+            assert_eq!(by_value, Some(expected.clone()));
         }
+    }
+
+    delete_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn vacuum_parallel_with_inserts() {
+    let mut config = VacuumManagerConfig::default();
+    config.check_interval = Duration::from_millis(5);
+    let vacuum_manager = Arc::new(VacuumManager::with_config(config));
+    let table = Arc::new(VacuumTestWorkTable::default());
+
+    // Insert 2000 rows
+    let mut rows = Vec::new();
+    for i in 0..2000 {
+        let row = VacuumTestRow {
+            id: table.get_next_pk().into(),
+            value: i,
+            data: format!("test_data_{}", i),
+        };
+        let id = row.id;
+        table.insert(row.clone()).unwrap();
+        rows.push((id, row));
+    }
+    let rows = Arc::new(rows);
+
+    let vacuum = table.vacuum();
+    vacuum_manager.register(vacuum);
+    let _h = vacuum_manager.run_vacuum_task();
+
+    let delete_table = table.clone();
+    let ids_to_delete: Arc<Vec<_>> = Arc::new(rows.iter().step_by(2).map(|p| p.0).collect());
+    let task_ids = ids_to_delete.clone();
+    let delete_task = tokio::spawn(async move {
+        for id in task_ids.iter() {
+            delete_table.delete((*id).into()).await.unwrap();
+        }
+    });
+
+    let mut inserted_rows = Vec::new();
+    for i in 2001..3000 {
+        let row = VacuumTestRow {
+            id: table.get_next_pk().into(),
+            value: i,
+            data: format!("test_data_{}", i),
+        };
+        let id = row.id;
+        table.insert(row.clone()).unwrap();
+        inserted_rows.push((id, row));
+    }
+
+    // Verify all remaining rows are still accessible
+    for (id, expected) in rows.iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
+        let row = table.select(*id).await;
+        assert_eq!(row, Some(expected.clone()));
+        let row = row.unwrap();
+        let by_value = table.select_by_value(row.value).await;
+        assert_eq!(by_value, Some(expected.clone()));
+    }
+    // Verify all inserted rows are accessible
+    for (id, expected) in inserted_rows.iter() {
+        let row = table.select(*id).await;
+        assert_eq!(row, Some(expected.clone()));
+        let row = row.unwrap();
+        let by_value = table.select_by_value(row.value).await;
+        assert_eq!(by_value, Some(expected.clone()));
     }
 
     delete_task.await.unwrap();

@@ -14,17 +14,17 @@ use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
-use rkyv::{Archive, Serialize};
+use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
 use crate::lock::WorkTableLock;
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
-use async_trait::async_trait;
-
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::{FragmentationInfo, PageFragmentationInfo};
 use crate::{AvailableIndex, PrimaryIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
+use async_trait::async_trait;
+use rkyv::api::high::HighDeserializer;
 
 #[derive(Debug)]
 pub struct EmptyDataVacuum<
@@ -89,7 +89,8 @@ where
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
         >,
-    <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+    <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper
+        + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
     AvailableIndexes: Debug + AvailableIndex,
@@ -387,6 +388,11 @@ where
         let old_offset_link = OffsetEqLink(old_link);
         let new_offset_link = OffsetEqLink(new_link);
 
+        let row = self
+            .data_pages
+            .select(new_link)
+            .expect("should exist as link was moved correctly");
+
         self.primary_index
             .pk_map
             .insert(pk.clone(), new_offset_link);
@@ -394,7 +400,9 @@ where
         self.primary_index
             .reverse_pk_map
             .insert(new_offset_link, pk);
-        // TODO: update secondary indexes
+        self.secondary_indexes
+            .reinsert_row(row.clone(), old_link, row, new_link)
+            .expect("should be ok as index were no violated");
     }
 
     /// Creates a new [`EmptyDataVacuum`] from the given [`WorkTable`] components.
@@ -454,7 +462,8 @@ where
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
         > + Send
         + Sync,
-    <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+    <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper
+        + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>
         + Send

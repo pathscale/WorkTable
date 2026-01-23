@@ -60,8 +60,6 @@ impl VacuumManager {
     ///
     /// Returns an `AbortHandle` that can be used to cancel the task.
     pub fn run_vacuum_task(self: Arc<Self>) -> AbortHandle {
-        let manager = self.clone();
-
         let handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(self.config.check_interval).await;
