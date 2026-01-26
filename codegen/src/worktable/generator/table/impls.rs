@@ -298,6 +298,7 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let table_name = name_generator.get_work_table_literal_name();
         let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
+        let lock_type = name_generator.get_lock_type_ident();
 
         if self.is_persist {
             quote! {
@@ -309,13 +310,12 @@ impl Generator {
                         _,
                         _,
                         _,
-                        _,
+                        #lock_type,
                         _,
                         #secondary_index_events
                         >::new(
                         #table_name,
                         std::sync::Arc::clone(&self.0.data),
-                        std::sync::Arc::clone(&self.0.lock_manager),
                         std::sync::Arc::clone(&self.0.primary_index),
                         std::sync::Arc::clone(&self.0.indexes),
                     ))
@@ -324,10 +324,18 @@ impl Generator {
         } else {
             quote! {
                 pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
-                    std::sync::Arc::new(EmptyDataVacuum::new(
+                    std::sync::Arc::new(EmptyDataVacuum::<
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        #lock_type,
+                        _
+                    >::new(
                         #table_name,
                         std::sync::Arc::clone(&self.0.data),
-                        std::sync::Arc::clone(&self.0.lock_manager),
                         std::sync::Arc::clone(&self.0.primary_index),
                         std::sync::Arc::clone(&self.0.indexes),
                     ))

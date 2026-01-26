@@ -48,7 +48,7 @@ impl Generator {
                 #delete_logic
 
                 lock.unlock();  // Releases locks
-                self.0.lock_manager.row_locks.remove_with_lock_check(&pk); // Removes locks
+                self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                 core::result::Result::Ok(())
             }
@@ -108,7 +108,7 @@ impl Generator {
                     Ok(l) => l,
                     Err(e) => {
                         lock.unlock();  // Releases locks
-                        self.0.lock_manager.row_locks.remove_with_lock_check(&pk); // Removes locks
+                        self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
                         return Err(e);
                     }
                 };

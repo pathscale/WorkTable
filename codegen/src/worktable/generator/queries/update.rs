@@ -78,7 +78,7 @@ impl Generator {
 
                     self.0.update_state.remove(&pk);
                     lock.unlock();
-                    self.0.lock_manager.row_locks.remove_with_lock_check(&pk); // Removes locks
+                    self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -102,21 +102,11 @@ impl Generator {
                     Ok(l) => l,
                     Err(e) => {
                         lock.unlock();
-                        self.0.lock_manager.row_locks.remove_with_lock_check(&pk);
+                        self.0.lock_manager.remove_with_lock_check(&pk);
 
                         return Err(e);
                     }
                 };
-
-                if self.0.lock_manager.await_page_lock(link.page_id).await {
-                    // We waited for vacuum to complete, need to re-lookup the link
-                    link = self.0
-                        .primary_index
-                        .pk_map
-                        .get(&pk)
-                        .map(|v| v.get().value.into())
-                        .expect("should be available as was found before vacuum");
-                }
 
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 self.0.update_state.insert(pk.clone(), row_old);
@@ -139,7 +129,7 @@ impl Generator {
                 self.0.update_state.remove(&pk);
 
                 lock.unlock();  // Releases locks
-                self.0.lock_manager.row_locks.remove_with_lock_check(&pk); // Removes locks
+                self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                 #persist_call
 
@@ -293,7 +283,7 @@ impl Generator {
                     }
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_manager.row_locks.remove_with_lock_check(&pk); // Removes locks
+                    self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -498,21 +488,11 @@ impl Generator {
                     Ok(l) => l,
                     Err(e) => {
                         lock.unlock();
-                        self.0.lock_manager.row_locks.remove_with_lock_check(&pk);
+                        self.0.lock_manager.remove_with_lock_check(&pk);
 
                         return Err(e);
                     }
                 };
-
-                if self.0.lock_manager.await_page_lock(link.page_id).await {
-                    // We waited for vacuum to complete, need to re-lookup the link
-                    link = self.0
-                        .primary_index
-                        .pk_map
-                        .get(&pk)
-                        .map(|v| v.get().value.into())
-                        .expect("should be available as was found before vacuum");
-                }
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
@@ -529,7 +509,7 @@ impl Generator {
                 #diff_process_remove
 
                 lock.unlock();
-                self.0.lock_manager.row_locks.remove_with_lock_check(&pk);
+                self.0.lock_manager.remove_with_lock_check(&pk);
 
                 #persist_call
 
@@ -605,7 +585,7 @@ impl Generator {
                     }
 
                     lock.unlock();  // Releases locks
-                    self.0.lock_manager.row_locks.remove_with_lock_check(&pk); // Removes locks
+                    self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                     continue;
                 } else {
@@ -672,7 +652,7 @@ impl Generator {
                 }
                 for (pk, lock) in pk_to_unlock {
                     lock.unlock();
-                    self.0.lock_manager.row_locks.remove_with_lock_check(&pk);
+                    self.0.lock_manager.remove_with_lock_check(&pk);
                 }
                 core::result::Result::Ok(())
             }
@@ -737,15 +717,6 @@ impl Generator {
                     .map(|v| v.get().value.into())
                     .ok_or(WorkTableError::NotFound)?;
 
-                if self.0.lock_manager.await_page_lock(link.page_id).await {
-                    // We waited for vacuum to complete, need to re-lookup the link
-                    link = self.0.indexes
-                        .#index
-                        .get(#by)
-                        .map(|v| v.get().value.into())
-                        .expect("should be available as was found before vacuum");
-                }
-
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
 
                 let lock = {
@@ -759,7 +730,7 @@ impl Generator {
                     Ok(l) => l,
                     Err(e) => {
                         lock.unlock();
-                        self.0.lock_manager.row_locks.remove_with_lock_check(&pk);
+                        self.0.lock_manager.remove_with_lock_check(&pk);
 
                         return Err(e);
                     }
@@ -779,7 +750,7 @@ impl Generator {
                 #diff_process_remove
 
                 lock.unlock();
-                self.0.lock_manager.row_locks.remove_with_lock_check(&pk);
+                self.0.lock_manager.remove_with_lock_check(&pk);
 
                 #persist_call
 

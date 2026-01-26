@@ -126,8 +126,8 @@ impl Generator {
         let lock_ident = name_generator.get_lock_type_ident();
 
         quote! {
-            let lock_id = self.0.lock_manager.row_locks.next_id();
-            if let Some(lock) = self.0.lock_manager.row_locks.get(&pk) {
+            let lock_id = self.0.lock_manager.next_id();
+            if let Some(lock) = self.0.lock_manager.get(&pk) {
                 let mut lock_guard = lock.write().await;
                 #[allow(clippy::mutable_key_type)]
                 let (locks, op_lock) = lock_guard.lock(lock_id);
@@ -140,7 +140,7 @@ impl Generator {
                 let (lock, op_lock) = #lock_ident::with_lock(lock_id);
                 let mut lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
                 let mut guard = lock.write().await;
-                if let Some(old_lock) = self.0.lock_manager.row_locks.insert(pk.clone(), lock.clone()) {
+                if let Some(old_lock) = self.0.lock_manager.insert(pk.clone(), lock.clone()) {
                     let mut old_lock_guard = old_lock.write().await;
                     #[allow(clippy::mutable_key_type)]
                     let locks = guard.merge(&mut *old_lock_guard);
@@ -160,8 +160,8 @@ impl Generator {
         let lock_ident = name_generator.get_lock_type_ident();
 
         quote! {
-            let lock_id = self.0.lock_manager.row_locks.next_id();
-            if let Some(lock) = self.0.lock_manager.row_locks.get(&pk) {
+            let lock_id = self.0.lock_manager.next_id();
+            if let Some(lock) = self.0.lock_manager.get(&pk) {
                 let mut lock_guard = lock.write().await;
                 #[allow(clippy::mutable_key_type)]
                 let (locks, op_lock) = lock_guard.#ident(lock_id);
@@ -174,7 +174,7 @@ impl Generator {
                 let (_, op_lock) = lock.#ident(lock_id);
                 let lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
                 let mut guard = lock.write().await;
-                if let Some(old_lock) = self.0.lock_manager.row_locks.insert(pk.clone(), lock.clone()) {
+                if let Some(old_lock) = self.0.lock_manager.insert(pk.clone(), lock.clone()) {
                     let mut old_lock_guard = old_lock.write().await;
                     #[allow(clippy::mutable_key_type)]
                     let locks = guard.merge(&mut *old_lock_guard);

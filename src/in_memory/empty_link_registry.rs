@@ -1,11 +1,13 @@
-use crate::in_memory::DATA_INNER_LENGTH;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use data_bucket::Link;
 use data_bucket::page::PageId;
 use derive_more::Into;
 use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::concurrent::set::BTreeSet;
 use parking_lot::FairMutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+
+use crate::in_memory::DATA_INNER_LENGTH;
 
 /// A link wrapper that implements `Ord` based on absolute index calculation.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Into)]
@@ -82,6 +84,7 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     sum_links_len: AtomicU32,
 
     op_lock: FairMutex<()>,
+    vacuum_lock: tokio::sync::Mutex<()>,
 }
 
 impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
@@ -92,6 +95,7 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
             page_links_map: BTreeMultiMap::new(),
             sum_links_len: Default::default(),
             op_lock: Default::default(),
+            vacuum_lock: Default::default(),
         }
     }
 }
@@ -157,6 +161,10 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     }
 
     pub fn pop_max(&self) -> Option<Link> {
+        if self.vacuum_lock.try_lock().is_err() {
+            return None;
+        }
+
         let _g = self.op_lock.lock();
 
         let mut iter = self.length_ord_links.iter().rev();
@@ -174,6 +182,10 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 
     pub fn get_empty_links_size_bytes(&self) -> u32 {
         self.sum_links_len.load(Ordering::Acquire)
+    }
+
+    pub async fn lock_vacuum(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.vacuum_lock.lock().await
     }
 }
 
@@ -434,5 +446,43 @@ mod tests {
 
         registry.pop_max();
         assert_eq!(registry.sum_links_len.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn test_lock_vacuum_prevents_pop() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        let link = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        };
+
+        registry.push(link);
+
+        let popped = registry.pop_max();
+        assert!(popped.is_some());
+        assert_eq!(popped.unwrap().length, 100);
+
+        registry.push(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let _lock = registry.lock_vacuum().await;
+        let popped_locked = registry.pop_max();
+        assert!(
+            popped_locked.is_none(),
+            "pop_max should return None when vacuum lock is held"
+        );
+
+        drop(_lock);
+        let popped_after_unlock = registry.pop_max();
+        assert!(
+            popped_after_unlock.is_some(),
+            "pop_max should return link after vacuum lock is released"
+        );
+        assert_eq!(popped_after_unlock.unwrap().length, 100);
     }
 }

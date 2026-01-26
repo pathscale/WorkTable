@@ -155,6 +155,7 @@ impl Generator {
         let dir_name = name_generator.get_dir_name();
         let const_name = name_generator.get_page_inner_size_const_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
+        let lock_type = name_generator.get_lock_type_ident();
         let table_name = name_generator.get_work_table_literal_name();
 
         let primary_index_init = if self.attributes.pk_unsized {
@@ -229,7 +230,7 @@ impl Generator {
                     primary_index: std::sync::Arc::new(primary_index),
                     indexes: std::sync::Arc::new(indexes),
                     pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
-                    lock_manager: std::sync::Arc::new(worktable::lock::WorkTableLock::default()),
+                    lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
                     update_state: IndexMap::default(),
                     table_name: #table_name,
                     pk_phantom: std::marker::PhantomData,

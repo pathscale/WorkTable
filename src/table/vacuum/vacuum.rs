@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use data_bucket::Link;
@@ -17,11 +16,10 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
-use crate::lock::WorkTableLock;
 use crate::prelude::{OffsetEqLink, TablePrimaryKey, VacuumWrapper};
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
-use crate::vacuum::fragmentation_info::{FragmentationInfo, PageFragmentationInfo};
+use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::{AvailableIndex, PrimaryIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 use async_trait::async_trait;
 use ordered_float::OrderedFloat;
@@ -50,7 +48,7 @@ pub struct EmptyDataVacuum<
     primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
     secondary_indexes: Arc<SecondaryIndexes>,
 
-    phantom_data: PhantomData<(SecondaryEvents, AvailableTypes, AvailableIndexes)>,
+    phantom_data: PhantomData<(SecondaryEvents, AvailableTypes, AvailableIndexes, LockType)>,
 }
 
 impl<
@@ -99,7 +97,9 @@ where
     async fn defragment(&self) -> VacuumStats {
         let now = Instant::now();
 
-        let mut per_page_info = self.data_pages.empty_links_registry().get_per_page_info();
+        let registry = self.data_pages.empty_links_registry();
+        let mut per_page_info = registry.get_per_page_info();
+        let _registry_lock = registry.lock_vacuum().await;
         per_page_info.sort_by(|l, r| {
             OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio))
         });
@@ -266,14 +266,12 @@ where
     pub fn new(
         table_name: &'static str,
         data_pages: Arc<DataPages<Row, DATA_LENGTH>>,
-        lock_manager: Arc<WorkTableLock<LockType, PrimaryKey>>,
         primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
         secondary_indexes: Arc<SecondaryIndexes>,
     ) -> Self {
         Self {
             table_name,
             data_pages,
-            lock_manager,
             primary_index,
             secondary_indexes,
             phantom_data: PhantomData,
@@ -320,6 +318,7 @@ where
         > + Send
         + Sync,
     <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper
+        + VacuumWrapper
         + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>
@@ -388,7 +387,6 @@ mod tests {
         EmptyDataVacuum::new(
             table.name(),
             Arc::clone(&table.0.data),
-            Arc::clone(&table.0.lock_manager),
             Arc::clone(&table.0.primary_index),
             Arc::clone(&table.0.indexes),
         )

@@ -65,11 +65,7 @@ impl Generator {
 
         Ok(quote! {
             pub async fn #fn_name(&self, by: #type_) -> Option<#row_ident> {
-                let mut link: Link = self.0.indexes.#field_ident.get(#by).map(|kv| kv.get().value.into())?;
-                if self.0.lock_manager.await_page_lock(link.page_id).await {
-                    // We waited for vacuum to complete, need to re-lookup the link
-                    link = self.0.indexes.#field_ident.get(#by).map(|kv| kv.get().value.into())?;
-                }
+                let link: Link = self.0.indexes.#field_ident.get(#by).map(|kv| kv.get().value.into())?;
                 self.0.data.select_non_ghosted(link).ok()
             }
         })

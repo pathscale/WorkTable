@@ -3,9 +3,8 @@ pub mod system_info;
 pub mod vacuum;
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
-use crate::lock::WorkTableLock;
 use crate::persistence::{InsertOperation, Operation};
-use crate::prelude::{Link, OperationId, PrimaryKeyGeneratorState};
+use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState, VacuumWrapper};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
@@ -54,7 +53,7 @@ pub struct WorkTable<
 
     pub pk_gen: PkGen,
 
-    pub lock_manager: Arc<IndexMap<PrimaryKey, Link, PkNodeType>>,
+    pub lock_manager: Arc<LockMap<LockType, PrimaryKey>>,
 
     pub update_state: IndexMap<PrimaryKey, Row>,
 
@@ -159,21 +158,11 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let mut link: Option<Link> = self
+        let link: Option<Link> = self
             .primary_index
             .pk_map
             .get(&pk)
             .map(|v| v.get().value.into());
-        if let Some(l) = link {
-            if self.lock_manager.await_page_lock(l.page_id).await {
-                // We waited for vacuum to complete, need to re-lookup the link
-                link = self
-                    .primary_index
-                    .pk_map
-                    .get(&pk)
-                    .map(|v| v.get().value.into());
-            }
-        }
         if let Some(link) = link {
             self.data.select(link).ok()
         } else {
@@ -196,7 +185,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: AvailableIndex,
@@ -262,7 +251,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
@@ -340,7 +329,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: Debug + AvailableIndex,
@@ -351,21 +340,12 @@ where
         if pk != row_old.get_primary_key() {
             return Err(WorkTableError::PrimaryUpdateTry);
         }
-        let mut old_link: Link = self
+        let old_link: Link = self
             .primary_index
             .pk_map
             .get(&pk)
             .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
-        if self.lock_manager.await_page_lock(old_link.page_id).await {
-            // We waited for vacuum to complete, need to re-lookup the link
-            old_link = self
-                .primary_index
-                .pk_map
-                .get(&pk)
-                .map(|v| v.get().value.into())
-                .ok_or(WorkTableError::NotFound)?;
-        }
         let new_link = self
             .data
             .insert(row_new.clone())
@@ -426,7 +406,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
