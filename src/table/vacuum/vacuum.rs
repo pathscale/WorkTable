@@ -18,12 +18,13 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
 use crate::lock::WorkTableLock;
-use crate::prelude::{OffsetEqLink, TablePrimaryKey};
+use crate::prelude::{OffsetEqLink, TablePrimaryKey, VacuumWrapper};
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::{FragmentationInfo, PageFragmentationInfo};
 use crate::{AvailableIndex, PrimaryIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 use async_trait::async_trait;
+use ordered_float::OrderedFloat;
 use rkyv::api::high::HighDeserializer;
 
 #[derive(Debug)]
@@ -45,7 +46,6 @@ pub struct EmptyDataVacuum<
     table_name: &'static str,
 
     data_pages: Arc<DataPages<Row, DATA_LENGTH>>,
-    lock_manager: Arc<WorkTableLock<LockType, PrimaryKey>>,
 
     primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
     secondary_indexes: Arc<SecondaryIndexes>,
@@ -90,6 +90,7 @@ where
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
         >,
     <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper
+        + VacuumWrapper
         + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
@@ -98,72 +99,56 @@ where
     async fn defragment(&self) -> VacuumStats {
         let now = Instant::now();
 
-        let per_page_info = self.data_pages.empty_links_registry().get_per_page_info();
+        let mut per_page_info = self.data_pages.empty_links_registry().get_per_page_info();
+        per_page_info.sort_by(|l, r| {
+            OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio))
+        });
         let initial_bytes_freed: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
+        let additional_allocated_page = self.data_pages.allocate_new_page();
 
-        let mut in_migration_pages = VecDeque::new();
-        let mut free_pages = vec![];
+        let mut free_pages = VecDeque::new();
         let mut defragmented_pages = VecDeque::new();
+        free_pages.push_back(additional_allocated_page.id);
 
         let pages_processed = per_page_info.len();
 
         let mut info_iter = per_page_info.into_iter();
         while let Some(info) = info_iter.next() {
-            let page_id = info.page_id;
-            if let Some(id) = defragmented_pages.pop_front() {
-                match self.move_data_from(page_id, id).await {
+            let page_from = info.page_id;
+            loop {
+                let page_to = if let Some(id) = defragmented_pages.pop_front() {
+                    id
+                } else if let Some(id) = free_pages.pop_front() {
+                    id
+                } else {
+                    unreachable!("I hope so")
+                };
+                match self.move_data_from(page_from, page_to).await {
                     (true, true) => {
                         // from moved fully and on to no more space
-                        free_pages.push(page_id);
+                        free_pages.push_back(page_from);
+                        self.free_page(page_from);
+                        break;
                     }
                     (true, false) => {
                         // from moved fully but to has space
-                        free_pages.push(id);
-                        defragmented_pages.push_back(id);
+                        free_pages.push_back(page_from);
+                        self.free_page(page_from);
+                        defragmented_pages.push_back(page_to);
+                        break;
                     }
                     (false, true) => {
                         // from was not moved but to have NO space
-                        in_migration_pages.push_back(page_id);
+                        continue;
                     }
                     (false, false) => unreachable!(
                         "at least one of two situations should appear to break from while cycle"
                     ),
                 }
-            } else {
-                let page_id = info.page_id;
-                self.defragment_page(info).await;
-                if let Some(id) = in_migration_pages.pop_front() {
-                    match self.move_data_from(id, page_id).await {
-                        (true, true) => {
-                            // from moved fully and on to no more space
-                            free_pages.push(id);
-                        }
-                        (true, false) => {
-                            // from moved fully but to has space
-                            free_pages.push(id);
-                            defragmented_pages.push_back(page_id);
-                        }
-                        (false, true) => {
-                            // from was not moved but to have NO space
-                            in_migration_pages.push_back(id);
-                        }
-                        (false, false) => unreachable!(
-                            "at least one of two situations should appear to break from while cycle"
-                        ),
-                    }
-                } else {
-                    defragmented_pages.push_back(page_id);
-                }
             }
-        }
-
-        for in_migration_pages in in_migration_pages {
-            let page_start = Link {
-                page_id: in_migration_pages,
-                offset: 0,
-                length: 0,
-            };
-            self.shift_data_in_range(page_start, None);
+            for l in info.links {
+                self.data_pages.empty_links_registry().remove_link(l)
+            }
         }
 
         let pages_freed = free_pages.len();
@@ -179,10 +164,15 @@ where
         }
     }
 
-    async fn move_data_from(&self, from: PageId, to: PageId) -> (bool, bool) {
-        let from_lock = self.lock_manager.lock_page(from);
-        let to_lock = self.lock_manager.lock_page(to);
+    fn free_page(&self, page_id: PageId) {
+        let p = self
+            .data_pages
+            .get_page(page_id)
+            .expect("should exist as called");
+        p.reset()
+    }
 
+    async fn move_data_from(&self, from: PageId, to: PageId) -> (bool, bool) {
         let to_page = self
             .data_pages
             .get_page(to)
@@ -234,6 +224,11 @@ where
         drop(range);
 
         for (from_link, pk) in links {
+            unsafe {
+                self.data_pages
+                    .with_mut_ref(from_link.0, |r| r.set_in_vacuum_process())
+                    .expect("link should be valid")
+            }
             let raw_data = from_page
                 .get_raw_row(from_link.0)
                 .expect("link is not bigger than free offset");
@@ -243,145 +238,7 @@ where
             self.update_index_after_move(pk, from_link.0, new_link);
         }
 
-        {
-            let g = from_lock.read().await;
-            g.unlock();
-            self.lock_manager.remove_page_lock(&from)
-        }
-        {
-            let g = to_lock.read().await;
-            g.unlock();
-            self.lock_manager.remove_page_lock(&to)
-        }
-
         (from_page_will_be_moved, to_page_will_be_filled)
-    }
-
-    async fn defragment_page(&self, info: PageFragmentationInfo) {
-        let registry = self.data_pages.empty_links_registry();
-        let mut page_empty_links = registry
-            .page_links_map
-            .get(&info.page_id)
-            .map(|(_, l)| *l)
-            .collect::<Vec<_>>();
-        page_empty_links.sort_by(|l1, l2| l1.offset.cmp(&l2.offset));
-
-        let lock = self.lock_manager.lock_page(info.page_id);
-        let mut empty_links_iter = page_empty_links.into_iter();
-
-        let Some(mut current_empty) = empty_links_iter.next() else {
-            // TODO: create some kind of guard that will Drop himself
-            {
-                let l = lock.read().await;
-                l.unlock();
-                self.lock_manager.remove_page_lock(&info.page_id)
-            }
-            return;
-        };
-        registry.remove_link(current_empty);
-
-        let Some(mut next_empty) = empty_links_iter.next() else {
-            self.shift_data_in_range(current_empty, None);
-            {
-                let l = lock.read().await;
-                l.unlock();
-                self.lock_manager.remove_page_lock(&info.page_id)
-            }
-            return;
-        };
-        registry.remove_link(next_empty);
-
-        loop {
-            let offset = self.shift_data_in_range(current_empty, Some(next_empty.offset));
-
-            let new_next = empty_links_iter.next();
-            match new_next {
-                Some(link) => {
-                    registry.remove_link(link);
-                    current_empty = Link {
-                        page_id: next_empty.page_id,
-                        offset,
-                        length: next_empty.length + (next_empty.offset - offset),
-                    };
-                    next_empty = link;
-                }
-                None => {
-                    let from = Link {
-                        page_id: next_empty.page_id,
-                        offset,
-                        length: next_empty.length + (next_empty.offset - offset),
-                    };
-                    self.shift_data_in_range(from, None);
-                    break;
-                }
-            }
-        }
-
-        {
-            let l = lock.read().await;
-            l.unlock();
-            self.lock_manager.remove_page_lock(&info.page_id)
-        }
-    }
-
-    fn shift_data_in_range(&self, start_link: Link, end_offset: Option<u32>) -> u32 {
-        let page_id = start_link.page_id;
-        let page = self
-            .data_pages
-            .get_page(page_id)
-            .expect("should exist as link exists");
-        let start_link = OffsetEqLink::<_>(start_link);
-        let range = if let Some(offset) = end_offset {
-            let end = OffsetEqLink::<_>(Link {
-                page_id,
-                offset,
-                length: 0,
-            });
-            self.primary_index.reverse_pk_map.range(start_link..end)
-        } else {
-            let end = OffsetEqLink::<_>(Link {
-                page_id: page_id.next(),
-                offset: 0,
-                length: 0,
-            });
-            self.primary_index.reverse_pk_map.range(start_link..end)
-        }
-        .map(|(l, pk)| (*l, pk.clone()))
-        .collect::<Vec<_>>();
-        let mut range_iter = range.into_iter();
-
-        let mut entry_offset = start_link.0.offset;
-        while let Some((link, pk)) = range_iter.next() {
-            let link_value = link.0;
-
-            if let Some(end) = end_offset {
-                if entry_offset + link_value.length >= end {
-                    return entry_offset;
-                }
-            }
-
-            let new_link = Link {
-                page_id,
-                offset: entry_offset,
-                length: link_value.length,
-            };
-
-            // TODO: Safety comment
-            unsafe {
-                page.move_from_to(link_value, new_link)
-                    .expect("should use valid links")
-            }
-            entry_offset += link_value.length;
-            self.update_index_after_move(pk.clone(), link_value, new_link);
-        }
-
-        if end_offset.is_none() {
-            // Is safe as page is locked now and we can get here only if end_offset
-            // is not set so we are shifting till page end.
-            page.free_offset.store(entry_offset, Ordering::Release);
-        }
-
-        entry_offset
     }
 
     fn update_index_after_move(&self, pk: PrimaryKey, old_link: Link, new_link: Link) {

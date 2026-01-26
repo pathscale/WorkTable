@@ -200,6 +200,15 @@ where
         }
     }
 
+    /// Allocates new page but **NOT** sets it as `current`.
+    pub fn allocate_new_page(&self) -> Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>> {
+        let mut pages = self.pages.write();
+        let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
+        let page = Arc::new(Data::new(index.into()));
+        pages.push(page.clone());
+        page
+    }
+
     #[cfg_attr(
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataPages")
@@ -215,7 +224,6 @@ where
     {
         let pages = self.pages.read();
         let page = pages
-            // - 1 is used because page ids are starting from 1.
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
         let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
@@ -233,7 +241,6 @@ where
     {
         let pages = self.pages.read();
         let page = pages
-            // - 1 is used because page ids are starting from 1.
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
         let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
@@ -327,9 +334,7 @@ where
     }
 
     pub fn delete(&self, link: Link) -> Result<(), ExecutionError> {
-        //println!("Pushing empty link");
         self.empty_links.push(link);
-        //println!("Pushed empty link");
         Ok(())
     }
 
@@ -343,8 +348,10 @@ where
     }
 
     pub fn mark_page_empty(&self, page_id: PageId) {
-        let mut g = self.empty_pages.write();
-        g.push_back(page_id);
+        if u32::from(page_id) != self.current_page_id.load(Ordering::Acquire) {
+            let mut g = self.empty_pages.write();
+            g.push_back(page_id);
+        }
     }
 
     pub fn get_empty_pages(&self) -> Vec<PageId> {
@@ -416,7 +423,7 @@ mod tests {
     use rkyv::{Archive, Deserialize, Serialize};
 
     use crate::in_memory::pages::DataPages;
-    use crate::in_memory::{PagesExecutionError, RowWrapper, StorableRow};
+    use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -437,6 +444,10 @@ mod tests {
         #[rkyv(with = AtomicLoad<Relaxed>)]
         pub is_ghosted: AtomicBool,
 
+        /// Indicator for vacuumed rows.
+        #[rkyv(with = AtomicLoad<Relaxed>)]
+        pub is_vacuumed: AtomicBool,
+
         /// Indicator for deleted rows.
         #[rkyv(with = AtomicLoad<Relaxed>)]
         pub deleted: AtomicBool,
@@ -451,11 +462,16 @@ mod tests {
             self.is_ghosted.load(Ordering::Relaxed)
         }
 
+        fn is_vacuumed(&self) -> bool {
+            self.is_vacuumed.load(Ordering::Relaxed)
+        }
+
         /// Creates new [`GeneralRow`] from `Inner`.
         fn from_inner(inner: Inner) -> Self {
             Self {
                 inner,
                 is_ghosted: AtomicBool::new(true),
+                is_vacuumed: AtomicBool::new(false),
                 deleted: AtomicBool::new(false),
             }
         }
@@ -644,5 +660,131 @@ mod tests {
         let elapsed = now.elapsed();
 
         println!("vec {elapsed:?}")
+    }
+
+    #[test]
+    fn allocate_new_page_creates_page_correctly() {
+        let pages = DataPages::<TestRow>::new();
+
+        let initial_last_id = pages.last_page_id.load(Ordering::Relaxed);
+        let initial_current = pages.current_page_id.load(Ordering::Relaxed);
+        let initial_count = pages.get_page_count();
+
+        let _allocated_page = pages.allocate_new_page();
+
+        assert_eq!(
+            pages.last_page_id.load(Ordering::Relaxed),
+            initial_last_id + 1
+        );
+
+        assert_eq!(
+            pages.current_page_id.load(Ordering::Relaxed),
+            initial_current,
+            "current_page_id should NOT change after allocate_new_page"
+        );
+
+        assert_eq!(pages.get_page_count(), initial_count + 1);
+
+        let retrieved_page = pages.get_page((initial_last_id + 1).into());
+        assert!(retrieved_page.is_some());
+    }
+
+    #[test]
+    fn allocate_multiple_new_pages() {
+        let pages = DataPages::<TestRow>::new();
+
+        let initial_last_id = pages.last_page_id.load(Ordering::Relaxed);
+        let initial_current = pages.current_page_id.load(Ordering::Relaxed);
+
+        let _page2 = pages.allocate_new_page();
+        let _page3 = pages.allocate_new_page();
+        let _page4 = pages.allocate_new_page();
+
+        assert_eq!(
+            pages.last_page_id.load(Ordering::Relaxed),
+            initial_last_id + 3
+        );
+        assert_eq!(
+            pages.current_page_id.load(Ordering::Relaxed),
+            initial_current
+        );
+        assert_eq!(pages.get_page_count(), 4);
+    }
+
+    #[test]
+    fn insert_continues_on_current_page_after_allocation() {
+        let pages = DataPages::<TestRow>::new();
+
+        pages.allocate_new_page();
+
+        let row = TestRow { a: 42, b: 99 };
+        let link = pages.insert(row).unwrap();
+
+        assert_eq!(link.page_id, 1.into());
+    }
+
+    #[test]
+    fn allocate_new_page_concurrent() {
+        let pages = Arc::new(DataPages::<TestRow>::new());
+        let mut handles = Vec::new();
+
+        for _ in 0..10 {
+            let pages_clone = pages.clone();
+            let handle = thread::spawn(move || {
+                for _ in 0..10 {
+                    pages_clone.allocate_new_page();
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(pages.get_page_count(), 101);
+        assert_eq!(pages.last_page_id.load(Ordering::Relaxed), 101);
+    }
+
+    #[test]
+    fn allocated_page_has_correct_initial_state() {
+        let pages = DataPages::<TestRow>::new();
+
+        let allocated = pages.allocate_new_page();
+
+        assert_eq!(allocated.free_offset.load(Ordering::Relaxed), 0);
+        assert_eq!(allocated.free_space(), DATA_INNER_LENGTH);
+    }
+
+    #[test]
+    fn skips_explicitly_allocated_page() {
+        let pages = DataPages::<TestRow>::new();
+
+        // Allocate page explicitly
+        pages.allocate_new_page();
+        assert_eq!(pages.last_page_id.load(Ordering::Relaxed), 2);
+        assert_eq!(pages.current_page_id.load(Ordering::Relaxed), 1);
+
+        loop {
+            let row = TestRow {
+                a: 42,
+                b: pages.row_count.load(Ordering::Relaxed),
+            };
+            let link = pages.insert(row).unwrap();
+            if link.page_id != 1.into() {
+                break;
+            }
+        }
+
+        let row = TestRow { a: 999, b: 888 };
+        let new_link = pages.insert(row).unwrap();
+
+        assert_eq!(
+            new_link.page_id,
+            3.into(),
+            "New insert should go to page 3, not page 2"
+        );
+        assert_eq!(pages.current_page_id.load(Ordering::Relaxed), 3);
+        assert_eq!(pages.get_page_count(), 3);
     }
 }

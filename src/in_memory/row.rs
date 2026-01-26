@@ -12,11 +12,16 @@ pub trait StorableRow {
 pub trait RowWrapper<Inner> {
     fn get_inner(self) -> Inner;
     fn is_ghosted(&self) -> bool;
+    fn is_vacuumed(&self) -> bool;
     fn from_inner(inner: Inner) -> Self;
 }
 
 pub trait GhostWrapper {
     fn unghost(&mut self);
+}
+
+pub trait VacuumWrapper {
+    fn set_in_vacuum_process(&mut self);
 }
 
 pub trait Query<Row> {

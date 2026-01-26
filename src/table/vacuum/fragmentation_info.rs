@@ -60,9 +60,10 @@ impl FragmentationInfo {
 /// Fragmentation information for a single data [`Page`].
 ///
 /// [`Page`]: crate::in_memory::Data
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct PageFragmentationInfo {
     pub page_id: PageId,
+    pub links: Vec<Link>,
     pub page_size: usize,
     pub empty_bytes: u32,
     pub filled_empty_ratio: f64,
@@ -80,16 +81,17 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     /// Calculates [`PageFragmentationInfo`] information for all pages with
     /// empty [`Link`]s.
     pub fn get_per_page_info(&self) -> Vec<PageFragmentationInfo> {
-        let mut page_empty_bytes: HashMap<PageId, u32> = HashMap::new();
+        let mut page_empty_data: HashMap<PageId, (u32, Vec<Link>)> = HashMap::new();
 
         for (page_id, link) in self.page_links_map.iter() {
-            let entry = page_empty_bytes.entry(*page_id).or_insert(0);
-            *entry += link.length;
+            let entry = page_empty_data.entry(*page_id).or_default();
+            entry.0 += link.length;
+            entry.1.push(link.clone());
         }
 
-        let mut per_page_data: Vec<PageFragmentationInfo> = page_empty_bytes
+        let mut per_page_data: Vec<PageFragmentationInfo> = page_empty_data
             .into_iter()
-            .map(|(page_id, empty_bytes)| {
+            .map(|(page_id, (empty_bytes, links))| {
                 let filled_empty_ratio = if empty_bytes > 0 {
                     let filled_bytes = DATA_LENGTH.saturating_sub(empty_bytes as usize);
                     filled_bytes as f64 / empty_bytes as f64
@@ -99,6 +101,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 
                 PageFragmentationInfo {
                     page_size: DATA_LENGTH,
+                    links,
                     page_id,
                     empty_bytes,
                     filled_empty_ratio,

@@ -52,7 +52,7 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     /// [`Id]: PageId
     /// [`General`]: page::General
     #[rkyv(with = Skip)]
-    id: PageId,
+    pub id: PageId,
 
     /// Offset to the first free byte on this [`Data`] page.
     #[rkyv(with = AtomicLoad<Relaxed>)]
@@ -233,10 +233,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(bytes) })
     }
 
-    //#[cfg_attr(
-    //    feature = "perf_measurements",
-    //    performance_measurement(prefix_name = "DataRow")
-    //)]
     pub fn get_row(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive,
@@ -325,6 +321,10 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     pub fn free_space(&self) -> usize {
         DATA_LENGTH.saturating_sub(self.free_offset.load(Ordering::Acquire) as usize)
     }
+
+    pub fn reset(&self) {
+        self.free_offset.store(0, Ordering::Release);
+    }
 }
 
 /// Error that can appear on [`Data`] page operations.
@@ -356,6 +356,7 @@ mod tests {
 
     use rkyv::{Archive, Deserialize, Serialize};
 
+    use crate::in_memory::DATA_INNER_LENGTH;
     use crate::in_memory::data::{Data, ExecutionError, INNER_PAGE_SIZE};
     use crate::prelude::Link;
 
@@ -694,5 +695,31 @@ mod tests {
             let retrieved = page.get_row(link).unwrap();
             assert_eq!(retrieved, row);
         }
+    }
+
+    #[test]
+    fn reset_clears_free_offset() {
+        let page = Data::<TestRow>::new(1.into());
+
+        let row1 = TestRow { a: 10, b: 20 };
+        let row2 = TestRow { a: 30, b: 40 };
+        let link1 = page.save_row(&row1).unwrap();
+        let link2 = page.save_row(&row2).unwrap();
+
+        assert!(page.free_offset.load(Ordering::Relaxed) > 0);
+        assert_eq!(link1.offset, 0);
+        assert_eq!(link2.offset, 16);
+
+        page.reset();
+
+        assert_eq!(page.free_offset.load(Ordering::Relaxed), 0);
+        assert_eq!(page.free_space(), DATA_INNER_LENGTH);
+
+        let row3 = TestRow { a: 99, b: 88 };
+        let link3 = page.save_row(&row3).unwrap();
+        assert_eq!(link3.offset, 0);
+
+        let retrieved = page.get_row(link3).unwrap();
+        assert_eq!(retrieved, row3);
     }
 }

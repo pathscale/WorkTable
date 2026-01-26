@@ -1,6 +1,5 @@
 mod map;
 mod row_lock;
-mod table_lock;
 
 use std::future::Future;
 use std::hash::{Hash, Hasher};
@@ -14,7 +13,6 @@ use parking_lot::Mutex;
 
 pub use map::LockMap;
 pub use row_lock::{FullRowLock, RowLock};
-pub use table_lock::WorkTableLock;
 
 #[derive(Debug)]
 pub struct Lock {

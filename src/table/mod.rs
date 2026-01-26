@@ -54,7 +54,7 @@ pub struct WorkTable<
 
     pub pk_gen: PkGen,
 
-    pub lock_manager: Arc<WorkTableLock<LockType, PrimaryKey>>,
+    pub lock_manager: Arc<IndexMap<PrimaryKey, Link, PkNodeType>>,
 
     pub update_state: IndexMap<PrimaryKey, Row>,
 
