@@ -723,16 +723,27 @@ impl Generator {
                     #custom_lock
                 };
 
-                let link = match self.0.indexes.#index
-                    .get(#by)
-                    .map(|v| v.get().value.into())
-                    .ok_or(WorkTableError::NotFound) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        lock.unlock();
-                        self.0.lock_manager.remove_with_lock_check(&pk);
+                let link = loop {
+                    let link = match self.0.indexes.#index
+                        .get(#by)
+                        .map(|v| v.get().value.into())
+                        .ok_or(WorkTableError::NotFound) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            lock.unlock();
+                            self.0.lock_manager.remove_with_lock_check(&pk);
 
-                        return Err(e);
+                            return Err(e);
+                        }
+                    };
+
+                    if let Err(e) = self.0.data.select_non_vacuumed(link) {
+                        if e.is_vacuumed() {
+                            continue;
+                        }
+                        return Err(e.into());
+                    } else  {
+                        break link;
                     }
                 };
 

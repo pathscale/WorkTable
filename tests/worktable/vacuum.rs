@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+
+use parking_lot::Mutex;
 use worktable::prelude::*;
 use worktable::vacuum::{VacuumManager, VacuumManagerConfig};
 use worktable_codegen::worktable;
@@ -159,14 +161,19 @@ async fn vacuum_parallel_with_upserts() {
 
     let delete_table = table.clone();
     let ids_to_delete: Arc<Vec<_>> = Arc::new(rows.iter().step_by(2).map(|p| p.0).collect());
+    let row_state = Arc::new(Mutex::new(rows.iter().cloned().collect::<HashMap<_, _>>()));
     let task_ids = ids_to_delete.clone();
+    let task_row_state = Arc::clone(&row_state);
     let delete_task = tokio::spawn(async move {
         for id in task_ids.iter() {
             delete_table.delete((*id).into()).await.unwrap();
+            {
+                let mut g = task_row_state.lock();
+                g.remove(id);
+            }
         }
     });
 
-    let mut row_state = rows.iter().cloned().collect::<HashMap<_, _>>();
     for _ in 0..3000 {
         let id = fastrand::u64(0..3000);
         let i = fastrand::i64(0..3000);
@@ -177,17 +184,22 @@ async fn vacuum_parallel_with_upserts() {
         };
         let id = row.id;
         table.upsert(row.clone()).await.unwrap();
-        row_state.entry(id).and_modify(|r| *r = row);
+        {
+            let mut g = row_state.lock();
+            g.entry(id).and_modify(|r| *r = row.clone()).or_insert(row);
+        }
     }
 
+    delete_task.await.unwrap();
+
+    let g = row_state.lock();
+
     // Verify all inserted rows are accessible
-    for (id, expected) in row_state.iter() {
+    for (id, expected) in g.iter() {
         let row = table.select(*id).await;
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();
         let by_value = table.select_by_value(row.value).await;
         assert_eq!(by_value, Some(expected.clone()));
     }
-
-    delete_task.await.unwrap();
 }

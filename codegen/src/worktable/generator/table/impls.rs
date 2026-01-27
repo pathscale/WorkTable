@@ -314,11 +314,12 @@ impl Generator {
                         _,
                         #secondary_index_events
                         >::new(
-                        #table_name,
-                        std::sync::Arc::clone(&self.0.data),
-                        std::sync::Arc::clone(&self.0.primary_index),
-                        std::sync::Arc::clone(&self.0.indexes),
-                    ))
+                            #table_name,
+                            std::sync::Arc::clone(&self.0.data),
+                            std::sync::Arc::clone(&self.0.lock_manager),
+                            std::sync::Arc::clone(&self.0.primary_index),
+                            std::sync::Arc::clone(&self.0.indexes),
+                        ))
                 }
             }
         } else {
@@ -336,6 +337,7 @@ impl Generator {
                     >::new(
                         #table_name,
                         std::sync::Arc::clone(&self.0.data),
+                        std::sync::Arc::clone(&self.0.lock_manager),
                         std::sync::Arc::clone(&self.0.primary_index),
                         std::sync::Arc::clone(&self.0.indexes),
                     ))

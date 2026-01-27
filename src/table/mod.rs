@@ -2,9 +2,9 @@ pub mod select;
 pub mod system_info;
 pub mod vacuum;
 
-use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
+use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::persistence::{InsertOperation, Operation};
-use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState, VacuumWrapper};
+use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
@@ -164,7 +164,7 @@ where
             .get(&pk)
             .map(|v| v.get().value.into());
         if let Some(link) = link {
-            self.data.select(link).ok()
+            self.data.select_non_ghosted(link).ok()
         } else {
             None
         }
@@ -185,7 +185,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: AvailableIndex,
@@ -251,7 +251,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
@@ -329,7 +329,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: Debug + AvailableIndex,
@@ -406,7 +406,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper + VacuumWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,

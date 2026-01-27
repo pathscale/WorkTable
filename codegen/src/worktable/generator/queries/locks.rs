@@ -138,7 +138,7 @@ impl Generator {
             } else {
                 #[allow(clippy::mutable_key_type)]
                 let (lock, op_lock) = #lock_ident::with_lock(lock_id);
-                let mut lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
+                let lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
                 let mut guard = lock.write().await;
                 if let Some(old_lock) = self.0.lock_manager.insert(pk.clone(), lock.clone()) {
                     let mut old_lock_guard = old_lock.write().await;

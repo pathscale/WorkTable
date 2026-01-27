@@ -119,6 +119,18 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.sum_links_len.fetch_add(link.length, Ordering::AcqRel);
     }
 
+    pub fn remove_link_for_page(&self, page_id: PageId) {
+        let _g = self.op_lock.lock();
+        let links = self
+            .page_links_map
+            .get(&page_id)
+            .map(|(_, l)| *l)
+            .collect::<Vec<_>>();
+        for l in links {
+            self.remove_link(l);
+        }
+    }
+
     pub fn push(&self, link: Link) {
         let mut index_ord_link = IndexOrdLink(link);
         let _g = self.op_lock.lock();

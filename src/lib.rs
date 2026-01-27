@@ -17,7 +17,7 @@ pub use worktable_codegen::worktable;
 
 pub mod prelude {
     pub use crate::in_memory::{
-        Data, DataPages, GhostWrapper, Query, RowWrapper, StorableRow, VacuumWrapper,
+        ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow,
     };
     pub use crate::lock::LockMap;
     pub use crate::lock::{Lock, RowLock};

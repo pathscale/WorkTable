@@ -18,6 +18,7 @@ use std::{
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
+use crate::prelude::ArchivedRowWrapper;
 use crate::{
     in_memory::{
         DATA_INNER_LENGTH, Data, DataExecutionError,
@@ -250,6 +251,29 @@ where
         Ok(gen_row.get_inner())
     }
 
+    pub fn select_non_vacuumed(&self, link: Link) -> Result<Row, ExecutionError>
+    where
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        let pages = self.pages.read();
+        let page = pages
+            .get(page_id_mapper(link.page_id.into()))
+            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
+        if gen_row.is_ghosted() {
+            return Err(ExecutionError::Ghosted);
+        }
+        if gen_row.is_vacuumed() {
+            return Err(ExecutionError::Vacuumed);
+        }
+        Ok(gen_row.get_inner())
+    }
+
     #[cfg_attr(
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataPages")
@@ -333,7 +357,20 @@ where
         }
     }
 
-    pub fn delete(&self, link: Link) -> Result<(), ExecutionError> {
+    pub fn delete(&self, link: Link) -> Result<(), ExecutionError>
+    where
+        Row: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <Row as StorableRow>::WrappedRow: Archive
+            + for<'a> Serialize<
+                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
+            >,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+    {
+        unsafe { self.with_mut_ref(link, |r| r.delete())? }
+
         self.empty_links.push(link);
         Ok(())
     }
@@ -408,6 +445,16 @@ pub enum ExecutionError {
     Locked,
 
     Ghosted,
+
+    Vacuumed,
+
+    Deleted,
+}
+
+impl ExecutionError {
+    pub fn is_vacuumed(&self) -> bool {
+        matches!(self, Self::Vacuumed)
+    }
 }
 
 #[cfg(test)]
@@ -422,8 +469,9 @@ mod tests {
     use rkyv::with::{AtomicLoad, Relaxed};
     use rkyv::{Archive, Deserialize, Serialize};
 
-    use crate::in_memory::pages::DataPages;
+    use crate::in_memory::pages::{DataPages, ExecutionError};
     use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
+    use crate::prelude::ArchivedRowWrapper;
 
     #[derive(
         Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
@@ -466,6 +514,10 @@ mod tests {
             self.is_vacuumed.load(Ordering::Relaxed)
         }
 
+        fn is_deleted(&self) -> bool {
+            self.deleted.load(Ordering::Relaxed)
+        }
+
         /// Creates new [`GeneralRow`] from `Inner`.
         fn from_inner(inner: Inner) -> Self {
             Self {
@@ -479,6 +531,24 @@ mod tests {
 
     impl StorableRow for TestRow {
         type WrappedRow = GeneralRow<TestRow>;
+    }
+
+    impl<T> ArchivedRowWrapper for ArchivedGeneralRow<T>
+    where
+        T: Archive,
+    {
+        fn unghost(&mut self) {
+            self.is_ghosted = false
+        }
+        fn set_in_vacuum_process(&mut self) {
+            self.is_vacuumed = true
+        }
+        fn delete(&mut self) {
+            self.deleted = true
+        }
+        fn is_deleted(&self) -> bool {
+            self.deleted
+        }
     }
 
     #[test]
@@ -528,6 +598,91 @@ mod tests {
         let res = pages.select_non_ghosted(link);
         assert!(res.is_err());
         assert_eq!(res.err(), Some(PagesExecutionError::Ghosted))
+    }
+
+    #[test]
+    fn select_non_vacuumed_returns_row_when_valid() {
+        let pages = DataPages::<TestRow>::new();
+
+        let row = TestRow { a: 10, b: 20 };
+        let link = pages.insert(row).unwrap();
+
+        unsafe {
+            pages
+                .with_mut_ref(link, |archived| {
+                    archived.unghost();
+                })
+                .unwrap();
+        }
+
+        let res = pages.select_non_vacuumed(link);
+        assert!(
+            res.is_ok(),
+            "select_non_vacuumed should return Ok for unghosted, non-vacuumed row"
+        );
+        assert_eq!(res.unwrap(), TestRow { a: 10, b: 20 });
+    }
+
+    #[test]
+    fn select_non_vacuumed_returns_ghosted_error_for_ghosted_row() {
+        let pages = DataPages::<TestRow>::new();
+
+        let row = TestRow { a: 10, b: 20 };
+        let link = pages.insert(row).unwrap();
+
+        let res = pages.select_non_vacuumed(link);
+        assert!(res.is_err());
+        assert_eq!(res.err(), Some(ExecutionError::Ghosted));
+    }
+
+    #[test]
+    fn select_non_vacuumed_returns_vacuumed_error_for_vacuumed_row() {
+        let pages = DataPages::<TestRow>::new();
+
+        let row = TestRow { a: 10, b: 20 };
+        let link = pages.insert(row).unwrap();
+
+        unsafe {
+            pages
+                .with_mut_ref(link, |archived| {
+                    archived.unghost();
+                })
+                .unwrap();
+        }
+
+        unsafe {
+            pages
+                .with_mut_ref(link, |archived| archived.set_in_vacuum_process())
+                .unwrap();
+        }
+
+        let res = pages.select_non_vacuumed(link);
+        assert!(res.is_err());
+        assert_eq!(res.err(), Some(ExecutionError::Vacuumed));
+    }
+
+    #[test]
+    fn select_non_vacuumed_errors_on_vacuumed_even_if_unghosted() {
+        let pages = DataPages::<TestRow>::new();
+
+        let row = TestRow { a: 42, b: 99 };
+        let link = pages.insert(row).unwrap();
+
+        unsafe {
+            pages
+                .with_mut_ref(link, |archived| {
+                    archived.set_in_vacuum_process();
+                })
+                .unwrap();
+        }
+
+        let res = pages.select_non_vacuumed(link);
+        assert!(res.is_err());
+        assert_eq!(
+            res.err(),
+            Some(ExecutionError::Ghosted),
+            "Should check ghosted before vacuumed"
+        );
     }
 
     #[test]

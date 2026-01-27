@@ -75,9 +75,9 @@ impl Generator {
 
         let process = if self.is_persist {
             quote! {
+                self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
                 let secondary_keys_events = self.0.indexes.delete_row_cdc(row, link)?;
                 let (_, primary_key_events) = self.0.primary_index.remove_cdc(pk.clone(), link);
-                self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
                 let mut op: Operation<
                     <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                     #pk_ident,
@@ -92,9 +92,9 @@ impl Generator {
             }
         } else {
             quote! {
+                self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
                 self.0.indexes.delete_row(row, link)?;
                 self.0.primary_index.remove(&pk, link);
-                self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
             }
         };
         if is_locked {

@@ -15,12 +15,14 @@ use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
-use crate::prelude::{OffsetEqLink, TablePrimaryKey, VacuumWrapper};
+use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
+use crate::prelude::{Lock, LockMap, OffsetEqLink, RowLock, TablePrimaryKey};
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
-use crate::{AvailableIndex, PrimaryIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
+use crate::{
+    AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
+};
 use async_trait::async_trait;
 use ordered_float::OrderedFloat;
 use rkyv::api::high::HighDeserializer;
@@ -45,10 +47,12 @@ pub struct EmptyDataVacuum<
 
     data_pages: Arc<DataPages<Row, DATA_LENGTH>>,
 
+    lock_manager: Arc<LockMap<LockType, PrimaryKey>>,
+
     primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
     secondary_indexes: Arc<SecondaryIndexes>,
 
-    phantom_data: PhantomData<(SecondaryEvents, AvailableTypes, AvailableIndexes, LockType)>,
+    phantom_data: PhantomData<(SecondaryEvents, AvailableTypes, AvailableIndexes)>,
 }
 
 impl<
@@ -87,13 +91,31 @@ where
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
         >,
-    <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper
-        + VacuumWrapper
+    <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
         + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
     AvailableIndexes: Debug + AvailableIndex,
+    LockType: RowLock,
 {
+    /// Creates a new [`EmptyDataVacuum`] from the given [`WorkTable`] components.
+    pub fn new(
+        table_name: &'static str,
+        data_pages: Arc<DataPages<Row, DATA_LENGTH>>,
+        lock_manager: Arc<LockMap<LockType, PrimaryKey>>,
+        primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
+        secondary_indexes: Arc<SecondaryIndexes>,
+    ) -> Self {
+        Self {
+            table_name,
+            data_pages,
+            lock_manager,
+            primary_index,
+            secondary_indexes,
+            phantom_data: PhantomData,
+        }
+    }
+
     async fn defragment(&self) -> VacuumStats {
         let now = Instant::now();
 
@@ -146,9 +168,7 @@ where
                     ),
                 }
             }
-            for l in info.links {
-                self.data_pages.empty_links_registry().remove_link(l)
-            }
+            registry.remove_link_for_page(page_from);
         }
 
         let pages_freed = free_pages.len();
@@ -224,58 +244,74 @@ where
         drop(range);
 
         for (from_link, pk) in links {
+            let lock = self.full_row_lock(&pk).await;
+            if self
+                .data_pages
+                .with_ref(from_link.0, |r| r.is_deleted())
+                .expect("link should be valid")
+            {
+                lock.unlock();
+                self.lock_manager.remove_with_lock_check(&pk);
+                continue;
+            }
+            let raw_data = from_page
+                .get_raw_row(from_link.0)
+                .expect("link is not bigger than free offset");
             unsafe {
                 self.data_pages
                     .with_mut_ref(from_link.0, |r| r.set_in_vacuum_process())
                     .expect("link should be valid")
             }
-            let raw_data = from_page
-                .get_raw_row(from_link.0)
-                .expect("link is not bigger than free offset");
             let new_link = to_page
                 .save_raw_row(&raw_data)
                 .expect("page is not full as checked on links collection");
-            self.update_index_after_move(pk, from_link.0, new_link);
+            self.update_index_after_move(pk.clone(), from_link.0, new_link);
+            self.lock_manager.remove_with_lock_check(&pk);
+            lock.unlock();
         }
 
         (from_page_will_be_moved, to_page_will_be_filled)
     }
 
-    fn update_index_after_move(&self, pk: PrimaryKey, old_link: Link, new_link: Link) {
-        let old_offset_link = OffsetEqLink(old_link);
-        let new_offset_link = OffsetEqLink(new_link);
+    async fn full_row_lock(&self, pk: &PrimaryKey) -> Arc<Lock> {
+        let lock_id = self.lock_manager.next_id();
+        if let Some(lock) = self.lock_manager.get(pk) {
+            let mut lock_guard = lock.write().await;
+            #[allow(clippy::mutable_key_type)]
+            let (locks, op_lock) = lock_guard.lock(lock_id);
+            drop(lock_guard);
+            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
 
+            op_lock
+        } else {
+            #[allow(clippy::mutable_key_type)]
+            let (lock, op_lock) = LockType::with_lock(lock_id);
+            let lock = Arc::new(tokio::sync::RwLock::new(lock));
+            let mut guard = lock.write().await;
+            if let Some(old_lock) = self.lock_manager.insert(pk.clone(), lock.clone()) {
+                let mut old_lock_guard = old_lock.write().await;
+                #[allow(clippy::mutable_key_type)]
+                let locks = guard.merge(&mut *old_lock_guard);
+                drop(old_lock_guard);
+                drop(guard);
+
+                futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            }
+
+            op_lock
+        }
+    }
+
+    fn update_index_after_move(&self, pk: PrimaryKey, old_link: Link, new_link: Link) {
         let row = self
             .data_pages
             .select(new_link)
             .expect("should exist as link was moved correctly");
 
-        self.primary_index
-            .pk_map
-            .insert(pk.clone(), new_offset_link);
-        self.primary_index.reverse_pk_map.remove(&old_offset_link);
-        self.primary_index
-            .reverse_pk_map
-            .insert(new_offset_link, pk);
         self.secondary_indexes
             .reinsert_row(row.clone(), old_link, row, new_link)
             .expect("should be ok as index were no violated");
-    }
-
-    /// Creates a new [`EmptyDataVacuum`] from the given [`WorkTable`] components.
-    pub fn new(
-        table_name: &'static str,
-        data_pages: Arc<DataPages<Row, DATA_LENGTH>>,
-        primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
-        secondary_indexes: Arc<SecondaryIndexes>,
-    ) -> Self {
-        Self {
-            table_name,
-            data_pages,
-            primary_index,
-            secondary_indexes,
-            phantom_data: PhantomData,
-        }
+        self.primary_index.insert(pk.clone(), new_link);
     }
 }
 
@@ -317,8 +353,7 @@ where
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
         > + Send
         + Sync,
-    <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper
-        + VacuumWrapper
+    <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
         + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>
@@ -328,7 +363,7 @@ where
     SecondaryEvents: Send + Sync + 'static,
     AvailableTypes: Send + Sync + 'static,
     AvailableIndexes: Send + Sync + 'static,
-    LockType: Send + Sync,
+    LockType: RowLock + Send + Sync,
 {
     fn table_name(&self) -> &str {
         self.table_name
@@ -352,7 +387,7 @@ mod tests {
     use indexset::core::pair::Pair;
     use worktable_codegen::{MemStat, worktable};
 
-    use crate::in_memory::{GhostWrapper, RowWrapper, StorableRow};
+    use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;
     use crate::vacuum::vacuum::EmptyDataVacuum;
 
@@ -387,6 +422,7 @@ mod tests {
         EmptyDataVacuum::new(
             table.name(),
             Arc::clone(&table.0.data),
+            Arc::clone(&table.0.lock_manager),
             Arc::clone(&table.0.primary_index),
             Arc::clone(&table.0.indexes),
         )

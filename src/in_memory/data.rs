@@ -1,4 +1,5 @@
 use std::cell::UnsafeCell;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -207,10 +208,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Row: Archive,
         <Row as Archive>::Archived: Portable,
     {
-        if link.offset > self.free_offset.load(Ordering::Acquire) {
-            return Err(ExecutionError::DeserializeError);
-        }
-
         let inner_data = unsafe { &mut *self.inner_data.get() };
         let bytes = &mut inner_data[link.offset as usize..(link.offset + link.length) as usize];
         Ok(unsafe { rkyv::access_unchecked_mut::<<Row as Archive>::Archived>(&mut bytes[..]) })
@@ -224,10 +221,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     where
         Row: Archive,
     {
-        if link.offset > self.free_offset.load(Ordering::Acquire) {
-            return Err(ExecutionError::DeserializeError);
-        }
-
         let inner_data = unsafe { &*self.inner_data.get() };
         let bytes = &inner_data[link.offset as usize..(link.offset + link.length) as usize];
         Ok(unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(bytes) })
@@ -244,10 +237,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     }
 
     pub fn get_raw_row(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
-        if link.offset > self.free_offset.load(Ordering::Acquire) {
-            return Err(ExecutionError::DeserializeError);
-        }
-
         let inner_data = unsafe { &mut *self.inner_data.get() };
         let bytes = &mut inner_data[link.offset as usize..(link.offset + link.length) as usize];
         Ok(bytes.to_vec())
