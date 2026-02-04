@@ -89,7 +89,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             for (page_id, link) in iter {
                 let entry = page_empty_data.entry(*page_id).or_default();
                 entry.0 += link.length;
-                entry.1.push(link.clone());
+                entry.1.push(*link);
             }
         }
 

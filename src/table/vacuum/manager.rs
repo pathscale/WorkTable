@@ -24,7 +24,7 @@ pub struct VacuumManagerConfig {
     pub critical_fragmentation_threshold: f64,
 }
 
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, Default)]
 pub struct VacuumManager {
     pub config: VacuumManagerConfig,
     pub id_gen: AtomicU64,
@@ -35,7 +35,7 @@ pub struct VacuumManager {
 impl VacuumManager {
     /// Creates a new vacuum manager with default configuration.
     pub fn new() -> Self {
-        Self::with_config(VacuumManagerConfig::default())
+        Self::default()
     }
 
     /// Creates a new vacuum manager with the given configuration.
@@ -75,7 +75,7 @@ impl VacuumManager {
                 for (id, table_name) in vacuums_to_check {
                     let vacuum_opt = {
                         let vacuums_read = self.vacuums.read();
-                        vacuums_read.get(&id).map(|v| v.clone())
+                        vacuums_read.get(&id).cloned()
                     };
 
                     if let Some(vacuum) = vacuum_opt {

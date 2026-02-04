@@ -37,6 +37,7 @@ impl FullRowLock {
     }
 }
 
+#[allow(clippy::mutable_key_type)]
 impl RowLock for FullRowLock {
     fn is_locked(&self) -> bool {
         self.l.is_locked()

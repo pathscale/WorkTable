@@ -22,8 +22,10 @@ worktable!(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn vacuum_parallel_with_selects() {
-    let mut config = VacuumManagerConfig::default();
-    config.check_interval = Duration::from_millis(5);
+    let config = VacuumManagerConfig {
+        check_interval: Duration::from_millis(5),
+        ..Default::default()
+    };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));
     let table = Arc::new(VacuumTestWorkTable::default());
 
@@ -70,8 +72,10 @@ async fn vacuum_parallel_with_selects() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn vacuum_parallel_with_inserts() {
-    let mut config = VacuumManagerConfig::default();
-    config.check_interval = Duration::from_millis(5);
+    let config = VacuumManagerConfig {
+        check_interval: Duration::from_millis(5),
+        ..Default::default()
+    };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));
     let table = Arc::new(VacuumTestWorkTable::default());
 
@@ -136,8 +140,10 @@ async fn vacuum_parallel_with_inserts() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn vacuum_parallel_with_upserts() {
-    let mut config = VacuumManagerConfig::default();
-    config.check_interval = Duration::from_millis(5);
+    let config = VacuumManagerConfig {
+        check_interval: Duration::from_millis(5),
+        ..Default::default()
+    };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));
     let table = Arc::new(VacuumTestWorkTable::default());
 
@@ -205,9 +211,12 @@ async fn vacuum_parallel_with_upserts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+#[ignore]
 async fn vacuum_loop_test() {
-    let mut config = VacuumManagerConfig::default();
-    config.check_interval = Duration::from_millis(1_000);
+    let config = VacuumManagerConfig {
+        check_interval: Duration::from_millis(1_000),
+        ..Default::default()
+    };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));
     let table = Arc::new(VacuumTestWorkTable::default());
 

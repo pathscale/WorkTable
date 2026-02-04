@@ -4,6 +4,7 @@ use crate::vacuum::fragmentation_info::FragmentationInfo;
 
 mod fragmentation_info;
 mod manager;
+#[allow(clippy::module_inception)]
 mod vacuum;
 
 pub use manager::{VacuumManager, VacuumManagerConfig};

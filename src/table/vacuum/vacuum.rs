@@ -134,8 +134,8 @@ where
 
         let pages_processed = per_page_info.len();
 
-        let mut info_iter = per_page_info.into_iter();
-        while let Some(info) = info_iter.next() {
+        let info_iter = per_page_info.into_iter();
+        for info in info_iter {
             let page_from = info.page_id;
             loop {
                 let page_to = if let Some(id) = defragmented_pages.pop_front() {
@@ -407,6 +407,7 @@ mod tests {
     );
 
     /// Creates an EmptyDataVacuum instance from a WorkTable
+    #[allow(clippy::type_complexity)]
     fn create_vacuum(
         table: &TestWorkTable,
     ) -> EmptyDataVacuum<
@@ -622,7 +623,7 @@ mod tests {
         let table = TestWorkTable::default();
 
         let mut ids = HashMap::new();
-        let strings = vec![
+        let strings = [
             "a",
             "bbbb",
             "cccccc",
@@ -835,7 +836,7 @@ mod tests {
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
 
-        assert!(table.0.data.get_empty_pages().len() > 0);
+        assert!(!table.0.data.get_empty_pages().is_empty());
 
         for (id, expected) in ids
             .into_iter()

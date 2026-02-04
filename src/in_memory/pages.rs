@@ -393,7 +393,7 @@ where
 
     pub fn get_empty_pages(&self) -> Vec<PageId> {
         let g = self.empty_pages.read();
-        g.iter().map(|p| *p).collect()
+        g.iter().copied().collect()
     }
 
     pub fn get_page(
