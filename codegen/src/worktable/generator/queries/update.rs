@@ -271,7 +271,7 @@ impl Generator {
                         #full_row_lock
                     };
 
-                    let row_old = self.0.select(pk.clone()).await.expect("should not be deleted by other thread");
+                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     let pk = row_old.get_primary_key().clone();
                     #(#row_updates)*
@@ -574,7 +574,7 @@ impl Generator {
                     let lock = {
                         #full_row_lock
                     };
-                    let row_old = self.0.select(pk.clone()).await.expect("should not be deleted by other thread");
+                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {

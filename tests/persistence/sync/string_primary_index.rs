@@ -61,7 +61,7 @@ fn test_space_insert_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk).await.is_some());
+            assert!(table.select(pk).is_some());
         }
     });
 }
@@ -107,7 +107,7 @@ fn test_space_insert_many_sync() {
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
             for pk in pks {
-                assert!(table.select(pk).await.is_some());
+                assert!(table.select(pk).is_some());
             }
         }
     });
@@ -155,8 +155,8 @@ fn test_space_update_full_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk).await.unwrap().another, 13);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk).unwrap().another, 13);
         }
     });
 }
@@ -198,8 +198,8 @@ fn test_space_update_query_pk_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk).await.unwrap().another, 13);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk).unwrap().another, 13);
         }
     });
 }
@@ -242,8 +242,8 @@ fn test_space_update_query_unique_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk).await.unwrap().field, 1.0);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk).unwrap().field, 1.0);
         }
     });
 }
@@ -286,8 +286,8 @@ fn test_space_update_query_non_unique_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk).await.unwrap().another, 13);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk).unwrap().another, 13);
         }
     });
 }
@@ -333,7 +333,7 @@ fn test_space_delete_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk).await.is_none());
+            assert!(table.select(pk).is_none());
         }
     });
 }
@@ -372,7 +372,7 @@ fn test_space_delete_query_sync() {
         };
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk).await.is_none());
+            assert!(table.select(pk).is_none());
         }
     });
 }

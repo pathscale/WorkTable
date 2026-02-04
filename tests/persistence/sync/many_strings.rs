@@ -61,8 +61,8 @@ fn test_space_update_query_pk_sync() {
             let table = TestSyncWorkTable::load_from_file(config.clone())
                 .await
                 .unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk.clone()).await.unwrap().another, 43);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk.clone()).unwrap().another, 43);
             let q = FieldAnotherByIdQuery {
                 field: "Some field value".to_string(),
                 another: 0,
@@ -75,10 +75,10 @@ fn test_space_update_query_pk_sync() {
         }
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk.clone()).await.unwrap().another, 0);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk.clone()).unwrap().another, 0);
             assert_eq!(
-                table.select(pk).await.unwrap().field,
+                table.select(pk).unwrap().field,
                 "Some field value".to_string()
             );
         }
@@ -128,8 +128,8 @@ fn test_space_update_query_pk_many_times_sync() {
             let table = TestSyncWorkTable::load_from_file(config.clone())
                 .await
                 .unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk.clone()).await.unwrap().another, 43);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk.clone()).unwrap().another, 43);
             for i in 0..512 {
                 let q = FieldAnotherByIdQuery {
                     field: "Some field value".to_string(),
@@ -145,10 +145,10 @@ fn test_space_update_query_pk_many_times_sync() {
         }
         {
             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
-            assert!(table.select(pk.clone()).await.is_some());
-            assert_eq!(table.select(pk.clone()).await.unwrap().another, 511);
+            assert!(table.select(pk.clone()).is_some());
+            assert_eq!(table.select(pk.clone()).unwrap().another, 511);
             assert_eq!(
-                table.select(pk).await.unwrap().field,
+                table.select(pk).unwrap().field,
                 "Some field value".to_string()
             );
         }

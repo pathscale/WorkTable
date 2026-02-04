@@ -31,10 +31,10 @@ async fn insert() {
         test: SomeEnum::First,
     };
     let pk = table.insert(row.clone()).unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -50,8 +50,8 @@ async fn update() {
         test: SomeEnum::Second,
     };
     table.update(updated.clone()).await.unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }

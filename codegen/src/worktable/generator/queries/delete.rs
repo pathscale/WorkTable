@@ -112,7 +112,7 @@ impl Generator {
                         return Err(e);
                     }
                 };
-                let row = self.select(pk.clone()).await.unwrap();
+                let row = self.select(pk.clone()).unwrap();
                 #process
             }
         } else {
@@ -123,7 +123,7 @@ impl Generator {
                         .get(&pk)
                         .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound)?;
-                let row = self.select(pk.clone()).await.unwrap();
+                let row = self.select(pk.clone()).unwrap();
                 #process
             }
         }

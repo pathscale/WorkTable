@@ -148,7 +148,7 @@ where
         feature = "perf_measurements",
         performance_measurement(prefix_name = "WorkTable")
     )]
-    pub async fn select(&self, pk: PrimaryKey) -> Option<Row>
+    pub fn select(&self, pk: PrimaryKey) -> Option<Row>
     where
         LockType: 'static,
         Row: Archive

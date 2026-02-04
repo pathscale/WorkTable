@@ -19,8 +19,8 @@ async fn insert() {
         another: 1,
     };
     let pk = table.insert(row.clone()).unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select((1, 0)).await.is_none())
+    assert!(table.select((1, 0)).is_none())
 }

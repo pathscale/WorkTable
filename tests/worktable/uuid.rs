@@ -18,8 +18,8 @@ async fn insert() {
         another: 1,
     };
     let pk = table.insert(row.clone()).unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select(Uuid::new_v4()).await.is_none())
+    assert!(table.select(Uuid::new_v4()).is_none())
 }

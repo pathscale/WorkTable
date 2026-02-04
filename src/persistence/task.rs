@@ -243,7 +243,6 @@ where
             let mut row: BatchInnerRow = self
                 .queue_inner_wt
                 .select(id)
-                .await
                 .expect("exists as Id exists")
                 .into();
             let op = self

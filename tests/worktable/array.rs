@@ -24,10 +24,10 @@ async fn insert() {
         test: [1; 20],
     };
     let pk = table.insert(row.clone()).unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -43,10 +43,10 @@ async fn update() {
         test: [2; 20],
     };
     table.update(new_row.clone()).await.unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, new_row);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -64,7 +64,7 @@ async fn update_in_a_middle() {
         test: [1; 20],
     };
     table.update(new_row.clone()).await.unwrap();
-    let selected_row = table.select(3).await.unwrap();
+    let selected_row = table.select(3).unwrap();
 
     assert_eq!(selected_row, new_row);
 }
@@ -82,10 +82,10 @@ async fn update_query() {
         .update_test_by_id(q.clone(), pk.clone())
         .await
         .unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row.test, q.test);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 type ArrI = [i64; 20];
@@ -111,10 +111,10 @@ async fn insert_i() {
         test: [1; 20],
     };
     let pk = table.insert(row.clone()).unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -130,10 +130,10 @@ async fn update_i() {
         test: [2; 20],
     };
     table.update(new_row.clone()).await.unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, new_row);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -151,7 +151,7 @@ async fn update_in_a_middle_i() {
         test: [1; 20],
     };
     table.update(new_row.clone()).await.unwrap();
-    let selected_row = table.select(3).await.unwrap();
+    let selected_row = table.select(3).unwrap();
 
     assert_eq!(selected_row, new_row);
 }
@@ -169,8 +169,8 @@ async fn update_query_i() {
         .update_test_i_by_id(q.clone(), pk.clone())
         .await
         .unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row.test, q.test);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }

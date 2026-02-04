@@ -45,7 +45,7 @@ async fn test_update_val_by_id() -> eyre::Result<()> {
             .update_val_by_id_in_place(|val| *val += 1, pk.0)
             .await?
     }
-    let row = table.select(pk).await.unwrap();
+    let row = table.select(pk).unwrap();
     assert_eq!(row.val, 10000);
     Ok(())
 }
@@ -67,7 +67,7 @@ async fn test_update_val2_by_id() -> eyre::Result<()> {
             .update_val_2_by_id_in_place(|val| *val += 1, pk.0)
             .await?
     }
-    let row = table.select(pk).await.unwrap();
+    let row = table.select(pk).unwrap();
     assert_eq!(row.val2, 100);
     Ok(())
 }
@@ -99,7 +99,7 @@ async fn test_update_val_by_id_two_thread() -> eyre::Result<()> {
             .await?
     }
     h.await?;
-    let row = table.select(pk).await.unwrap();
+    let row = table.select(pk).unwrap();
     assert_eq!(row.val, 20_000);
     Ok(())
 }
@@ -151,7 +151,7 @@ async fn test_update_val_and_val2_by_id_four_thread() -> eyre::Result<()> {
     h1.await?;
     h2.await?;
     h3.await?;
-    let row = table.select(pk).await.unwrap();
+    let row = table.select(pk).unwrap();
     assert_eq!(row.val, 20_000);
     assert_eq!(row.val2, 20_000);
     Ok(())
@@ -204,7 +204,7 @@ async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
     h1.await?;
     h2.await?;
     h3.await?;
-    let row = table.select(pk).await.unwrap();
+    let row = table.select(pk).unwrap();
     assert_eq!(row.val, 40_000);
     Ok(())
 }
@@ -283,15 +283,15 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
     h2.await?;
 
     for (id, smth) in i_state.lock_arc().iter() {
-        let row = table.select(*id).await.unwrap();
+        let row = table.select(*id).unwrap();
         assert_eq!(&row.something, smth);
     }
     for (id, val) in val2_state.lock_arc().iter() {
-        let row = table.select(*id).await.unwrap();
+        let row = table.select(*id).unwrap();
         assert_eq!(&row.val2, val);
     }
     for (id, val) in val_state.lock_arc().iter() {
-        let row = table.select(*id).await.unwrap();
+        let row = table.select(*id).unwrap();
         assert_eq!(&row.val, val);
     }
     Ok(())
@@ -376,12 +376,12 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
     h2.await?;
 
     for (id, smth) in i_state.lock_arc().iter() {
-        let row = table.select(*id).await.unwrap();
+        let row = table.select(*id).unwrap();
         assert_eq!(&row.another, smth);
     }
     let mut errors = 0;
     for (id, val) in val2_state.lock_arc().iter() {
-        let row = table.select(*id).await.unwrap();
+        let row = table.select(*id).unwrap();
         if &row.val2 != val {
             errors += 1;
         }
@@ -389,7 +389,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
     assert_eq!(errors, 0);
     let mut errors = 0;
     for (id, val) in val_state.lock_arc().iter() {
-        let row = table.select(*id).await.unwrap();
+        let row = table.select(*id).unwrap();
         if &row.val != val {
             errors += 1;
         }

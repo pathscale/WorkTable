@@ -121,10 +121,10 @@ async fn update_spawn() {
         .await
         .unwrap()
         .unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -149,10 +149,10 @@ async fn upsert_spawn() {
         .await
         .unwrap()
         .unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -172,10 +172,10 @@ async fn update() {
         exchange: "test".to_string(),
     };
     table.update(updated.clone()).await.unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test]
@@ -196,11 +196,11 @@ async fn update_string() {
         exchange: "much bigger test to make size of new row bigger than previous one".to_string(),
     };
     table.update(updated.clone()).await.unwrap();
-    let selected_row = table.select(pk).await.unwrap();
+    let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -279,7 +279,7 @@ async fn delete() {
         .map(|kv| kv.get().value)
         .unwrap();
     table.delete(pk.clone()).await.unwrap();
-    let selected_row = table.select(pk).await;
+    let selected_row = table.select(pk);
     assert!(selected_row.is_none());
     let selected_row = table.select_by_test(1).await;
     assert!(selected_row.is_none());
@@ -392,7 +392,7 @@ async fn delete_and_insert_less() {
         .map(|kv| kv.get().value)
         .unwrap();
     table.delete(pk.clone()).await.unwrap();
-    let selected_row = table.select(pk).await;
+    let selected_row = table.select(pk);
     assert!(selected_row.is_none());
 
     let updated = TestRow {
@@ -438,7 +438,7 @@ async fn delete_and_replace() {
         .map(|kv| kv.get().value)
         .unwrap();
     table.delete(pk.clone()).await.unwrap();
-    let selected_row = table.select(pk).await;
+    let selected_row = table.select(pk);
     assert!(selected_row.is_none());
 
     let updated = TestRow {
@@ -476,10 +476,10 @@ async fn upsert() {
         exchange: "test".to_string(),
     };
     table.upsert(updated.clone()).await.unwrap();
-    let selected_row = table.select(row.id).await.unwrap();
+    let selected_row = table.select(row.id).unwrap();
 
     assert_eq!(selected_row, updated);
-    assert!(table.select(2).await.is_none())
+    assert!(table.select(2).is_none())
 }
 
 #[test]
@@ -1250,6 +1250,6 @@ async fn _bench() {
     }
 
     for a in v {
-        let _ = table.select(a).await.expect("TODO: panic message");
+        let _ = table.select(a).expect("TODO: panic message");
     }
 }

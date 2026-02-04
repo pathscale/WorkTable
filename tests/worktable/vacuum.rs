@@ -57,7 +57,7 @@ async fn vacuum_parallel_with_selects() {
     for _ in 0..10 {
         // Verify all remaining rows are still accessible multiple times while vacuuming
         for (id, expected) in rows.iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-            let row = table.select(*id).await;
+            let row = table.select(*id);
             assert_eq!(row, Some(expected.clone()));
             let row = row.unwrap();
             let by_value = table.select_by_value(row.value).await;
@@ -116,7 +116,7 @@ async fn vacuum_parallel_with_inserts() {
 
     // Verify all remaining rows are still accessible
     for (id, expected) in rows.iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-        let row = table.select(*id).await;
+        let row = table.select(*id);
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();
         let by_value = table.select_by_value(row.value).await;
@@ -124,7 +124,7 @@ async fn vacuum_parallel_with_inserts() {
     }
     // Verify all inserted rows are accessible
     for (id, expected) in inserted_rows.iter() {
-        let row = table.select(*id).await;
+        let row = table.select(*id);
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();
         let by_value = table.select_by_value(row.value).await;
@@ -196,7 +196,7 @@ async fn vacuum_parallel_with_upserts() {
 
     // Verify all inserted rows are accessible
     for (id, expected) in g.iter() {
-        let row = table.select(*id).await;
+        let row = table.select(*id);
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();
         let by_value = table.select_by_value(row.value).await;

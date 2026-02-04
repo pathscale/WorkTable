@@ -454,7 +454,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().skip(2) {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -488,7 +488,7 @@ mod tests {
             .into_iter()
             .filter(|(i, _)| *i != ids_to_delete[0] && *i != ids_to_delete[1])
         {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -522,7 +522,7 @@ mod tests {
             .into_iter()
             .filter(|(i, _)| *i != last_two_ids[0] && *i != last_two_ids[1])
         {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -554,7 +554,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -585,7 +585,7 @@ mod tests {
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
 
-        let row = table.select(remaining_id).await;
+        let row = table.select(remaining_id);
         assert_eq!(row, Some(ids[0].1.clone()));
     }
 
@@ -612,7 +612,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().take(4) {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -654,7 +654,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -701,12 +701,12 @@ mod tests {
             .into_iter()
             .filter(|(i, _)| !ids_to_delete.contains(i))
         {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
 
         for (id, expected) in new_ids {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -738,7 +738,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -773,7 +773,7 @@ mod tests {
             .into_iter()
             .filter(|(id, _)| !ids_to_delete.contains(id))
         {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -802,7 +802,7 @@ mod tests {
         vacuum.defragment().await;
 
         for (id, expected) in ids.into_iter().take(499) {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
@@ -841,7 +841,7 @@ mod tests {
             .into_iter()
             .filter(|(id, _)| !ids_to_delete.contains(id))
         {
-            let row = table.select(id).await;
+            let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
     }
