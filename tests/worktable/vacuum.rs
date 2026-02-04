@@ -1,8 +1,8 @@
+use chrono::TimeDelta;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-
-use parking_lot::Mutex;
 use worktable::prelude::*;
 use worktable::vacuum::{VacuumManager, VacuumManagerConfig};
 use worktable_codegen::worktable;
@@ -201,5 +201,64 @@ async fn vacuum_parallel_with_upserts() {
         let row = row.unwrap();
         let by_value = table.select_by_value(row.value);
         assert_eq!(by_value, Some(expected.clone()));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn vacuum_loop_test() {
+    let mut config = VacuumManagerConfig::default();
+    config.check_interval = Duration::from_millis(1_000);
+    let vacuum_manager = Arc::new(VacuumManager::with_config(config));
+    let table = Arc::new(VacuumTestWorkTable::default());
+
+    // Insert 3000 rows
+    for i in 0..3000 {
+        let row = VacuumTestRow {
+            id: table.get_next_pk().into(),
+            value: chrono::Utc::now().timestamp_nanos_opt().unwrap(),
+            data: format!("test_data_{}", i),
+        };
+        table.insert(row.clone()).unwrap();
+    }
+
+    let vacuum = table.vacuum();
+    vacuum_manager.register(vacuum);
+    let _h = vacuum_manager.run_vacuum_task();
+
+    let insert_table = table.clone();
+    let _task = tokio::spawn(async move {
+        let mut i = 3000;
+        loop {
+            let row = VacuumTestRow {
+                id: insert_table.get_next_pk().into(),
+                value: chrono::Utc::now().timestamp_nanos_opt().unwrap(),
+                data: format!("test_data_{}", i),
+            };
+            insert_table.insert(row.clone()).unwrap();
+            tokio::time::sleep(Duration::from_micros(500)).await;
+            i += 1;
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let outdated_ts = chrono::Utc::now()
+            .checked_sub_signed(TimeDelta::new(0, 500 * 1_000_000).unwrap())
+            .unwrap()
+            .timestamp_nanos_opt()
+            .unwrap();
+        let ids_to_remove = table
+            .0
+            .indexes
+            .value_idx
+            .range(..outdated_ts)
+            .map(|(_, l)| table.0.data.select(**l).unwrap())
+            .collect::<Vec<_>>();
+        for row in ids_to_remove {
+            table.delete(row.id.into()).await.unwrap()
+        }
     }
 }

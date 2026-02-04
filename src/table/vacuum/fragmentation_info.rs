@@ -83,10 +83,14 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     pub fn get_per_page_info(&self) -> Vec<PageFragmentationInfo> {
         let mut page_empty_data: HashMap<PageId, (u32, Vec<Link>)> = HashMap::new();
 
-        for (page_id, link) in self.page_links_map.iter() {
-            let entry = page_empty_data.entry(*page_id).or_default();
-            entry.0 += link.length;
-            entry.1.push(link.clone());
+        {
+            let _op_lock = self.op_lock.lock();
+            let iter = self.page_links_map.iter();
+            for (page_id, link) in iter {
+                let entry = page_empty_data.entry(*page_id).or_default();
+                entry.0 += link.length;
+                entry.1.push(link.clone());
+            }
         }
 
         let mut per_page_data: Vec<PageFragmentationInfo> = page_empty_data

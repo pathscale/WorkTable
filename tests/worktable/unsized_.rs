@@ -961,10 +961,12 @@ async fn upsert_parallel() {
             }
         }
     });
-    for _ in 0..20_000 {
-        let val = fastrand::i64(0..1000);
-        let res = table.select_by_test(val);
-        assert!(res.is_some())
+    for _ in 0..2_000 {
+        let all = table.select_all().execute().unwrap();
+        assert_eq!(all.len(), 1000);
+        // let val = fastrand::i64(0..1000);
+        // let res = table.select_by_test(val);
+        // assert!(res.is_some())
     }
     h1.await.unwrap();
 

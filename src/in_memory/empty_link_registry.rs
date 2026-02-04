@@ -79,11 +79,11 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     index_ord_links: BTreeSet<IndexOrdLink<DATA_LENGTH>>,
     length_ord_links: BTreeMultiMap<u32, Link>,
 
-    pub page_links_map: BTreeMultiMap<PageId, Link>,
+    pub(crate) page_links_map: BTreeMultiMap<PageId, Link>,
 
     sum_links_len: AtomicU32,
 
-    op_lock: FairMutex<()>,
+    pub(crate) op_lock: FairMutex<()>,
     vacuum_lock: tokio::sync::Mutex<()>,
 }
 

@@ -81,12 +81,13 @@ impl VacuumManager {
                     if let Some(vacuum) = vacuum_opt {
                         let info = vacuum.analyze_fragmentation();
 
-                        log::info!("vacuum info: {:?}", info);
-                        // println!("vacuum info: {:?}", info);
+                        log::debug!("vacuum info: {:?}", info);
+                        //println!("vacuum info: {:?}", info);
                         if info.overall_fragmentation_ratio
                             < self.config.low_fragmentation_threshold
                             && info.overall_fragmentation_ratio != 0.0
                         {
+                            log::debug!("Vacuuming {}", info.table_name);
                             match vacuum.vacuum().await {
                                 Ok(stats) => {
                                     // println!(
@@ -96,7 +97,7 @@ impl VacuumManager {
                                     //     stats.bytes_freed,
                                     //     stats.duration_ns as f64 / 1_000_000.0
                                     // );
-                                    log::info!(
+                                    log::debug!(
                                         "Vacuum completed for table '{}': {} pages processed, {} bytes freed in {:.2}ms",
                                         table_name,
                                         stats.pages_processed,
@@ -106,7 +107,7 @@ impl VacuumManager {
                                 }
                                 Err(e) => {
                                     // println!("Vacuum failed for table '{}': {}", table_name, e);
-                                    log::error!("Vacuum failed for table '{}': {}", table_name, e);
+                                    log::debug!("Vacuum failed for table '{}': {}", table_name, e);
                                 }
                             }
                         }
