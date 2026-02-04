@@ -50,7 +50,7 @@ async fn test_update_string_full_row() {
         .await
         .unwrap();
 
-    let row = table.select_by_test(1).await.unwrap();
+    let row = table.select_by_test(1).unwrap();
 
     assert_eq!(
         row,
@@ -81,7 +81,7 @@ async fn test_update_string_by_unique() {
     };
     table.update_exchange_by_test(row, 1).await.unwrap();
 
-    let row = table.select_by_test(1).await.unwrap();
+    let row = table.select_by_test(1).unwrap();
 
     assert_eq!(
         row,
@@ -112,7 +112,7 @@ async fn test_update_string_by_pk() {
     };
     table.update_exchange_by_id(row, pk).await.unwrap();
 
-    let row = table.select_by_test(1).await.unwrap();
+    let row = table.select_by_test(1).unwrap();
 
     assert_eq!(
         row,
@@ -216,7 +216,7 @@ async fn update_many_times() {
     }
 
     for (test, val) in i_state {
-        let row = table.select_by_test(test).await.unwrap();
+        let row = table.select_by_test(test).unwrap();
         assert_eq!(row.exchange, val)
     }
 }
@@ -284,7 +284,7 @@ async fn update_parallel() {
     h.await.unwrap();
 
     for (test, val) in i_state.lock_arc().iter() {
-        let row = table.select_by_test(*test).await.unwrap();
+        let row = table.select_by_test(*test).unwrap();
         assert_eq!(&row.exchange, val)
     }
 }
@@ -340,7 +340,7 @@ async fn test_update_many_strings_by_unique() {
         .await
         .unwrap();
 
-    let row = table.select_by_test(1).await.unwrap();
+    let row = table.select_by_test(1).unwrap();
 
     assert_eq!(
         row,
@@ -376,7 +376,7 @@ async fn test_update_many_strings_by_pk() {
     };
     table.update_exchange_and_some_by_id(row, pk).await.unwrap();
 
-    let row = table.select_by_test(1).await.unwrap();
+    let row = table.select_by_test(1).unwrap();
 
     assert_eq!(
         row,
@@ -908,7 +908,7 @@ async fn update_parallel_more_strings_with_select_unique() {
     });
     for _ in 0..20_000 {
         let val = fastrand::i64(0..1000);
-        let res = table.select_by_test(val).await;
+        let res = table.select_by_test(val);
         assert!(res.is_some())
     }
     h1.await.unwrap();
@@ -963,7 +963,7 @@ async fn upsert_parallel() {
     });
     for _ in 0..20_000 {
         let val = fastrand::i64(0..1000);
-        let res = table.select_by_test(val).await;
+        let res = table.select_by_test(val);
         assert!(res.is_some())
     }
     h1.await.unwrap();

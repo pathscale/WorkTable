@@ -60,7 +60,7 @@ async fn vacuum_parallel_with_selects() {
             let row = table.select(*id);
             assert_eq!(row, Some(expected.clone()));
             let row = row.unwrap();
-            let by_value = table.select_by_value(row.value).await;
+            let by_value = table.select_by_value(row.value);
             assert_eq!(by_value, Some(expected.clone()));
         }
     }
@@ -119,7 +119,7 @@ async fn vacuum_parallel_with_inserts() {
         let row = table.select(*id);
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();
-        let by_value = table.select_by_value(row.value).await;
+        let by_value = table.select_by_value(row.value);
         assert_eq!(by_value, Some(expected.clone()));
     }
     // Verify all inserted rows are accessible
@@ -127,7 +127,7 @@ async fn vacuum_parallel_with_inserts() {
         let row = table.select(*id);
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();
-        let by_value = table.select_by_value(row.value).await;
+        let by_value = table.select_by_value(row.value);
         assert_eq!(by_value, Some(expected.clone()));
     }
 
@@ -199,7 +199,7 @@ async fn vacuum_parallel_with_upserts() {
         let row = table.select(*id);
         assert_eq!(row, Some(expected.clone()));
         let row = row.unwrap();
-        let by_value = table.select_by_value(row.value).await;
+        let by_value = table.select_by_value(row.value);
         assert_eq!(by_value, Some(expected.clone()));
     }
 }

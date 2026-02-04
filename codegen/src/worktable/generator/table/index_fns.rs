@@ -64,7 +64,7 @@ impl Generator {
         };
 
         Ok(quote! {
-            pub async fn #fn_name(&self, by: #type_) -> Option<#row_ident> {
+            pub fn #fn_name(&self, by: #type_) -> Option<#row_ident> {
                 let link: Link = self.0.indexes.#field_ident.get(#by).map(|kv| kv.get().value.into())?;
                 self.0.data.select_non_ghosted(link).ok()
             }

@@ -256,7 +256,7 @@ async fn update_parallel() {
     h.await.unwrap();
 
     for (test, val) in i_state.lock_arc().iter() {
-        let row = table.select_by_test(*test).await.unwrap();
+        let row = table.select_by_test(*test).unwrap();
         assert_eq!(row.another, *val)
     }
 }
@@ -281,7 +281,7 @@ async fn delete() {
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
     assert!(selected_row.is_none());
-    let selected_row = table.select_by_test(1).await;
+    let selected_row = table.select_by_test(1);
     assert!(selected_row.is_none());
     let selected_row = table.select_by_exchange("test".to_string());
     assert!(selected_row.execute().expect("REASON").is_empty());
@@ -586,10 +586,10 @@ async fn select_by_test() {
         exchange: "test".to_string(),
     };
     let _ = table.insert(row.clone()).unwrap();
-    let selected_row = table.select_by_test(1).await.unwrap();
+    let selected_row = table.select_by_test(1).unwrap();
 
     assert_eq!(selected_row, row);
-    assert!(table.select_by_test(2).await.is_none())
+    assert!(table.select_by_test(2).is_none())
 }
 
 #[tokio::test]
@@ -1191,7 +1191,7 @@ async fn test_update_by_unique() {
     let row = AnotherByTestQuery { another: 3 };
     table.update_another_by_test(row, 1).await.unwrap();
 
-    let row = table.select_by_test(1).await.unwrap();
+    let row = table.select_by_test(1).unwrap();
 
     assert_eq!(
         row,
@@ -1218,7 +1218,7 @@ async fn test_update_by_pk() {
     let row = AnotherByIdQuery { another: 3 };
     table.update_another_by_id(row, pk).await.unwrap();
 
-    let row = table.select_by_test(1).await.unwrap();
+    let row = table.select_by_test(1).unwrap();
 
     assert_eq!(
         row,

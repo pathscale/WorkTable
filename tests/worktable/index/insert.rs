@@ -238,7 +238,7 @@ async fn insert_when_unique_violated() {
         assert_eq!(attr_1_rows.len(), 1);
         assert_eq!(attr_1_rows.first().unwrap(), &row);
         let row_new_attr_2_row = table.select_by_attr2(row_new_attr_2);
-        assert!(row_new_attr_2_row.await.is_none());
+        assert!(row_new_attr_2_row.is_none());
     }
 
     h.join().unwrap();
