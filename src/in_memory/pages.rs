@@ -201,8 +201,24 @@ where
         }
     }
 
-    /// Allocates new page but **NOT** sets it as `current`.
-    pub fn allocate_new_page(&self) -> Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>> {
+    /// Allocates a new page or reuses a free page from `empty_pages`.
+    /// Does **NOT** set the page as `current`.
+    pub fn allocate_new_or_pop_free(
+        &self,
+    ) -> Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>> {
+        let page_id = {
+            let mut empty_pages = self.empty_pages.write();
+            empty_pages.pop_front()
+        };
+
+        if let Some(page_id) = page_id {
+            let pages = self.pages.read();
+            let index = page_id_mapper(page_id.into());
+            let page = pages[index].clone();
+            page.reset();
+            return page;
+        }
+
         let mut pages = self.pages.write();
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
         let page = Arc::new(Data::new(index.into()));
@@ -391,6 +407,37 @@ where
         }
     }
 
+    /// Marks [`Page`] as full if it's not current [`Page`], which means put
+    /// [`Link`] from it's current offset to the end of the page in
+    /// [`EmptyLinkRegistry`] and set `free_offset` to max value.
+    ///
+    /// [`Page`]: Data
+    pub fn mark_page_full(&self, page_id: PageId) {
+        if u32::from(page_id) == self.current_page_id.load(Ordering::Acquire) {
+            return;
+        }
+
+        let pages = self.pages.read();
+        let index = page_id_mapper(page_id.into());
+
+        if let Some(page) = pages.get(index) {
+            let free_offset = page.free_offset.load(Ordering::Acquire);
+            let remaining = DATA_LENGTH.saturating_sub(free_offset as usize);
+
+            if remaining > 0 {
+                let link = Link {
+                    page_id,
+                    offset: free_offset,
+                    length: remaining as u32,
+                };
+                self.empty_links.push(link);
+            }
+
+            page.free_offset
+                .store(DATA_LENGTH as u32, Ordering::Release);
+        }
+    }
+
     pub fn get_empty_pages(&self) -> Vec<PageId> {
         let g = self.empty_pages.read();
         g.iter().copied().collect()
@@ -469,6 +516,7 @@ mod tests {
     use rkyv::with::{AtomicLoad, Relaxed};
     use rkyv::{Archive, Deserialize, Serialize};
 
+    use crate::in_memory::data::Data;
     use crate::in_memory::pages::{DataPages, ExecutionError};
     use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::ArchivedRowWrapper;
@@ -818,14 +866,14 @@ mod tests {
     }
 
     #[test]
-    fn allocate_new_page_creates_page_correctly() {
+    fn allocate_new_or_pop_free_creates_page_correctly() {
         let pages = DataPages::<TestRow>::new();
 
         let initial_last_id = pages.last_page_id.load(Ordering::Relaxed);
         let initial_current = pages.current_page_id.load(Ordering::Relaxed);
         let initial_count = pages.get_page_count();
 
-        let _allocated_page = pages.allocate_new_page();
+        let _allocated_page = pages.allocate_new_or_pop_free();
 
         assert_eq!(
             pages.last_page_id.load(Ordering::Relaxed),
@@ -835,7 +883,7 @@ mod tests {
         assert_eq!(
             pages.current_page_id.load(Ordering::Relaxed),
             initial_current,
-            "current_page_id should NOT change after allocate_new_page"
+            "current_page_id should NOT change after allocate_new_or_pop_free"
         );
 
         assert_eq!(pages.get_page_count(), initial_count + 1);
@@ -851,9 +899,9 @@ mod tests {
         let initial_last_id = pages.last_page_id.load(Ordering::Relaxed);
         let initial_current = pages.current_page_id.load(Ordering::Relaxed);
 
-        let _page2 = pages.allocate_new_page();
-        let _page3 = pages.allocate_new_page();
-        let _page4 = pages.allocate_new_page();
+        let _page2 = pages.allocate_new_or_pop_free();
+        let _page3 = pages.allocate_new_or_pop_free();
+        let _page4 = pages.allocate_new_or_pop_free();
 
         assert_eq!(
             pages.last_page_id.load(Ordering::Relaxed),
@@ -870,7 +918,7 @@ mod tests {
     fn insert_continues_on_current_page_after_allocation() {
         let pages = DataPages::<TestRow>::new();
 
-        pages.allocate_new_page();
+        pages.allocate_new_or_pop_free();
 
         let row = TestRow { a: 42, b: 99 };
         let link = pages.insert(row).unwrap();
@@ -879,7 +927,7 @@ mod tests {
     }
 
     #[test]
-    fn allocate_new_page_concurrent() {
+    fn allocate_new_or_pop_free_concurrent() {
         let pages = Arc::new(DataPages::<TestRow>::new());
         let mut handles = Vec::new();
 
@@ -887,7 +935,7 @@ mod tests {
             let pages_clone = pages.clone();
             let handle = thread::spawn(move || {
                 for _ in 0..10 {
-                    pages_clone.allocate_new_page();
+                    pages_clone.allocate_new_or_pop_free();
                 }
             });
             handles.push(handle);
@@ -905,7 +953,7 @@ mod tests {
     fn allocated_page_has_correct_initial_state() {
         let pages = DataPages::<TestRow>::new();
 
-        let allocated = pages.allocate_new_page();
+        let allocated = pages.allocate_new_or_pop_free();
 
         assert_eq!(allocated.free_offset.load(Ordering::Relaxed), 0);
         assert_eq!(allocated.free_space(), DATA_INNER_LENGTH);
@@ -916,7 +964,7 @@ mod tests {
         let pages = DataPages::<TestRow>::new();
 
         // Allocate page explicitly
-        pages.allocate_new_page();
+        pages.allocate_new_or_pop_free();
         assert_eq!(pages.last_page_id.load(Ordering::Relaxed), 2);
         assert_eq!(pages.current_page_id.load(Ordering::Relaxed), 1);
 
@@ -941,5 +989,158 @@ mod tests {
         );
         assert_eq!(pages.current_page_id.load(Ordering::Relaxed), 3);
         assert_eq!(pages.get_page_count(), 3);
+    }
+
+    #[test]
+    fn allocate_new_or_pop_free_reuses_empty_page() {
+        let pages = DataPages::<TestRow>::from_data(vec![
+            Arc::new(Data::new(1.into())),
+            Arc::new(Data::new(2.into())),
+            Arc::new(Data::new(3.into())),
+        ]);
+
+        pages.mark_page_empty(2.into());
+
+        let initial_last_id = pages.last_page_id.load(Ordering::Relaxed);
+        let initial_page_count = pages.get_page_count();
+
+        let reused_page = pages.allocate_new_or_pop_free();
+
+        assert_eq!(reused_page.id, 2.into(), "Should reuse page 2");
+        assert_eq!(
+            pages.last_page_id.load(Ordering::Relaxed),
+            initial_last_id,
+            "last_page_id should NOT increment when reusing"
+        );
+        assert_eq!(
+            pages.get_page_count(),
+            initial_page_count,
+            "Page count should NOT increase when reusing"
+        );
+        assert_eq!(
+            reused_page.free_offset.load(Ordering::Relaxed),
+            0,
+            "Reused page should be reset (free_offset = 0)"
+        );
+        assert_eq!(
+            reused_page.free_space(),
+            DATA_INNER_LENGTH,
+            "Reused page should have full free space"
+        );
+
+        let row = TestRow { a: 111, b: 222 };
+        let link = pages.insert(row).unwrap();
+        assert_eq!(link.page_id, 3.into());
+
+        pages.current_page_id.store(2, Ordering::Release);
+        let row2 = TestRow { a: 333, b: 444 };
+        let link2 = pages.insert(row2).unwrap();
+        assert_eq!(link2.page_id, 2.into(), "Should write to reused page 2");
+
+        let retrieved = pages.select(link2).unwrap();
+        assert_eq!(retrieved, row2);
+    }
+
+    #[test]
+    fn mark_page_full_adds_empty_link_and_sets_free_offset() {
+        let pages = DataPages::<TestRow>::from_data(vec![
+            Arc::new(Data::new(1.into())),
+            Arc::new(Data::new(2.into())),
+        ]);
+
+        let row = TestRow { a: 10, b: 20 };
+        let _link = pages.insert(row).unwrap();
+
+        pages.current_page_id.store(2, Ordering::Release);
+        pages.mark_page_full(1.into());
+
+        let empty_links = pages.get_empty_links();
+        assert!(!empty_links.is_empty(), "Should have empty links");
+
+        let link = empty_links.first().unwrap();
+        assert_eq!(link.page_id, 1.into());
+        assert_eq!(
+            link.length, 24,
+            "Should have remaining space = DATA_INNER_LENGTH - 24"
+        );
+
+        let page = pages.get_page(1.into()).unwrap();
+        assert_eq!(
+            page.free_offset.load(Ordering::Relaxed),
+            DATA_INNER_LENGTH as u32,
+            "free_offset should be set to DATA_LENGTH"
+        );
+    }
+
+    #[test]
+    fn mark_page_full_does_nothing_for_current_or_nonexistent_page() {
+        let pages = DataPages::<TestRow>::new();
+
+        let initial_empty_links = pages.get_empty_links().len();
+        pages.mark_page_full(1.into());
+
+        assert_eq!(
+            pages.get_empty_links().len(),
+            initial_empty_links,
+            "Should not add empty links for current page"
+        );
+
+        let page = pages.get_page(1.into()).unwrap();
+        assert_ne!(
+            page.free_offset.load(Ordering::Relaxed),
+            DATA_INNER_LENGTH as u32,
+            "free_offset should NOT be modified for current page"
+        );
+
+        pages.mark_page_full(999.into());
+
+        assert!(pages.get_empty_links().is_empty());
+    }
+
+    #[test]
+    fn mark_page_full_with_partial_page() {
+        let pages = DataPages::<TestRow>::from_data(vec![
+            Arc::new(Data::new(1.into())),
+            Arc::new(Data::new(2.into())),
+        ]);
+
+        for _ in 0..10 {
+            let row = TestRow { a: 42, b: 99 };
+            pages.insert(row).unwrap();
+        }
+
+        let page = pages.get_page(1.into()).unwrap();
+        let free_offset_before = page.free_offset.load(Ordering::Relaxed);
+        let expected_remaining = DATA_INNER_LENGTH as u32 - free_offset_before;
+
+        pages.current_page_id.store(2, Ordering::Release);
+        pages.mark_page_full(1.into());
+
+        let empty_links = pages.get_empty_links();
+        let link = empty_links.first().unwrap();
+        assert_eq!(link.offset, free_offset_before);
+        assert_eq!(link.length, expected_remaining);
+
+        assert_eq!(
+            page.free_offset.load(Ordering::Relaxed),
+            DATA_INNER_LENGTH as u32
+        );
+    }
+
+    #[test]
+    fn mark_page_full_with_no_remaining_space() {
+        let pages = DataPages::<TestRow>::from_data(vec![
+            Arc::new(Data::new(1.into())),
+            Arc::new(Data::new(2.into())),
+        ]);
+
+        let page = pages.get_page(1.into()).unwrap();
+        page.free_offset
+            .store(DATA_INNER_LENGTH as u32, Ordering::Release);
+
+        pages.current_page_id.store(2, Ordering::Release);
+        pages.mark_page_full(1.into());
+
+        assert!(pages.get_empty_links().is_empty());
     }
 }

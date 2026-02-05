@@ -211,7 +211,7 @@ async fn vacuum_parallel_with_upserts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-#[ignore]
+//#[ignore]
 async fn vacuum_loop_test() {
     let config = VacuumManagerConfig {
         check_interval: Duration::from_millis(1_000),
@@ -236,7 +236,7 @@ async fn vacuum_loop_test() {
 
     let insert_table = table.clone();
     let _task = tokio::spawn(async move {
-        let mut i = 3000;
+        let mut i = 3001;
         loop {
             let row = VacuumTestRow {
                 id: insert_table.get_next_pk().into(),
@@ -252,10 +252,10 @@ async fn vacuum_loop_test() {
     tokio::time::sleep(Duration::from_millis(1_000)).await;
 
     loop {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(1_000)).await;
 
         let outdated_ts = chrono::Utc::now()
-            .checked_sub_signed(TimeDelta::new(0, 500 * 1_000_000).unwrap())
+            .checked_sub_signed(TimeDelta::new(1, 0).unwrap())
             .unwrap()
             .timestamp_nanos_opt()
             .unwrap();

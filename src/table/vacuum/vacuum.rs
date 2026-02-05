@@ -126,7 +126,7 @@ where
             OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio))
         });
         let initial_bytes_freed: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
-        let additional_allocated_page = self.data_pages.allocate_new_page();
+        let additional_allocated_page = self.data_pages.allocate_new_or_pop_free();
 
         let mut free_pages = VecDeque::new();
         let mut defragmented_pages = VecDeque::new();
@@ -174,6 +174,9 @@ where
         let pages_freed = free_pages.len();
         for id in free_pages {
             self.data_pages.mark_page_empty(id)
+        }
+        for id in defragmented_pages {
+            self.data_pages.mark_page_full(id)
         }
 
         VacuumStats {
