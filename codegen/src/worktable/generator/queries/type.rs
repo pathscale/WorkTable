@@ -15,6 +15,14 @@ pub fn map_to_uppercase(str: &str) -> String {
             .expect("OrderedFloat def contains inner type")
             .replace(">", "");
         format!("Ordered{}", inner_type.to_uppercase().trim())
+    } else if str.contains("Option") {
+        let mut split = str.split("<");
+        let _ = split.next();
+        let inner_type = split
+            .next()
+            .expect("Option def contains inner type")
+            .replace(">", "");
+        format!("Option{}", inner_type.to_uppercase().trim())
     } else {
         str.to_uppercase()
     }

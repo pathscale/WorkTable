@@ -58,23 +58,31 @@ impl Generator {
                     .clone()
                     .expect("index fields should always be named fields"),
             );
-            let index_type = field.ty.to_token_stream().to_string();
-            let mut split = index_type.split("<");
-            // skip `IndexMap` ident.
-            split.next();
-            let substr = split
-                .next()
-                .expect("index type should always contain key generic")
-                .to_string();
-            types.push(
-                substr
-                    .split(",")
-                    .next()
-                    .expect("index type should always contain key and value generics")
-                    .to_string()
-                    .parse()
-                    .expect("should be valid because parsed from declaration"),
-            );
+
+            let syn::Type::Path(type_path) = &field.ty else {
+                unreachable!()
+            };
+
+            let last_segment = type_path
+                .path
+                .segments
+                .last()
+                .expect("Index type should have at least one segment");
+
+            let syn::PathArguments::AngleBracketed(arguments) = &last_segment.arguments else {
+                unreachable!("IndexMap always have angle brackets arguments which are generic")
+            };
+
+            let first_arg = arguments
+                .args
+                .first()
+                .expect("Index type should have at least one type argument");
+
+            let syn::GenericArgument::Type(ty) = first_arg else {
+                unreachable!("Index type should have at least one type argument")
+            };
+
+            types.push(ty.to_token_stream());
         }
         let map = fields.into_iter().zip(types).collect::<HashMap<_, _>>();
 

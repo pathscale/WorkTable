@@ -5,6 +5,7 @@ use worktable::prelude::*;
 use worktable::worktable;
 
 mod many_strings;
+mod option;
 mod string_primary_index;
 mod string_re_read;
 mod string_secondary_index;
