@@ -52,7 +52,7 @@ async fn vacuum_parallel_with_selects() {
     let task_ids = ids_to_delete.clone();
     let delete_task = tokio::spawn(async move {
         for id in task_ids.iter() {
-            delete_table.delete((*id).into()).await.unwrap();
+            delete_table.delete(*id).await.unwrap();
         }
     });
 
@@ -102,7 +102,7 @@ async fn vacuum_parallel_with_inserts() {
     let task_ids = ids_to_delete.clone();
     let delete_task = tokio::spawn(async move {
         for id in task_ids.iter() {
-            delete_table.delete((*id).into()).await.unwrap();
+            delete_table.delete(*id).await.unwrap();
         }
     });
 
@@ -172,7 +172,7 @@ async fn vacuum_parallel_with_upserts() {
     let task_row_state = Arc::clone(&row_state);
     let delete_task = tokio::spawn(async move {
         for id in task_ids.iter() {
-            delete_table.delete((*id).into()).await.unwrap();
+            delete_table.delete(*id).await.unwrap();
             {
                 let mut g = task_row_state.lock();
                 g.remove(id);
@@ -267,7 +267,7 @@ async fn vacuum_loop_test() {
             .map(|(_, l)| table.0.data.select(**l).unwrap())
             .collect::<Vec<_>>();
         for row in ids_to_remove {
-            table.delete(row.id.into()).await.unwrap()
+            table.delete(row.id).await.unwrap()
         }
     }
 }

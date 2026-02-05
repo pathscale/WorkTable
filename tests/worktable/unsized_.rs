@@ -819,7 +819,7 @@ async fn delete_parallel() {
     let h2 = tokio::spawn(async move {
         for _ in 0..1_000 {
             let id_to_update = fastrand::u64(0..1000);
-            let _ = shared.delete(id_to_update.into()).await;
+            let _ = shared.delete(id_to_update).await;
             {
                 let mut guard = shared_deleted_state.lock();
                 guard.insert(id_to_update);

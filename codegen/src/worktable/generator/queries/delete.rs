@@ -40,7 +40,10 @@ impl Generator {
         let full_row_lock = self.gen_full_lock_for_update();
 
         quote! {
-            pub async fn delete(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
+            pub async fn delete<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
+            where #pk_ident: From<Pk>
+            {
+                let pk: #pk_ident = pk.into();
                 let lock = {
                     #full_row_lock
                 };
@@ -61,7 +64,10 @@ impl Generator {
         let delete_logic = self.gen_delete_logic(false);
 
         quote! {
-            pub async fn delete_without_lock(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
+            pub async fn delete_without_lock<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
+            where #pk_ident: From<Pk>
+            {
+                let pk: #pk_ident = pk.into();
                 #delete_logic
                 core::result::Result::Ok(())
             }
@@ -112,7 +118,7 @@ impl Generator {
                         return Err(e);
                     }
                 };
-                let row = self.select(pk.clone()).unwrap();
+                let row = self.0.select(pk.clone()).unwrap();
                 #process
             }
         } else {
@@ -123,7 +129,7 @@ impl Generator {
                         .get(&pk)
                         .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound)?;
-                let row = self.select(pk.clone()).unwrap();
+                let row = self.0.select(pk.clone()).unwrap();
                 #process
             }
         }
@@ -172,7 +178,7 @@ impl Generator {
                 self.iter_with_async(|row| {
                     if row.#field == by {
                         futures::future::Either::Left(async move {
-                            self.delete(row.get_primary_key()).await
+                            self.delete::<_>(row.get_primary_key()).await
                         })
                     } else {
                         futures::future::Either::Right(async {

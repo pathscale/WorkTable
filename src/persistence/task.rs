@@ -253,7 +253,7 @@ where
             row.op_type = op.operation_type();
             ops.push(op);
             info_wt.insert(row)?;
-            self.queue_inner_wt.delete_without_lock(id.into()).await?
+            self.queue_inner_wt.delete_without_lock::<_>(id).await?
         }
         // println!("New wt generated {:?}", start.elapsed());
         // return ops sorted by `OperationId`
