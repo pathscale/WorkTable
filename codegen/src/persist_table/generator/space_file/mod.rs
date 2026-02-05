@@ -155,24 +155,56 @@ impl Generator {
         let dir_name = name_generator.get_dir_name();
         let const_name = name_generator.get_page_inner_size_const_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
+        let lock_type = name_generator.get_lock_type_ident();
+        let table_name = name_generator.get_work_table_literal_name();
 
-        let pk_map = if self.attributes.pk_unsized {
+        let primary_index_init = if self.attributes.pk_unsized {
             let pk_ident = &self.pk_ident;
             quote! {
-                let pk_map = IndexMap::<#pk_ident, Link, UnsizedNode<_>>::with_maximum_node_size(#const_name);
+                let pk_map = IndexMap::<#pk_ident, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name);
                 for page in self.primary_index.1 {
-                    let node = page.inner.get_node();
+                    let node = page
+                        .inner
+                        .get_node()
+                        .into_iter()
+                        .map(|p| IndexPair {
+                            key: p.key,
+                            value: p.value.into(),
+                        })
+                        .collect();
                     pk_map.attach_node(UnsizedNode::from_inner(node, #const_name));
                 }
+                // Reconstruct reverse_pk_map by iterating over pk_map
+                let mut reverse_pk_map = IndexMap::<OffsetEqLink<#const_name>, #pk_ident>::new();
+                for entry in pk_map.iter() {
+                    let (pk, link) = entry;
+                    reverse_pk_map.insert(*link, pk.clone());
+                }
+                let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
             }
         } else {
             quote! {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                let pk_map = IndexMap::with_maximum_node_size(size);
+                let pk_map = IndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size);
                 for page in self.primary_index.1 {
-                    let node = page.inner.get_node();
+                    let node = page
+                        .inner
+                        .get_node()
+                        .into_iter()
+                        .map(|p| IndexPair {
+                            key: p.key,
+                            value: p.value.into(),
+                        })
+                        .collect();
                     pk_map.attach_node(node);
                 }
+                // Reconstruct reverse_pk_map by iterating over pk_map
+                let mut reverse_pk_map = IndexMap::<OffsetEqLink<#const_name>, #pk_type>::new();
+                for entry in pk_map.iter() {
+                    let (pk, link) = entry;
+                    reverse_pk_map.insert(*link, pk.clone());
+                }
+                let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
             }
         };
 
@@ -191,16 +223,16 @@ impl Generator {
                     .with_empty_links(self.data_info.inner.empty_links_list);
                 let indexes = #index_ident::from_persisted(self.indexes);
 
-                #pk_map
+                #primary_index_init
 
                 let table = WorkTable {
-                    data,
-                    pk_map,
-                    indexes,
+                    data: std::sync::Arc::new(data),
+                    primary_index: std::sync::Arc::new(primary_index),
+                    indexes: std::sync::Arc::new(indexes),
                     pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
-                    lock_map: LockMap::default(),
+                    lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
                     update_state: IndexMap::default(),
-                    table_name: "",
+                    table_name: #table_name,
                     pk_phantom: std::marker::PhantomData,
                 };
 

@@ -12,7 +12,7 @@ use futures::task::AtomicWaker;
 use parking_lot::Mutex;
 
 pub use map::LockMap;
-pub use row_lock::RowLock;
+pub use row_lock::{FullRowLock, RowLock};
 
 #[derive(Debug)]
 pub struct Lock {
@@ -91,13 +91,13 @@ impl Future for LockWait {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if !self.locked.load(Ordering::Relaxed) {
+        if !self.locked.load(Ordering::Acquire) {
             return Poll::Ready(());
         }
 
         self.waker.register(cx.waker());
 
-        if self.locked.load(Ordering::Relaxed) {
+        if self.locked.load(Ordering::Acquire) {
             Poll::Pending
         } else {
             Poll::Ready(())

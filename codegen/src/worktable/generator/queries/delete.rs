@@ -48,7 +48,7 @@ impl Generator {
                 #delete_logic
 
                 lock.unlock();  // Releases locks
-                self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                 core::result::Result::Ok(())
             }
@@ -61,7 +61,7 @@ impl Generator {
         let delete_logic = self.gen_delete_logic(false);
 
         quote! {
-            pub fn delete_without_lock(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
+            pub async fn delete_without_lock(&self, pk: #pk_ident) -> core::result::Result<(), WorkTableError> {
                 #delete_logic
                 core::result::Result::Ok(())
             }
@@ -76,7 +76,7 @@ impl Generator {
         let process = if self.is_persist {
             quote! {
                 let secondary_keys_events = self.0.indexes.delete_row_cdc(row, link)?;
-                let (_, primary_key_events) = TableIndexCdc::remove_cdc(&self.0.pk_map, pk.clone(), link);
+                let (_, primary_key_events) = self.0.primary_index.remove_cdc(pk.clone(), link);
                 self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
                 let mut op: Operation<
                     <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
@@ -93,21 +93,22 @@ impl Generator {
         } else {
             quote! {
                 self.0.indexes.delete_row(row, link)?;
-                self.0.pk_map.remove(&pk);
+                self.0.primary_index.remove(&pk, link);
                 self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
             }
         };
         if is_locked {
             quote! {
                 let link = match self.0
+                        .primary_index
                         .pk_map
                         .get(&pk)
-                        .map(|v| v.get().value)
+                        .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound) {
                     Ok(l) => l,
                     Err(e) => {
                         lock.unlock();  // Releases locks
-                        self.0.lock_map.remove_with_lock_check(&pk).await; // Removes locks
+                        self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
                         return Err(e);
                     }
                 };
@@ -117,9 +118,10 @@ impl Generator {
         } else {
             quote! {
                 let link = self.0
+                        .primary_index
                         .pk_map
                         .get(&pk)
-                        .map(|v| v.get().value)
+                        .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound)?;
                 let row = self.select(pk.clone()).unwrap();
                 #process
@@ -197,7 +199,7 @@ impl Generator {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 let rows_to_update = self.0.indexes.#index.get(#by).map(|kv| kv.1).collect::<Vec<_>>();
                 for link in rows_to_update {
-                    let row = self.0.data.select_non_ghosted(*link).map_err(WorkTableError::PagesError)?;
+                    let row = self.0.data.select_non_ghosted(link.0).map_err(WorkTableError::PagesError)?;
                     self.delete(row.get_primary_key()).await?;
                 }
                 core::result::Result::Ok(())
@@ -217,7 +219,7 @@ impl Generator {
         };
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
-                let row_to_update = self.0.indexes.#index.get(#by).map(|v| v.get().value);
+                let row_to_update = self.0.indexes.#index.get(#by).map(|v| v.get().value.into());
                 if let Some(link) = row_to_update {
                     let row = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
                     self.delete(row.get_primary_key()).await?;

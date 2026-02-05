@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::IndexMultiMap;
 use crate::persistence::OperationType;
 use crate::prelude::OperationId;
+use crate::util::OffsetEqLink;
 use crate::{IndexMap, impl_memstat_zero};
 
 pub trait MemStat {
@@ -179,3 +180,14 @@ where
 }
 
 impl_memstat_zero!(Link, PageId, Uuid, OperationId, OperationType);
+
+// OffsetEqLink has zero heap size (just wraps Link)
+impl<const N: usize> MemStat for OffsetEqLink<N> {
+    fn heap_size(&self) -> usize {
+        0
+    }
+
+    fn used_size(&self) -> usize {
+        0
+    }
+}

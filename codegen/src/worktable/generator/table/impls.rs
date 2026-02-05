@@ -21,6 +21,7 @@ impl Generator {
         let iter_with_async_fn = self.gen_table_iter_with_async_fn();
         let count_fn = self.gen_table_count_fn();
         let system_info_fn = self.gen_system_info_fn();
+        let vacuum_fn = self.gen_table_vacuum_fn();
 
         quote! {
             impl #ident {
@@ -35,6 +36,7 @@ impl Generator {
                 #iter_with_fn
                 #iter_with_async_fn
                 #system_info_fn
+                #vacuum_fn
             }
         }
     }
@@ -62,21 +64,27 @@ impl Generator {
                 })
                 .collect::<Vec<_>>();
             let pk_types_unsized = is_unsized_vec(pk_types);
-            let index_size = if pk_types_unsized {
+            let index_setup = if pk_types_unsized {
                 quote! {
-                    let size = #const_name;
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name),
+                        reverse_pk_map: IndexMap::new(),
+                    });
                 }
             } else {
                 quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: IndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
+                        reverse_pk_map: IndexMap::new(),
+                    });
                 }
             };
             quote! {
                 pub async fn new(config: PersistenceConfig) -> eyre::Result<Self> {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
-                    #index_size
-                    inner.pk_map = IndexMap::with_maximum_node_size(size);
+                    #index_setup
                     let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
                     let engine: #engine = PersistenceEngine::from_table_files_path(table_files_path).await?;
                     core::result::Result::Ok(Self(
@@ -149,12 +157,12 @@ impl Generator {
             }
         } else {
             quote! {
-                self.0.reinsert(row_old, row_new)
+                self.0.reinsert(row_old, row_new).await
             }
         };
 
         quote! {
-            pub fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+            pub async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
                 #reinsert
             }
         }
@@ -168,8 +176,7 @@ impl Generator {
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 let need_to_update = {
-                    if let Some(_) = self.0.pk_map.get(&pk)
-                    {
+                    if let Some(link) = self.0.primary_index.pk_map.get(&pk) {
                         true
                     } else {
                         false
@@ -238,7 +245,7 @@ impl Generator {
 
     fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
         quote! {
-            let first = self.0.pk_map.iter().next().map(|(k, v)| (k.clone(), *v));
+            let first = self.0.primary_index.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
             let Some((mut k, link)) = first else {
                 return Ok(())
             };
@@ -249,12 +256,12 @@ impl Generator {
             let mut ind = false;
             while !ind {
                 let next = {
-                    let mut iter = self.0.pk_map.range(k.clone()..);
-                    let next = iter.next().map(|(k, v)| (k.clone(), *v)).filter(|(key, _)| key != &k);
+                    let mut iter = self.0.primary_index.pk_map.range(k.clone()..);
+                    let next = iter.next().map(|(k, v)| (k.clone(), v.0)).filter(|(key, _)| key != &k);
                     if next.is_some() {
                         next
                     } else {
-                        iter.next().map(|(k, v)| (k.clone(), *v))
+                        iter.next().map(|(k, v)| (k.clone(), v.0))
                     }
                 };
                 if let Some((key, link)) = next {
@@ -273,7 +280,7 @@ impl Generator {
     fn gen_table_count_fn(&self) -> TokenStream {
         quote! {
             pub fn count(&self) -> usize {
-                let count = self.0.pk_map.len();
+                let count = self.0.primary_index.pk_map.len();
                 count
             }
         }
@@ -283,6 +290,58 @@ impl Generator {
         quote! {
             pub fn system_info(&self) -> SystemInfo {
                 self.0.system_info()
+            }
+        }
+    }
+
+    fn gen_table_vacuum_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let table_name = name_generator.get_work_table_literal_name();
+        let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
+        let lock_type = name_generator.get_lock_type_ident();
+
+        if self.is_persist {
+            quote! {
+                pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
+                    std::sync::Arc::new(EmptyDataVacuum::<
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        #lock_type,
+                        _,
+                        #secondary_index_events
+                        >::new(
+                            #table_name,
+                            std::sync::Arc::clone(&self.0.data),
+                            std::sync::Arc::clone(&self.0.lock_manager),
+                            std::sync::Arc::clone(&self.0.primary_index),
+                            std::sync::Arc::clone(&self.0.indexes),
+                        ))
+                }
+            }
+        } else {
+            quote! {
+                pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
+                    std::sync::Arc::new(EmptyDataVacuum::<
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        _,
+                        #lock_type,
+                        _
+                    >::new(
+                        #table_name,
+                        std::sync::Arc::clone(&self.0.data),
+                        std::sync::Arc::clone(&self.0.lock_manager),
+                        std::sync::Arc::clone(&self.0.primary_index),
+                        std::sync::Arc::clone(&self.0.indexes),
+                    ))
+                }
             }
         }
     }

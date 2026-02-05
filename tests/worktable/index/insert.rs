@@ -20,8 +20,8 @@ worktable!(
     }
 );
 
-#[test]
-fn insert() {
+#[tokio::test]
+async fn insert() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -38,8 +38,8 @@ fn insert() {
     assert!(table.select(2).is_none())
 }
 
-#[test]
-fn insert_when_pk_exists() {
+#[tokio::test]
+async fn insert_when_pk_exists() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -131,12 +131,13 @@ fn insert_when_secondary_unique_exists() {
             .indexes
             .attr2_idx
             .get(&row.attr2)
-            .map(|r| r.get().value),
+            .map(|r| r.get().value.0),
         table
             .0
+            .primary_index
             .pk_map
             .get(&TestPrimaryKey(row.id))
-            .map(|r| r.get().value)
+            .map(|r| r.get().value.0)
     );
 }
 
@@ -188,17 +189,18 @@ fn insert_when_secondary_unique_string_exists() {
             .indexes
             .attr4_idx
             .get(&row.attr4)
-            .map(|r| r.get().value),
+            .map(|r| r.get().value.0),
         table
             .0
+            .primary_index
             .pk_map
             .get(&TestPrimaryKey(row.id))
-            .map(|r| r.get().value)
+            .map(|r| r.get().value.0)
     );
 }
 
-#[test]
-fn insert_when_unique_violated() {
+#[tokio::test]
+async fn insert_when_unique_violated() {
     let table = Arc::new(TestWorkTable::default());
 
     let row = TestRow {
@@ -289,8 +291,8 @@ fn insert_after_unique_violated() {
     }
 }
 
-#[test]
-fn insert_when_pk_violated() {
+#[tokio::test]
+async fn insert_when_pk_violated() {
     let table = Arc::new(TestWorkTable::default());
 
     let row = TestRow {

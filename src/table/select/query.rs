@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
-
 use crate::WorkTableError;
 use crate::select::{Order, QueryParams};
+
+use std::collections::VecDeque;
 
 pub struct SelectQueryBuilder<Row, I, ColumnRange, RowFields>
 where

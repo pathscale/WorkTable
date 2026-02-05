@@ -112,7 +112,7 @@ where
         self.ops
     }
 
-    fn remove_operations_from_events(
+    async fn remove_operations_from_events(
         &mut self,
         invalid_events: PreparedIndexEvents<PrimaryKey, SecondaryEvents>,
     ) -> HashSet<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>> {
@@ -151,7 +151,7 @@ where
                 .select_by_operation_id(op.operation_id())
                 .expect("exists as all should be inserted on prepare step")
                 .id;
-            self.info_wt.delete_without_lock(pk.into()).unwrap();
+            self.info_wt.delete_without_lock(pk.into()).await.unwrap();
             let prepared_evs = self
                 .prepared_index_evs
                 .as_mut()
@@ -237,7 +237,7 @@ where
                 primary_evs: primary_invalid_events,
                 secondary_evs: secondary_invalid_events,
             };
-            let ops = self.remove_operations_from_events(events_to_remove);
+            let ops = self.remove_operations_from_events(events_to_remove).await;
             ops_to_remove.extend(ops);
         }
 

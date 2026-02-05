@@ -1,19 +1,17 @@
 pub mod select;
 pub mod system_info;
+pub mod vacuum;
 
-use std::fmt::Debug;
-use std::marker::PhantomData;
-
-use crate::in_memory::{DataPages, GhostWrapper, RowWrapper, StorableRow};
-use crate::lock::LockMap;
+use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::persistence::{InsertOperation, Operation};
-use crate::prelude::{OperationId, PrimaryKeyGeneratorState};
+use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
+use crate::util::OffsetEqLink;
 use crate::{
-    AvailableIndex, IndexError, IndexMap, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-    in_memory,
+    AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow,
+    TableSecondaryIndex, TableSecondaryIndexCdc, convert_change_events, in_memory,
 };
-use data_bucket::{INNER_PAGE_SIZE, Link};
+use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
@@ -26,6 +24,9 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
+use std::fmt::Debug;
+use std::marker::PhantomData;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -37,22 +38,22 @@ pub struct WorkTable<
     SecondaryIndexes = (),
     LockType = (),
     PkGen = <PrimaryKey as TablePrimaryKey>::Generator,
-    PkNodeType = Vec<Pair<PrimaryKey, Link>>,
     const DATA_LENGTH: usize = INNER_PAGE_SIZE,
+    PkNodeType = Vec<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>>,
 > where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
-    PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
 {
-    pub data: DataPages<Row, DATA_LENGTH>,
+    pub data: Arc<DataPages<Row, DATA_LENGTH>>,
 
-    pub pk_map: IndexMap<PrimaryKey, Link, PkNodeType>,
+    pub primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
 
-    pub indexes: SecondaryIndexes,
+    pub indexes: Arc<SecondaryIndexes>,
 
     pub pk_gen: PkGen,
 
-    pub lock_map: LockMap<LockType, PrimaryKey>,
+    pub lock_manager: Arc<LockMap<LockType, PrimaryKey>>,
 
     pub update_state: IndexMap<PrimaryKey, Row>,
 
@@ -70,8 +71,8 @@ impl<
     SecondaryIndexes,
     LockType,
     PkGen,
-    PkNodeType,
     const DATA_LENGTH: usize,
+    PkNodeType,
 > Default
     for WorkTable<
         Row,
@@ -81,24 +82,24 @@ impl<
         SecondaryIndexes,
         LockType,
         PkGen,
-        PkNodeType,
         DATA_LENGTH,
+        PkNodeType,
     >
 where
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
     SecondaryIndexes: Default,
     PkGen: Default,
-    PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
     fn default() -> Self {
         Self {
-            data: DataPages::new(),
-            pk_map: IndexMap::default(),
-            indexes: SecondaryIndexes::default(),
+            data: Arc::new(DataPages::new()),
+            primary_index: Arc::new(PrimaryIndex::default()),
+            indexes: Arc::new(SecondaryIndexes::default()),
             pk_gen: Default::default(),
-            lock_map: LockMap::default(),
+            lock_manager: Default::default(),
             update_state: IndexMap::default(),
             table_name: "",
             pk_phantom: PhantomData,
@@ -114,8 +115,8 @@ impl<
     SecondaryIndexes,
     LockType,
     PkGen,
-    PkNodeType,
     const DATA_LENGTH: usize,
+    PkNodeType,
 >
     WorkTable<
         Row,
@@ -125,13 +126,13 @@ impl<
         SecondaryIndexes,
         LockType,
         PkGen,
-        PkNodeType,
         DATA_LENGTH,
+        PkNodeType,
     >
 where
     Row: TableRow<PrimaryKey>,
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
-    PkNodeType: NodeLike<Pair<PrimaryKey, Link>> + Send + 'static,
+    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
@@ -157,9 +158,13 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link = self.pk_map.get(&pk).map(|v| v.get().value);
+        let link: Option<Link> = self
+            .primary_index
+            .pk_map
+            .get(&pk)
+            .map(|v| v.get().value.into());
         if let Some(link) = link {
-            self.data.select(link).ok()
+            self.data.select_non_ghosted(link).ok()
         } else {
             None
         }
@@ -180,7 +185,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: AvailableIndex,
@@ -192,7 +197,11 @@ where
             .data
             .insert(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        if self.pk_map.checked_insert(pk.clone(), link).is_none() {
+        if self
+            .primary_index
+            .insert_checked(pk.clone(), link)
+            .is_none()
+        {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
         };
@@ -203,7 +212,7 @@ where
                     inserted_already,
                 } => {
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
-                    self.pk_map.remove(&pk);
+                    self.primary_index.remove(&pk, link);
                     self.indexes
                         .delete_from_indexes(row, link, inserted_already)?;
 
@@ -242,7 +251,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
@@ -254,11 +263,12 @@ where
             .data
             .insert_cdc(row.clone())
             .map_err(WorkTableError::PagesError)?;
-        let primary_key_events = self.pk_map.checked_insert_cdc(pk.clone(), link);
-        if primary_key_events.is_none() {
+        let primary_key_events = self.primary_index.insert_checked_cdc(pk.clone(), link);
+        let Some(primary_key_events) = primary_key_events else {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
-        }
+        };
+        let primary_key_events = convert_change_events(primary_key_events);
         let indexes_res = self.indexes.save_row_cdc(row.clone(), link);
         if let Err(e) = indexes_res {
             return match e {
@@ -267,7 +277,7 @@ where
                     inserted_already,
                 } => {
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
-                    self.pk_map.remove(&pk);
+                    self.primary_index.remove(&pk, link);
                     self.indexes
                         .delete_from_indexes(row, link, inserted_already)?;
 
@@ -289,7 +299,7 @@ where
         let op = Operation::Insert(InsertOperation {
             id: OperationId::Single(Uuid::now_v7()),
             pk_gen_state: self.pk_gen.get_state(),
-            primary_key_events: primary_key_events.expect("should be checked before for existence"),
+            primary_key_events,
             secondary_keys_events: indexes_res.expect("was checked before"),
             bytes,
             link,
@@ -306,7 +316,9 @@ where
     /// part is for new row. Goal is to make `PrimaryKey` of the row always
     /// acceptable. As for reinsert `PrimaryKey` will be same for both old and
     /// new [`Link`]'s, goal will be achieved.
-    pub fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
+    ///
+    /// [`Link`]: data_bucket::Link
+    pub async fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
             + Clone
@@ -317,7 +329,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: Debug + AvailableIndex,
@@ -328,10 +340,11 @@ where
         if pk != row_old.get_primary_key() {
             return Err(WorkTableError::PrimaryUpdateTry);
         }
-        let old_link = self
+        let old_link: Link = self
+            .primary_index
             .pk_map
             .get(&pk)
-            .map(|v| v.get().value)
+            .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
         let new_link = self
             .data
@@ -342,7 +355,7 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        self.pk_map.insert(pk.clone(), new_link);
+        self.primary_index.insert(pk.clone(), new_link);
 
         let indexes_res = self
             .indexes
@@ -353,7 +366,7 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.pk_map.insert(pk.clone(), old_link);
+                    self.primary_index.insert(pk.clone(), old_link);
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data
@@ -393,7 +406,7 @@ where
             + for<'a> Serialize<
                 Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
             >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: GhostWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
@@ -405,9 +418,10 @@ where
             return Err(WorkTableError::PrimaryUpdateTry);
         }
         let old_link = self
+            .primary_index
             .pk_map
             .get(&pk)
-            .map(|v| v.get().value)
+            .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
         let (new_link, _) = self
             .data
@@ -418,7 +432,8 @@ where
                 .with_mut_ref(new_link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
-        let (_, primary_key_events) = self.pk_map.insert_cdc(pk.clone(), new_link);
+        let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
+        let primary_key_events = convert_change_events(primary_key_events);
         let indexes_res =
             self.indexes
                 .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
@@ -428,7 +443,7 @@ where
                     at,
                     inserted_already,
                 } => {
-                    self.pk_map.insert(pk.clone(), old_link);
+                    self.primary_index.insert(pk.clone(), old_link);
                     self.indexes
                         .delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data

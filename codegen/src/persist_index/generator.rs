@@ -372,12 +372,29 @@ impl Generator {
                 if is_unsized(&ty.to_string()) {
                     let node = if is_unique {
                         quote! {
-                            let node = UnsizedNode::from_inner(page.inner.get_node(), #const_name);
+                            let node = page
+                                .inner
+                                .get_node()
+                                .into_iter()
+                                .map(|p| IndexPair {
+                                    key: p.key,
+                                    value: p.value.into(),
+                                })
+                                .collect();
+                            let node = UnsizedNode::from_inner(node, #const_name);
                             #i.attach_node(node);
                         }
                     } else {
                         quote! {
-                            let inner = page.inner.get_node();
+                            let inner: Vec<_> = page
+                                .inner
+                                .get_node()
+                                .into_iter()
+                                .map(|p| IndexPair {
+                                    key: p.key,
+                                    value: OffsetEqLink(p.value),
+                                })
+                                .collect();
                             let mut last_key = inner.first().expect("Node should be not empty").key.clone();
                             let mut discriminator = 0;
                             let mut inner = inner.into_iter().map(move |p| {
@@ -398,7 +415,7 @@ impl Generator {
                         }
                     };
                     quote! {
-                        let #i: #t<_, Link, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
+                        let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
                         for page in persisted.#i.1 {
                             #node
                         }
@@ -406,12 +423,28 @@ impl Generator {
                 } else {
                     let node = if is_unique {
                         quote! {
-                            let node = page.inner.get_node();
+                            let node = page
+                                .inner
+                                .get_node()
+                                .into_iter()
+                                .map(|p| IndexPair {
+                                    key: p.key,
+                                    value: p.value.into(),
+                                })
+                                .collect();
                             #i.attach_node(node);
                         }
                     } else {
                         quote! {
-                            let inner = page.inner.get_node();
+                            let inner: Vec<_> = page
+                                .inner
+                                .get_node()
+                                .into_iter()
+                                .map(|p| IndexPair {
+                                    key: p.key,
+                                    value: OffsetEqLink(p.value),
+                                })
+                                .collect();
                             let mut last_key = inner.first().expect("Node should be not empty").key.clone();
                             let mut discriminator = 0;
                             let mut inner = inner.into_iter().map(move |p| {
@@ -432,7 +465,7 @@ impl Generator {
                     };
                     quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
-                        let #i: #t<_, Link> = #t::with_maximum_node_size(size);
+                        let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);
                         for page in persisted.#i.1 {
                             #node
                         }

@@ -9,11 +9,6 @@ mod mem_stat;
 mod persistence;
 mod util;
 
-// mod ty;
-// mod value;
-//
-// pub use column::*;
-// pub use field::*;
 pub use index::*;
 pub use row::*;
 pub use table::*;
@@ -21,7 +16,9 @@ pub use table::*;
 pub use worktable_codegen::worktable;
 
 pub mod prelude {
-    pub use crate::in_memory::{Data, DataPages, GhostWrapper, Query, RowWrapper, StorableRow};
+    pub use crate::in_memory::{
+        ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow,
+    };
     pub use crate::lock::LockMap;
     pub use crate::lock::{Lock, RowLock};
     pub use crate::mem_stat::MemStat;
@@ -35,12 +32,12 @@ pub mod prelude {
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
-    pub use crate::util::{OrderedF32Def, OrderedF64Def};
+    pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
         AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
-        TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-        TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UnsizedNode, WorkTable,
-        WorkTableError,
+        PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
+        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UnsizedNode,
+        WorkTable, WorkTableError, vacuum::EmptyDataVacuum, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE,
@@ -62,7 +59,3 @@ pub mod prelude {
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
     pub const WT_DATA_EXTENSION: &str = ".wt.data";
 }
-
-// TODO:
-// 1. add checked inserts to indexset to not insert/remove but just insert with violation error
-// 2. Add pre-update state storage to avoid ghost reads of updated data if it will be rolled back

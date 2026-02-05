@@ -29,9 +29,9 @@ impl Generator {
                                                            #column_range_type,
                                                            #row_fields_ident>
             {
-                let iter = self.0.pk_map
+                let iter = self.0.primary_index.pk_map
                     .iter()
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(*link).ok());
+                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
 
                 SelectQueryBuilder::new(iter)
             }

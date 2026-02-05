@@ -23,8 +23,8 @@ worktable! (
     }
 );
 
-#[test]
-fn insert() {
+#[tokio::test]
+async fn insert() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: 1,

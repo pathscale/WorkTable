@@ -3,7 +3,7 @@ members = ["codegen", "examples", "performance_measurement", "performance_measur
 
 [package]
 name = "worktable"
-version = "0.8.19"
+version = "0.8.20"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -16,10 +16,11 @@ perf_measurements = ["dep:performance_measurement", "dep:performance_measurement
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-worktable_codegen = { path = "codegen", version = "=0.8.19" }
+worktable_codegen = { path = "codegen", version = "=0.8.20" }
 
+async-trait = "0.1.89"
 eyre = "0.6.12"
-derive_more = { version = "2.0.1", features = ["from", "error", "display", "into"] }
+derive_more = { version = "2.0.1", features = ["from", "error", "display", "debug", "into"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 rkyv = { version = "0.8.9", features = ["uuid-1"] }
@@ -27,9 +28,9 @@ lockfree = { version = "0.5.1" }
 fastrand = "2.3.0"
 futures = "0.3.30"
 uuid = { version = "1.10.0", features = ["v4", "v7"] }
-data_bucket = "=0.3.10"
+data_bucket = "=0.3.11"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
-# data_bucket = { path = "../DataBucket", version = "0.3.9" }
+# data_bucket = { path = "../DataBucket", version = "0.3.10" }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "0.1.0", optional = true }
 performance_measurement = { path = "performance_measurement", version = "0.1.0", optional = true }
 indexset = { version = "=0.14.0", features = ["concurrent", "cdc", "multimap"] }
@@ -39,6 +40,9 @@ convert_case = "0.6.0"
 ordered-float = "5.0.0"
 parking_lot = "0.12.3"
 prettytable-rs = "^0.10"
+smart-default = "0.7.1"
+log = "0.4.29"
 
 [dev-dependencies]
 rand = "0.9.1"
+chrono = "0.4.43"

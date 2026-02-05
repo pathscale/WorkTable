@@ -43,8 +43,7 @@ where
         self.map.write().remove(key);
     }
 
-    #[allow(clippy::await_holding_lock)]
-    pub async fn remove_with_lock_check(&self, key: &PrimaryKey)
+    pub fn remove_with_lock_check(&self, key: &PrimaryKey)
     where
         LockType: RowLock,
     {

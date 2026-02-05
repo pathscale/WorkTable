@@ -101,11 +101,11 @@ impl Generator {
         };
         let node_type = if pk_types_unsized {
             quote! {
-                UnsizedNode<IndexPair<#primary_key_type, Link>>
+                UnsizedNode<IndexPair<#primary_key_type, OffsetEqLink<#inner_const_name>>>
             }
         } else {
             quote! {
-                Vec<IndexPair<#primary_key_type, Link>>
+                Vec<IndexPair<#primary_key_type, OffsetEqLink<#inner_const_name>>>
             }
         };
 
@@ -121,8 +121,8 @@ impl Generator {
                         #index_type,
                         #lock_ident,
                         <#primary_key_type as TablePrimaryKey>::Generator,
-                        #node_type,
-                        #inner_const_name
+                        #inner_const_name,
+                        #node_type
                     >
                     #persist_type_part
                 );
@@ -139,7 +139,8 @@ impl Generator {
                         #index_type,
                         #lock_ident,
                         <#primary_key_type as TablePrimaryKey>::Generator,
-                        #node_type,
+                        { INNER_PAGE_SIZE },
+                        #node_type
                     >
                     #persist_type_part
                 );
