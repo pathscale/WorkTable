@@ -1048,6 +1048,9 @@ mod tests {
             Arc::new(Data::new(2.into())),
         ]);
 
+        // to manually insert on page 1
+        pages.current_page_id.store(1, Ordering::Release);
+
         let row = TestRow { a: 10, b: 20 };
         let _link = pages.insert(row).unwrap();
 
@@ -1060,7 +1063,8 @@ mod tests {
         let link = empty_links.first().unwrap();
         assert_eq!(link.page_id, 1.into());
         assert_eq!(
-            link.length, 24,
+            link.length,
+            DATA_INNER_LENGTH as u32 - 24,
             "Should have remaining space = DATA_INNER_LENGTH - 24"
         );
 

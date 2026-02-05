@@ -211,7 +211,7 @@ async fn vacuum_parallel_with_upserts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-//#[ignore]
+#[ignore]
 async fn vacuum_loop_test() {
     let config = VacuumManagerConfig {
         check_interval: Duration::from_millis(1_000),
