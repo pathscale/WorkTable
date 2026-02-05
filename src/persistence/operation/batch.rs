@@ -151,7 +151,7 @@ where
                 .select_by_operation_id(op.operation_id())
                 .expect("exists as all should be inserted on prepare step")
                 .id;
-            self.info_wt.delete_without_lock(pk.into()).await.unwrap();
+            self.info_wt.delete_without_lock::<_>(pk).await.unwrap();
             let prepared_evs = self
                 .prepared_index_evs
                 .as_mut()

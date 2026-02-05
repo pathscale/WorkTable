@@ -355,7 +355,7 @@ fn test_space_delete_sync() {
                 id: table.get_next_pk().0,
             };
             table.insert(row.clone()).unwrap();
-            table.delete(row.id.into()).await.unwrap();
+            table.delete(row.id).await.unwrap();
             table.wait_for_ops().await;
             row.id
         };

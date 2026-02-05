@@ -327,7 +327,7 @@ fn test_space_delete_sync() {
                 id: "Some string".to_string(),
             };
             table.insert(another_row.clone()).unwrap();
-            table.delete(another_row.id.clone().into()).await.unwrap();
+            table.delete(another_row.id.clone()).await.unwrap();
             table.wait_for_ops().await;
             another_row.id
         };

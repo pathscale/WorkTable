@@ -451,8 +451,8 @@ mod tests {
 
         let first_two_ids = ids.iter().take(2).map(|(i, _)| *i).collect::<Vec<_>>();
 
-        table.delete(first_two_ids[0].into()).await.unwrap();
-        table.delete(first_two_ids[1].into()).await.unwrap();
+        table.delete(first_two_ids[0].clone()).await.unwrap();
+        table.delete(first_two_ids[1].clone()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -482,8 +482,8 @@ mod tests {
 
         let ids_to_delete = ids.keys().skip(5).take(2).cloned().collect::<Vec<_>>();
 
-        table.delete(ids_to_delete[0].into()).await.unwrap();
-        table.delete(ids_to_delete[1].into()).await.unwrap();
+        table.delete(ids_to_delete[0].clone()).await.unwrap();
+        table.delete(ids_to_delete[1].clone()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -516,8 +516,8 @@ mod tests {
 
         let last_two_ids = ids.keys().skip(8).take(2).cloned().collect::<Vec<_>>();
 
-        table.delete(last_two_ids[1].into()).await.unwrap();
-        table.delete(last_two_ids[0].into()).await.unwrap();
+        table.delete(last_two_ids[1].clone()).await.unwrap();
+        table.delete(last_two_ids[0].clone()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -551,7 +551,7 @@ mod tests {
         let ids_to_delete = [1, 3, 5, 7].map(|idx| ids.keys().cloned().nth(idx).unwrap());
 
         for id in &ids_to_delete {
-            table.delete((*id).into()).await.unwrap();
+            table.delete(*id).await.unwrap();
         }
 
         let vacuum = create_vacuum(&table);
@@ -583,7 +583,7 @@ mod tests {
         let remaining_id = ids[0].0;
 
         for (id, _) in ids.iter().skip(1) {
-            table.delete((*id).into()).await.unwrap();
+            table.delete(*id).await.unwrap();
         }
 
         let vacuum = create_vacuum(&table);
@@ -610,7 +610,7 @@ mod tests {
             ids.push((id, row));
         }
 
-        table.delete(ids.last().unwrap().0.into()).await.unwrap();
+        table.delete(ids.last().unwrap().0.clone()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -651,7 +651,7 @@ mod tests {
         let ids_to_delete = ids.keys().take(3).cloned().collect::<Vec<_>>();
 
         for id in &ids_to_delete {
-            table.delete((*id).into()).await.unwrap();
+            table.delete(*id).await.unwrap();
         }
 
         let vacuum = create_vacuum(&table);
@@ -682,7 +682,7 @@ mod tests {
 
         let ids_to_delete = original_ids.keys().take(3).cloned().collect::<Vec<_>>();
         for id in &ids_to_delete {
-            table.delete((*id).into()).await.unwrap();
+            table.delete(*id).await.unwrap();
         }
 
         let vacuum = create_vacuum(&table);
@@ -735,7 +735,7 @@ mod tests {
 
         let ids_to_delete: Vec<_> = ids.iter().map(|(i, _)| *i).take(20).collect();
         for id in &ids_to_delete {
-            table.delete((*id).into()).await.unwrap();
+            table.delete(*id).await.unwrap();
         }
 
         let vacuum = create_vacuum(&table);
@@ -767,7 +767,7 @@ mod tests {
 
         let ids_to_delete: Vec<_> = ids.iter().step_by(20).map(|(id, _)| *id).collect();
         for id in &ids_to_delete {
-            table.delete((*id).into()).await.unwrap();
+            table.delete(*id).await.unwrap();
         }
 
         let vacuum = create_vacuum(&table);
@@ -800,7 +800,7 @@ mod tests {
             ids.push((id, row));
         }
 
-        table.delete(ids.last().unwrap().0.into()).await.unwrap();
+        table.delete(ids.last().unwrap().0.clone()).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -833,7 +833,7 @@ mod tests {
         // remove last too to trigger vacuum for last page too.
         ids_to_delete.push(ids.last().unwrap().0);
         for id in &ids_to_delete {
-            table.delete((*id).into()).await.unwrap();
+            table.delete(*id).await.unwrap();
         }
 
         let vacuum = create_vacuum(&table);
