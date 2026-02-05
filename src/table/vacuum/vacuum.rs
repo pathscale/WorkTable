@@ -451,8 +451,8 @@ mod tests {
 
         let first_two_ids = ids.iter().take(2).map(|(i, _)| *i).collect::<Vec<_>>();
 
-        table.delete(first_two_ids[0].clone()).await.unwrap();
-        table.delete(first_two_ids[1].clone()).await.unwrap();
+        table.delete(first_two_ids[0]).await.unwrap();
+        table.delete(first_two_ids[1]).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -482,8 +482,8 @@ mod tests {
 
         let ids_to_delete = ids.keys().skip(5).take(2).cloned().collect::<Vec<_>>();
 
-        table.delete(ids_to_delete[0].clone()).await.unwrap();
-        table.delete(ids_to_delete[1].clone()).await.unwrap();
+        table.delete(ids_to_delete[0]).await.unwrap();
+        table.delete(ids_to_delete[1]).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -516,8 +516,8 @@ mod tests {
 
         let last_two_ids = ids.keys().skip(8).take(2).cloned().collect::<Vec<_>>();
 
-        table.delete(last_two_ids[1].clone()).await.unwrap();
-        table.delete(last_two_ids[0].clone()).await.unwrap();
+        table.delete(last_two_ids[1]).await.unwrap();
+        table.delete(last_two_ids[0]).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -610,7 +610,7 @@ mod tests {
             ids.push((id, row));
         }
 
-        table.delete(ids.last().unwrap().0.clone()).await.unwrap();
+        table.delete(ids.last().unwrap().0).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
@@ -800,7 +800,7 @@ mod tests {
             ids.push((id, row));
         }
 
-        table.delete(ids.last().unwrap().0.clone()).await.unwrap();
+        table.delete(ids.last().unwrap().0).await.unwrap();
 
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
