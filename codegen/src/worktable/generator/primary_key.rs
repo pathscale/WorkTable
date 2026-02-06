@@ -81,6 +81,7 @@ impl Generator {
                 PartialOrd,
                 Ord,
                 SizeMeasure,
+                MemStat,
                 #unsized_derive
             )]
             #[rkyv(derive(PartialEq, Eq, PartialOrd, Ord, Debug))]

@@ -230,7 +230,7 @@ where
         feature = "perf_measurements",
         performance_measurement(prefix_name = "DataPages")
     )]
-    pub fn select(&self, link: Link) -> Result<Row, ExecutionError>
+    pub fn select<L: Into<Link>>(&self, link: L) -> Result<Row, ExecutionError>
     where
         Row: Archive
             + for<'a> Serialize<
@@ -239,6 +239,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
+        let link = link.into();
         let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
