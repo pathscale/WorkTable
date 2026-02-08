@@ -109,9 +109,9 @@ impl Generator {
             where #pk_type: From<Pk>
             {
                 let pk: #pk_type = by.into();
-                let lock = {
+                let _guard = {
                     #custom_lock
-                };
+                }.guard();
                 let link = self
                     .0
                     .primary_index.pk_map
@@ -125,7 +125,7 @@ impl Generator {
                         .map_err(WorkTableError::PagesError)?
                     };
 
-                lock.unlock();
+                drop(_guard);
                 self.0.lock_manager.remove_with_lock_check(&pk);
 
                 Ok(())

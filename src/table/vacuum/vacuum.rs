@@ -247,13 +247,13 @@ where
         drop(range);
 
         for (from_link, pk) in links {
-            let lock = self.full_row_lock(&pk).await;
+            let _guard = self.full_row_lock(&pk).await.guard();
             if self
                 .data_pages
                 .with_ref(from_link.0, |r| r.is_deleted())
                 .expect("link should be valid")
             {
-                lock.unlock();
+                drop(_guard);
                 self.lock_manager.remove_with_lock_check(&pk);
                 continue;
             }
@@ -270,7 +270,7 @@ where
                 .expect("page is not full as checked on links collection");
             self.update_index_after_move(pk.clone(), from_link.0, new_link);
             self.lock_manager.remove_with_lock_check(&pk);
-            lock.unlock();
+            drop(_guard);
         }
 
         (from_page_will_be_moved, to_page_will_be_filled)

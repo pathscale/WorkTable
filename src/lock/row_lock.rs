@@ -1,4 +1,4 @@
-use crate::lock::{Lock, LockWait};
+use crate::lock::{Lock, LockGuard, LockWait};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -30,6 +30,11 @@ pub struct FullRowLock {
 impl FullRowLock {
     pub fn unlock(&self) {
         self.l.unlock();
+    }
+
+    /// Creates a [`LockGuard`] that will automatically unlock this lock when dropped.
+    pub fn guard(self) -> LockGuard {
+        self.l.guard()
     }
 
     pub fn wait(&self) -> LockWait {
