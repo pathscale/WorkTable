@@ -2,6 +2,7 @@ mod map;
 mod row_lock;
 
 use std::cell::Cell;
+use std::fmt::Debug;
 use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -20,26 +21,52 @@ pub use row_lock::{FullRowLock, RowLock};
 ///
 /// The [`Lock`] is automatically released when the guard is dropped, or can be
 /// explicitly released early using the `unlock()` method.
-pub struct LockGuard {
-    lock: Option<Arc<Lock>>,
+///
+/// The guard will also attempt to remove the lock entry from the map on drop
+/// (preventing memory leaks).
+pub struct LockGuard<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
+    lock: Arc<Lock>,
+    lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+    primary_key: PrimaryKey,
     /// Marker to make this type `!Sync` (but still `Send`)
     _not_sync: PhantomData<Cell<()>>,
 }
 
-impl LockGuard {
-    /// Explicitly unlocks the lock before the guard is dropped.
-    pub fn unlock(mut self) {
-        if let Some(lock) = self.lock.take() {
-            lock.unlock();
+impl<LockType, PrimaryKey> LockGuard<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
+    /// Creates a new guard that will clean up the lock entry from the map on drop.
+    pub fn new(
+        lock: Arc<Lock>,
+        lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+        primary_key: PrimaryKey,
+    ) -> Self {
+        Self {
+            lock,
+            lock_map,
+            primary_key,
+            _not_sync: PhantomData,
         }
+    }
+
+    /// Explicitly unlocks the lock before the guard is dropped.
+    pub fn unlock(self) {
+        self.lock.unlock();
+        self.lock_map.remove_with_lock_check(&self.primary_key);
     }
 }
 
-impl Drop for LockGuard {
+impl<LockType, PrimaryKey> Drop for LockGuard<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
     fn drop(&mut self) {
-        if let Some(lock) = &self.lock {
-            lock.unlock();
-        }
+        self.lock.unlock();
+        // Remove from lock map after unlocking
+        self.lock_map.remove_with_lock_check(&self.primary_key);
     }
 }
 
@@ -108,15 +135,6 @@ impl Lock {
             waker,
         }
     }
-
-    /// Creates a [`LockGuard`] that will automatically unlock this lock when
-    /// dropped.
-    pub fn guard(self: Arc<Self>) -> LockGuard {
-        LockGuard {
-            lock: Some(self),
-            _not_sync: PhantomData,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -151,10 +169,12 @@ mod tests {
     #[test]
     fn test_unlock_on_drop() {
         let lock = Arc::new(Lock::new(1));
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let pk = 1u64;
         assert!(lock.is_locked());
 
         {
-            let _guard = lock.clone().guard();
+            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), lock_map.clone(), pk);
             assert!(lock.is_locked());
         }
 
@@ -164,9 +184,11 @@ mod tests {
     #[test]
     fn test_explicit_unlock() {
         let lock = Arc::new(Lock::new(1));
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let pk = 1u64;
         assert!(lock.is_locked());
 
-        let guard = lock.clone().guard();
+        let guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), lock_map.clone(), pk);
         assert!(lock.is_locked());
 
         guard.unlock();
@@ -177,10 +199,12 @@ mod tests {
     #[test]
     fn test_panic_releases_lock() {
         let lock = Arc::new(Lock::new(1));
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let pk = 1u64;
         assert!(lock.is_locked());
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            let _guard = lock.clone().guard();
+            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), lock_map.clone(), pk);
             panic!("test panic");
         }));
 
@@ -194,15 +218,16 @@ mod tests {
         let lock1 = Arc::new(Lock::new(1));
         let lock2 = Arc::new(Lock::new(2));
         let lock3 = Arc::new(Lock::new(3));
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
 
         assert!(lock1.is_locked());
         assert!(lock2.is_locked());
         assert!(lock3.is_locked());
 
         {
-            let _guard1 = lock1.clone().guard();
-            let _guard2 = lock2.clone().guard();
-            let _guard3 = lock3.clone().guard();
+            let _guard1 = LockGuard::<FullRowLock, u64>::new(lock1.clone(), lock_map.clone(), 1u64);
+            let _guard2 = LockGuard::<FullRowLock, u64>::new(lock2.clone(), lock_map.clone(), 2u64);
+            let _guard3 = LockGuard::<FullRowLock, u64>::new(lock3.clone(), lock_map.clone(), 3u64);
 
             assert!(lock1.is_locked());
             assert!(lock2.is_locked());
@@ -217,6 +242,32 @@ mod tests {
     #[test]
     fn test_guard_is_send() {
         fn assert_send<T: Send>() {}
-        assert_send::<LockGuard>();
+        // LockGuard is Send if LockType and PrimaryKey are Send
+        assert_send::<LockGuard<FullRowLock, u64>>();
+    }
+
+    #[tokio::test]
+    async fn test_lock_cleanup_on_guard_drop() {
+        use crate::lock::FullRowLock;
+        use crate::lock::RowLock;
+
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let pk = 42u64;
+
+        // Create and insert a lock
+        let (lock_type, lock) = FullRowLock::with_lock(lock_map.next_id());
+        let rw_lock = Arc::new(tokio::sync::RwLock::new(lock_type));
+        lock_map.insert(pk, rw_lock);
+
+        // Verify the lock is in the map
+        assert!(lock_map.get(&pk).is_some());
+
+        // Create a guard and drop it
+        {
+            let _guard = LockGuard::new(lock, lock_map.clone(), pk);
+        }
+
+        // Verify the lock entry was removed from the map
+        assert!(lock_map.get(&pk).is_none());
     }
 }

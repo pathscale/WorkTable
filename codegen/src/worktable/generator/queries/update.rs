@@ -64,21 +64,20 @@ impl Generator {
         } else {
             quote! {
                 drop(_guard);
-                let _guard = {
-                   #full_row_lock
-                }.guard();
+                let op_lock = { #full_row_lock };
+                let _guard = LockGuard::new(
+                   op_lock,
+                   self.0.lock_manager.clone(),
+                   pk.clone(),
+                );
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 if let Err(e) = self.reinsert(row_old, row).await {
                     self.0.update_state.remove(&pk);
-                    drop(_guard);
-                    self.0.lock_manager.remove_with_lock_check(&pk);
 
                     return Err(e);
                 }
 
                 self.0.update_state.remove(&pk);
-                drop(_guard);
-                self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                 return core::result::Result::Ok(());
             }
@@ -87,25 +86,19 @@ impl Generator {
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
-                let _guard = {
-                    #full_row_lock
-                }.guard();
+                let op_lock = { #full_row_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
 
-                let mut link: Link = match self.0
+                let mut link: Link = self.0
                     .primary_index
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value.into())
-                    .ok_or(WorkTableError::NotFound)
-                {
-                    Ok(l) => l,
-                    Err(e) => {
-                        drop(_guard);
-                        self.0.lock_manager.remove_with_lock_check(&pk);
-
-                        return Err(e);
-                    }
-                };
+                    .ok_or(WorkTableError::NotFound)?;
 
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 self.0.update_state.insert(pk.clone(), row_old);
@@ -126,9 +119,6 @@ impl Generator {
                 #diff_process_remove
 
                 self.0.update_state.remove(&pk);
-
-                drop(_guard);
-                self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                 #persist_call
 
@@ -265,26 +255,22 @@ impl Generator {
                 let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    // CRITICAL: Drop the outer guard first before creating a new one for reinsert
                     drop(_guard);
-                    let _guard = {
-                        #full_row_lock
-                    }.guard();
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
 
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
-                    let pk = row_old.get_primary_key().clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
                         self.0.update_state.remove(&pk);
-                        drop(_guard);
-                        self.0.lock_manager.remove_with_lock_check(&pk);
 
                         return Err(e);
                     }
-
-                    drop(_guard);
-                    self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -476,24 +462,19 @@ impl Generator {
             where #pk_ident: From<Pk>
             {
                 let pk = pk.into();
-                let _guard = {
-                    #custom_lock
-                }.guard();
+                let op_lock = { #custom_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
 
-                let mut link: Link = match self.0
+                let mut link: Link = self.0
                         .primary_index
                         .pk_map
                         .get(&pk)
                         .map(|v| v.get().value.into())
-                        .ok_or(WorkTableError::NotFound) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        drop(_guard);
-                        self.0.lock_manager.remove_with_lock_check(&pk);
-
-                        return Err(e);
-                    }
-                };
+                        .ok_or(WorkTableError::NotFound)?;
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
@@ -508,9 +489,6 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
-
-                drop(_guard);
-                self.0.lock_manager.remove_with_lock_check(&pk);
 
                 #persist_call
 
@@ -571,30 +549,23 @@ impl Generator {
                 let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    // CRITICAL: First remove and drop the existing guard to unlock before acquiring full row lock
-                    let _old_guard = guards.remove(&pk).expect("guard should exist for this pk");
-                    drop(_old_guard);
+                    let old_guard = guards.remove(&pk).expect("guard should exist for this pk");
+                    drop(old_guard);
 
-                    let _guard = {
-                        #full_row_lock
-                    }.guard();
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
                         self.0.update_state.remove(&pk);
-                        drop(_guard);
-                        self.0.lock_manager.remove_with_lock_check(&pk);
                         return Err(e);
                     }
 
-                    drop(_guard);
-                    self.0.lock_manager.remove_with_lock_check(&pk);
-                    // Re-acquire a new guard and insert back for the final unlock loop
-                    let new_guard = {
-                        #custom_lock_for_size_check
-                    }.guard();
-                    guards.insert(pk, new_guard);
                     continue;
                 }
             }
@@ -620,14 +591,11 @@ impl Generator {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
                 let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
 
-                // Acquire ALL locks as guards upfront to prevent deadlock
-                let mut guards: std::collections::HashMap<_, worktable::lock::LockGuard> = std::collections::HashMap::new();
+                let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
                 for link in links.iter() {
                     let pk = self.0.data.select_non_ghosted(*link)?.get_primary_key().clone();
-                    let lock = {
-                        #custom_lock
-                    };
-                    guards.insert(pk, lock.guard());
+                    let __op_lock = { #custom_lock };
+                    guards.insert(pk, LockGuard::new(__op_lock, self.0.lock_manager.clone(), pk.clone()));
                 }
 
                 let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
@@ -656,12 +624,8 @@ impl Generator {
 
                     #persist_call
 
-                    // Remove guard, drop it to unlock, then remove from LockMap
-                    let _guard = guards.remove(&pk).expect("guard should exist for this pk");
-                    drop(_guard);
-                    self.0.lock_manager.remove_with_lock_check(&pk);
+                    guards.remove(&pk);
                 }
-                // All remaining guards (error paths) dropped automatically here
                 core::result::Result::Ok(())
             }
         }
@@ -727,23 +691,18 @@ impl Generator {
 
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
 
-                let _guard = {
-                    #custom_lock
-                }.guard();
+                let op_lock = { #custom_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
 
                 let link = loop {
-                    let link = match self.0.indexes.#index
+                    let link = self.0.indexes.#index
                         .get(#by)
                         .map(|v| v.get().value.into())
-                        .ok_or(WorkTableError::NotFound) {
-                        Ok(l) => l,
-                        Err(e) => {
-                            drop(_guard);
-                            self.0.lock_manager.remove_with_lock_check(&pk);
-
-                            return Err(e);
-                        }
-                    };
+                        .ok_or(WorkTableError::NotFound)?;
 
                     if let Err(e) = self.0.data.select_non_vacuumed(link) {
                         if e.is_vacuumed() {
@@ -767,9 +726,6 @@ impl Generator {
                 }
 
                 #diff_process_remove
-
-                drop(_guard);
-                self.0.lock_manager.remove_with_lock_check(&pk);
 
                 #persist_call
 

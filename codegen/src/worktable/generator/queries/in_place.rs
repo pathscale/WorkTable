@@ -109,9 +109,12 @@ impl Generator {
             where #pk_type: From<Pk>
             {
                 let pk: #pk_type = by.into();
-                let _guard = {
-                    #custom_lock
-                }.guard();
+                let __op_lock = { #custom_lock };
+                let _guard = LockGuard::new(
+                    __op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
                 let link = self
                     .0
                     .primary_index.pk_map
@@ -124,9 +127,6 @@ impl Generator {
                         .with_mut_ref(link, move |archived| f(#column_fields))
                         .map_err(WorkTableError::PagesError)?
                     };
-
-                drop(_guard);
-                self.0.lock_manager.remove_with_lock_check(&pk);
 
                 Ok(())
             }
