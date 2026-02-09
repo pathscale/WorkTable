@@ -595,8 +595,8 @@ impl Generator {
                 let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
                 for link in links.iter() {
                     let pk = self.0.data.select_non_ghosted(*link)?.get_primary_key().clone();
-                    let __op_lock = { #custom_lock };
-                    guards.insert(pk.clone(), LockGuard::new(__op_lock, self.0.lock_manager.clone(), pk.clone()));
+                    let op_lock = { #custom_lock };
+                    guards.insert(pk.clone(), LockGuard::new(op_lock, self.0.lock_manager.clone(), pk.clone()));
                 }
 
                 let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();

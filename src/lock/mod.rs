@@ -19,8 +19,9 @@ pub use row_lock::{FullRowLock, RowLock};
 
 /// RAII guard that automatically unlocks a [`Lock`] when dropped.
 ///
-/// The [`Lock`] is automatically released when the guard is dropped, or can be
-/// explicitly released early using the `unlock()` method.
+/// The [`Lock`] is automatically released when the [`LockGuard`] is
+/// [`Drop`]ped, or can be explicitly released early using the `unlock()`
+/// method.
 ///
 /// The guard will also attempt to remove the lock entry from the map on drop
 /// (preventing memory leaks).
@@ -28,7 +29,7 @@ pub struct LockGuard<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
     lock: Arc<Lock>,
     lock_map: Arc<LockMap<LockType, PrimaryKey>>,
     primary_key: PrimaryKey,
-    /// Marker to make this type `!Sync` (but still `Send`)
+    /// Marker to make this type ![`Sync`] (but still [`Send`])
     _not_sync: PhantomData<Cell<()>>,
 }
 
@@ -37,7 +38,8 @@ where
     LockType: RowLock,
     PrimaryKey: Hash + Eq + Debug + Clone,
 {
-    /// Creates a new guard that will clean up the lock entry from the map on drop.
+    /// Creates a new [`LockGuard`] that will clean up the [`Lock`] entry from
+    /// the [`LockMap`] on [`Drop`].
     pub fn new(
         lock: Arc<Lock>,
         lock_map: Arc<LockMap<LockType, PrimaryKey>>,
@@ -51,7 +53,7 @@ where
         }
     }
 
-    /// Explicitly unlocks the lock before the guard is dropped.
+    /// Explicitly unlocks the [`Lock`] before the [`LockGuard`] is [`Drop`]ped.
     pub fn unlock(self) {
         self.lock.unlock();
         self.lock_map.remove_with_lock_check(&self.primary_key);
@@ -65,7 +67,6 @@ where
 {
     fn drop(&mut self) {
         self.lock.unlock();
-        // Remove from lock map after unlocking
         self.lock_map.remove_with_lock_check(&self.primary_key);
     }
 }

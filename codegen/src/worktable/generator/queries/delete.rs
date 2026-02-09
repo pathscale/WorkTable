@@ -44,9 +44,9 @@ impl Generator {
             where #pk_ident: From<Pk>
             {
                 let pk: #pk_ident = pk.into();
-                let __op_lock = { #full_row_lock };
+                let op_lock = { #full_row_lock };
                 let _guard = LockGuard::new(
-                    __op_lock,
+                    op_lock,
                     self.0.lock_manager.clone(),
                     pk.clone(),
                 );
