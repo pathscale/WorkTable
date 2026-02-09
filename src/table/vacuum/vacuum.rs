@@ -16,7 +16,8 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
-use crate::prelude::{Lock, LockMap, OffsetEqLink, RowLock, TablePrimaryKey};
+use crate::lock::{Lock, LockMap, RowLock};
+use crate::prelude::{OffsetEqLink, TablePrimaryKey};
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
@@ -269,8 +270,9 @@ where
                 .save_raw_row(&raw_data)
                 .expect("page is not full as checked on links collection");
             self.update_index_after_move(pk.clone(), from_link.0, new_link);
-            self.lock_manager.remove_with_lock_check(&pk);
+
             lock.unlock();
+            self.lock_manager.remove_with_lock_check(&pk);
         }
 
         (from_page_will_be_moved, to_page_will_be_filled)

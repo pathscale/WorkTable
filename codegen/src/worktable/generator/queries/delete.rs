@@ -44,14 +44,14 @@ impl Generator {
             where #pk_ident: From<Pk>
             {
                 let pk: #pk_ident = pk.into();
-                let lock = {
-                    #full_row_lock
-                };
+                let op_lock = { #full_row_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
 
                 #delete_logic
-
-                lock.unlock();  // Releases locks
-                self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                 core::result::Result::Ok(())
             }
@@ -113,8 +113,6 @@ impl Generator {
                         .ok_or(WorkTableError::NotFound) {
                     Ok(l) => l,
                     Err(e) => {
-                        lock.unlock();  // Releases locks
-                        self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
                         return Err(e);
                     }
                 };

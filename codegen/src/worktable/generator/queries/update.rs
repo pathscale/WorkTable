@@ -64,21 +64,21 @@ impl Generator {
         } else {
             quote! {
                 if true {
-                    lock.unlock();  // Releases locks
-                    let lock = {
-                       #full_row_lock
-                    };
+                    drop(_guard);
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
                     let row_old = self.0.data.select_non_ghosted(link)?;
                     if let Err(e) = self.reinsert(row_old, row).await {
                         self.0.update_state.remove(&pk);
-                        lock.unlock();
 
                         return Err(e);
                     }
 
                     self.0.update_state.remove(&pk);
-                    lock.unlock();
-                    self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -88,25 +88,19 @@ impl Generator {
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
-                let lock = {
-                    #full_row_lock
-                };
+                let op_lock = { #full_row_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
 
-                let mut link: Link = match self.0
+                let mut link: Link = self.0
                     .primary_index
                     .pk_map
                     .get(&pk)
                     .map(|v| v.get().value.into())
-                    .ok_or(WorkTableError::NotFound)
-                {
-                    Ok(l) => l,
-                    Err(e) => {
-                        lock.unlock();
-                        self.0.lock_manager.remove_with_lock_check(&pk);
-
-                        return Err(e);
-                    }
-                };
+                    .ok_or(WorkTableError::NotFound)?;
 
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 self.0.update_state.insert(pk.clone(), row_old);
@@ -127,9 +121,6 @@ impl Generator {
                 #diff_process_remove
 
                 self.0.update_state.remove(&pk);
-
-                lock.unlock();  // Releases locks
-                self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                 #persist_call
 
@@ -266,24 +257,22 @@ impl Generator {
                 let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    lock.unlock();
-                    let lock = {
-                        #full_row_lock
-                    };
+                    drop(_guard);
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
 
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
-                    let pk = row_old.get_primary_key().clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
                         self.0.update_state.remove(&pk);
-                        lock.unlock();
 
                         return Err(e);
                     }
-
-                    lock.unlock();  // Releases locks
-                    self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
 
                     return core::result::Result::Ok(());
                 }
@@ -475,24 +464,19 @@ impl Generator {
             where #pk_ident: From<Pk>
             {
                 let pk = pk.into();
-                let lock = {
-                    #custom_lock
-                };
+                let op_lock = { #custom_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
 
-                let mut link: Link = match self.0
+                let mut link: Link = self.0
                         .primary_index
                         .pk_map
                         .get(&pk)
                         .map(|v| v.get().value.into())
-                        .ok_or(WorkTableError::NotFound) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        lock.unlock();
-                        self.0.lock_manager.remove_with_lock_check(&pk);
-
-                        return Err(e);
-                    }
-                };
+                        .ok_or(WorkTableError::NotFound)?;
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
@@ -507,9 +491,6 @@ impl Generator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
-
-                lock.unlock();
-                self.0.lock_manager.remove_with_lock_check(&pk);
 
                 #persist_call
 
@@ -569,27 +550,24 @@ impl Generator {
                 let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    let op_lock = locks.remove(&pk).expect("should not be deleted as links are unique");
-                    op_lock.unlock();
-                    let lock = {
-                        #full_row_lock
-                    };
+                    let old_guard = guards.remove(&pk).expect("guard should exist for this pk");
+                    drop(old_guard);
+
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
                         self.0.update_state.remove(&pk);
-                        lock.unlock();
-
                         return Err(e);
                     }
 
-                    lock.unlock();  // Releases locks
-                    self.0.lock_manager.remove_with_lock_check(&pk); // Removes locks
-
                     continue;
-                } else {
-                    pk_to_unlock.insert(pk.clone(), locks.remove(&pk).expect("should not be deleted as links are unique"));
                 }
             }
         } else {
@@ -614,17 +592,14 @@ impl Generator {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
                 let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
 
-                let mut locks = std::collections::HashMap::new();
+                let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
                 for link in links.iter() {
                     let pk = self.0.data.select_non_ghosted(*link)?.get_primary_key().clone();
-                    let op_lock = {
-                        #custom_lock
-                    };
-                    locks.insert(pk, op_lock);
+                    let op_lock = { #custom_lock };
+                    guards.insert(pk.clone(), LockGuard::new(op_lock, self.0.lock_manager.clone(), pk.clone()));
                 }
 
                 let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
-                let mut pk_to_unlock: std::collections::HashMap<_, std::sync::Arc<Lock>> = std::collections::HashMap::new();
                 let op_id = OperationId::Multi(uuid::Uuid::now_v7());
                 for link in links.into_iter() {
                     let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
@@ -649,10 +624,8 @@ impl Generator {
                     #diff_process_remove
 
                     #persist_call
-                }
-                for (pk, lock) in pk_to_unlock {
-                    lock.unlock();
-                    self.0.lock_manager.remove_with_lock_check(&pk);
+
+                    guards.remove(&pk);
                 }
                 core::result::Result::Ok(())
             }
@@ -719,23 +692,18 @@ impl Generator {
 
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
 
-                let lock = {
-                    #custom_lock
-                };
+                let op_lock = { #custom_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
 
                 let link = loop {
-                    let link = match self.0.indexes.#index
+                    let link = self.0.indexes.#index
                         .get(#by)
                         .map(|v| v.get().value.into())
-                        .ok_or(WorkTableError::NotFound) {
-                        Ok(l) => l,
-                        Err(e) => {
-                            lock.unlock();
-                            self.0.lock_manager.remove_with_lock_check(&pk);
-
-                            return Err(e);
-                        }
-                    };
+                        .ok_or(WorkTableError::NotFound)?;
 
                     if let Err(e) = self.0.data.select_non_vacuumed(link) {
                         if e.is_vacuumed() {
@@ -759,9 +727,6 @@ impl Generator {
                 }
 
                 #diff_process_remove
-
-                lock.unlock();
-                self.0.lock_manager.remove_with_lock_check(&pk);
 
                 #persist_call
 

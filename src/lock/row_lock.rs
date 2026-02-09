@@ -1,6 +1,9 @@
-use crate::lock::{Lock, LockWait};
 use std::collections::HashSet;
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::sync::Arc;
+
+use crate::lock::{Lock, LockGuard, LockMap, LockWait};
 
 pub trait RowLock {
     /// Checks if any column of this row is locked.
@@ -30,6 +33,16 @@ pub struct FullRowLock {
 impl FullRowLock {
     pub fn unlock(&self) {
         self.l.unlock();
+    }
+
+    /// Creates a [`LockGuard`] that will automatically unlock this lock when
+    /// dropped.
+    pub fn guard<PrimaryKey: Clone + Hash + Eq + Debug>(
+        self,
+        lock_map: Arc<LockMap<Self, PrimaryKey>>,
+        primary_key: PrimaryKey,
+    ) -> LockGuard<Self, PrimaryKey> {
+        LockGuard::new(self.l, lock_map, primary_key)
     }
 
     pub fn wait(&self) -> LockWait {
