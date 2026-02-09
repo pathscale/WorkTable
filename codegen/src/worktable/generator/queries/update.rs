@@ -63,23 +63,25 @@ impl Generator {
             quote! {}
         } else {
             quote! {
-                drop(_guard);
-                let op_lock = { #full_row_lock };
-                let _guard = LockGuard::new(
-                   op_lock,
-                   self.0.lock_manager.clone(),
-                   pk.clone(),
-                );
-                let row_old = self.0.data.select_non_ghosted(link)?;
-                if let Err(e) = self.reinsert(row_old, row).await {
+                if true {
+                    drop(_guard);
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
+                    let row_old = self.0.data.select_non_ghosted(link)?;
+                    if let Err(e) = self.reinsert(row_old, row).await {
+                        self.0.update_state.remove(&pk);
+
+                        return Err(e);
+                    }
+
                     self.0.update_state.remove(&pk);
 
-                    return Err(e);
+                    return core::result::Result::Ok(());
                 }
-
-                self.0.update_state.remove(&pk);
-
-                return core::result::Result::Ok(());
             }
         };
 
@@ -524,7 +526,6 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
-        let custom_lock_for_size_check = self.gen_custom_lock_for_update(lock_ident.clone());
         let size_check = if let Some(f) = unsized_fields {
             let fields_check: Vec<_> = f
                 .iter()
@@ -595,7 +596,7 @@ impl Generator {
                 for link in links.iter() {
                     let pk = self.0.data.select_non_ghosted(*link)?.get_primary_key().clone();
                     let __op_lock = { #custom_lock };
-                    guards.insert(pk, LockGuard::new(__op_lock, self.0.lock_manager.clone(), pk.clone()));
+                    guards.insert(pk.clone(), LockGuard::new(__op_lock, self.0.lock_manager.clone(), pk.clone()));
                 }
 
                 let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
