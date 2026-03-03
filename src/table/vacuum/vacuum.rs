@@ -4,23 +4,23 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
 
-use data_bucket::Link;
 use data_bucket::page::PageId;
+use data_bucket::Link;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 use rkyv::rancor::Strategy;
-use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
+use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::lock::{Lock, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
+use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
-use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
 };
@@ -271,6 +271,8 @@ where
                 .expect("page is not full as checked on links collection");
             self.update_index_after_move(pk.clone(), from_link.0, new_link);
 
+            println!("Moved {:?} from {:?} to {:?}", pk, from_link, new_link);
+
             lock.unlock();
             self.lock_manager.remove_with_lock_check(&pk);
         }
@@ -390,7 +392,7 @@ mod tests {
     use std::sync::Arc;
 
     use indexset::core::pair::Pair;
-    use worktable_codegen::{MemStat, worktable};
+    use worktable_codegen::{worktable, MemStat};
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;

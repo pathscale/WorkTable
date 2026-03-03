@@ -8,8 +8,8 @@ use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
-    AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow,
-    TableSecondaryIndex, TableSecondaryIndexCdc, convert_change_events, in_memory,
+    convert_change_events, in_memory, AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex,
+    TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
@@ -19,9 +19,9 @@ use indexset::core::pair::Pair;
 use performance_measurement_codegen::performance_measurement;
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
-use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
+use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::fmt::Debug;
@@ -197,12 +197,14 @@ where
             .data
             .insert(row.clone())
             .map_err(WorkTableError::PagesError)?;
+        println!("Inserting {:?} to {:?}", pk, link);
         if self
             .primary_index
             .insert_checked(pk.clone(), link)
             .is_none()
         {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
+            println!("Already exists {:?}", pk);
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
         };
         if let Err(e) = self.indexes.save_row(row.clone(), link) {
