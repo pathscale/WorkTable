@@ -118,6 +118,7 @@ where
                     if let Some(l) = left_link {
                         self.empty_links.push(l);
                     }
+                    println!("Inserted in empty link");
                     return Ok(link);
                 }
                 Err(e) => match e {
@@ -144,6 +145,7 @@ where
             match link {
                 Ok(link) => {
                     self.row_count.fetch_add(1, Ordering::Relaxed);
+                    println!("Inserted in new place");
                     return Ok(link);
                 }
                 Err(e) => match e {
@@ -401,6 +403,7 @@ where
     }
 
     pub fn mark_page_empty(&self, page_id: PageId) {
+        println!("Mark {:?} as empty", page_id);
         if u32::from(page_id) != self.current_page_id.load(Ordering::Acquire) {
             let mut g = self.empty_pages.write();
             g.push_back(page_id);
