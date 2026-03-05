@@ -4,25 +4,25 @@ use parking_lot::RwLock;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
-    api::high::HighDeserializer, rancor::Strategy, ser::{allocator::ArenaHandle, sharing::Share, Serializer}, util::AlignedVec,
-    Archive,
-    Deserialize,
-    Portable,
-    Serialize,
+    Archive, Deserialize, Portable, Serialize,
+    api::high::HighDeserializer,
+    rancor::Strategy,
+    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
+    util::AlignedVec,
 };
 use std::collections::VecDeque;
 use std::{
     fmt::Debug,
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
     sync::Arc,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::prelude::ArchivedRowWrapper;
 use crate::{
     in_memory::{
-        row::{RowWrapper, StorableRow}, Data, DataExecutionError,
-        DATA_INNER_LENGTH,
+        DATA_INNER_LENGTH, Data, DataExecutionError,
+        row::{RowWrapper, StorableRow},
     },
     prelude::Link,
 };
@@ -484,6 +484,10 @@ where
 
         self
     }
+
+    pub fn current_page_id(&self) -> PageId {
+        self.current_page_id.load(Ordering::Acquire).into()
+    }
 }
 
 #[derive(Debug, Display, Error, From, PartialEq)]
@@ -510,8 +514,8 @@ impl ExecutionError {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
     use std::time::Instant;
 
@@ -521,7 +525,7 @@ mod tests {
 
     use crate::in_memory::data::Data;
     use crate::in_memory::pages::{DataPages, ExecutionError};
-    use crate::in_memory::{PagesExecutionError, RowWrapper, StorableRow, DATA_INNER_LENGTH};
+    use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::ArchivedRowWrapper;
 
     #[derive(

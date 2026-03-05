@@ -4,23 +4,23 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
 
-use data_bucket::page::PageId;
 use data_bucket::Link;
+use data_bucket::page::PageId;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 use rkyv::rancor::Strategy;
+use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
-use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::lock::{Lock, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
-use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
+use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
 };
@@ -138,6 +138,10 @@ where
         let info_iter = per_page_info.into_iter();
         for info in info_iter {
             let page_from = info.page_id;
+            if self.data_pages.current_page_id() == page_from {
+                // don't touch current page or else inserts will be broken
+                continue;
+            }
             loop {
                 let page_to = if let Some(id) = defragmented_pages.pop_front() {
                     id
@@ -392,7 +396,7 @@ mod tests {
     use std::sync::Arc;
 
     use indexset::core::pair::Pair;
-    use worktable_codegen::{worktable, MemStat};
+    use worktable_codegen::{MemStat, worktable};
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;
