@@ -1037,6 +1037,7 @@ impl VacuumTestWorkTable {
         {
             Ok(l) => l,
             Err(e) => {
+                println!("Error getting primary index: {} for {:?}", e, pk.clone());
                 return Err(e);
             }
         };
