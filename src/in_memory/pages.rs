@@ -4,25 +4,25 @@ use parking_lot::RwLock;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
-    Archive, Deserialize, Portable, Serialize,
-    api::high::HighDeserializer,
-    rancor::Strategy,
-    ser::{Serializer, allocator::ArenaHandle, sharing::Share},
-    util::AlignedVec,
+    api::high::HighDeserializer, rancor::Strategy, ser::{allocator::ArenaHandle, sharing::Share, Serializer}, util::AlignedVec,
+    Archive,
+    Deserialize,
+    Portable,
+    Serialize,
 };
 use std::collections::VecDeque;
 use std::{
     fmt::Debug,
-    sync::Arc,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::Arc,
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::prelude::ArchivedRowWrapper;
 use crate::{
     in_memory::{
-        DATA_INNER_LENGTH, Data, DataExecutionError,
-        row::{RowWrapper, StorableRow},
+        row::{RowWrapper, StorableRow}, Data, DataExecutionError,
+        DATA_INNER_LENGTH,
     },
     prelude::Link,
 };
@@ -264,6 +264,9 @@ where
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
         let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
         if gen_row.is_ghosted() {
+            return Err(ExecutionError::Ghosted);
+        }
+        if gen_row.is_deleted() {
             return Err(ExecutionError::Ghosted);
         }
         Ok(gen_row.get_inner())
@@ -514,8 +517,8 @@ impl ExecutionError {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::thread;
     use std::time::Instant;
 
@@ -525,7 +528,7 @@ mod tests {
 
     use crate::in_memory::data::Data;
     use crate::in_memory::pages::{DataPages, ExecutionError};
-    use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
+    use crate::in_memory::{PagesExecutionError, RowWrapper, StorableRow, DATA_INNER_LENGTH};
     use crate::prelude::ArchivedRowWrapper;
 
     #[derive(

@@ -2,25 +2,25 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use data_bucket::Link;
 use data_bucket::page::PageId;
+use data_bucket::Link;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 use rkyv::rancor::Strategy;
-use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
+use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::lock::{Lock, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
+use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
-use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
 };
@@ -123,6 +123,10 @@ where
         let registry = self.data_pages.empty_links_registry();
         let mut per_page_info = registry.get_per_page_info();
         let _registry_lock = registry.lock_vacuum().await;
+
+        // to avoid some rewrites of ops that used link from empty links registry
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         per_page_info.sort_by(|l, r| {
             OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio))
         });
@@ -396,7 +400,7 @@ mod tests {
     use std::sync::Arc;
 
     use indexset::core::pair::Pair;
-    use worktable_codegen::{MemStat, worktable};
+    use worktable_codegen::{worktable, MemStat};
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;

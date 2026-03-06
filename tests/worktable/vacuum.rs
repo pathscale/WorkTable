@@ -1052,6 +1052,7 @@ impl VacuumTestWorkTable {
             .data
             .delete(link)
             .map_err(WorkTableError::PagesError)?;
+        println!("Deleted link {:?} for {:?}", link, pk);
         core::result::Result::Ok(())
     }
     pub async fn delete_without_lock<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -1331,8 +1332,9 @@ async fn vacuum_loop_test() {
             .indexes
             .value_idx
             .range(..outdated_ts)
-            .map(|(_, l)| table.0.data.select(**l).unwrap())
+            .map(|(_, l)| table.0.data.select_non_ghosted(**l).unwrap())
             .collect::<Vec<_>>();
+        println!("Ids to Remove {:?}", ids_to_remove);
         for row in ids_to_remove {
             table.delete(row.id).await.unwrap();
             println!("Removed {:?}", row.id);
