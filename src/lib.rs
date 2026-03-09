@@ -25,7 +25,7 @@ pub mod prelude {
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
         DeleteOperation, IndexTableOfContents, InsertOperation, Operation, OperationId,
-        PersistenceConfig, PersistenceEngine, PersistenceEngineOps, PersistenceTask, SpaceData,
+        PersistenceConfig, DiskConfig, DiskPersistenceEngine, PersistenceEngine, PersistenceTask, SpaceData,
         SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps,
         UpdateOperation, map_index_pages_to_toc_and_general,
         map_unsized_index_pages_to_toc_and_general, validate_events,

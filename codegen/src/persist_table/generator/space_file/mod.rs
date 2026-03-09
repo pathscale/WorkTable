@@ -237,7 +237,7 @@ impl Generator {
                 };
 
                 let path = format!("{}/{}", config.tables_path.as_str(), #dir_name);
-                let engine: #engine_ident = PersistenceEngine::from_table_files_path(path)
+                let engine: #engine_ident = DiskPersistenceEngine::from_table_files_path(path)
                                 .await
                                 .expect("should not panic as SpaceFile is ok");
                 #wt_ident(

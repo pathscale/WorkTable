@@ -43,7 +43,7 @@ impl Generator {
         };
 
         quote! {
-            pub type #ident = PersistenceEngine<
+            pub type #ident = DiskPersistenceEngine<
                 SpaceData<
                     <<#primary_key_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                     { #inner_const_name},

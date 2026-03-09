@@ -5,8 +5,8 @@ mod space;
 mod task;
 
 use crate::persistence::operation::BatchOperation;
-pub use engine::PersistenceEngine;
-pub use manager::PersistenceConfig;
+pub use engine::DiskPersistenceEngine;
+pub use manager::DiskConfig;
 pub use operation::{
     DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,
@@ -19,13 +19,22 @@ pub use space::{
 use std::future::Future;
 pub use task::PersistenceTask;
 
-pub trait PersistenceEngineOps<
+// Re-export for backward compatibility
+pub use DiskConfig as PersistenceConfig;
+
+pub trait PersistenceEngine<
     PrimaryKeyGenState,
     PrimaryKey,
     SecondaryIndexEvents,
     AvailableIndexes,
 >
 {
+    type Config;
+
+    fn new(config: Self::Config) -> impl Future<Output = eyre::Result<Self>> + Send
+    where
+        Self: Sized;
+
     fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,

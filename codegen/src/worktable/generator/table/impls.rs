@@ -86,7 +86,7 @@ impl Generator {
                     inner.table_name = #table_name;
                     #index_setup
                     let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
-                    let engine: #engine = PersistenceEngine::from_table_files_path(table_files_path).await?;
+                    let engine: #engine = DiskPersistenceEngine::from_table_files_path(table_files_path).await?;
                     core::result::Result::Ok(Self(
                         inner,
                         config,

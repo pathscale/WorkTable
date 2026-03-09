@@ -1,7 +1,7 @@
 use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
-    PersistenceEngineOps, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
+    PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
 };
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 use futures::StreamExt;
@@ -13,8 +13,23 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
 
+#[derive(Debug, Clone)]
+pub struct DiskConfig {
+    pub config_path: String,
+    pub tables_path: String,
+}
+
+impl DiskConfig {
+    pub fn new<S1: Into<String>, S2: Into<String>>(config_path: S1, table_files_dir: S2) -> Self {
+        Self {
+            config_path: config_path.into(),
+            tables_path: table_files_dir.into(),
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct PersistenceEngine<
+pub struct DiskPersistenceEngine<
     SpaceData,
     SpacePrimaryIndex,
     SpaceSecondaryIndexes,
@@ -42,7 +57,7 @@ impl<
     AvailableIndexes,
     PrimaryKeyGenState,
 >
-    PersistenceEngine<
+    DiskPersistenceEngine<
         SpaceData,
         SpacePrimaryIndex,
         SpaceSecondaryIndexes,
@@ -83,8 +98,8 @@ impl<
     SecondaryIndexEvents,
     AvailableIndexes,
     PrimaryKeyGenState,
-> PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
-    for PersistenceEngine<
+> PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
+    for DiskPersistenceEngine<
         SpaceData,
         SpacePrimaryIndex,
         SpaceSecondaryIndexes,
@@ -104,6 +119,24 @@ where
     PrimaryKeyGenState: Clone + Debug + Send,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send,
 {
+    type Config = DiskConfig;
+
+    async fn new(config: Self::Config) -> eyre::Result<Self>
+    where
+        Self: Sized,
+    {
+        let table_path = Path::new(&config.tables_path);
+        if !table_path.exists() {
+            fs::create_dir_all(table_path)?;
+        }
+
+        Ok(Self {
+            data: SpaceData::from_table_files_path(config.tables_path.clone()).await?,
+            primary_index: SpacePrimaryIndex::primary_from_table_files_path(config.tables_path.clone()).await?,
+            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path).await?,
+            phantom_data: PhantomData,
+        })
+    }
     async fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
