@@ -217,6 +217,9 @@ where
             let index = page_id_mapper(page_id.into());
             let page = pages[index].clone();
             page.reset();
+
+            println!("Used empty page {:?}", page_id);
+
             return page;
         }
 
@@ -224,6 +227,9 @@ where
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
         let page = Arc::new(Data::new(index.into()));
         pages.push(page.clone());
+
+        println!("Used new page {:?}", page_id);
+
         page
     }
 

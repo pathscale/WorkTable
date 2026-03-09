@@ -305,8 +305,19 @@ impl TableSecondaryIndex<VacuumTestRow, VacuumTestAvaiableTypes, VacuumTestAvail
         row: VacuumTestRow,
         link: Link,
     ) -> core::result::Result<(), IndexError<VacuumTestAvailableIndexes>> {
-        TableIndex::remove(&self.value_idx, &row.value, link);
-        TableIndex::remove(&self.data_idx, &row.data, link);
+        if let Some(v) = TableIndex::remove(&self.value_idx, &row.value, link) {
+            println!("Delete value from value_idx: {:?}", v);
+        } else {
+            println!(
+                "Not deleted value from value_idx: {:?} {:?}",
+                row.value, link
+            );
+        }
+        if let Some(v) = TableIndex::remove(&self.data_idx, &row.data, link) {
+            println!("Delete value from data_idx: {:?}", v);
+        } else {
+            println!("Not deleted from data_idx: {:?} {:?}", row.data, link);
+        }
         core::result::Result::Ok(())
     }
     fn process_difference_insert(
