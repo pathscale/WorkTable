@@ -109,7 +109,6 @@ impl Generator {
         let index_ident = name_generator.get_index_type_ident();
         let task_ident = name_generator.get_persistence_task_ident();
         let engine_ident = name_generator.get_persistence_engine_ident();
-        let dir_name = name_generator.get_dir_name();
         let const_name = name_generator.get_page_inner_size_const_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
         let lock_type = name_generator.get_lock_type_ident();
@@ -166,7 +165,8 @@ impl Generator {
         };
 
         quote! {
-            pub async fn into_worktable(self, config: DiskConfig) -> #wt_ident {
+            pub async fn into_worktable(self, engine: #engine_ident) -> #wt_ident {
+                let config = engine.config().clone();
                 let mut page_id = 1;
                 let data = self.data.into_iter().map(|p| {
                     let mut data = Data::from_data_page(p);
@@ -193,10 +193,6 @@ impl Generator {
                     pk_phantom: std::marker::PhantomData,
                 };
 
-                let engine_config = DiskConfig::new(config.config_path.clone(), format!("{}/{}", config.tables_path, #dir_name));
-                let engine: #engine_ident = DiskPersistenceEngine::new(engine_config)
-                                .await
-                                .expect("should not panic as SpaceFile is ok");
                 #wt_ident(
                     table,
                     config,

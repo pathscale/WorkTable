@@ -1,3 +1,4 @@
+use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -46,8 +47,9 @@ worktable!(
 );
 
 pub async fn get_empty_test_wt() -> TestPersistWorkTable {
-    let config = DiskConfig::new("tests/data", "tests/data");
-    TestPersistWorkTable::new(config).await.unwrap()
+    let config = DiskConfig::new_with_table_name("tests/data", TestPersistWorkTable::name_snake_case());
+    let engine = DiskPersistenceEngine::new(config).await.unwrap();
+    TestPersistWorkTable::new(engine).await.unwrap()
 }
 
 pub async fn get_test_wt() -> TestPersistWorkTable {

@@ -9,14 +9,12 @@ impl Generator {
         let ident = &self.struct_def.ident;
         let space_info_fn = self.gen_worktable_space_info_fn();
         let persisted_pk_fn = self.gen_worktable_persisted_primary_key_fn();
-        let from_file_fn = self.gen_worktable_from_file_fn();
         let wait_for_ops_fn = self.gen_worktable_wait_for_ops_fn();
 
         quote! {
             impl #ident {
                 #space_info_fn
                 #persisted_pk_fn
-                #from_file_fn
                 #wait_for_ops_fn
             }
         }
@@ -26,25 +24,6 @@ impl Generator {
         quote! {
             pub async fn wait_for_ops(&self) {
                self.2.wait_for_ops().await
-            }
-        }
-    }
-
-    fn gen_worktable_from_file_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
-        let space_ident = name_generator.get_space_file_ident();
-        let wt_ident = name_generator.get_work_table_ident();
-        let dir_name = name_generator.get_dir_name();
-
-        quote! {
-            pub async fn load_from_file(config: DiskConfig) -> eyre::Result<Self> {
-                let filename = format!("{}/{}", config.tables_path.as_str(), #dir_name);
-                if !std::path::Path::new(filename.as_str()).exists() {
-                    return #wt_ident::new(config).await;
-                };
-                let space = #space_ident::parse_file(&filename).await?;
-                let table = space.into_worktable(config).await;
-                Ok(table)
             }
         }
     }

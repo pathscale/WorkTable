@@ -20,9 +20,30 @@ pub mod operation;
 mod space;
 mod task;
 
+/// Trait for persistence configuration types.
+/// Provides access to the table-specific path for file operations.
+pub trait PersistenceConfig {
+    /// Returns the table-specific path for this worktable
+    fn table_path(&self) -> &str;
+}
+
+/// Trait for worktables that can be created/loaded from a persistence engine.
+/// The engine must implement PersistenceEngine and provide access to its config.
+pub trait PersistedWorkTable<E>: Sized
+where
+    E: Send,
+{
+    /// Create a new empty worktable with the given engine
+    fn new(engine: E) -> impl Future<Output = eyre::Result<Self>> + Send;
+
+    /// Load worktable from disk using the engine's config to find files.
+    /// Falls back to `new()` if no files exist.
+    fn load(engine: E) -> impl Future<Output = eyre::Result<Self>> + Send;
+}
+
 pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
 {
-    type Config;
+    type Config: PersistenceConfig;
 
     fn new(config: Self::Config) -> impl Future<Output = eyre::Result<Self>> + Send
     where
@@ -42,4 +63,7 @@ pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents
             AvailableIndexes,
         >,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
+
+    /// Returns the configuration used to create this engine
+    fn config(&self) -> &Self::Config;
 }

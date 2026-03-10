@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::task;
+use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -54,7 +55,7 @@ worktable! (
 #[test]
 #[ignore]
 fn test_concurrent() {
-    let config = DiskConfig::new("tests/data/concurrent/test", "tests/data/concurrent/test");
+    let config = DiskConfig::new_with_table_name("tests/data/concurrent/test", TestConcurrentWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -66,11 +67,8 @@ fn test_concurrent() {
     runtime.block_on(async {
         remove_dir_if_exists("tests/data/concurrent/test".to_string()).await;
         {
-            let table = Arc::new(
-                TestConcurrentWorkTable::load_from_file(config.clone())
-                    .await
-                    .unwrap(),
-            );
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = Arc::new(TestConcurrentWorkTable::load(engine).await.unwrap());
 
             let total: u64 = 5_000;
             let tasks = 8;
@@ -110,11 +108,8 @@ fn test_concurrent() {
             table.wait_for_ops().await;
         }
         {
-            let table = Arc::new(
-                TestConcurrentWorkTable::load_from_file(config.clone())
-                    .await
-                    .unwrap(),
-            );
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = Arc::new(TestConcurrentWorkTable::load(engine).await.unwrap());
             assert_eq!(table.count(), 5_000)
         }
     })

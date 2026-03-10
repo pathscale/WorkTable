@@ -4,14 +4,16 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
 
+use futures::StreamExt;
 use futures::future::Either;
 use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 
-use crate::persistence::operation::{BatchOperation, Operation};
-use crate::persistence::{PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
-use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 use crate::TableSecondaryIndexEventsOps;
+use crate::persistence::operation::{BatchOperation, Operation};
+use crate::persistence::{
+    PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
+};
+use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 
 #[derive(Debug, Clone)]
 pub struct DiskConfig {
@@ -25,6 +27,25 @@ impl DiskConfig {
             config_path: config_path.into(),
             tables_path: table_files_dir.into(),
         }
+    }
+
+    pub fn new_with_table_name<S1: Into<String>, S2: AsRef<str>>(
+        config_path: S1,
+        table_name_snake_case: S2,
+    ) -> Self {
+        let config_path = config_path.into();
+        let table_name = table_name_snake_case.as_ref();
+        let tables_path = format!("{}/{}", config_path.trim_end_matches('/'), table_name);
+        Self {
+            config_path,
+            tables_path,
+        }
+    }
+}
+
+impl PersistenceConfig for DiskConfig {
+    fn table_path(&self) -> &str {
+        &self.tables_path
     }
 }
 
@@ -42,6 +63,7 @@ where
     PrimaryKey: TablePrimaryKey,
     <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState
 {
+    config: DiskConfig,
     pub data: SpaceData,
     pub primary_index: SpacePrimaryIndex,
     pub secondary_indexes: SpaceSecondaryIndexes,
@@ -89,6 +111,7 @@ where
         }
 
         Ok(Self {
+            config: config.clone(),
             data: SpaceData::from_table_files_path(config.tables_path.clone()).await?,
             primary_index: SpacePrimaryIndex::primary_from_table_files_path(
                 config.tables_path.clone(),
@@ -99,6 +122,11 @@ where
             phantom_data: PhantomData,
         })
     }
+
+    fn config(&self) -> &DiskConfig {
+        &self.config
+    }
+
     async fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
