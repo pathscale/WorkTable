@@ -27,7 +27,7 @@ worktable!(
 
 #[test]
 fn test_key() {
-    let config = PersistenceConfig::new("tests/data/key/key", "tests/data/key/key");
+    let config = DiskConfig::new("tests/data/key/key", "tests/data/key/key");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -90,7 +90,7 @@ fn test_key() {
 
 #[test]
 fn test_key_delete_scenario() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/key/delete_scenario",
         "tests/data/key/delete_scenario",
     );
@@ -204,7 +204,7 @@ fn test_key_delete_scenario() {
 
 #[test]
 fn test_key_delete() {
-    let config = PersistenceConfig::new("tests/data/key/delete", "tests/data/key/delete");
+    let config = DiskConfig::new("tests/data/key/delete", "tests/data/key/delete");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -272,7 +272,7 @@ fn test_key_delete() {
 
 #[test]
 fn test_key_delete_all() {
-    let config = PersistenceConfig::new("tests/data/key/delete_all", "tests/data/key/delete_all");
+    let config = DiskConfig::new("tests/data/key/delete_all", "tests/data/key/delete_all");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -343,7 +343,7 @@ fn test_key_delete_all() {
 
 #[test]
 fn test_key_delete_all_and_insert() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/key/delete_all_and_insert",
         "tests/data/key/delete_all_and_insert",
     );
@@ -435,7 +435,7 @@ fn test_key_delete_all_and_insert() {
 
 #[test]
 fn test_key_delete_by_unique() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/key/delete_unique",
         "tests/data/key/delete_unique",
     );
@@ -509,7 +509,7 @@ fn test_key_delete_by_unique() {
 
 #[test]
 fn test_key_delete_by_non_unique() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/key/delete_non_unique",
         "tests/data/key/delete_non_unique",
     );
@@ -582,7 +582,7 @@ fn test_key_delete_by_non_unique() {
 
 #[test]
 fn test_big_amount_reread() {
-    let config = PersistenceConfig::new("tests/data/key/big_amount", "tests/data/key/big_amount");
+    let config = DiskConfig::new("tests/data/key/big_amount", "tests/data/key/big_amount");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

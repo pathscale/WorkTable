@@ -27,7 +27,7 @@ worktable! (
 
 #[test]
 fn test_option_insert_none_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/insert_none",
         "tests/data/option_sync/insert_none",
     );
@@ -70,7 +70,7 @@ fn test_option_insert_none_sync() {
 
 #[test]
 fn test_option_insert_some_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/insert_some",
         "tests/data/option_sync/insert_some",
     );
@@ -113,7 +113,7 @@ fn test_option_insert_some_sync() {
 
 #[test]
 fn test_option_update_full_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/update_full",
         "tests/data/option_sync/update_full",
     );
@@ -166,7 +166,7 @@ fn test_option_update_full_sync() {
 
 #[test]
 fn test_option_update_by_id_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/update_by_id",
         "tests/data/option_sync/update_by_id",
     );
@@ -214,7 +214,7 @@ fn test_option_update_by_id_sync() {
 
 #[test]
 fn test_option_update_none_to_some_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/none_to_some",
         "tests/data/option_sync/none_to_some",
     );
@@ -262,7 +262,7 @@ fn test_option_update_none_to_some_sync() {
 
 #[test]
 fn test_option_update_some_to_none_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/some_to_none",
         "tests/data/option_sync/some_to_none",
     );
@@ -310,7 +310,7 @@ fn test_option_update_some_to_none_sync() {
 
 #[test]
 fn test_option_update_by_another_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/update_by_another",
         "tests/data/option_sync/update_by_another",
     );
@@ -358,7 +358,7 @@ fn test_option_update_by_another_sync() {
 
 #[test]
 fn test_option_update_by_exchange_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/update_by_exchange",
         "tests/data/option_sync/update_by_exchange",
     );
@@ -406,7 +406,7 @@ fn test_option_update_by_exchange_sync() {
 
 #[test]
 fn test_option_multiple_rows_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/multiple_rows",
         "tests/data/option_sync/multiple_rows",
     );
@@ -486,7 +486,7 @@ worktable! (
 
 #[test]
 fn test_option_indexed_insert_none_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/indexed_insert_none",
         "tests/data/option_sync/indexed_insert_none",
     );
@@ -529,7 +529,7 @@ fn test_option_indexed_insert_none_sync() {
 
 #[test]
 fn test_option_indexed_insert_some_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/indexed_insert_some",
         "tests/data/option_sync/indexed_insert_some",
     );
@@ -572,7 +572,7 @@ fn test_option_indexed_insert_some_sync() {
 
 #[test]
 fn test_option_indexed_update_none_to_some_by_id_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/indexed_none_to_some",
         "tests/data/option_sync/indexed_none_to_some",
     );
@@ -620,7 +620,7 @@ fn test_option_indexed_update_none_to_some_by_id_sync() {
 
 #[test]
 fn test_option_indexed_update_some_to_none_by_id_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/indexed_some_to_none",
         "tests/data/option_sync/indexed_some_to_none",
     );
@@ -668,7 +668,7 @@ fn test_option_indexed_update_some_to_none_by_id_sync() {
 
 #[test]
 fn test_option_indexed_update_by_another_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/indexed_update_by_another",
         "tests/data/option_sync/indexed_update_by_another",
     );
@@ -716,7 +716,7 @@ fn test_option_indexed_update_by_another_sync() {
 
 #[test]
 fn test_option_indexed_multiple_rows_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/indexed_multiple_rows",
         "tests/data/option_sync/indexed_multiple_rows",
     );
@@ -787,7 +787,7 @@ fn test_option_indexed_multiple_rows_sync() {
 
 #[test]
 fn test_option_indexed_full_row_update_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/option_sync/indexed_full_update",
         "tests/data/option_sync/indexed_full_update",
     );

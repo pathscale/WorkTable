@@ -1,33 +1,26 @@
+use std::future::Future;
+
+use crate::persistence::operation::BatchOperation;
+
+pub use engine::DiskConfig;
+pub use engine::DiskPersistenceEngine;
+pub use operation::{
+    validate_events, DeleteOperation, InsertOperation, Operation, OperationId, OperationType,
+    UpdateOperation,
+};
+pub use space::{
+    map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex,
+    SpaceIndexOps, SpaceIndexUnsized,
+    SpaceSecondaryIndexOps,
+};
+pub use task::PersistenceTask;
+
 mod engine;
-mod manager;
 pub mod operation;
 mod space;
 mod task;
 
-use crate::persistence::operation::BatchOperation;
-pub use engine::DiskPersistenceEngine;
-pub use manager::DiskConfig;
-pub use operation::{
-    DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
-    validate_events,
-};
-pub use space::{
-    IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
-    SpaceSecondaryIndexOps, map_index_pages_to_toc_and_general,
-    map_unsized_index_pages_to_toc_and_general,
-};
-use std::future::Future;
-pub use task::PersistenceTask;
-
-// Re-export for backward compatibility
-pub use DiskConfig as PersistenceConfig;
-
-pub trait PersistenceEngine<
-    PrimaryKeyGenState,
-    PrimaryKey,
-    SecondaryIndexEvents,
-    AvailableIndexes,
->
+pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
 {
     type Config;
 

@@ -81,12 +81,12 @@ impl Generator {
                 }
             };
             quote! {
-                pub async fn new(config: PersistenceConfig) -> eyre::Result<Self> {
+                pub async fn new(config: DiskConfig) -> eyre::Result<Self> {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
                     #index_setup
-                    let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
-                    let engine: #engine = DiskPersistenceEngine::from_table_files_path(table_files_path).await?;
+                    let engine_config = DiskConfig::new(config.config_path.clone(), format!("{}/{}", config.tables_path, #dir_name));
+                    let engine: #engine = DiskPersistenceEngine::new(engine_config).await?;
                     core::result::Result::Ok(Self(
                         inner,
                         config,

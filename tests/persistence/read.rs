@@ -126,7 +126,7 @@ async fn test_data_parse() {
 
 #[tokio::test]
 async fn test_space_parse() {
-    let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected");
+    let config = DiskConfig::new("tests/data/expected", "tests/data/expected");
     let table = TestPersistWorkTable::load_from_file(config).await.unwrap();
     let expected = get_test_wt().await;
 
@@ -140,7 +140,7 @@ async fn test_space_parse() {
 async fn test_space_parse_no_file() {
     remove_dir_if_exists("tests/non-existent".to_string()).await;
 
-    let config = PersistenceConfig::new("tests/non-existent", "tests/non-existent");
+    let config = DiskConfig::new("tests/non-existent", "tests/non-existent");
     let table = TestPersistWorkTable::load_from_file(config).await.unwrap();
     let expected = get_empty_test_wt().await;
     assert_eq!(

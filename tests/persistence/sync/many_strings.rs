@@ -20,7 +20,7 @@ worktable! (
 
 #[test]
 fn test_space_update_query_pk_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_and_other_sync/update_query_pk",
         "tests/data/unsized_primary_and_other_sync/update_query_pk",
     );
@@ -87,7 +87,7 @@ fn test_space_update_query_pk_sync() {
 
 #[test]
 fn test_space_update_query_pk_many_times_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_and_other_sync/update_query_pk_many",
         "tests/data/unsized_primary_and_other_sync/update_query_pk_many",
     );

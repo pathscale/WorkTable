@@ -14,13 +14,11 @@ impl Generator {
         let type_ = self.gen_space_file_type();
         let impls = self.gen_space_file_impls();
         let worktable_impl = self.gen_space_file_worktable_impl();
-        let space_persist_impl = self.gen_space_persist_impl();
 
         quote! {
             #type_
             #impls
             #worktable_impl
-            #space_persist_impl
         }
     }
 
@@ -43,7 +41,6 @@ impl Generator {
         quote! {
             #[derive(Debug)]
             pub struct #space_file_ident {
-                pub path: String,
                 #primary_index
                 pub indexes: #index_persisted_ident,
                 pub data: Vec<GeneralPage<DataPage<#inner_const_name>>>,
@@ -85,46 +82,6 @@ impl Generator {
                 };
                 info.inner.page_count = self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32;
                 Ok(info)
-            }
-        }
-    }
-
-    fn gen_space_persist_impl(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
-        let space_ident = name_generator.get_space_file_ident();
-        let index_extension = Literal::string(WT_INDEX_EXTENSION);
-        let data_extension = Literal::string(WT_DATA_EXTENSION);
-
-        quote! {
-            impl #space_ident {
-                pub async fn persist(&mut self) -> eyre::Result<()> {
-                    let prefix = &self.path;
-                    tokio::fs::create_dir_all(prefix).await?;
-
-                    {
-                        let mut primary_index_file = tokio::fs::File::create(format!("{}/primary{}", &self.path, #index_extension)).await?;
-                        let mut info = self.get_primary_index_info()?;
-                        persist_page(&mut info, &mut primary_index_file).await?;
-                        for mut toc_page in &mut self.primary_index.0 {
-                            persist_page(&mut toc_page, &mut primary_index_file).await?;
-                        }
-                        for mut primary_index_page in &mut self.primary_index.1 {
-                            persist_page(&mut primary_index_page, &mut primary_index_file).await?;
-                        }
-                    }
-
-                    self.indexes.persist(&prefix).await?;
-
-                    {
-                        let mut data_file = tokio::fs::File::create(format!("{}/{}", &self.path, #data_extension)).await?;
-                        persist_page(&mut self.data_info, &mut data_file).await?;
-                        for mut data_page in &mut self.data {
-                            persist_page(&mut data_page, &mut data_file).await?;
-                        }
-                    }
-
-                    Ok(())
-                }
             }
         }
     }
@@ -209,7 +166,7 @@ impl Generator {
         };
 
         quote! {
-            pub async fn into_worktable(self, config: PersistenceConfig) -> #wt_ident {
+            pub async fn into_worktable(self, config: DiskConfig) -> #wt_ident {
                 let mut page_id = 1;
                 let data = self.data.into_iter().map(|p| {
                     let mut data = Data::from_data_page(p);
@@ -236,8 +193,8 @@ impl Generator {
                     pk_phantom: std::marker::PhantomData,
                 };
 
-                let path = format!("{}/{}", config.tables_path.as_str(), #dir_name);
-                let engine: #engine_ident = DiskPersistenceEngine::from_table_files_path(path)
+                let engine_config = DiskConfig::new(config.config_path.clone(), format!("{}/{}", config.tables_path, #dir_name));
+                let engine: #engine_ident = DiskPersistenceEngine::new(engine_config)
                                 .await
                                 .expect("should not panic as SpaceFile is ok");
                 #wt_ident(
@@ -300,7 +257,6 @@ impl Generator {
                 };
 
                 Ok(Self {
-                    path: "".to_string(),
                     primary_index,
                     indexes,
                     data,

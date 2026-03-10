@@ -20,7 +20,7 @@ worktable!(
 
 #[test]
 fn test_uuid() {
-    let config = PersistenceConfig::new("tests/data/uuid/reread", "tests/data/uuid/reread");
+    let config = DiskConfig::new("tests/data/uuid/reread", "tests/data/uuid/reread");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -77,7 +77,7 @@ fn test_uuid() {
 
 #[test]
 fn test_big_amount_reread() {
-    let config = PersistenceConfig::new("tests/data/uuid/big_amount", "tests/data/uuid/big_amount");
+    let config = DiskConfig::new("tests/data/uuid/big_amount", "tests/data/uuid/big_amount");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

@@ -30,7 +30,7 @@ worktable! (
 
 #[test]
 fn test_space_insert_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/insert",
         "tests/data/unsized_primary_sync/insert",
     );
@@ -68,7 +68,7 @@ fn test_space_insert_sync() {
 
 #[test]
 fn test_space_insert_many_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/insert_many",
         "tests/data/unsized_primary_sync/insert_many",
     );
@@ -115,7 +115,7 @@ fn test_space_insert_many_sync() {
 
 #[test]
 fn test_space_update_full_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/update_full",
         "tests/data/unsized_primary_sync/update_full",
     );
@@ -163,7 +163,7 @@ fn test_space_update_full_sync() {
 
 #[test]
 fn test_space_update_query_pk_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/update_query_pk",
         "tests/data/unsized_primary_sync/update_query_pk",
     );
@@ -206,7 +206,7 @@ fn test_space_update_query_pk_sync() {
 
 #[test]
 fn test_space_update_query_unique_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/update_query_unique",
         "tests/data/unsized_primary_sync/update_query_unique",
     );
@@ -250,7 +250,7 @@ fn test_space_update_query_unique_sync() {
 
 #[test]
 fn test_space_update_query_non_unique_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/update_query_non_unique",
         "tests/data/unsized_primary_sync/update_query_non_unique",
     );
@@ -294,7 +294,7 @@ fn test_space_update_query_non_unique_sync() {
 
 #[test]
 fn test_space_delete_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/delete",
         "tests/data/unsized_primary_sync/delete",
     );
@@ -340,7 +340,7 @@ fn test_space_delete_sync() {
 
 #[test]
 fn test_space_delete_query_sync() {
-    let config = PersistenceConfig::new(
+    let config = DiskConfig::new(
         "tests/data/unsized_primary_sync/delete_query",
         "tests/data/unsized_primary_sync/delete_query",
     );

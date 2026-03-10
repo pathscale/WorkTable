@@ -54,7 +54,7 @@ worktable! (
 #[test]
 #[ignore]
 fn test_concurrent() {
-    let config = PersistenceConfig::new("tests/data/concurrent/test", "tests/data/concurrent/test");
+    let config = DiskConfig::new("tests/data/concurrent/test", "tests/data/concurrent/test");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

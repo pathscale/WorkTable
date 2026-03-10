@@ -1,17 +1,17 @@
-use crate::TableSecondaryIndexEventsOps;
-use crate::persistence::operation::{BatchOperation, Operation};
-use crate::persistence::{
-    PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
-};
-use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
-use futures::StreamExt;
-use futures::future::Either;
-use futures::stream::FuturesUnordered;
 use std::fmt::Debug;
 use std::fs;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
+
+use futures::future::Either;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+
+use crate::persistence::operation::{BatchOperation, Operation};
+use crate::persistence::{PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
+use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
+use crate::TableSecondaryIndexEventsOps;
 
 #[derive(Debug, Clone)]
 pub struct DiskConfig {
@@ -56,48 +56,6 @@ impl<
     SecondaryIndexEvents,
     AvailableIndexes,
     PrimaryKeyGenState,
->
-    DiskPersistenceEngine<
-        SpaceData,
-        SpacePrimaryIndex,
-        SpaceSecondaryIndexes,
-        PrimaryKey,
-        SecondaryIndexEvents,
-        AvailableIndexes,
-        PrimaryKeyGenState,
-    >
-where
-    PrimaryKey: Ord + TablePrimaryKey,
-    <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
-    SpaceData: SpaceDataOps<PrimaryKeyGenState>,
-    SpacePrimaryIndex: SpaceIndexOps<PrimaryKey>,
-    SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
-{
-    pub async fn from_table_files_path<S: AsRef<str> + Clone + Send>(
-        path: S,
-    ) -> eyre::Result<Self> {
-        let table_path = Path::new(path.as_ref());
-        if !table_path.exists() {
-            fs::create_dir_all(table_path)?;
-        }
-
-        Ok(Self {
-            data: SpaceData::from_table_files_path(path.clone()).await?,
-            primary_index: SpacePrimaryIndex::primary_from_table_files_path(path.clone()).await?,
-            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(path).await?,
-            phantom_data: PhantomData,
-        })
-    }
-}
-
-impl<
-    SpaceData,
-    SpacePrimaryIndex,
-    SpaceSecondaryIndexes,
-    PrimaryKey,
-    SecondaryIndexEvents,
-    AvailableIndexes,
-    PrimaryKeyGenState,
 > PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
     for DiskPersistenceEngine<
         SpaceData,
@@ -132,8 +90,12 @@ where
 
         Ok(Self {
             data: SpaceData::from_table_files_path(config.tables_path.clone()).await?,
-            primary_index: SpacePrimaryIndex::primary_from_table_files_path(config.tables_path.clone()).await?,
-            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path).await?,
+            primary_index: SpacePrimaryIndex::primary_from_table_files_path(
+                config.tables_path.clone(),
+            )
+            .await?,
+            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path)
+                .await?,
             phantom_data: PhantomData,
         })
     }
