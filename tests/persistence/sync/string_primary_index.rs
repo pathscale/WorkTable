@@ -1,4 +1,5 @@
 use worktable::prelude::*;
+use worktable::prelude::PersistedWorkTable;
 use worktable_codegen::worktable;
 
 use crate::remove_dir_if_exists;
@@ -30,10 +31,7 @@ worktable! (
 
 #[test]
 fn test_space_insert_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/insert",
-        "tests/data/unsized_primary_sync/insert",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/insert", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -46,9 +44,8 @@ fn test_space_insert_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/insert".to_string()).await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 non_unique: 0,
@@ -60,7 +57,8 @@ fn test_space_insert_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk).is_some());
         }
     });
@@ -68,10 +66,7 @@ fn test_space_insert_sync() {
 
 #[test]
 fn test_space_insert_many_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/insert_many",
-        "tests/data/unsized_primary_sync/insert_many",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/insert_many", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -85,9 +80,8 @@ fn test_space_insert_many_sync() {
 
         let mut pks = vec![];
         {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             for i in 0..1_000 {
                 let pk = {
                     let row = TestSyncRow {
@@ -105,7 +99,8 @@ fn test_space_insert_many_sync() {
         }
 
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             for pk in pks {
                 assert!(table.select(pk).is_some());
             }
@@ -115,10 +110,7 @@ fn test_space_insert_many_sync() {
 
 #[test]
 fn test_space_update_full_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/update_full",
-        "tests/data/unsized_primary_sync/update_full",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/update_full", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -131,9 +123,8 @@ fn test_space_update_full_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/update_full".to_string()).await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 non_unique: 0,
@@ -154,7 +145,8 @@ fn test_space_update_full_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().another, 13);
         }
@@ -163,10 +155,7 @@ fn test_space_update_full_sync() {
 
 #[test]
 fn test_space_update_query_pk_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/update_query_pk",
-        "tests/data/unsized_primary_sync/update_query_pk",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/update_query_pk", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -179,9 +168,8 @@ fn test_space_update_query_pk_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/update_query_pk".to_string()).await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 non_unique: 0,
@@ -197,7 +185,8 @@ fn test_space_update_query_pk_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().another, 13);
         }
@@ -206,10 +195,7 @@ fn test_space_update_query_pk_sync() {
 
 #[test]
 fn test_space_update_query_unique_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/update_query_unique",
-        "tests/data/unsized_primary_sync/update_query_unique",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/update_query_unique", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -223,9 +209,8 @@ fn test_space_update_query_unique_sync() {
             .await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 non_unique: 0,
@@ -241,7 +226,8 @@ fn test_space_update_query_unique_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().field, 1.0);
         }
@@ -250,10 +236,7 @@ fn test_space_update_query_unique_sync() {
 
 #[test]
 fn test_space_update_query_non_unique_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/update_query_non_unique",
-        "tests/data/unsized_primary_sync/update_query_non_unique",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/update_query_non_unique", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -267,9 +250,8 @@ fn test_space_update_query_non_unique_sync() {
             .await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 non_unique: 10,
@@ -285,7 +267,8 @@ fn test_space_update_query_non_unique_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().another, 13);
         }
@@ -294,10 +277,7 @@ fn test_space_update_query_non_unique_sync() {
 
 #[test]
 fn test_space_delete_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/delete",
-        "tests/data/unsized_primary_sync/delete",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/delete", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -310,9 +290,8 @@ fn test_space_delete_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/delete".to_string()).await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 non_unique: 0,
@@ -332,7 +311,8 @@ fn test_space_delete_sync() {
             another_row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk).is_none());
         }
     });
@@ -340,10 +320,7 @@ fn test_space_delete_sync() {
 
 #[test]
 fn test_space_delete_query_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_sync/delete_query",
-        "tests/data/unsized_primary_sync/delete_query",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_sync/delete_query", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -356,9 +333,8 @@ fn test_space_delete_query_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/delete_query".to_string()).await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 non_unique: 0,
@@ -371,7 +347,8 @@ fn test_space_delete_query_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk).is_none());
         }
     });

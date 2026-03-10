@@ -10,7 +10,7 @@ use data_bucket::page::PageId;
 use tokio::sync::Notify;
 use worktable_codegen::worktable;
 
-use crate::persistence::PersistenceEngineOps;
+use crate::persistence::PersistenceEngine;
 use crate::persistence::operation::{
     BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery,
 };
@@ -376,7 +376,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 
     pub fn run_engine<E>(mut engine: E) -> Self
     where
-        E: PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
+        E: PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             + Send
             + 'static,
         SecondaryKeys: Clone
