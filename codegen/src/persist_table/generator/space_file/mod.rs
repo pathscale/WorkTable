@@ -108,11 +108,12 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_ident = name_generator.get_index_type_ident();
         let task_ident = name_generator.get_persistence_task_ident();
-        let engine_ident = name_generator.get_persistence_engine_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
         let lock_type = name_generator.get_lock_type_ident();
         let table_name = name_generator.get_work_table_literal_name();
+        let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
+        let avt_index_ident = name_generator.get_available_indexes_ident();
 
         let primary_index_init = if self.attributes.pk_unsized {
             let pk_ident = &self.pk_ident;
@@ -165,7 +166,17 @@ impl Generator {
         };
 
         quote! {
-            pub async fn into_worktable(self, engine: #engine_ident) -> #wt_ident {
+            pub async fn into_worktable<E>(self, engine: E) -> #wt_ident
+            where
+                E: worktable::persistence::PersistenceEngine<
+                    <<#pk_type as worktable::prelude::TablePrimaryKey>::Generator as worktable::prelude::PrimaryKeyGeneratorState>::State,
+                    #pk_type,
+                    #secondary_index_events,
+                    #avt_index_ident,
+                > + Send
+                    + 'static,
+                E::Config: Clone,
+            {
                 let config = engine.config().clone();
                 let mut page_id = 1;
                 let data = self.data.into_iter().map(|p| {

@@ -8,6 +8,9 @@ mod row;
 mod table;
 mod util;
 
+#[cfg(feature = "s3-support")]
+pub mod features;
+
 pub use index::*;
 pub use persistence::{PersistedWorkTable, PersistenceConfig};
 pub use row::*;
@@ -60,4 +63,7 @@ pub mod prelude {
 
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
     pub const WT_DATA_EXTENSION: &str = ".wt.data";
+
+    #[cfg(feature = "s3-support")]
+    pub use crate::features::{S3Config, S3DiskConfig, S3SyncDiskPersistenceEngine};
 }
