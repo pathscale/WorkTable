@@ -16,7 +16,7 @@ perf_measurements = ["dep:performance_measurement", "dep:performance_measurement
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-worktable_codegen = { path = "codegen", version = "=0.8.23" }
+worktable_codegen = { path = "codegen", version = "=0.9.0-alpha1" }
 
 async-trait = "0.1.89"
 eyre = "0.6.12"
