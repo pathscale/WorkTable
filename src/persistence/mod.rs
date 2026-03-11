@@ -5,13 +5,13 @@ use crate::persistence::operation::BatchOperation;
 pub use engine::DiskConfig;
 pub use engine::DiskPersistenceEngine;
 pub use operation::{
-    validate_events, DeleteOperation, InsertOperation, Operation, OperationId, OperationType,
-    UpdateOperation,
+    DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
+    validate_events,
 };
 pub use space::{
-    map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex,
-    SpaceIndexOps, SpaceIndexUnsized,
-    SpaceSecondaryIndexOps,
+    IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
+    SpaceSecondaryIndexOps, map_index_pages_to_toc_and_general,
+    map_unsized_index_pages_to_toc_and_general,
 };
 pub use task::PersistenceTask;
 
@@ -20,24 +20,17 @@ pub mod operation;
 mod space;
 mod task;
 
-/// Trait for persistence configuration types.
-/// Provides access to the table-specific path for file operations.
+// TODO: remove this
 pub trait PersistenceConfig {
-    /// Returns the table-specific path for this worktable
     fn table_path(&self) -> &str;
 }
 
-/// Trait for worktables that can be created/loaded from a persistence engine.
-/// The engine must implement PersistenceEngine and provide access to its config.
 pub trait PersistedWorkTable<E>: Sized
 where
     E: Send,
 {
-    /// Create a new empty worktable with the given engine
     fn new(engine: E) -> impl Future<Output = eyre::Result<Self>> + Send;
 
-    /// Load worktable from disk using the engine's config to find files.
-    /// Falls back to `new()` if no files exist.
     fn load(engine: E) -> impl Future<Output = eyre::Result<Self>> + Send;
 }
 
@@ -64,6 +57,5 @@ pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents
         >,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
 
-    /// Returns the configuration used to create this engine
     fn config(&self) -> &Self::Config;
 }

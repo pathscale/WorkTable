@@ -67,7 +67,7 @@ fn test_concurrent() {
     runtime.block_on(async {
         remove_dir_if_exists("tests/data/concurrent/test".to_string()).await;
         {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestConcurrentPersistenceEngine::new(config.clone()).await.unwrap();
             let table = Arc::new(TestConcurrentWorkTable::load(engine).await.unwrap());
 
             let total: u64 = 5_000;
@@ -108,7 +108,7 @@ fn test_concurrent() {
             table.wait_for_ops().await;
         }
         {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestConcurrentPersistenceEngine::new(config.clone()).await.unwrap();
             let table = Arc::new(TestConcurrentWorkTable::load(engine).await.unwrap());
             assert_eq!(table.count(), 5_000)
         }

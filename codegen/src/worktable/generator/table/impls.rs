@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::name_generator::{WorktableNameGenerator, is_unsized_vec};
+use crate::name_generator::{is_unsized_vec, WorktableNameGenerator};
 use crate::worktable::generator::Generator;
 use crate::worktable::model::GeneratorType;
 
@@ -45,11 +45,12 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_work_table_ident();
         let table_name = name_generator.get_work_table_literal_name();
-        let engine = name_generator.get_persistence_engine_ident();
         let task = name_generator.get_persistence_task_ident();
         let space_ident = name_generator.get_space_file_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
+        let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
+        let avt_index_ident = name_generator.get_available_indexes_ident();
 
         if self.is_persist {
             let pk_types = &self
@@ -82,20 +83,29 @@ impl Generator {
                 }
             };
             quote! {
-                impl worktable::persistence::PersistedWorkTable<#engine> for #ident {
-                    async fn new(engine: #engine) -> eyre::Result<Self> {
+                impl<E, C> PersistedWorkTable<E> for #ident
+                where
+                    E: PersistenceEngine<
+                        <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                        #pk_type,
+                        #secondary_index_events,
+                        #avt_index_ident,
+                        Config=C
+                    > + Send
+                        + 'static,
+                    C: Clone + PersistenceConfig,
+                {
+                    async fn new(engine: E) -> eyre::Result<Self> {
                         let mut inner = WorkTable::default();
                         inner.table_name = #table_name;
                         #index_setup
-                        let config = engine.config().clone();
                         core::result::Result::Ok(Self(
                             inner,
-                            config,
                             #task::run_engine(engine)
                         ))
                     }
 
-                    async fn load(engine: #engine) -> eyre::Result<Self> {
+                    async fn load(engine: E) -> eyre::Result<Self> {
                         let table_path = engine.config().table_path();
                         if !std::path::Path::new(table_path).exists() {
                             return Self::new(engine).await;
@@ -147,7 +157,7 @@ impl Generator {
         let insert = if self.is_persist {
             quote! {
                 let (pk, op) = self.0.insert_cdc(row)?;
-                self.2.apply_operation(op);
+                self.1.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {
@@ -171,7 +181,7 @@ impl Generator {
         let reinsert = if self.is_persist {
             quote! {
                 let (pk, op) = self.0.reinsert_cdc(row_old, row_new)?;
-                self.2.apply_operation(op);
+                self.1.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {

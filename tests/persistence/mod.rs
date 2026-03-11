@@ -9,6 +9,9 @@ mod space_index;
 mod sync;
 mod toc;
 
+#[cfg(feature = "s3-support")]
+mod s3;
+
 worktable! (
     name: TestPersist,
     persist: true,
@@ -48,7 +51,7 @@ worktable!(
 
 pub async fn get_empty_test_wt() -> TestPersistWorkTable {
     let config = DiskConfig::new_with_table_name("tests/data", TestPersistWorkTable::name_snake_case());
-    let engine = DiskPersistenceEngine::new(config).await.unwrap();
+    let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
     TestPersistWorkTable::new(engine).await.unwrap()
 }
 

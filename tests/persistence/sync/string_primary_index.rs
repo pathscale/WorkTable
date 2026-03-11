@@ -44,7 +44,7 @@ fn test_space_insert_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/insert".to_string()).await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -57,7 +57,7 @@ fn test_space_insert_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk).is_some());
         }
@@ -80,7 +80,7 @@ fn test_space_insert_many_sync() {
 
         let mut pks = vec![];
         {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             for i in 0..1_000 {
                 let pk = {
@@ -99,7 +99,7 @@ fn test_space_insert_many_sync() {
         }
 
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             for pk in pks {
                 assert!(table.select(pk).is_some());
@@ -123,7 +123,7 @@ fn test_space_update_full_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/update_full".to_string()).await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -145,7 +145,7 @@ fn test_space_update_full_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().another, 13);
@@ -168,7 +168,7 @@ fn test_space_update_query_pk_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/update_query_pk".to_string()).await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -185,7 +185,7 @@ fn test_space_update_query_pk_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().another, 13);
@@ -209,7 +209,7 @@ fn test_space_update_query_unique_sync() {
             .await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -226,7 +226,7 @@ fn test_space_update_query_unique_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().field, 1.0);
@@ -250,7 +250,7 @@ fn test_space_update_query_non_unique_sync() {
             .await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -267,7 +267,7 @@ fn test_space_update_query_non_unique_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk).unwrap().another, 13);
@@ -290,7 +290,7 @@ fn test_space_delete_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/delete".to_string()).await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -311,7 +311,7 @@ fn test_space_delete_sync() {
             another_row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk).is_none());
         }
@@ -333,7 +333,7 @@ fn test_space_delete_query_sync() {
         remove_dir_if_exists("tests/data/unsized_primary_sync/delete_query".to_string()).await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -347,7 +347,7 @@ fn test_space_delete_query_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk).is_none());
         }

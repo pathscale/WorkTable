@@ -63,7 +63,6 @@ impl Generator {
 
         let persist_type_part = if self.is_persist {
             quote! {
-                , DiskConfig
                 , #persistence_task
             }
         } else {

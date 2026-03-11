@@ -30,20 +30,6 @@ impl WorktableNameGenerator {
             Span::mixed_site(),
         )
     }
-
-    pub fn get_space_secondary_index_events_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}SpaceSecondaryIndexEvents", self.name).as_str(),
-            Span::mixed_site(),
-        )
-    }
-
-    pub fn get_space_secondary_index_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}SpaceSecondaryIndex", self.name).as_str(),
-            Span::mixed_site(),
-        )
-    }
 }
 
 impl Generator {
