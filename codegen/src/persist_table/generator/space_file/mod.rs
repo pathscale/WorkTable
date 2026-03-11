@@ -179,6 +179,8 @@ impl Generator {
                 C: Clone + PersistenceConfig,
             {
                 let mut page_id = 1;
+                println!("{:?}", self.data_info.inner);
+
                 let data = self.data.into_iter().map(|p| {
                     let mut data = Data::from_data_page(p);
                     data.set_page_id(page_id.into());
