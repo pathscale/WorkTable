@@ -21,7 +21,10 @@ worktable! (
 
 #[test]
 fn test_space_update_query_pk_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_and_other_sync/update_query_pk", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/unsized_primary_and_other_sync/update_query_pk",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -37,7 +40,9 @@ fn test_space_update_query_pk_sync() {
         .await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -55,7 +60,9 @@ fn test_space_update_query_pk_sync() {
             row.id
         };
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
@@ -70,7 +77,9 @@ fn test_space_update_query_pk_sync() {
             table.wait_for_ops().await;
         }
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 0);
@@ -84,7 +93,10 @@ fn test_space_update_query_pk_sync() {
 
 #[test]
 fn test_space_update_query_pk_many_times_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_and_other_sync/update_query_pk_many", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/unsized_primary_and_other_sync/update_query_pk_many",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -100,7 +112,9 @@ fn test_space_update_query_pk_many_times_sync() {
         .await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -118,7 +132,9 @@ fn test_space_update_query_pk_many_times_sync() {
             row.id
         };
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
@@ -136,7 +152,9 @@ fn test_space_update_query_pk_many_times_sync() {
             table.wait_for_ops().await;
         }
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 511);

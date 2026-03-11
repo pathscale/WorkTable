@@ -1,8 +1,8 @@
 use crate::remove_dir_if_exists;
 use std::time::Duration;
 
-use worktable::prelude::*;
 use worktable::prelude::PersistedWorkTable;
+use worktable::prelude::*;
 use worktable::worktable;
 
 mod many_strings;
@@ -39,7 +39,10 @@ worktable! (
 
 #[test]
 fn test_wait_for_ops_for_empty() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/wait", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/wait",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -51,7 +54,9 @@ fn test_wait_for_ops_for_empty() {
     runtime.block_on(async {
         remove_dir_if_exists("tests/data/sync/wait".to_string()).await;
 
-        let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+        let engine = TestSyncPersistenceEngine::new(config.clone())
+            .await
+            .unwrap();
         let table = TestSyncWorkTable::load(engine).await.unwrap();
         tokio::time::sleep(Duration::from_millis(200)).await;
         table.wait_for_ops().await;
@@ -60,7 +65,10 @@ fn test_wait_for_ops_for_empty() {
 
 #[test]
 fn test_space_insert_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/insert", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/insert",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -73,7 +81,9 @@ fn test_space_insert_sync() {
         remove_dir_if_exists("tests/data/sync/insert".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -96,7 +106,10 @@ fn test_space_insert_sync() {
 
 #[test]
 fn test_space_insert_many_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/insert_many", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/insert_many",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -110,7 +123,9 @@ fn test_space_insert_many_sync() {
 
         let mut pks = vec![];
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             for i in 0..5_000 {
                 let pk = {
@@ -142,7 +157,10 @@ fn test_space_insert_many_sync() {
 
 #[test]
 fn test_space_update_full_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/update_full", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/update_full",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -155,7 +173,9 @@ fn test_space_update_full_sync() {
         remove_dir_if_exists("tests/data/sync/update_full".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -188,7 +208,10 @@ fn test_space_update_full_sync() {
 
 #[test]
 fn test_space_update_query_pk_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/update_query_pk", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/update_query_pk",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -201,7 +224,9 @@ fn test_space_update_query_pk_sync() {
         remove_dir_if_exists("tests/data/sync/update_query_pk".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -229,7 +254,10 @@ fn test_space_update_query_pk_sync() {
 
 #[test]
 fn test_space_update_query_unique_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/update_query_unique", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/update_query_unique",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -242,7 +270,9 @@ fn test_space_update_query_unique_sync() {
         remove_dir_if_exists("tests/data/sync/update_query_unique".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -270,7 +300,10 @@ fn test_space_update_query_unique_sync() {
 
 #[test]
 fn test_space_update_query_non_unique_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/update_query_non_unique", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/update_query_non_unique",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -283,7 +316,9 @@ fn test_space_update_query_non_unique_sync() {
         remove_dir_if_exists("tests/data/sync/update_query_non_unique".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -311,7 +346,10 @@ fn test_space_update_query_non_unique_sync() {
 
 #[test]
 fn test_space_delete_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/delete", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/delete",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -324,7 +362,9 @@ fn test_space_delete_sync() {
         remove_dir_if_exists("tests/data/sync/delete".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -348,7 +388,10 @@ fn test_space_delete_sync() {
 
 #[test]
 fn test_space_delete_query_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/sync/delete_query", TestSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/sync/delete_query",
+        TestSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -361,7 +404,9 @@ fn test_space_delete_query_sync() {
         remove_dir_if_exists("tests/data/sync/delete_query".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,

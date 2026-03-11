@@ -8,13 +8,13 @@ use awsregion::Region;
 use s3::Bucket;
 use walkdir::WalkDir;
 
+use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
     DiskConfig, DiskPersistenceEngine, PersistenceConfig, PersistenceEngine, SpaceDataOps,
     SpaceIndexOps, SpaceSecondaryIndexOps,
 };
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
-use crate::TableSecondaryIndexEventsOps;
 
 #[derive(Debug, Clone)]
 pub struct S3Config {

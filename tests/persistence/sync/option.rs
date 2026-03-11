@@ -1,5 +1,5 @@
-use worktable::prelude::*;
 use worktable::prelude::PersistedWorkTable;
+use worktable::prelude::*;
 use worktable_codegen::worktable;
 
 use crate::remove_dir_if_exists;
@@ -28,7 +28,10 @@ worktable! (
 
 #[test]
 fn test_option_insert_none_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/insert_none", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/insert_none",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -41,7 +44,9 @@ fn test_option_insert_none_sync() {
         remove_dir_if_exists("tests/data/option_sync/insert_none".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -66,7 +71,10 @@ fn test_option_insert_none_sync() {
 
 #[test]
 fn test_option_insert_some_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/insert_some", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/insert_some",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -79,7 +87,9 @@ fn test_option_insert_some_sync() {
         remove_dir_if_exists("tests/data/option_sync/insert_some".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -104,7 +114,10 @@ fn test_option_insert_some_sync() {
 
 #[test]
 fn test_option_update_full_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/update_full", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/update_full",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -117,7 +130,9 @@ fn test_option_update_full_sync() {
         remove_dir_if_exists("tests/data/option_sync/update_full".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -152,7 +167,10 @@ fn test_option_update_full_sync() {
 
 #[test]
 fn test_option_update_by_id_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/update_by_id", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/update_by_id",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -165,7 +183,9 @@ fn test_option_update_by_id_sync() {
         remove_dir_if_exists("tests/data/option_sync/update_by_id".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -195,7 +215,10 @@ fn test_option_update_by_id_sync() {
 
 #[test]
 fn test_option_update_none_to_some_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/none_to_some", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/none_to_some",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -208,7 +231,9 @@ fn test_option_update_none_to_some_sync() {
         remove_dir_if_exists("tests/data/option_sync/none_to_some".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -238,7 +263,10 @@ fn test_option_update_none_to_some_sync() {
 
 #[test]
 fn test_option_update_some_to_none_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/some_to_none", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/some_to_none",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -251,7 +279,9 @@ fn test_option_update_some_to_none_sync() {
         remove_dir_if_exists("tests/data/option_sync/some_to_none".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -281,7 +311,10 @@ fn test_option_update_some_to_none_sync() {
 
 #[test]
 fn test_option_update_by_another_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/update_by_another", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/update_by_another",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -294,7 +327,9 @@ fn test_option_update_by_another_sync() {
         remove_dir_if_exists("tests/data/option_sync/update_by_another".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -324,7 +359,10 @@ fn test_option_update_by_another_sync() {
 
 #[test]
 fn test_option_update_by_exchange_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/update_by_exchange", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/update_by_exchange",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -337,7 +375,9 @@ fn test_option_update_by_exchange_sync() {
         remove_dir_if_exists("tests/data/option_sync/update_by_exchange".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -367,7 +407,10 @@ fn test_option_update_by_exchange_sync() {
 
 #[test]
 fn test_option_multiple_rows_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/multiple_rows", TestOptionSyncWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/multiple_rows",
+        TestOptionSyncWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -380,7 +423,9 @@ fn test_option_multiple_rows_sync() {
         remove_dir_if_exists("tests/data/option_sync/multiple_rows".to_string()).await;
 
         let (pk1, pk2) = {
-            let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncWorkTable::load(engine).await.unwrap();
 
             let row1 = TestOptionSyncRow {
@@ -442,7 +487,10 @@ worktable! (
 
 #[test]
 fn test_option_indexed_insert_none_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/indexed_insert_none", TestOptionSyncIndexWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/indexed_insert_none",
+        TestOptionSyncIndexWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -455,7 +503,9 @@ fn test_option_indexed_insert_none_sync() {
         remove_dir_if_exists("tests/data/option_sync/indexed_insert_none".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -469,7 +519,9 @@ fn test_option_indexed_insert_none_sync() {
         };
 
         {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let selected = table.select(pk).unwrap();
             assert_eq!(selected.test, None);
@@ -480,7 +532,10 @@ fn test_option_indexed_insert_none_sync() {
 
 #[test]
 fn test_option_indexed_insert_some_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/indexed_insert_some", TestOptionSyncIndexWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/indexed_insert_some",
+        TestOptionSyncIndexWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -493,7 +548,9 @@ fn test_option_indexed_insert_some_sync() {
         remove_dir_if_exists("tests/data/option_sync/indexed_insert_some".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -507,7 +564,9 @@ fn test_option_indexed_insert_some_sync() {
         };
 
         {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let selected = table.select(pk).unwrap();
             assert_eq!(selected.test, Some(42));
@@ -518,7 +577,10 @@ fn test_option_indexed_insert_some_sync() {
 
 #[test]
 fn test_option_indexed_update_none_to_some_by_id_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/indexed_none_to_some", TestOptionSyncIndexWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/indexed_none_to_some",
+        TestOptionSyncIndexWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -531,7 +593,9 @@ fn test_option_indexed_update_none_to_some_by_id_sync() {
         remove_dir_if_exists("tests/data/option_sync/indexed_none_to_some".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -550,7 +614,9 @@ fn test_option_indexed_update_none_to_some_by_id_sync() {
         };
 
         {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let selected = table.select(pk).unwrap();
             assert_eq!(selected.test, Some(55));
@@ -561,7 +627,10 @@ fn test_option_indexed_update_none_to_some_by_id_sync() {
 
 #[test]
 fn test_option_indexed_update_some_to_none_by_id_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/indexed_some_to_none", TestOptionSyncIndexWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/indexed_some_to_none",
+        TestOptionSyncIndexWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -574,7 +643,9 @@ fn test_option_indexed_update_some_to_none_by_id_sync() {
         remove_dir_if_exists("tests/data/option_sync/indexed_some_to_none".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -593,7 +664,9 @@ fn test_option_indexed_update_some_to_none_by_id_sync() {
         };
 
         {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let selected = table.select(pk).unwrap();
             assert_eq!(selected.test, None);
@@ -604,7 +677,10 @@ fn test_option_indexed_update_some_to_none_by_id_sync() {
 
 #[test]
 fn test_option_indexed_update_by_another_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/indexed_update_by_another", TestOptionSyncIndexWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/indexed_update_by_another",
+        TestOptionSyncIndexWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -617,7 +693,9 @@ fn test_option_indexed_update_by_another_sync() {
         remove_dir_if_exists("tests/data/option_sync/indexed_update_by_another".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -636,7 +714,9 @@ fn test_option_indexed_update_by_another_sync() {
         };
 
         {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let selected = table.select(pk).unwrap();
             assert_eq!(selected.test, Some(77));
@@ -647,7 +727,10 @@ fn test_option_indexed_update_by_another_sync() {
 
 #[test]
 fn test_option_indexed_multiple_rows_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/indexed_multiple_rows", TestOptionSyncIndexWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/indexed_multiple_rows",
+        TestOptionSyncIndexWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -660,7 +743,9 @@ fn test_option_indexed_multiple_rows_sync() {
         remove_dir_if_exists("tests/data/option_sync/indexed_multiple_rows".to_string()).await;
 
         let (pk1, pk2, pk3) = {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
 
             let row1 = TestOptionSyncIndexRow {
@@ -702,7 +787,9 @@ fn test_option_indexed_multiple_rows_sync() {
         };
 
         {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select(pk1).unwrap().test, Some(40));
             assert_eq!(table.select(pk2).unwrap().test, Some(50));
@@ -713,7 +800,10 @@ fn test_option_indexed_multiple_rows_sync() {
 
 #[test]
 fn test_option_indexed_full_row_update_sync() {
-    let config = DiskConfig::new_with_table_name("tests/data/option_sync/indexed_full_update", TestOptionSyncIndexWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/option_sync/indexed_full_update",
+        TestOptionSyncIndexWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -726,7 +816,9 @@ fn test_option_indexed_full_row_update_sync() {
         remove_dir_if_exists("tests/data/option_sync/indexed_full_update".to_string()).await;
 
         let pk = {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let row = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -750,7 +842,9 @@ fn test_option_indexed_full_row_update_sync() {
         };
 
         {
-            let engine = TestOptionSyncIndexPersistenceEngine::new(config).await.unwrap();
+            let engine = TestOptionSyncIndexPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = TestOptionSyncIndexWorkTable::load(engine).await.unwrap();
             let selected = table.select(pk).unwrap();
             assert_eq!(selected.test, Some(99));

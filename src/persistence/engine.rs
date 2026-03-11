@@ -4,16 +4,16 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
 
+use futures::StreamExt;
 use futures::future::Either;
 use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 
+use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
     PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
 };
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
-use crate::TableSecondaryIndexEventsOps;
 
 #[derive(Debug, Clone)]
 pub struct DiskConfig {

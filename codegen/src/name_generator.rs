@@ -135,7 +135,7 @@ impl WorktableNameGenerator {
     #[cfg(feature = "s3-support")]
     pub fn get_s3_sync_persistence_engine_ident(&self) -> Ident {
         Ident::new(
-            format!("{}SyncPersistenceEngine", self.name).as_str(),
+            format!("{}S3SyncPersistenceEngine", self.name).as_str(),
             Span::mixed_site(),
         )
     }

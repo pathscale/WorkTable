@@ -15,6 +15,7 @@ worktable!(
 s3_sync_persistence!(TestS3WorkTable);
 
 #[test]
+#[ignore]
 fn test_s3_engine_compiles() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -32,19 +33,17 @@ fn test_s3_engine_compiles() {
                 TestS3WorkTable::name_snake_case(),
             ),
             s3: S3Config {
-                bucket_name: "honey-auth".to_string(),
-                endpoint: "https://1b7c8f39b677597cd7d2d8740cdf70d0.r2.cloudflarestorage.com"
-                    .to_string(),
-                access_key: "f0b666f2ae141c91fe621d5d4ae427e0".to_string(),
-                secret_key: "f1b639f1d3eab3f0dd2a6077439a45e49ef58c31b22901a177f9d5d49f7bc72e"
-                    .to_string(),
+                bucket_name: "test".to_string(),
+                endpoint: "test".to_string(),
+                access_key: "test".to_string(),
+                secret_key: "test".to_string(),
                 region: None,
                 prefix: Some("wt-test".to_string()),
             },
         };
 
         {
-            let engine = TestS3SyncPersistenceEngine::new(config).await.unwrap();
+            let engine = TestS3S3SyncPersistenceEngine::new(config).await.unwrap();
             let table = TestS3WorkTable::load(engine).await.unwrap();
             table
                 .insert(TestS3Row {
@@ -52,7 +51,7 @@ fn test_s3_engine_compiles() {
                     value: 0,
                 })
                 .unwrap();
-            assert!(table.select_all().execute().unwrap().len() > 0);
+            assert!(!table.select_all().execute().unwrap().is_empty());
             table.wait_for_ops().await;
         }
     });
