@@ -36,7 +36,7 @@ pub fn expand(input: TokenStream) -> Result<TokenStream> {
     let page_size_const = generator.get_page_size_const_ident();
 
     Ok(quote! {
-        type #output_ident = S3SyncDiskPersistenceEngine<
+        pub type #output_ident = S3SyncDiskPersistenceEngine<
             SpaceData<
                 <<#primary_key as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                 { #inner_size_const },
