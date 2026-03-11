@@ -1,7 +1,7 @@
 use crate::remove_dir_if_exists;
 
-use worktable::prelude::*;
 use worktable::prelude::PersistedWorkTable;
+use worktable::prelude::*;
 use worktable_codegen::worktable;
 
 worktable!(
@@ -28,7 +28,10 @@ worktable!(
 
 #[test]
 fn test_key() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/key", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/key",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -41,7 +44,9 @@ fn test_key() {
         remove_dir_if_exists("tests/data/key/key".to_string()).await;
 
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -65,7 +70,9 @@ fn test_key() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -79,7 +86,9 @@ fn test_key() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 3);
         }
@@ -88,7 +97,10 @@ fn test_key() {
 
 #[test]
 fn test_key_delete_scenario() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/delete_scenario", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/delete_scenario",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -101,7 +113,9 @@ fn test_key_delete_scenario() {
         remove_dir_if_exists("tests/data/key/delete_scenario".to_string()).await;
 
         let (pk0, pk) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -126,14 +140,18 @@ fn test_key_delete_scenario() {
             (pk0, pk)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk.clone()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
@@ -160,14 +178,18 @@ fn test_key_delete_scenario() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk0.clone()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
@@ -194,7 +216,10 @@ fn test_key_delete_scenario() {
 
 #[test]
 fn test_key_delete() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/delete", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/delete",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -207,7 +232,9 @@ fn test_key_delete() {
         remove_dir_if_exists("tests/data/key/delete".to_string()).await;
 
         let pk = {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -232,14 +259,18 @@ fn test_key_delete() {
             pk
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk.clone()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
@@ -259,7 +290,10 @@ fn test_key_delete() {
 
 #[test]
 fn test_key_delete_all() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/delete_all", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/delete_all",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -272,7 +306,9 @@ fn test_key_delete_all() {
         remove_dir_if_exists("tests/data/key/delete_all".to_string()).await;
 
         let (pk0, pk1) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -297,7 +333,9 @@ fn test_key_delete_all() {
             (pk0, pk1)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk0.clone()).await.unwrap();
             table.delete(pk1.clone()).await.unwrap();
@@ -305,7 +343,9 @@ fn test_key_delete_all() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
@@ -327,7 +367,10 @@ fn test_key_delete_all() {
 
 #[test]
 fn test_key_delete_all_and_insert() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/delete_all_and_insert", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/delete_all_and_insert",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -340,7 +383,9 @@ fn test_key_delete_all_and_insert() {
         remove_dir_if_exists("tests/data/key/delete_all_and_insert".to_string()).await;
 
         let (pk0, pk1) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -365,7 +410,9 @@ fn test_key_delete_all_and_insert() {
             (pk0, pk1)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk0.clone()).await.unwrap();
             table.delete(pk1.clone()).await.unwrap();
@@ -373,7 +420,9 @@ fn test_key_delete_all_and_insert() {
             table.wait_for_ops().await
         }
         let pk = {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
@@ -391,7 +440,9 @@ fn test_key_delete_all_and_insert() {
             pk
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
@@ -412,7 +463,10 @@ fn test_key_delete_all_and_insert() {
 
 #[test]
 fn test_key_delete_by_unique() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/delete_unique", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/delete_unique",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -425,7 +479,9 @@ fn test_key_delete_by_unique() {
         remove_dir_if_exists("tests/data/key/delete_unique".to_string()).await;
 
         let pk = {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -450,7 +506,9 @@ fn test_key_delete_by_unique() {
             pk
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .delete_by_second("second_again".to_string())
@@ -460,7 +518,9 @@ fn test_key_delete_by_unique() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
@@ -480,7 +540,10 @@ fn test_key_delete_by_unique() {
 
 #[test]
 fn test_key_delete_by_non_unique() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/delete_non_unique", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/delete_non_unique",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -493,7 +556,9 @@ fn test_key_delete_by_non_unique() {
         remove_dir_if_exists("tests/data/key/delete_non_unique".to_string()).await;
 
         let (pk0, pk1) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -518,14 +583,18 @@ fn test_key_delete_by_non_unique() {
             (pk0, pk1)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete_by_first("first".to_string()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
@@ -547,7 +616,10 @@ fn test_key_delete_by_non_unique() {
 
 #[test]
 fn test_big_amount_reread() {
-    let config = DiskConfig::new_with_table_name("tests/data/key/big_amount", StringReReadWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/big_amount",
+        StringReReadWorkTable::name_snake_case(),
+    );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -560,7 +632,9 @@ fn test_big_amount_reread() {
         remove_dir_if_exists("tests/data/key/big_amount".to_string()).await;
 
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             for i in 0..1000 {
                 table
@@ -577,7 +651,9 @@ fn test_big_amount_reread() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -592,7 +668,9 @@ fn test_big_amount_reread() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1001);
             assert!(table.select_by_second("second_last".to_string()).is_some());
