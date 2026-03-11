@@ -44,7 +44,7 @@ fn test_s3_engine_compiles() {
         };
 
         {
-            let engine = TestS3SyncPersistenceEngine::new(config).await.unwrap();
+            let engine = TestS3S3SyncPersistenceEngine::new(config).await.unwrap();
             let table = TestS3WorkTable::load(engine).await.unwrap();
             table
                 .insert(TestS3Row {
