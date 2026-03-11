@@ -1,5 +1,6 @@
 use crate::remove_dir_if_exists;
 use worktable::prelude::*;
+use worktable::s3_sync_persistence;
 use worktable::worktable;
 
 worktable!(
@@ -11,18 +12,7 @@ worktable!(
     },
 );
 
-type TestS3SyncPersistenceEngine = S3SyncDiskPersistenceEngine<
-    SpaceData<
-        <<TestS3PrimaryKey as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
-        { TEST_S_3_INNER_SIZE },
-        { TEST_S_3_PAGE_SIZE as u32 },
-    >,
-    SpaceIndex<TestS3PrimaryKey, { TEST_S_3_INNER_SIZE as u32 }>,
-    TestS3SpaceSecondaryIndex,
-    TestS3PrimaryKey,
-    TestS3SpaceSecondaryIndexEvents,
-    TestS3AvailableIndexes,
->;
+s3_sync_persistence!(TestS3WorkTable);
 
 #[test]
 fn test_s3_engine_compiles() {

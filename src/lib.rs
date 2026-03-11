@@ -19,6 +19,9 @@ pub use table::*;
 pub use data_bucket;
 pub use worktable_codegen::worktable;
 
+#[cfg(feature = "s3-support")]
+pub use worktable_codegen::s3_sync_persistence;
+
 pub mod prelude {
     pub use crate::in_memory::{
         ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow,

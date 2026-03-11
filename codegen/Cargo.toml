@@ -5,6 +5,9 @@ edition = "2024"
 license = "MIT"
 description = "WorkTable codegeneration crate"
 
+[features]
+s3-support = []
+
 [lib]
 name = "worktable_codegen"
 path = "src/lib.rs"

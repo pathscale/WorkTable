@@ -12,7 +12,7 @@ description = "WorkTable is in-memory storage"
 
 [features]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
-s3-support = ["dep:rust-s3", "dep:aws-creds", "dep:aws-region", "dep:walkdir"]
+s3-support = ["dep:rust-s3", "dep:aws-creds", "dep:aws-region", "dep:walkdir", "worktable_codegen/s3-support"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
