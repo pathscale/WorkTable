@@ -166,18 +166,18 @@ impl Generator {
         };
 
         quote! {
-            pub async fn into_worktable<E>(self, engine: E) -> #wt_ident
+            pub async fn into_worktable<E, C>(self, engine: E) -> #wt_ident
             where
-                E: worktable::persistence::PersistenceEngine<
-                    <<#pk_type as worktable::prelude::TablePrimaryKey>::Generator as worktable::prelude::PrimaryKeyGeneratorState>::State,
+                E: PersistenceEngine<
+                    <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                     #pk_type,
                     #secondary_index_events,
                     #avt_index_ident,
+                    Config=C
                 > + Send
                     + 'static,
-                E::Config: Clone,
+                C: Clone + PersistenceConfig,
             {
-                let config = engine.config().clone();
                 let mut page_id = 1;
                 let data = self.data.into_iter().map(|p| {
                     let mut data = Data::from_data_page(p);
@@ -206,7 +206,6 @@ impl Generator {
 
                 #wt_ident(
                     table,
-                    config,
                     #task_ident::run_engine(engine)
                 )
             }

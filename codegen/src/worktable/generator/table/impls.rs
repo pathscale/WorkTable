@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::name_generator::{WorktableNameGenerator, is_unsized_vec};
+use crate::name_generator::{is_unsized_vec, WorktableNameGenerator};
 use crate::worktable::generator::Generator;
 use crate::worktable::model::GeneratorType;
 
@@ -99,10 +99,8 @@ impl Generator {
                         let mut inner = WorkTable::default();
                         inner.table_name = #table_name;
                         #index_setup
-                        let config = engine.config().clone();
                         core::result::Result::Ok(Self(
                             inner,
-                            config,
                             #task::run_engine(engine)
                         ))
                     }
@@ -159,7 +157,7 @@ impl Generator {
         let insert = if self.is_persist {
             quote! {
                 let (pk, op) = self.0.insert_cdc(row)?;
-                self.2.apply_operation(op);
+                self.1.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {
@@ -183,7 +181,7 @@ impl Generator {
         let reinsert = if self.is_persist {
             quote! {
                 let (pk, op) = self.0.reinsert_cdc(row_old, row_new)?;
-                self.2.apply_operation(op);
+                self.1.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {

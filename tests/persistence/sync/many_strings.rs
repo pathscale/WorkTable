@@ -37,7 +37,7 @@ fn test_space_update_query_pk_sync() {
         .await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -55,7 +55,7 @@ fn test_space_update_query_pk_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
@@ -70,7 +70,7 @@ fn test_space_update_query_pk_sync() {
             table.wait_for_ops().await;
         }
         {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 0);
@@ -100,7 +100,7 @@ fn test_space_update_query_pk_many_times_sync() {
         .await;
 
         let pk = {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -118,7 +118,7 @@ fn test_space_update_query_pk_many_times_sync() {
             row.id
         };
         {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
@@ -136,7 +136,7 @@ fn test_space_update_query_pk_many_times_sync() {
             table.wait_for_ops().await;
         }
         {
-            let engine = DiskPersistenceEngine::new(config.clone()).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 511);

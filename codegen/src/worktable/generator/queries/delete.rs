@@ -4,7 +4,7 @@ use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
-use crate::name_generator::{WorktableNameGenerator, is_float};
+use crate::name_generator::{is_float, WorktableNameGenerator};
 use crate::worktable::generator::Generator;
 use crate::worktable::model::Operation;
 
@@ -94,7 +94,7 @@ impl Generator {
                     primary_key_events,
                     link,
                 });
-                self.2.apply_operation(op);
+                self.1.apply_operation(op);
             }
         } else {
             quote! {

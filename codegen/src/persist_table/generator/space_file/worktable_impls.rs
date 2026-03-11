@@ -23,7 +23,7 @@ impl Generator {
     fn gen_worktable_wait_for_ops_fn(&self) -> TokenStream {
         quote! {
             pub async fn wait_for_ops(&self) {
-               self.2.wait_for_ops().await
+               self.1.wait_for_ops().await
             }
         }
     }
