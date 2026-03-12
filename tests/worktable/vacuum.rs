@@ -264,10 +264,10 @@ async fn vacuum_loop_test() {
             .indexes
             .value_idx
             .range(..outdated_ts)
-            .map(|(_, l)| table.0.data.select(**l).unwrap())
+            .map(|(v, l)| (table.0.data.select_non_ghosted(**l).unwrap(), l, v))
             .collect::<Vec<_>>();
-        for row in ids_to_remove {
-            table.delete(row.id).await.unwrap()
+        for (row, _, _) in ids_to_remove {
+            table.delete(row.id).await.unwrap();
         }
     }
 }

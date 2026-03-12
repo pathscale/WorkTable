@@ -66,7 +66,13 @@ where
     fn insert_checked(&self, value: PrimaryKey, link: Link) -> Option<()> {
         let offset_link = OffsetEqLink(link);
         self.pk_map.checked_insert(value.clone(), offset_link)?;
-        self.reverse_pk_map.checked_insert(offset_link, value)?;
+        if self
+            .reverse_pk_map
+            .checked_insert(offset_link, value)
+            .is_none()
+        {
+            return None;
+        }
         Some(())
     }
 

@@ -120,7 +120,6 @@ where
                     }
                     return Ok(link);
                 }
-                // Ok(l) => return Ok(l),
                 Err(e) => match e {
                     DataExecutionError::InvalidLink => {
                         self.empty_links.push(link);
@@ -216,6 +215,7 @@ where
             let index = page_id_mapper(page_id.into());
             let page = pages[index].clone();
             page.reset();
+
             return page;
         }
 
@@ -223,6 +223,7 @@ where
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
         let page = Arc::new(Data::new(index.into()));
         pages.push(page.clone());
+
         page
     }
 
@@ -481,6 +482,10 @@ where
         self.empty_links = registry;
 
         self
+    }
+
+    pub fn current_page_id(&self) -> PageId {
+        self.current_page_id.load(Ordering::Acquire).into()
     }
 }
 

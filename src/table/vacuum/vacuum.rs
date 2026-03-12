@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -41,7 +41,7 @@ pub struct EmptyDataVacuum<
     SecondaryEvents = (),
 > where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
-    Row: StorableRow + Send + Clone + 'static,
+    Row: StorableRow + Send + Clone + 'static + Debug,
     PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
 {
     table_name: &'static str,
@@ -87,7 +87,7 @@ where
         + Clone
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        >,
+        > + Debug,
     <Row as StorableRow>::WrappedRow: Archive
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
@@ -123,6 +123,10 @@ where
         let registry = self.data_pages.empty_links_registry();
         let mut per_page_info = registry.get_per_page_info();
         let _registry_lock = registry.lock_vacuum().await;
+
+        // to avoid some rewrites of ops that used link from empty links registry
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         per_page_info.sort_by(|l, r| {
             OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio))
         });
@@ -138,6 +142,10 @@ where
         let info_iter = per_page_info.into_iter();
         for info in info_iter {
             let page_from = info.page_id;
+            if self.data_pages.current_page_id() == page_from {
+                // don't touch current page or else inserts will be broken
+                continue;
+            }
             loop {
                 let page_to = if let Some(id) = defragmented_pages.pop_front() {
                     id
@@ -233,6 +241,10 @@ where
                 from_page_will_be_moved = true;
                 break;
             };
+
+            if next.page_id != from {
+                continue;
+            }
 
             if sum_links_len + next.length > to_free_space as u32 {
                 to_page_will_be_filled = true;
@@ -352,7 +364,7 @@ where
         + Clone
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        >,
+        > + Debug,
     <Row as StorableRow>::WrappedRow: Archive
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
