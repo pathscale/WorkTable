@@ -127,7 +127,10 @@ async fn test_data_parse() {
 
 #[tokio::test]
 async fn test_space_parse() {
-    let config = DiskConfig::new_with_table_name("tests/data/expected", TestPersistWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/expected",
+        TestPersistWorkTable::name_snake_case(),
+    );
     let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
     let table = TestPersistWorkTable::load(engine).await.unwrap();
     let expected = get_test_wt().await;
@@ -142,7 +145,10 @@ async fn test_space_parse() {
 async fn test_space_parse_no_file() {
     remove_dir_if_exists("tests/non-existent".to_string()).await;
 
-    let config = DiskConfig::new_with_table_name("tests/non-existent", TestPersistWorkTable::name_snake_case());
+    let config = DiskConfig::new_with_table_name(
+        "tests/non-existent",
+        TestPersistWorkTable::name_snake_case(),
+    );
     let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
     let table = TestPersistWorkTable::load(engine).await.unwrap();
     let expected = get_empty_test_wt().await;
