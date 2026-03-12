@@ -117,4 +117,26 @@ impl WorktableNameGenerator {
             Span::mixed_site(),
         )
     }
+
+    pub fn get_space_secondary_index_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}SpaceSecondaryIndex", self.name).as_str(),
+            Span::mixed_site(),
+        )
+    }
+
+    pub fn get_space_secondary_index_events_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}SpaceSecondaryIndexEvents", self.name).as_str(),
+            Span::mixed_site(),
+        )
+    }
+
+    #[cfg(feature = "s3-support")]
+    pub fn get_s3_sync_persistence_engine_ident(&self) -> Ident {
+        Ident::new(
+            format!("{}SyncPersistenceEngine", self.name).as_str(),
+            Span::mixed_site(),
+        )
+    }
 }

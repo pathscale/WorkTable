@@ -1,3 +1,4 @@
+use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -7,7 +8,9 @@ mod read;
 mod space_index;
 mod sync;
 mod toc;
-mod write;
+
+#[cfg(feature = "s3-support")]
+mod s3;
 
 worktable! (
     name: TestPersist,
@@ -46,11 +49,10 @@ worktable!(
     }
 );
 
-pub const TEST_ROW_COUNT: usize = 100;
-
 pub async fn get_empty_test_wt() -> TestPersistWorkTable {
-    let config = PersistenceConfig::new("tests/data", "tests/data");
-    TestPersistWorkTable::new(config).await.unwrap()
+    let config = DiskConfig::new_with_table_name("tests/data", TestPersistWorkTable::name_snake_case());
+    let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
+    TestPersistWorkTable::new(engine).await.unwrap()
 }
 
 pub async fn get_test_wt() -> TestPersistWorkTable {
@@ -58,23 +60,6 @@ pub async fn get_test_wt() -> TestPersistWorkTable {
 
     for i in 1..100 {
         let row = TestPersistRow { another: i, id: i };
-        table.insert(row).unwrap();
-    }
-
-    table
-}
-
-pub async fn get_test_wt_without_secondary_indexes() -> TestWithoutSecondaryIndexesWorkTable {
-    let config = PersistenceConfig::new("tests/data", "tests/data");
-    let table = TestWithoutSecondaryIndexesWorkTable::new(config)
-        .await
-        .unwrap();
-
-    for i in 1..TEST_ROW_COUNT {
-        let row = TestWithoutSecondaryIndexesRow {
-            another: i as u64,
-            id: i as u64,
-        };
         table.insert(row).unwrap();
     }
 

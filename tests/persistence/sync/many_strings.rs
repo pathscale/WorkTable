@@ -1,3 +1,4 @@
+use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable_codegen::worktable;
 
@@ -20,10 +21,7 @@ worktable! (
 
 #[test]
 fn test_space_update_query_pk_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_and_other_sync/update_query_pk",
-        "tests/data/unsized_primary_and_other_sync/update_query_pk",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_and_other_sync/update_query_pk", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -39,9 +37,8 @@ fn test_space_update_query_pk_sync() {
         .await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 field: "".to_string(),
@@ -58,9 +55,8 @@ fn test_space_update_query_pk_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
             let q = FieldAnotherByIdQuery {
@@ -74,7 +70,8 @@ fn test_space_update_query_pk_sync() {
             table.wait_for_ops().await;
         }
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 0);
             assert_eq!(
@@ -87,10 +84,7 @@ fn test_space_update_query_pk_sync() {
 
 #[test]
 fn test_space_update_query_pk_many_times_sync() {
-    let config = PersistenceConfig::new(
-        "tests/data/unsized_primary_and_other_sync/update_query_pk_many",
-        "tests/data/unsized_primary_and_other_sync/update_query_pk_many",
-    );
+    let config = DiskConfig::new_with_table_name("tests/data/unsized_primary_and_other_sync/update_query_pk_many", TestSyncWorkTable::name_snake_case());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -106,9 +100,8 @@ fn test_space_update_query_pk_many_times_sync() {
         .await;
 
         let pk = {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
                 field: "".to_string(),
@@ -125,9 +118,8 @@ fn test_space_update_query_pk_many_times_sync() {
             row.id
         };
         {
-            let table = TestSyncWorkTable::load_from_file(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
             for i in 0..512 {
@@ -144,7 +136,8 @@ fn test_space_update_query_pk_many_times_sync() {
             table.wait_for_ops().await;
         }
         {
-            let table = TestSyncWorkTable::load_from_file(config).await.unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 511);
             assert_eq!(

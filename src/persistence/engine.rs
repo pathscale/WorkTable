@@ -1,20 +1,56 @@
-use crate::TableSecondaryIndexEventsOps;
-use crate::persistence::operation::{BatchOperation, Operation};
-use crate::persistence::{
-    PersistenceEngineOps, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
-};
-use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
-use futures::StreamExt;
-use futures::future::Either;
-use futures::stream::FuturesUnordered;
 use std::fmt::Debug;
 use std::fs;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
 
+use futures::future::Either;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+
+use crate::persistence::operation::{BatchOperation, Operation};
+use crate::persistence::{
+    PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
+};
+use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
+use crate::TableSecondaryIndexEventsOps;
+
+#[derive(Debug, Clone)]
+pub struct DiskConfig {
+    pub config_path: String,
+    pub tables_path: String,
+}
+
+impl DiskConfig {
+    pub fn new<S1: Into<String>, S2: Into<String>>(config_path: S1, table_files_dir: S2) -> Self {
+        Self {
+            config_path: config_path.into(),
+            tables_path: table_files_dir.into(),
+        }
+    }
+
+    pub fn new_with_table_name<S1: Into<String>, S2: AsRef<str>>(
+        config_path: S1,
+        table_name_snake_case: S2,
+    ) -> Self {
+        let config_path = config_path.into();
+        let table_name = table_name_snake_case.as_ref();
+        let tables_path = format!("{}/{}", config_path.trim_end_matches('/'), table_name);
+        Self {
+            config_path,
+            tables_path,
+        }
+    }
+}
+
+impl PersistenceConfig for DiskConfig {
+    fn table_path(&self) -> &str {
+        &self.tables_path
+    }
+}
+
 #[derive(Debug)]
-pub struct PersistenceEngine<
+pub struct DiskPersistenceEngine<
     SpaceData,
     SpacePrimaryIndex,
     SpaceSecondaryIndexes,
@@ -27,6 +63,7 @@ where
     PrimaryKey: TablePrimaryKey,
     <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState
 {
+    config: DiskConfig,
     pub data: SpaceData,
     pub primary_index: SpacePrimaryIndex,
     pub secondary_indexes: SpaceSecondaryIndexes,
@@ -41,50 +78,8 @@ impl<
     SecondaryIndexEvents,
     AvailableIndexes,
     PrimaryKeyGenState,
->
-    PersistenceEngine<
-        SpaceData,
-        SpacePrimaryIndex,
-        SpaceSecondaryIndexes,
-        PrimaryKey,
-        SecondaryIndexEvents,
-        AvailableIndexes,
-        PrimaryKeyGenState,
-    >
-where
-    PrimaryKey: Ord + TablePrimaryKey,
-    <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
-    SpaceData: SpaceDataOps<PrimaryKeyGenState>,
-    SpacePrimaryIndex: SpaceIndexOps<PrimaryKey>,
-    SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents>,
-{
-    pub async fn from_table_files_path<S: AsRef<str> + Clone + Send>(
-        path: S,
-    ) -> eyre::Result<Self> {
-        let table_path = Path::new(path.as_ref());
-        if !table_path.exists() {
-            fs::create_dir_all(table_path)?;
-        }
-
-        Ok(Self {
-            data: SpaceData::from_table_files_path(path.clone()).await?,
-            primary_index: SpacePrimaryIndex::primary_from_table_files_path(path.clone()).await?,
-            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(path).await?,
-            phantom_data: PhantomData,
-        })
-    }
-}
-
-impl<
-    SpaceData,
-    SpacePrimaryIndex,
-    SpaceSecondaryIndexes,
-    PrimaryKey,
-    SecondaryIndexEvents,
-    AvailableIndexes,
-    PrimaryKeyGenState,
-> PersistenceEngineOps<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
-    for PersistenceEngine<
+> PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
+    for DiskPersistenceEngine<
         SpaceData,
         SpacePrimaryIndex,
         SpaceSecondaryIndexes,
@@ -104,6 +99,34 @@ where
     PrimaryKeyGenState: Clone + Debug + Send,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send,
 {
+    type Config = DiskConfig;
+
+    async fn new(config: Self::Config) -> eyre::Result<Self>
+    where
+        Self: Sized,
+    {
+        let table_path = Path::new(&config.tables_path);
+        if !table_path.exists() {
+            fs::create_dir_all(table_path)?;
+        }
+
+        Ok(Self {
+            config: config.clone(),
+            data: SpaceData::from_table_files_path(config.tables_path.clone()).await?,
+            primary_index: SpacePrimaryIndex::primary_from_table_files_path(
+                config.tables_path.clone(),
+            )
+            .await?,
+            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path)
+                .await?,
+            phantom_data: PhantomData,
+        })
+    }
+
+    fn config(&self) -> &DiskConfig {
+        &self.config
+    }
+
     async fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
@@ -171,6 +194,7 @@ where
         }
 
         if let Some(pk_gen_state_update) = batch_op.get_pk_gen_state()? {
+            println!("PK gen state update: {:?}", pk_gen_state_update);
             let info = self.data.get_mut_info();
             info.inner.pk_gen_state = pk_gen_state_update;
             self.data.save_info().await?;

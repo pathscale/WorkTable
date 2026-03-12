@@ -3,7 +3,7 @@ members = ["codegen", "examples", "performance_measurement", "performance_measur
 
 [package]
 name = "worktable"
-version = "0.8.23"
+version = "0.9.0-alpha2"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -12,11 +12,12 @@ description = "WorkTable is in-memory storage"
 
 [features]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
+s3-support = ["dep:rust-s3", "dep:aws-creds", "dep:aws-region", "dep:walkdir", "worktable_codegen/s3-support"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-worktable_codegen = { path = "codegen", version = "=0.8.23" }
+worktable_codegen = { path = "codegen", version = "=0.9.0-alpha2" }
 
 async-trait = "0.1.89"
 eyre = "0.6.12"
@@ -42,6 +43,12 @@ parking_lot = "0.12.3"
 prettytable-rs = "^0.10"
 smart-default = "0.7.1"
 log = "0.4.29"
+
+# S3 support (optional)
+rust-s3 = { version = "0.37", optional = true }
+aws-creds = { version = "0.39", optional = true }
+aws-region = { version = "0.28", optional = true }
+walkdir = { version = "2", optional = true }
 
 [dev-dependencies]
 rand = "0.9.1"

@@ -2,6 +2,8 @@ mod mem_stat;
 mod name_generator;
 mod persist_index;
 mod persist_table;
+#[cfg(feature = "s3-support")]
+mod s3_persistence;
 mod worktable;
 
 use proc_macro::TokenStream;
@@ -10,6 +12,14 @@ use proc_macro::TokenStream;
 #[proc_macro]
 pub fn worktable(input: TokenStream) -> TokenStream {
     worktable::expand(input.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+#[cfg(feature = "s3-support")]
+#[proc_macro]
+pub fn s3_sync_persistence(input: TokenStream) -> TokenStream {
+    s3_persistence::expand(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

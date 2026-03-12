@@ -1,19 +1,26 @@
 pub mod in_memory;
 mod index;
 pub mod lock;
+mod mem_stat;
+pub mod persistence;
 mod primary_key;
 mod row;
 mod table;
-pub use data_bucket;
-mod mem_stat;
-mod persistence;
 mod util;
 
+#[cfg(feature = "s3-support")]
+pub mod features;
+
 pub use index::*;
+pub use persistence::{PersistedWorkTable, PersistenceConfig};
 pub use row::*;
 pub use table::*;
 
+pub use data_bucket;
 pub use worktable_codegen::worktable;
+
+#[cfg(feature = "s3-support")]
+pub use worktable_codegen::s3_sync_persistence;
 
 pub mod prelude {
     pub use crate::in_memory::{
@@ -24,10 +31,10 @@ pub mod prelude {
     pub use crate::lock::{LockGuard, LockMap};
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
-        DeleteOperation, IndexTableOfContents, InsertOperation, Operation, OperationId,
-        PersistenceConfig, PersistenceEngine, PersistenceEngineOps, PersistenceTask, SpaceData,
-        SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps,
-        UpdateOperation, map_index_pages_to_toc_and_general,
+        DeleteOperation, DiskConfig, DiskPersistenceEngine, IndexTableOfContents, InsertOperation,
+        Operation, OperationId, PersistedWorkTable, PersistenceConfig, PersistenceEngine,
+        PersistenceTask, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
+        SpaceSecondaryIndexOps, UpdateOperation, map_index_pages_to_toc_and_general,
         map_unsized_index_pages_to_toc_and_general, validate_events,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
@@ -59,4 +66,7 @@ pub mod prelude {
 
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
     pub const WT_DATA_EXTENSION: &str = ".wt.data";
+
+    #[cfg(feature = "s3-support")]
+    pub use crate::features::{S3Config, S3DiskConfig, S3SyncDiskPersistenceEngine};
 }

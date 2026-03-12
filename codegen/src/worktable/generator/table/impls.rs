@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::name_generator::{WorktableNameGenerator, is_unsized_vec};
+use crate::name_generator::{is_unsized_vec, WorktableNameGenerator};
 use crate::worktable::generator::Generator;
 use crate::worktable::model::GeneratorType;
 
@@ -10,7 +10,7 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_work_table_ident();
 
-        let new_fn = self.gen_table_new_fn();
+        let persisted_impl = self.gen_table_new_fn();
         let name_fn = self.gen_table_name_fn();
         let select_fn = self.gen_table_select_fn();
         let insert_fn = self.gen_table_insert_fn();
@@ -24,8 +24,8 @@ impl Generator {
         let vacuum_fn = self.gen_table_vacuum_fn();
 
         quote! {
+            #persisted_impl
             impl #ident {
-                #new_fn
                 #name_fn
                 #select_fn
                 #insert_fn
@@ -43,12 +43,14 @@ impl Generator {
 
     fn gen_table_new_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
         let table_name = name_generator.get_work_table_literal_name();
-        let engine = name_generator.get_persistence_engine_ident();
         let task = name_generator.get_persistence_task_ident();
-        let dir_name = name_generator.get_dir_name();
+        let space_ident = name_generator.get_space_file_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
+        let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
+        let avt_index_ident = name_generator.get_available_indexes_ident();
 
         if self.is_persist {
             let pk_types = &self
@@ -81,17 +83,37 @@ impl Generator {
                 }
             };
             quote! {
-                pub async fn new(config: PersistenceConfig) -> eyre::Result<Self> {
-                    let mut inner = WorkTable::default();
-                    inner.table_name = #table_name;
-                    #index_setup
-                    let table_files_path = format!("{}/{}", config.tables_path, #dir_name);
-                    let engine: #engine = PersistenceEngine::from_table_files_path(table_files_path).await?;
-                    core::result::Result::Ok(Self(
-                        inner,
-                        config,
-                        #task::run_engine(engine)
-                    ))
+                impl<E, C> PersistedWorkTable<E> for #ident
+                where
+                    E: PersistenceEngine<
+                        <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                        #pk_type,
+                        #secondary_index_events,
+                        #avt_index_ident,
+                        Config=C
+                    > + Send
+                        + 'static,
+                    C: Clone + PersistenceConfig,
+                {
+                    async fn new(engine: E) -> eyre::Result<Self> {
+                        let mut inner = WorkTable::default();
+                        inner.table_name = #table_name;
+                        #index_setup
+                        core::result::Result::Ok(Self(
+                            inner,
+                            #task::run_engine(engine)
+                        ))
+                    }
+
+                    async fn load(engine: E) -> eyre::Result<Self> {
+                        let table_path = engine.config().table_path();
+                        if !std::path::Path::new(table_path).exists() {
+                            return Self::new(engine).await;
+                        };
+                        let space = #space_ident::parse_file(table_path).await?;
+                        let table = space.into_worktable(engine).await;
+                        Ok(table)
+                    }
                 }
             }
         } else {
@@ -100,9 +122,16 @@ impl Generator {
     }
 
     fn gen_table_name_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let dir_name = name_generator.get_dir_name();
+
         quote! {
             pub fn name(&self) -> &'static str {
                 &self.0.table_name
+            }
+
+            pub fn name_snake_case() -> &'static str {
+                #dir_name
             }
         }
     }
@@ -128,7 +157,7 @@ impl Generator {
         let insert = if self.is_persist {
             quote! {
                 let (pk, op) = self.0.insert_cdc(row)?;
-                self.2.apply_operation(op);
+                self.1.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {
@@ -152,7 +181,7 @@ impl Generator {
         let reinsert = if self.is_persist {
             quote! {
                 let (pk, op) = self.0.reinsert_cdc(row_old, row_new)?;
-                self.2.apply_operation(op);
+                self.1.apply_operation(op);
                 core::result::Result::Ok(pk)
             }
         } else {

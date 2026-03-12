@@ -1,10 +1,11 @@
 use tokio::fs::File;
+use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 
 // TODO: Fix naming.
 use crate::persistence::{
-    TEST_PERSIST_INNER_SIZE, TEST_PERSIST_PAGE_SIZE, TestPersistWorkTable, get_empty_test_wt,
-    get_test_wt,
+    TEST_PERSIST_INNER_SIZE, TEST_PERSIST_PAGE_SIZE, TestPersistPersistenceEngine,
+    TestPersistWorkTable, get_empty_test_wt, get_test_wt,
 };
 use crate::remove_dir_if_exists;
 
@@ -126,8 +127,9 @@ async fn test_data_parse() {
 
 #[tokio::test]
 async fn test_space_parse() {
-    let config = PersistenceConfig::new("tests/data/expected", "tests/data/expected");
-    let table = TestPersistWorkTable::load_from_file(config).await.unwrap();
+    let config = DiskConfig::new_with_table_name("tests/data/expected", TestPersistWorkTable::name_snake_case());
+    let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
+    let table = TestPersistWorkTable::load(engine).await.unwrap();
     let expected = get_test_wt().await;
 
     assert_eq!(
@@ -140,8 +142,9 @@ async fn test_space_parse() {
 async fn test_space_parse_no_file() {
     remove_dir_if_exists("tests/non-existent".to_string()).await;
 
-    let config = PersistenceConfig::new("tests/non-existent", "tests/non-existent");
-    let table = TestPersistWorkTable::load_from_file(config).await.unwrap();
+    let config = DiskConfig::new_with_table_name("tests/non-existent", TestPersistWorkTable::name_snake_case());
+    let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
+    let table = TestPersistWorkTable::load(engine).await.unwrap();
     let expected = get_empty_test_wt().await;
     assert_eq!(
         table.select_all().execute().unwrap(),
