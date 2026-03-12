@@ -3,7 +3,7 @@ members = ["codegen", "examples", "performance_measurement", "performance_measur
 
 [package]
 name = "worktable"
-version = "0.9.0-alpha3"
+version = "0.9.0-alpha4"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -17,7 +17,7 @@ s3-support = ["dep:rust-s3", "dep:aws-creds", "dep:aws-region", "dep:walkdir", "
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-worktable_codegen = { path = "codegen", version = "=0.9.0-alpha3" }
+worktable_codegen = { path = "codegen", version = "=0.9.0-alpha4" }
 
 async-trait = "0.1.89"
 eyre = "0.6.12"
