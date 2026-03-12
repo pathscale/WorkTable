@@ -4,23 +4,23 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use data_bucket::page::PageId;
 use data_bucket::Link;
+use data_bucket::page::PageId;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 use rkyv::rancor::Strategy;
+use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
-use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::lock::{Lock, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
-use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
+use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
 };
@@ -41,7 +41,7 @@ pub struct EmptyDataVacuum<
     SecondaryEvents = (),
 > where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
-    Row: StorableRow + Send + Clone + 'static,
+    Row: StorableRow + Send + Clone + 'static + Debug,
     PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
 {
     table_name: &'static str,
@@ -87,7 +87,7 @@ where
         + Clone
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        >,
+        > + Debug,
     <Row as StorableRow>::WrappedRow: Archive
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
@@ -242,6 +242,10 @@ where
                 break;
             };
 
+            if next.page_id != from {
+                continue;
+            }
+
             if sum_links_len + next.length > to_free_space as u32 {
                 to_page_will_be_filled = true;
                 if range.next().is_none() {
@@ -323,6 +327,8 @@ where
             .select(new_link)
             .expect("should exist as link was moved correctly");
 
+        println!("Updating indexes for {:?} with pk {:?}", row, pk);
+
         self.secondary_indexes
             .reinsert_row(row.clone(), old_link, row, new_link)
             .expect("should be ok as index were no violated");
@@ -362,7 +368,7 @@ where
         + Clone
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        >,
+        > + Debug,
     <Row as StorableRow>::WrappedRow: Archive
         + for<'a> Serialize<
             Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
@@ -400,7 +406,7 @@ mod tests {
     use std::sync::Arc;
 
     use indexset::core::pair::Pair;
-    use worktable_codegen::{worktable, MemStat};
+    use worktable_codegen::{MemStat, worktable};
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;

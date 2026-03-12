@@ -27,12 +27,12 @@ where
     Node: NodeLike<MultiPair<T, OffsetEqLink>> + Send + 'static,
 {
     fn insert(&self, value: T, link: Link) -> Option<Link> {
-        //println!("Insert to indexmap: {:?} {:?}", value, link);
+        println!("Insert to indexmap: {:?} {:?}", value, link);
         self.insert(value, OffsetEqLink(link)).map(|l| l.0)
     }
 
     fn insert_checked(&self, value: T, link: Link) -> Option<()> {
-        //println!("Checked Insert to indexmap: {:?} {:?}", value, link);
+        println!("Checked Insert to indexmap: {:?} {:?}", value, link);
         if self.insert(value, OffsetEqLink(link)).is_some() {
             None
         } else {
@@ -44,7 +44,7 @@ where
         let res = self
             .remove(value, &OffsetEqLink(link))
             .map(|(v, l)| (v, l.0));
-        //println!("Remove from indexmap: {:?} {:?} {:?}", value, link, res);
+        println!("Remove from indexmap: {:?} {:?} {:?}", value, link, res);
         res
     }
 }
@@ -55,18 +55,18 @@ where
     Node: NodeLike<Pair<T, OffsetEqLink>> + Send + 'static,
 {
     fn insert(&self, value: T, link: Link) -> Option<Link> {
-        //println!("Insert to indexmap: {:?} {:?}", value, link);
+        println!("Insert to indexmap: {:?} {:?}", value, link);
         self.insert(value, OffsetEqLink(link)).map(|l| l.0)
     }
 
     fn insert_checked(&self, value: T, link: Link) -> Option<()> {
-        //println!("Checked Insert to indexmap: {:?} {:?}", value, link);
+        println!("Checked Insert to indexmap: {:?} {:?}", value, link);
         self.checked_insert(value, OffsetEqLink(link))
     }
 
     fn remove(&self, value: &T, _: Link) -> Option<(T, Link)> {
         let res = self.remove(value).map(|(v, l)| (v, l.0));
-        //println!("Remove from indexmap: {:?} {:?}", value, res);
+        println!("Remove from indexmap: {:?} {:?}", value, res);
         res
     }
 }
