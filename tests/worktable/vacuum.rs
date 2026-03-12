@@ -1057,6 +1057,7 @@ impl VacuumTestWorkTable {
             println!("Found link {:?} for {:?}", link, pk);
             panic!("Should exist")
         };
+        println!("Deleted row {:?}", row);
         self.0.indexes.delete_row(row, link)?;
         self.0.primary_index.remove(&pk, link);
         self.0
@@ -1343,10 +1344,10 @@ async fn vacuum_loop_test() {
             .indexes
             .value_idx
             .range(..outdated_ts)
-            .map(|(_, l)| table.0.data.select_non_ghosted(**l).unwrap())
+            .map(|(v, l)| (table.0.data.select_non_ghosted(**l).unwrap(), l, v))
             .collect::<Vec<_>>();
         println!("Ids to Remove {:?}", ids_to_remove);
-        for row in ids_to_remove {
+        for (row, _, _) in ids_to_remove {
             table.delete(row.id).await.unwrap();
             println!("Removed {:?}", row.id);
         }
