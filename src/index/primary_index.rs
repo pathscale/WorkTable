@@ -12,7 +12,7 @@ use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 
 use crate::util::OffsetEqLink;
-use crate::{convert_change_events, IndexMap, TableIndex, TableIndexCdc};
+use crate::{IndexMap, TableIndex, TableIndexCdc, convert_change_events};
 
 /// Combined storage for primary and reverse indexes.
 ///
@@ -71,7 +71,6 @@ where
             .checked_insert(offset_link, value)
             .is_none()
         {
-            println!("Reverse map checked insert failed");
             return None;
         }
         Some(())

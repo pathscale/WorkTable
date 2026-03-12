@@ -118,7 +118,6 @@ where
                     if let Some(l) = left_link {
                         self.empty_links.push(l);
                     }
-                    println!("Inserted in empty link");
                     return Ok(link);
                 }
                 Err(e) => match e {
@@ -145,7 +144,6 @@ where
             match link {
                 Ok(link) => {
                     self.row_count.fetch_add(1, Ordering::Relaxed);
-                    println!("Inserted in new place");
                     return Ok(link);
                 }
                 Err(e) => match e {
@@ -218,8 +216,6 @@ where
             let page = pages[index].clone();
             page.reset();
 
-            println!("Used empty page {:?}", page_id);
-
             return page;
         }
 
@@ -227,8 +223,6 @@ where
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
         let page = Arc::new(Data::new(index.into()));
         pages.push(page.clone());
-
-        println!("Used new page {:?}", page_id);
 
         page
     }
@@ -409,7 +403,6 @@ where
     }
 
     pub fn mark_page_empty(&self, page_id: PageId) {
-        println!("Mark {:?} as empty", page_id);
         if u32::from(page_id) != self.current_page_id.load(Ordering::Acquire) {
             let mut g = self.empty_pages.write();
             g.push_back(page_id);

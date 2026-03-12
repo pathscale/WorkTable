@@ -283,8 +283,6 @@ where
                 .expect("page is not full as checked on links collection");
             self.update_index_after_move(pk.clone(), from_link.0, new_link);
 
-            println!("Moved {:?} from {:?} to {:?}", pk, from_link, new_link);
-
             lock.unlock();
             self.lock_manager.remove_with_lock_check(&pk);
         }
@@ -326,8 +324,6 @@ where
             .data_pages
             .select(new_link)
             .expect("should exist as link was moved correctly");
-
-        println!("Updating indexes for {:?} with pk {:?}", row, pk);
 
         self.secondary_indexes
             .reinsert_row(row.clone(), old_link, row, new_link)
