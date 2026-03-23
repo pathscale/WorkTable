@@ -8,6 +8,7 @@ mod delete;
 mod float;
 mod in_place;
 mod index;
+mod nid;
 mod option;
 mod tuple_primary_key;
 mod unsized_;
