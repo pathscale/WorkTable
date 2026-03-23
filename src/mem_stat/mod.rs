@@ -11,6 +11,8 @@ use indexset::core::multipair::MultiPair;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 use ordered_float::OrderedFloat;
+use psc_nanoid::PackedNanoid;
+use psc_nanoid::packed::AlphabetPackExt;
 use uuid::Uuid;
 
 use crate::IndexMultiMap;
@@ -183,6 +185,16 @@ impl_memstat_zero!(Link, PageId, Uuid, OperationId, OperationType);
 
 // OffsetEqLink has zero heap size (just wraps Link)
 impl<const N: usize> MemStat for OffsetEqLink<N> {
+    fn heap_size(&self) -> usize {
+        0
+    }
+
+    fn used_size(&self) -> usize {
+        0
+    }
+}
+
+impl<const N: usize, const B: usize, A: AlphabetPackExt> MemStat for PackedNanoid<N, B, A> {
     fn heap_size(&self) -> usize {
         0
     }
