@@ -7,6 +7,8 @@ target
 
 Cargo.lock
 *.DS_Store
-tests/data/sync/
-/tests/data/unsized_secondary_sync/
-/tests/data/unsized_primary_sync/
+tests/data/*
+!tests/data/expected/
+!tests/data/persist_index_table_of_contents.wt.idx
+
+.claude
