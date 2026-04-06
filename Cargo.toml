@@ -46,8 +46,8 @@ smart-default = "0.7.1"
 log = "0.4.29"
 
 # S3 support (optional)
-rust-s3 = { version = "0.37", optional = true }
-aws-creds = { version = "0.39", optional = true }
+rust-s3 = { version = "0.37", optional = true, default-features = false, features = ["tokio-rustls-tls"] }
+aws-creds = { version = "0.39", optional = true, default-features = false, features = ["rustls-tls"] }
 aws-region = { version = "0.28", optional = true }
 walkdir = { version = "2", optional = true }
 
