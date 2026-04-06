@@ -8,13 +8,15 @@ use awsregion::Region;
 use s3::Bucket;
 use walkdir::WalkDir;
 
-use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
     DiskConfig, DiskPersistenceEngine, PersistenceConfig, PersistenceEngine, SpaceDataOps,
     SpaceIndexOps, SpaceSecondaryIndexOps,
 };
-use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
+use crate::prelude::{
+    PrimaryKeyGeneratorState, TablePrimaryKey, WT_DATA_EXTENSION, WT_INDEX_EXTENSION,
+};
+use crate::TableSecondaryIndexEventsOps;
 
 #[derive(Debug, Clone)]
 pub struct S3Config {
@@ -142,8 +144,6 @@ where
                 .ok_or_else(|| eyre::eyre!("Invalid table path"))?;
             let s3_key = Self::full_s3_path(prefix, &relative.to_string_lossy(), table_name);
 
-            println!("Syncing S3 to {}", s3_key);
-            println!("File {} {}", local_path.display(), s3_key);
             tracing::debug!(local_path = %local_path.display(), s3_key = %s3_key, "Uploading file to S3");
 
             let content = tokio::fs::read(local_path).await?;
@@ -189,6 +189,12 @@ where
                 let s3_key = &obj.key;
 
                 let filename = s3_key.rsplit('/').next().unwrap_or(s3_key);
+
+                if !filename.ends_with(WT_DATA_EXTENSION) && !filename.ends_with(WT_INDEX_EXTENSION)
+                {
+                    tracing::debug!(s3_key = %s3_key, "Skipping non-table file");
+                    continue;
+                }
 
                 let local_path = table_path.join(filename);
 
