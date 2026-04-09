@@ -71,7 +71,7 @@ where
             self.primary_id = another.primary_id
         }
         for (index, id) in another.secondary_ids {
-            if id != IndexChangeEventId::default() {
+            if id != IndexChangeEventId::default() || self.secondary_ids.get(&index).is_none() {
                 self.secondary_ids.insert(index, id);
             }
         }
@@ -274,6 +274,8 @@ where
             self.page_limit = MAX_PAGE_AMOUNT;
             self.attempts = 0;
 
+            println!("Op generated");
+
             Ok(Some(op))
         } else {
             // can't collect batch for now
@@ -452,6 +454,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     }
 
     fn check_wait_triggers(&self) -> bool {
+        println!("{:?}", self.queue.len());
         if self.queue.len() != 0 {
             return false;
         }

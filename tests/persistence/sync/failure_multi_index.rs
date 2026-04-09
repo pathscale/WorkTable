@@ -70,6 +70,35 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 .unwrap();
             let table = MultiUniqueIdxWorkTable::load(engine).await.unwrap();
 
+            let valid_row = MultiUniqueIdxRow {
+                id: table.get_next_pk().0,
+                unique_a: 9999,
+                unique_b: 999,
+            };
+            table.insert(valid_row).unwrap();
+
+            let valid_row = MultiUniqueIdxRow {
+                id: table.get_next_pk().0,
+                unique_a: 1,
+                unique_b: 1,
+            };
+            table.insert(valid_row).unwrap();
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            let failing_row = MultiUniqueIdxRow {
+                id: table.get_next_pk().0,
+                unique_a: 99,
+                unique_b: 0, // This already exists
+            };
+
+            let result = table.insert(failing_row);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                WorkTableError::AlreadyExists(_)
+            ));
+
             let failing_row = MultiUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 99,
