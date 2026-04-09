@@ -1,11 +1,11 @@
 use crate::worktable::Parser;
 use crate::worktable::model::Index;
+use indexmap::IndexMap;
 use proc_macro2::{Delimiter, Ident, TokenTree};
-use std::collections::HashMap;
 use syn::spanned::Spanned;
 
 impl Parser {
-    pub fn parse_indexes(&mut self) -> syn::Result<HashMap<Ident, Index>> {
+    pub fn parse_indexes(&mut self) -> syn::Result<IndexMap<Ident, Index>> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
             "Expected `indexes` field in declaration",
@@ -44,7 +44,7 @@ impl Parser {
 
         let mut parser = Parser::new(tt);
 
-        let mut rows = HashMap::new();
+        let mut rows = IndexMap::new();
         let mut ind = true;
 
         while ind {
