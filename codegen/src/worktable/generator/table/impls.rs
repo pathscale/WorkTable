@@ -153,12 +153,15 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type = name_generator.get_row_type_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
 
         let insert = if self.is_persist {
             quote! {
-                let (pk, op) = self.0.insert_cdc(row)?;
-                self.1.apply_operation(op);
-                core::result::Result::Ok(pk)
+                let (op, res) = self.0.insert_cdc::<#secondary_events_ident>(row);
+                if let Some(op) = op {
+                    self.1.apply_operation(op);
+                }
+                res
             }
         } else {
             quote! {
@@ -177,12 +180,15 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type = name_generator.get_row_type_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
 
         let reinsert = if self.is_persist {
             quote! {
-                let (pk, op) = self.0.reinsert_cdc(row_old, row_new)?;
-                self.1.apply_operation(op);
-                core::result::Result::Ok(pk)
+                let (op, res) = self.0.reinsert_cdc::<#secondary_events_ident>(row_old, row_new);
+                if let Some(op) = op {
+                    self.1.apply_operation(op);
+                }
+                res
             }
         } else {
             quote! {

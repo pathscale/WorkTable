@@ -86,6 +86,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
 
             tokio::time::sleep(Duration::from_millis(500)).await;
 
+            println!("Wrong starts here");
             let failing_row = MultiUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 99,
@@ -122,7 +123,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
 
             // Use timeout to detect if persistence is stuck
             // If this hangs, the bug exists - CDC queue is blocked
-            let wait_result = timeout(Duration::from_secs(10), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
 
             if wait_result.is_err() {
                 panic!(

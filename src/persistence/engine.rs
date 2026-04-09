@@ -162,6 +162,10 @@ where
                     .process_change_events(delete.secondary_keys_events)
                     .await
             }
+            Operation::Acknowledge(_) => {
+                // Acknowledge operations carry orphaned events for sequence continuity.
+                Ok(())
+            }
         }
     }
 

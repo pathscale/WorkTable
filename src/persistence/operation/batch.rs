@@ -352,15 +352,30 @@ where
     }
 
     pub fn get_indexes_evs(&self) -> eyre::Result<(BatchChangeEvent<PrimaryKey>, SecondaryEvents)> {
-        if let Some(evs) = &self.prepared_index_evs {
-            Ok((evs.primary_evs.clone(), evs.secondary_evs.clone()))
-        } else {
-            tracing::warn!(
-                "Index events are not validated and it can cause errors while applying batch"
-            );
-            let evs = self.prepare_indexes_evs()?;
-            Ok((evs.primary_evs.clone(), evs.secondary_evs.clone()))
+        let prepared_evs = self
+            .prepared_index_evs
+            .as_ref()
+            .expect("prepared_index_evs should be set by validate() before calling get_indexes_evs");
+
+        // Clone the prepared events (already sorted in validate())
+        let mut primary_evs = prepared_evs.primary_evs.clone();
+        let mut secondary_evs = prepared_evs.secondary_evs.clone();
+
+        // Remove events from Acknowledge operations
+        for op in &self.ops {
+            if let Operation::Acknowledge(ack) = op {
+                // Remove primary events from ack
+                for ack_ev in &ack.primary_key_events {
+                    if let Ok(pos) = primary_evs.binary_search_by(|ev| ev.id().cmp(&ack_ev.id())) {
+                        primary_evs.remove(pos);
+                    }
+                }
+                // Remove secondary events from ack using the trait's remove method
+                secondary_evs.remove(&ack.secondary_keys_events);
+            }
         }
+
+        Ok((primary_evs, secondary_evs))
     }
 
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {

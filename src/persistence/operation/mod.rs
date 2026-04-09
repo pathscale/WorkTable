@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::prelude::From;
 
 pub use batch::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, PosByOpIdQuery};
-pub use operation::{DeleteOperation, InsertOperation, Operation, UpdateOperation};
+pub use operation::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, UpdateOperation};
 pub use util::validate_events;
 
 /// Represents page's identifier. Is unique within the table bounds
@@ -95,6 +95,7 @@ pub enum OperationType {
     Insert,
     Update,
     Delete,
+    Acknowledge,
 }
 
 impl SizeMeasurable for OperationType {

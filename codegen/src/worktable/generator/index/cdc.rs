@@ -50,13 +50,16 @@ impl Generator {
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
                 quote! {
+                    partial_events.#index_field_name = vec![];
                     let #index_field_name = if let Some(events) = self.#index_field_name.insert_checked_cdc(row.#i.clone(), link) {
-                        events.into_iter().map(|ev| ev.into()).collect()
+                        let evs: Vec<_> = events.into_iter().map(|ev| ev.into()).collect();
+                        partial_events.#index_field_name = evs.clone();
+                        evs
                     } else {
-                        return Err(IndexError::AlreadyExists {
+                        return (partial_events, Err(IndexError::AlreadyExists {
                             at: #available_index_ident::#index_variant,
                             inserted_already: inserted_indexes.clone(),
-                        });
+                        }));
                     };
                     inserted_indexes.push(#available_index_ident::#index_variant);
                 }
@@ -70,15 +73,14 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            fn save_row_cdc(&self, row: #row_type_ident, link: Link) -> Result<#events_ident, IndexError<#available_index_ident>> {
+            fn save_row_cdc(&self, row: #row_type_ident, link: Link) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
+                let mut partial_events = #events_ident::default();
 
                 #(#save_rows)*
-                core::result::Result::Ok(
-                    #events_ident {
-                        #(#idents,)*
-                    }
-                )
+                (#events_ident {
+                    #(#idents,)*
+                }, Ok(()))
             }
         }
     }
@@ -122,13 +124,16 @@ impl Generator {
                 let insert = if idx.is_unique {
                     quote! {
                         let mut #index_field_name = if row_new.#i != row_old.#i {
+                            partial_events.#index_field_name = vec![];
                             let #index_field_name: Vec<_> = if let Some(events) = self.#index_field_name.insert_checked_cdc(row_new.#i.clone(), link_new) {
-                                events.into_iter().map(|ev| ev.into()).collect()
+                                let evs: Vec<_> = events.into_iter().map(|ev| ev.into()).collect();
+                                partial_events.#index_field_name = evs.clone();
+                                evs
                             } else {
-                                return Err(IndexError::AlreadyExists {
+                                return (partial_events, Err(IndexError::AlreadyExists {
                                     at: #available_index_ident::#index_variant,
                                     inserted_already: inserted_indexes.clone(),
-                                });
+                                }));
                             };
                             inserted_indexes.push(#available_index_ident::#index_variant);
 
@@ -159,16 +164,15 @@ impl Generator {
                 link_old: Link,
                 row_new: #row_type_ident,
                 link_new: Link
-            ) -> Result<#events_ident, IndexError<#available_index_ident>> {
+            ) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
+                let mut partial_events = #events_ident::default();
 
                 #(#insert_rows)*
                 #(#remove_rows)*
-                core::result::Result::Ok(
-                    #events_ident {
-                        #(#idents,)*
-                    }
-                )
+                (#events_ident {
+                    #(#idents,)*
+                }, Ok(()))
             }
         }
     }
@@ -199,13 +203,11 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            fn delete_row_cdc(&self, row: #row_type_ident, link: Link) -> Result<#events_ident, IndexError<#available_index_ident>> {
+            fn delete_row_cdc(&self, row: #row_type_ident, link: Link) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 #(#delete_rows)*
-                core::result::Result::Ok(
-                    #events_ident {
-                        #(#idents,)*
-                    }
-                )
+                (#events_ident {
+                    #(#idents,)*
+                }, Ok(()))
             }
         }
     }
@@ -261,13 +263,11 @@ impl Generator {
                 &self,
                 link: Link,
                 difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
-            ) -> Result<#events_ident, IndexError<#available_index_ident>> {
+            ) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 #(#process_difference_rows)*
-                core::result::Result::Ok(
-                    #events_ident {
-                        #(#idents,)*
-                    }
-                )
+                (#events_ident {
+                    #(#idents,)*
+                }, Ok(()))
             }
         }
     }
@@ -304,13 +304,16 @@ impl Generator {
                         let mut events = vec![];
                         if let #avt_type_ident::#variant_ident(new) = &diff.new {
                             let key_new = #new_value_expr;
-                            if let Some(evs) =  TableIndexCdc::insert_checked_cdc(&self.#index_field_name, key_new, link) {
+                            partial_events.#index_field_name = vec![];
+                            if let Some(evs) = TableIndexCdc::insert_checked_cdc(&self.#index_field_name, key_new, link) {
+                                let evs: Vec<_> = evs.into_iter().collect();
+                                partial_events.#index_field_name = evs.clone();
                                 events.extend_from_slice(evs.as_ref());
                             } else {
-                                return Err(IndexError::AlreadyExists {
+                                return (partial_events, Err(IndexError::AlreadyExists {
                                     at: #available_index_ident::#index_variant,
                                     inserted_already: inserted_indexes.clone(),
-                                });
+                                }));
                             }
                             inserted_indexes.push(#available_index_ident::#index_variant);
                         }
@@ -335,15 +338,14 @@ impl Generator {
                 &self,
                 link: Link,
                 difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
-            ) -> Result<#events_ident, IndexError<#available_index_ident>> {
+            ) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
+                let mut partial_events = #events_ident::default();
 
                 #(#process_difference_insert_rows)*
-                core::result::Result::Ok(
-                    #events_ident {
-                        #(#idents,)*
-                    }
-                )
+                (#events_ident {
+                    #(#idents,)*
+                }, Ok(()))
             }
         }
     }

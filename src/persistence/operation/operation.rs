@@ -13,6 +13,7 @@ pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Insert(InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>),
     Update(UpdateOperation<SecondaryKeys>),
     Delete(DeleteOperation<PrimaryKey, SecondaryKeys>),
+    Acknowledge(AcknowledgeOperation<PrimaryKey, SecondaryKeys>),
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Hash
@@ -44,6 +45,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(_) => OperationType::Insert,
             Operation::Update(_) => OperationType::Update,
             Operation::Delete(_) => OperationType::Delete,
+            Operation::Acknowledge(_) => OperationType::Acknowledge,
         }
     }
 
@@ -52,6 +54,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => insert.id,
             Operation::Update(update) => update.id,
             Operation::Delete(delete) => delete.id,
+            Operation::Acknowledge(ack) => ack.id,
         }
     }
 
@@ -60,6 +63,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => insert.link,
             Operation::Update(update) => update.link,
             Operation::Delete(delete) => delete.link,
+            Operation::Acknowledge(_) => Link::default(),
         }
     }
 
@@ -68,6 +72,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => Some(&insert.bytes),
             Operation::Update(update) => Some(&update.bytes),
             Operation::Delete(_) => None,
+            Operation::Acknowledge(_) => None,
         }
     }
 
@@ -76,6 +81,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => Some(&insert.primary_key_events),
             Operation::Update(_) => None,
             Operation::Delete(delete) => Some(&delete.primary_key_events),
+            Operation::Acknowledge(ack) => Some(&ack.primary_key_events),
         }
     }
 
@@ -84,6 +90,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => &insert.secondary_keys_events,
             Operation::Update(update) => &update.secondary_keys_events,
             Operation::Delete(delete) => &delete.secondary_keys_events,
+            Operation::Acknowledge(ack) => &ack.secondary_keys_events,
         }
     }
 
@@ -95,6 +102,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => insert.secondary_keys_events.extend(evs),
             Operation::Update(update) => update.secondary_keys_events.extend(evs),
             Operation::Delete(delete) => delete.secondary_keys_events.extend(evs),
+            Operation::Acknowledge(ack) => ack.secondary_keys_events.extend(evs),
         }
     }
 
@@ -103,6 +111,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
             Operation::Insert(insert) => Some(&insert.pk_gen_state),
             Operation::Update(_) => None,
             Operation::Delete(_) => None,
+            Operation::Acknowledge(_) => None,
         }
     }
 }
@@ -131,4 +140,11 @@ pub struct DeleteOperation<PrimaryKey, SecondaryKeys> {
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
     pub link: Link,
+}
+
+#[derive(Clone, Debug)]
+pub struct AcknowledgeOperation<PrimaryKey, SecondaryKeys> {
+    pub id: OperationId,
+    pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
+    pub secondary_keys_events: SecondaryKeys,
 }

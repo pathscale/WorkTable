@@ -353,7 +353,7 @@ impl Generator {
         let process_difference = if self.is_persist {
             if idx_idents.is_some() {
                 quote! {
-                    let indexes_res = self.0.indexes.process_difference_insert_cdc(link, diffs.clone());
+                    let (secondary_events, indexes_res) = self.0.indexes.process_difference_insert_cdc(link, diffs.clone());
                     if let Err(e) = indexes_res {
                         return match e {
                             IndexError::AlreadyExists {
@@ -368,7 +368,7 @@ impl Generator {
                             IndexError::NotFound => Err(WorkTableError::NotFound),
                         };
                     }
-                    let mut secondary_keys_events = indexes_res.expect("was just checked for correctness");
+                    let mut secondary_keys_events = secondary_events;
                 }
             } else {
                 quote! {
@@ -408,7 +408,8 @@ impl Generator {
         let process_difference = if self.is_persist {
             if idx_idents.is_some() {
                 quote! {
-                    let secondary_keys_events_remove = self.0.indexes.process_difference_remove_cdc(link, diffs)?;
+                    let (secondary_keys_events_remove, res) = self.0.indexes.process_difference_remove_cdc(link, diffs);
+                    res?;
                     op.extend_secondary_key_events(secondary_keys_events_remove);
                 }
             } else {
