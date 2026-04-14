@@ -264,14 +264,6 @@ where
             info_wt.update_pos_by_op_id(q, op_id).await?;
         }
 
-        println!(
-            "Ops {:?}",
-            ops.iter()
-                .map(|o| o
-                    .primary_key_events()
-                    .map(|v| v.iter().map(|v| v.id()).collect::<Vec<_>>()))
-                .collect::<Vec<_>>()
-        );
         let mut op = BatchOperation::new(ops, info_wt);
         let invalid_for_this_batch_ops = op.validate(&self.last_events_ids, self.attempts).await?;
         if let Some(invalid_for_this_batch_ops) = invalid_for_this_batch_ops {
@@ -282,12 +274,9 @@ where
             self.page_limit = MAX_PAGE_AMOUNT;
             self.attempts = 0;
 
-            println!("Op generated");
-
             Ok(Some(op))
         } else {
             // can't collect batch for now
-            println!("Op Not generated");
             let ops = op.ops();
             self.attempts += 1;
             if self.last_invalid_batch_size == ops.len() {
@@ -463,7 +452,6 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     }
 
     fn check_wait_triggers(&self) -> bool {
-        println!("{:?}", self.queue.len());
         if self.queue.len() != 0 {
             return false;
         }

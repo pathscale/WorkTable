@@ -198,7 +198,6 @@ where
         }
 
         if let Some(pk_gen_state_update) = batch_op.get_pk_gen_state()? {
-            println!("PK gen state update: {:?}", pk_gen_state_update);
             let info = self.data.get_mut_info();
             info.inner.pk_gen_state = pk_gen_state_update;
             self.data.save_info().await?;

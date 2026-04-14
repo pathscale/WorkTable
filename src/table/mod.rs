@@ -294,14 +294,6 @@ where
                     let mut merged_primary_events = primary_key_events.clone();
                     merged_primary_events.extend(rollback_pk_events);
 
-                    println!(
-                        "From insert {:?}",
-                        merged_primary_events
-                            .iter()
-                            .map(|o| o.id())
-                            .collect::<Vec<_>>()
-                    );
-
                     let mut merged_secondary_events = secondary_events.clone();
                     merged_secondary_events.extend(rollback_secondary_events);
 
