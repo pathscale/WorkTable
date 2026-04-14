@@ -2,10 +2,11 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::time::Duration;
 
-use awscreds::Credentials;
-use awsregion::Region;
-use s3::Bucket;
+use reqwest::Client;
+use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+use url::Url;
 use walkdir::WalkDir;
 
 use crate::persistence::operation::{BatchOperation, Operation};
@@ -64,7 +65,9 @@ where
         PrimaryKeyGenState,
     >,
     config: S3DiskConfig,
-    bucket: Box<Bucket>,
+    bucket: Bucket,
+    credentials: Credentials,
+    client: Client,
     phantom: PhantomData<(PrimaryKey, SecondaryIndexEvents, PrimaryKeyGenState, AvailableIndexes)>,
 }
 
@@ -97,29 +100,17 @@ where
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
-    fn create_bucket(config: &S3Config) -> eyre::Result<Box<Bucket>> {
-        let credentials = Credentials::new(
-            Some(&config.access_key),
-            Some(&config.secret_key),
-            None,
-            None,
-            None,
-        )?;
+    fn create_bucket(config: &S3Config) -> eyre::Result<(Bucket, Credentials, Client)> {
+        let credentials = Credentials::new(&config.access_key, &config.secret_key);
+        let endpoint: Url = config.endpoint.parse()?;
+        let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
+        let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
 
-        let region = if let Some(region) = &config.region {
-            Region::Custom {
-                region: region.clone(),
-                endpoint: config.endpoint.clone(),
-            }
-        } else {
-            Region::Custom {
-                region: "auto".to_string(),
-                endpoint: config.endpoint.clone(),
-            }
-        };
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
 
-        let bucket = Bucket::new(&config.bucket_name, region, credentials)?.with_path_style();
-        Ok(bucket)
+        Ok((bucket, credentials, client))
     }
 
     async fn sync_to_s3(&self) -> eyre::Result<()> {
@@ -147,7 +138,16 @@ where
             tracing::debug!(local_path = %local_path.display(), s3_key = %s3_key, "Uploading file to S3");
 
             let content = tokio::fs::read(local_path).await?;
-            self.bucket.put_object(&s3_key, &content).await?;
+
+            let action = self.bucket.put_object(Some(&self.credentials), &s3_key);
+            let url = action.sign(Duration::from_secs(3600));
+
+            self.client
+                .put(url)
+                .body(content)
+                .send()
+                .await?
+                .error_for_status()?;
         }
 
         tracing::debug!("S3 sync complete");
@@ -164,7 +164,14 @@ where
         }
     }
 
-    async fn sync_from_s3(bucket: &Bucket, config: &S3DiskConfig) -> eyre::Result<()> {
+    async fn sync_from_s3(
+        bucket: &Bucket,
+        credentials: &Credentials,
+        client: &Client,
+        config: &S3DiskConfig,
+    ) -> eyre::Result<()> {
+        use rusty_s3::actions::ListObjectsV2;
+
         let table_path = config.disk.table_path();
         let table_path = Path::new(table_path);
         let prefix = config.s3.prefix.as_deref().unwrap_or("");
@@ -175,35 +182,53 @@ where
             .ok_or_else(|| eyre::eyre!("Invalid table path"))?;
 
         let s3_path = Self::full_s3_path(prefix, "", table_name);
-        let results = bucket.list(s3_path.clone(), Some("/".to_string())).await?;
 
-        if results.is_empty() {
+        let mut action = bucket.list_objects_v2(Some(credentials));
+        action.with_prefix(&s3_path);
+        action.with_delimiter("/");
+        let url = action.sign(Duration::from_secs(3600));
+
+        let response = client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let text = response.text().await?;
+        let parsed = ListObjectsV2::parse_response(&text)?;
+
+        if parsed.contents.is_empty() {
             tracing::debug!(s3_prefix = %s3_path, "No objects found in S3");
             return Ok(());
         }
 
         tokio::fs::create_dir_all(table_path).await?;
 
-        for result in results {
-            for obj in result.contents {
-                let s3_key = &obj.key;
+        for obj in parsed.contents {
+            let s3_key = &obj.key;
 
-                let filename = s3_key.rsplit('/').next().unwrap_or(s3_key);
+            let filename = s3_key.rsplit('/').next().unwrap_or(s3_key);
 
-                if !filename.ends_with(WT_DATA_EXTENSION) && !filename.ends_with(WT_INDEX_EXTENSION)
-                {
-                    tracing::debug!(s3_key = %s3_key, "Skipping non-table file");
-                    continue;
-                }
-
-                let local_path = table_path.join(filename);
-
-                tracing::debug!(s3_key = %s3_key, local_path = %local_path.display(), "Downloading file from S3");
-
-                let content = bucket.get_object(s3_key).await?;
-
-                tokio::fs::write(&local_path, content.bytes()).await?;
+            if !filename.ends_with(WT_DATA_EXTENSION) && !filename.ends_with(WT_INDEX_EXTENSION) {
+                tracing::debug!(s3_key = %s3_key, "Skipping non-table file");
+                continue;
             }
+
+            let local_path = table_path.join(filename);
+
+            tracing::debug!(s3_key = %s3_key, local_path = %local_path.display(), "Downloading file from S3");
+
+            let action = bucket.get_object(Some(credentials), s3_key);
+            let url = action.sign(Duration::from_secs(3600));
+
+            let response = client
+                .get(url)
+                .send()
+                .await?
+                .error_for_status()?;
+
+            let content = response.bytes().await?;
+            tokio::fs::write(&local_path, content).await?;
         }
 
         tracing::info!(table_name = %table_name, "S3 download sync complete");
@@ -246,9 +271,9 @@ where
     where
         Self: Sized,
     {
-        let bucket = Self::create_bucket(&config.s3)?;
+        let (bucket, credentials, client) = Self::create_bucket(&config.s3)?;
 
-        if let Err(e) = Self::sync_from_s3(&bucket, &config).await {
+        if let Err(e) = Self::sync_from_s3(&bucket, &credentials, &client, &config).await {
             tracing::warn!(error = %e, "Failed to sync from S3, continuing with local files");
         }
 
@@ -258,6 +283,8 @@ where
             inner,
             config,
             bucket,
+            credentials,
+            client,
             phantom: PhantomData,
         })
     }
