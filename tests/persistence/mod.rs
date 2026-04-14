@@ -3,6 +3,7 @@ use worktable::prelude::*;
 use worktable::worktable;
 
 mod concurrent;
+mod failure;
 mod index_page;
 mod read;
 mod space_index;
