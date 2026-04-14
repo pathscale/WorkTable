@@ -17,6 +17,7 @@ impl Generator {
         let save_row_cdc = self.gen_save_row_cdc_index_fn();
         let reinsert_row_cdc = self.gen_reinsert_row_cdc_index_fn();
         let delete_row_cdc = self.gen_delete_row_cdc_index_fn();
+        let delete_from_indexes_cdc = self.gen_delete_from_indexes_cdc_index_fn();
         let process_difference_insert_cdc = self.gen_process_difference_insert_cdc_index_fn();
         let process_difference_remove_cdc = self.gen_process_difference_remove_cdc_index_fn();
 
@@ -25,6 +26,7 @@ impl Generator {
                 #reinsert_row_cdc
                 #save_row_cdc
                 #delete_row_cdc
+                #delete_from_indexes_cdc
                 #process_difference_insert_cdc
                 #process_difference_remove_cdc
             }
@@ -208,6 +210,77 @@ impl Generator {
                 (#events_ident {
                     #(#idents,)*
                 }, Ok(()))
+            }
+        }
+    }
+
+    fn gen_delete_from_indexes_cdc_index_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type_ident = name_generator.get_row_type_ident();
+        let events_ident = name_generator.get_space_secondary_index_events_ident();
+        let available_index_ident = name_generator.get_available_indexes_ident();
+
+        let matches = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(i, idx)| {
+                let index_field_name = &idx.name;
+                let camel_case_name = index_field_name
+                    .to_string()
+                    .from_case(Case::Snake)
+                    .to_case(Case::Pascal);
+                let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                let type_str = self.columns
+                    .columns_map
+                    .get(i)
+                    .unwrap()
+                    .to_string();
+                let row = if is_float(type_str.as_str()) {
+                    quote! {
+                        OrderedFloat(row.#i)
+                    }
+                } else if type_str == "String" {
+                    quote! {
+                        row.#i.clone()
+                    }
+                } else {
+                    quote! {
+                        row.#i
+                    }
+                };
+
+                quote! {
+                    #available_index_ident::#index_variant => {
+                        let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, #row, link);
+                        partial_events.#index_field_name = events.into_iter().map(|ev| ev.into()).collect();
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let inner = if matches.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                for index in indexes {
+                    match index {
+                        #(#matches)*
+                    }
+                }
+            }
+        };
+
+        quote! {
+            fn delete_from_indexes_cdc(
+                &self,
+                row: #row_type_ident,
+                link: Link,
+                indexes: Vec<#available_index_ident>,
+            ) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
+                let mut partial_events = #events_ident::default();
+                #inner
+                (partial_events, Ok(()))
             }
         }
     }

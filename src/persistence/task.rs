@@ -264,7 +264,14 @@ where
             info_wt.update_pos_by_op_id(q, op_id).await?;
         }
 
-        println!("Ops {:?}", ops);
+        println!(
+            "Ops {:?}",
+            ops.iter()
+                .map(|o| o
+                    .primary_key_events()
+                    .map(|v| v.iter().map(|v| v.id()).collect::<Vec<_>>()))
+                .collect::<Vec<_>>()
+        );
         let mut op = BatchOperation::new(ops, info_wt);
         let invalid_for_this_batch_ops = op.validate(&self.last_events_ids, self.attempts).await?;
         if let Some(invalid_for_this_batch_ops) = invalid_for_this_batch_ops {

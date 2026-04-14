@@ -22,6 +22,12 @@ pub trait TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, Available
         row: Row,
         link: Link,
     ) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
+    fn delete_from_indexes_cdc(
+        &self,
+        row: Row,
+        link: Link,
+        indexes: Vec<AvailableIndexes>,
+    ) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
     fn process_difference_insert_cdc(
         &self,
         link: Link,
@@ -55,6 +61,15 @@ where
 
     fn delete_row_cdc(&self, row: Row, link: Link) -> ((), Result<(), IndexError<AvailableIndexes>>) {
         ((), self.delete_row(row, link))
+    }
+
+    fn delete_from_indexes_cdc(
+        &self,
+        row: Row,
+        link: Link,
+        indexes: Vec<AvailableIndexes>,
+    ) -> ((), Result<(), IndexError<AvailableIndexes>>) {
+        ((), self.delete_from_indexes(row, link, indexes))
     }
 
     fn process_difference_insert_cdc(

@@ -21,15 +21,15 @@ async-trait = "0.1.89"
 aws-creds = { version = "0.39", optional = true, default-features = false, features = ["rustls-tls"] }
 aws-region = { version = "0.28", optional = true }
 convert_case = "0.6.0"
-data_bucket = "=0.3.12"
+# data_bucket = "=0.3.12"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
-# data_bucket = { path = "../DataBucket", version = "0.3.11" }
+data_bucket = { path = "../DataBucket", version = "0.3.11" }
 derive_more = { version = "2.0.1", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6.12"
 fastrand = "2.3.0"
 futures = "0.3.30"
-indexset = { version = "=0.14.0", features = ["concurrent", "cdc", "multimap"] }
-# indexset = { package = "wt-indexset", path = "../indexset", version = "0.12.10", features = ["concurrent", "cdc", "multimap"] }
+# indexset = { version = "=0.14.0", features = ["concurrent", "cdc", "multimap"] }
+indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }
 lockfree = { version = "0.5.1" }
 log = "0.4.29"

@@ -9,7 +9,8 @@ use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
     AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow,
-    TableSecondaryIndex, TableSecondaryIndexCdc, convert_change_events, in_memory,
+    TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
+    convert_change_events, in_memory,
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
@@ -250,7 +251,7 @@ where
             >,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
-        SecondaryEvents: Debug + Default + Clone,
+        SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
         PkGen: PrimaryKeyGeneratorState,
@@ -278,32 +279,52 @@ where
 
         let (secondary_events, indexes_res) = self.indexes.save_row_cdc(row.clone(), link);
         if let Err(e) = indexes_res {
-            let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                id: OperationId::Single(Uuid::now_v7()),
-                primary_key_events: primary_key_events.clone(),
-                secondary_keys_events: secondary_events.clone(),
-            });
-
-            println!("Operation ack {:?}", ack_op);
-
-            let error = match e {
+            let (ack_op, error) = match e {
                 IndexError::AlreadyExists {
                     at,
                     inserted_already,
                 } => {
+                    let (_, rollback_pk_events) = self.primary_index.remove_cdc(pk.clone(), link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    let (rollback_secondary_events, _) =
+                        self.indexes
+                            .delete_from_indexes_cdc(row.clone(), link, inserted_already);
+
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    println!(
+                        "From insert {:?}",
+                        merged_primary_events
+                            .iter()
+                            .map(|o| o.id())
+                            .collect::<Vec<_>>()
+                    );
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
                     if let Err(e) = self.data.delete(link) {
-                        return (Some(ack_op), Err(WorkTableError::PagesError(e)));
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
                     }
-                    self.primary_index.remove(&pk, link);
-                    if let Err(e) = self
-                        .indexes
-                        .delete_from_indexes(row, link, inserted_already)
-                    {
-                        return (Some(ack_op), Err(e.into()));
-                    }
-                    WorkTableError::AlreadyExists(at.to_string_value())
                 }
-                IndexError::NotFound => WorkTableError::NotFound,
+                IndexError::NotFound => {
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: primary_key_events.clone(),
+                        secondary_keys_events: secondary_events.clone(),
+                    });
+                    (ack_op, WorkTableError::NotFound)
+                }
             };
             return (Some(ack_op), Err(error));
         }
@@ -440,7 +461,7 @@ where
             >,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
-        SecondaryEvents: Debug + Default + Clone,
+        SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
         PkGen: PrimaryKeyGeneratorState,
@@ -480,31 +501,48 @@ where
                 .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
 
         if let Err(e) = indexes_res {
-            let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                id: OperationId::Single(Uuid::now_v7()),
-                primary_key_events: primary_key_events.clone(),
-                secondary_keys_events: secondary_events.clone(),
-            });
-
-            let error = match e {
+            let (ack_op, error) = match e {
                 IndexError::AlreadyExists {
                     at,
                     inserted_already,
                 } => {
-                    // Rollback: restore old link in primary index, cleanup new secondary indexes
-                    self.primary_index.insert(pk.clone(), old_link);
-                    if let Err(e) =
+                    // Rollback: generate CDC events for restoring old link in primary index
+                    let (_, rollback_pk_events) =
+                        self.primary_index.insert_cdc(pk.clone(), old_link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    // Rollback: generate CDC events for cleaning up new secondary indexes
+                    let (rollback_secondary_events, _) =
                         self.indexes
-                            .delete_from_indexes(row_new, new_link, inserted_already)
-                    {
-                        return (Some(ack_op), Err(e.into()));
-                    }
+                            .delete_from_indexes_cdc(row_new, new_link, inserted_already);
+
+                    // Merge original partial insert events with rollback events
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
                     if let Err(e) = self.data.delete(new_link) {
-                        return (Some(ack_op), Err(WorkTableError::PagesError(e)));
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
                     }
-                    WorkTableError::AlreadyExists(at.to_string_value())
                 }
-                IndexError::NotFound => WorkTableError::NotFound,
+                IndexError::NotFound => {
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: primary_key_events.clone(),
+                        secondary_keys_events: secondary_events.clone(),
+                    });
+                    (ack_op, WorkTableError::NotFound)
+                }
             };
             return (Some(ack_op), Err(error));
         }

@@ -351,17 +351,34 @@ impl Generator {
         };
 
         let process_difference = if self.is_persist {
+            let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
             if idx_idents.is_some() {
                 quote! {
-                    let (secondary_events, indexes_res) = self.0.indexes.process_difference_insert_cdc(link, diffs.clone());
+                    let (secondary_events, indexes_res): (#secondary_events_ident, _) = self.0.indexes.process_difference_insert_cdc(link, diffs.clone());
                     if let Err(e) = indexes_res {
                         return match e {
                             IndexError::AlreadyExists {
                                 at,
                                 inserted_already,
                             } => {
-                                self.0.indexes
-                                    .delete_from_indexes(row_new.merge(row_old.clone()), link, inserted_already)?;
+                                // Generate rollback CDC events for secondary indexes
+                                let (rollback_secondary_events, _): (#secondary_events_ident, _) = self.0.indexes.delete_from_indexes_cdc(
+                                    row_new.merge(row_old.clone()),
+                                    link,
+                                    inserted_already
+                                );
+
+                                // Merge original partial insert events with rollback events
+                                let mut merged_events = secondary_events.clone();
+                                merged_events.extend(rollback_secondary_events);
+
+                                // Create AcknowledgeOperation with all events
+                                let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],  // Updates don't modify primary key
+                                    secondary_keys_events: merged_events,
+                                });
+                                self.1.apply_operation(ack_op);
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
                             }
@@ -372,7 +389,7 @@ impl Generator {
                 }
             } else {
                 quote! {
-                    let secondary_keys_events = core::default::Default::default();
+                    let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
                 }
             }
         } else if idx_idents.is_some() {
