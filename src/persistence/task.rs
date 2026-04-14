@@ -2,18 +2,18 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use data_bucket::page::PageId;
 use tokio::sync::Notify;
 use worktable_codegen::worktable;
 
-use crate::persistence::PersistenceEngine;
 use crate::persistence::operation::{
     BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery,
 };
+use crate::persistence::PersistenceEngine;
 use crate::prelude::*;
 use crate::util::OptimizedVec;
 
@@ -71,7 +71,7 @@ where
             self.primary_id = another.primary_id
         }
         for (index, id) in another.secondary_ids {
-            if id != IndexChangeEventId::default() || self.secondary_ids.get(&index).is_none() {
+            if id != IndexChangeEventId::default() || !self.secondary_ids.contains_key(&index) {
                 self.secondary_ids.insert(index, id);
             }
         }
