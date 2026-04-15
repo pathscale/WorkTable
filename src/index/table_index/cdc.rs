@@ -29,10 +29,6 @@ where
 {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>) {
         let (res, evs) = self.insert_cdc(value, OffsetEqLink(link));
-        println!(
-            "IndexMultiMap::insert_cdc events: {:?}",
-            evs.iter().map(|e| e.id()).collect::<Vec<_>>()
-        );
         let pair_evs = evs.into_iter().map(Into::into).collect();
         let res_link = res.map(|l| l.0);
         (res_link, convert_change_events(pair_evs))
@@ -40,10 +36,6 @@ where
 
     fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>> {
         let (res, evs) = self.insert_cdc(value, OffsetEqLink(link));
-        println!(
-            "IndexMultiMap::insert_checked_cdc events: {:?}",
-            evs.iter().map(|e| e.id()).collect::<Vec<_>>()
-        );
         let pair_evs = evs.into_iter().map(Into::into).collect();
         if res.is_some() {
             None
@@ -58,10 +50,6 @@ where
         link: Link,
     ) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
         let (res, evs) = self.remove_cdc(&value, &OffsetEqLink(link));
-        println!(
-            "IndexMultiMap::remove_cdc events: {:?}",
-            evs.iter().map(|e| e.id()).collect::<Vec<_>>()
-        );
         let pair_evs = evs.into_iter().map(Into::into).collect();
         let res_pair = res.map(|(k, v)| (k, v.into()));
         (res_pair, convert_change_events(pair_evs))
@@ -75,21 +63,12 @@ where
 {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>) {
         let (res, evs) = self.insert_cdc(value, OffsetEqLink(link));
-        println!(
-            "IndexMap::insert_cdc events: {:?}",
-            evs.iter().map(|e| e.id()).collect::<Vec<_>>()
-        );
         let res_link = res.map(|l| l.0);
         (res_link, convert_change_events(evs))
     }
 
     fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>> {
         let res = self.checked_insert_cdc(value, OffsetEqLink(link));
-        println!(
-            "IndexMap::checked_insert_cdc events: {:?}",
-            res.as_ref()
-                .map(|evs| evs.iter().map(|e| e.id()).collect::<Vec<_>>())
-        );
         res.map(|evs| convert_change_events(evs))
     }
 
@@ -99,10 +78,6 @@ where
         _: Link,
     ) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
         let (res, evs) = self.remove_cdc(&value);
-        println!(
-            "IndexMap::remove_cdc events: {:?}",
-            evs.iter().map(|e| e.id()).collect::<Vec<_>>()
-        );
         let res_pair = res.map(|(k, v)| (k, v.0));
         (res_pair, convert_change_events(evs))
     }

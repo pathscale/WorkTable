@@ -12,6 +12,7 @@ use tokio::time::timeout;
 use worktable::prelude::*;
 use worktable::worktable;
 
+
 // Table with TWO unique indexes to trigger the bug scenario
 worktable!(
     name: MultiUniqueIdx,
@@ -86,7 +87,6 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
 
             tokio::time::sleep(Duration::from_millis(500)).await;
 
-            println!("Wrong starts here");
             let failing_row = MultiUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 99,

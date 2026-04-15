@@ -263,10 +263,7 @@ where
     {
         let (bucket, credentials, client) = Self::create_bucket(&config.s3)?;
 
-        println!("will now sync from s3");
-
         if let Err(e) = Self::sync_from_s3(&bucket, &credentials, &client, &config).await {
-            println!("sync from s3 error: {:?}", e);
             tracing::warn!(error = %e, "Failed to sync from S3, continuing with local files");
         }
 
