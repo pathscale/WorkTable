@@ -158,7 +158,7 @@ where
         )
         .await?;
 
-        if node_id.key < value.key {
+        if node_id.key < value.key || (node_id.key == value.key && node_id.value != value.value) {
             utility.node_id = value.clone().into();
             new_node_id = Some(value);
         }

@@ -165,7 +165,7 @@ where
             (value_offset, (value_offset - previous_offset) as u16),
         );
 
-        if node_id.key < value.key {
+        if node_id.key < value.key || (node_id.key == value.key && node_id.value != value.value) {
             utility.update_node_id(value.clone().into())?;
             new_node_id = Some(value);
         }
@@ -395,22 +395,6 @@ where
                 ChangeEvent::InsertAt { max_value, .. }
                 | ChangeEvent::RemoveAt { max_value, .. } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
-
-                    // DEBUG START
-                    println!(
-                        "[INFO InsertAt/RemoveAt] Looking for page_id: {:?}",
-                        page_id
-                    );
-                    println!("[INFO] Available entries in table_of_contents:");
-                    for (k, pid) in self.table_of_contents.iter() {
-                        println!("[INFO]   key={:?}, page_id={:?}", k, pid);
-                    }
-                    println!(
-                        "[INFO] Total entries count: {}",
-                        self.table_of_contents.iter().count()
-                    );
-                    // DEBUG END
-
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
@@ -481,19 +465,6 @@ where
                     split_index,
                 } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
-
-                    // DEBUG START
-                    println!("[INFO SplitNode] Looking for page_id: {:?}", page_id);
-                    println!("[INFO] Available entries in table_of_contents:");
-                    for (k, pid) in self.table_of_contents.iter() {
-                        println!("[INFO]   key={:?}, page_id={:?}", k, pid);
-                    }
-                    println!(
-                        "[INFO] Total entries count: {}",
-                        self.table_of_contents.iter().count()
-                    );
-                    // DEBUG END
-
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
