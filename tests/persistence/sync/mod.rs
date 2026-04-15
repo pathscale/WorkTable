@@ -12,6 +12,7 @@ mod option;
 mod string_primary_index;
 mod string_re_read;
 mod string_secondary_index;
+mod string_update_timeout;
 mod uuid_;
 
 worktable! (
