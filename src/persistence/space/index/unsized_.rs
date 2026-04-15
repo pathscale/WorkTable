@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    GeneralHeader, GeneralPage, IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable,
-    SpaceId, SpaceInfoPage, UnsizedIndexPage, VariableSizeMeasurable, parse_page, persist_page,
-    persist_pages_batch,
+    parse_page, persist_page, persist_pages_batch, GeneralHeader, GeneralPage, IndexPageUtility, IndexValue,
+    Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage, UnsizedIndexPage,
+    VariableSizeMeasurable,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -16,17 +16,17 @@ use indexset::concurrent::map::BTreeMap;
 use indexset::core::pair::Pair;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
-use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
+use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
-use rkyv::{Archive, Deserialize, Serialize, rancor};
+use rkyv::{rancor, Archive, Deserialize, Serialize};
 use tokio::fs::File;
 
-use crate::UnsizedNode;
 use crate::persistence::space::BatchChangeEvent;
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
+use crate::UnsizedNode;
 
 #[derive(Debug)]
 pub struct SpaceIndexUnsized<T: Ord + Eq, const DATA_LENGTH: u32> {
@@ -387,12 +387,30 @@ where
         &mut self,
         events: BatchChangeEvent<T>,
     ) -> eyre::Result<()> {
+        println!("[INFO events]: {:?}", events);
         let mut pages: HashMap<PageId, _> = HashMap::new();
         for ev in events {
+            println!("[INFO event]: {:?}", ev);
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. }
                 | ChangeEvent::RemoveAt { max_value, .. } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
+
+                    // DEBUG START
+                    println!(
+                        "[INFO InsertAt/RemoveAt] Looking for page_id: {:?}",
+                        page_id
+                    );
+                    println!("[INFO] Available entries in table_of_contents:");
+                    for (k, pid) in self.table_of_contents.iter() {
+                        println!("[INFO]   key={:?}, page_id={:?}", k, pid);
+                    }
+                    println!(
+                        "[INFO] Total entries count: {}",
+                        self.table_of_contents.iter().count()
+                    );
+                    // DEBUG END
+
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
@@ -463,6 +481,19 @@ where
                     split_index,
                 } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
+
+                    // DEBUG START
+                    println!("[INFO SplitNode] Looking for page_id: {:?}", page_id);
+                    println!("[INFO] Available entries in table_of_contents:");
+                    for (k, pid) in self.table_of_contents.iter() {
+                        println!("[INFO]   key={:?}, page_id={:?}", k, pid);
+                    }
+                    println!(
+                        "[INFO] Total entries count: {}",
+                        self.table_of_contents.iter().count()
+                    );
+                    // DEBUG END
+
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
