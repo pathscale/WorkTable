@@ -784,3 +784,97 @@ fn test_big_amount_reread() {
         }
     })
 }
+
+#[test]
+fn test_unique_index_same_value_link_changes() {
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/key/unique_link_change",
+        StringReReadWorkTable::name_snake_case(),
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/key/unique_link_change".to_string()).await;
+
+        // Phase 1: Insert initial value
+        let pk1 = {
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
+            let table = StringReReadWorkTable::load(engine).await.unwrap();
+
+            let pk1 = table
+                .insert(StringReReadRow {
+                    first: "first_1".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third_1".to_string(),
+                    second: "unique_second".to_string(),
+                    last: "last_1".to_string(),
+                })
+                .unwrap();
+
+            table.wait_for_ops().await;
+            pk1
+        };
+
+        // Phase 2: Update (same unique value) + Insert new (same block)
+        {
+            let engine = StringReReadPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
+            let table = StringReReadWorkTable::load(engine).await.unwrap();
+
+            // Update: same second value, other fields change
+            table
+                .update(StringReReadRow {
+                    first: "first_updated".to_string(),
+                    id: pk1.into(),
+                    third: "third_updated".to_string(),
+                    second: "unique_second".to_string(), // SAME unique index value
+                    last: "last_updated".to_string(),
+                })
+                .await
+                .unwrap();
+
+            // Insert new row with different unique value
+            let result = table.insert(StringReReadRow {
+                first: "first_2".to_string(),
+                id: table.get_next_pk().into(),
+                third: "third_2".to_string(),
+                second: "unique_second_2".to_string(),
+                last: "last_2".to_string(),
+            });
+
+            assert!(
+                result.is_ok(),
+                "Insert should succeed after update with same unique index value"
+            );
+
+            // Timeout check for stuck persistence
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            assert!(
+                wait_result.is_ok(),
+                "BUG: persistence blocked after unique index update"
+            );
+        }
+
+        // Phase 3: Load and verify all data
+        {
+            let engine = StringReReadPersistenceEngine::new(config).await.unwrap();
+            let table = StringReReadWorkTable::load(engine).await.unwrap();
+
+            assert_eq!(table.select_all().execute().unwrap().len(), 2);
+            assert!(table.select_by_second("unique_second".to_string()).is_some());
+            assert!(table.select_by_second("unique_second_2".to_string()).is_some());
+
+            let row1 = table.select_by_second("unique_second".to_string()).unwrap();
+            assert_eq!(row1.first, "first_updated");
+        }
+    });
+}
