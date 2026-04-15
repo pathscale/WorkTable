@@ -5,7 +5,7 @@ use crate::persistence::operation::BatchOperation;
 pub use engine::DiskConfig;
 pub use engine::DiskPersistenceEngine;
 pub use operation::{
-    DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
+    AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,
 };
 pub use space::{

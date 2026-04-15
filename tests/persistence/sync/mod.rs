@@ -5,11 +5,14 @@ use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable::worktable;
 
+mod failure;
+mod failure_multi_index;
 mod many_strings;
 mod option;
 mod string_primary_index;
 mod string_re_read;
 mod string_secondary_index;
+mod string_update_timeout;
 mod uuid_;
 
 worktable! (

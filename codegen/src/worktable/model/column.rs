@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::worktable::model::GeneratorType;
@@ -15,7 +16,7 @@ pub struct Columns {
     pub is_sized: bool,
     pub columns_map: HashMap<Ident, TokenStream>,
     pub field_positions: HashMap<Ident, usize>,
-    pub indexes: HashMap<Ident, Index>,
+    pub indexes: IndexMap<Ident, Index>,
     pub primary_keys: Vec<Ident>,
     pub generator_type: GeneratorType,
 }

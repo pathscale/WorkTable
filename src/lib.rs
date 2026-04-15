@@ -31,7 +31,7 @@ pub mod prelude {
     pub use crate::lock::{LockGuard, LockMap};
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
-        DeleteOperation, DiskConfig, DiskPersistenceEngine, IndexTableOfContents, InsertOperation,
+        AcknowledgeOperation, DeleteOperation, DiskConfig, DiskPersistenceEngine, IndexTableOfContents, InsertOperation,
         Operation, OperationId, PersistedWorkTable, PersistenceConfig, PersistenceEngine,
         PersistenceTask, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
         SpaceSecondaryIndexOps, UpdateOperation, map_index_pages_to_toc_and_general,

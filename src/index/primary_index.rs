@@ -12,7 +12,7 @@ use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 
 use crate::util::OffsetEqLink;
-use crate::{IndexMap, TableIndex, TableIndexCdc, convert_change_events};
+use crate::{convert_change_events, IndexMap, TableIndex, TableIndexCdc};
 
 /// Combined storage for primary and reverse indexes.
 ///
@@ -66,13 +66,7 @@ where
     fn insert_checked(&self, value: PrimaryKey, link: Link) -> Option<()> {
         let offset_link = OffsetEqLink(link);
         self.pk_map.checked_insert(value.clone(), offset_link)?;
-        if self
-            .reverse_pk_map
-            .checked_insert(offset_link, value)
-            .is_none()
-        {
-            return None;
-        }
+        self.reverse_pk_map.checked_insert(offset_link, value)?;
         Some(())
     }
 

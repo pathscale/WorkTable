@@ -106,9 +106,7 @@ where
         let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
         let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
 
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
         Ok((bucket, credentials, client))
     }
@@ -188,11 +186,7 @@ where
         action.with_delimiter("/");
         let url = action.sign(Duration::from_secs(3600));
 
-        let response = client
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = client.get(url).send().await?.error_for_status()?;
 
         let text = response.text().await?;
         let parsed = ListObjectsV2::parse_response(&text)?;
@@ -221,11 +215,7 @@ where
             let action = bucket.get_object(Some(credentials), s3_key);
             let url = action.sign(Duration::from_secs(3600));
 
-            let response = client
-                .get(url)
-                .send()
-                .await?
-                .error_for_status()?;
+            let response = client.get(url).send().await?.error_for_status()?;
 
             let content = response.bytes().await?;
             tokio::fs::write(&local_path, content).await?;
