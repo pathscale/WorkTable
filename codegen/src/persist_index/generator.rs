@@ -381,22 +381,40 @@ impl Generator {
                                     value: OffsetEqLink(p.value),
                                 })
                                 .collect();
-                            let mut last_key = inner.first().expect("Node should be not empty").key.clone();
-                            let mut discriminator = 0;
-                            let mut inner = inner.into_iter().map(move |p| {
-                                if p.key == last_key {
-                                    let multi = p.with_last_discriminator(discriminator) ;
-                                    discriminator = multi.discriminator;
-                                    multi
+
+                            // Sort first to establish deterministic ordering
+                            let mut sorted: Vec<_> = inner.into_iter()
+                                .map(|p| IndexMultiPair {
+                                    key: p.key,
+                                    value: p.value,
+                                    discriminator: 0, // temporary, will be reassigned
+                                })
+                                .collect();
+                            sorted.sort();
+
+                            // Reassign discriminators deterministically so last entry (max_value) has highest discriminator
+                            let max_discriminator = u64::MAX - 1; // Avoid SUPREMUM
+                            let mut current_discriminator = 1u64; // Avoid INFIMUM
+                            let last_key = sorted.last().expect("Node should not be empty").key.clone();
+
+                            for entry in sorted.iter_mut() {
+                                if entry.key == last_key {
+                                    // Last key entries get ascending discriminators ending with max_discriminator
+                                    entry.discriminator = current_discriminator.min(max_discriminator);
+                                    current_discriminator += 1;
                                 } else {
-                                    last_key = p.key.clone();
-                                    let multi: IndexMultiPair<_, _> = p.into();
-                                    discriminator = multi.discriminator;
-                                    multi
+                                    // Other keys: assign sequential discriminators (they don't affect max_value lookup)
+                                    entry.discriminator = current_discriminator.min(max_discriminator);
+                                    current_discriminator += 1;
                                 }
-                            }).collect::<Vec<_>>();
-                            inner.sort();
-                            let node = UnsizedNode::from_inner(inner, #const_name);
+                            }
+
+                            // Ensure the very last entry has max_discriminator
+                            if let Some(last) = sorted.last_mut() {
+                                last.discriminator = max_discriminator;
+                            }
+
+                            let node = UnsizedNode::from_inner(sorted, #const_name);
                             #i.attach_multi_node(node);
                         }
                     };
@@ -431,22 +449,40 @@ impl Generator {
                                     value: OffsetEqLink(p.value),
                                 })
                                 .collect();
-                            let mut last_key = inner.first().expect("Node should be not empty").key.clone();
-                            let mut discriminator = 0;
-                            let mut inner = inner.into_iter().map(move |p| {
-                                if p.key == last_key {
-                                    let multi = p.with_last_discriminator(discriminator) ;
-                                    discriminator = multi.discriminator;
-                                    multi
+
+                            // Sort first to establish deterministic ordering
+                            let mut sorted: Vec<_> = inner.into_iter()
+                                .map(|p| IndexMultiPair {
+                                    key: p.key,
+                                    value: p.value,
+                                    discriminator: 0, // temporary, will be reassigned
+                                })
+                                .collect();
+                            sorted.sort();
+
+                            // Reassign discriminators deterministically so last entry (max_value) has highest discriminator
+                            let max_discriminator = u64::MAX - 1; // Avoid SUPREMUM
+                            let mut current_discriminator = 1u64; // Avoid INFIMUM
+                            let last_key = sorted.last().expect("Node should not be empty").key.clone();
+
+                            for entry in sorted.iter_mut() {
+                                if entry.key == last_key {
+                                    // Last key entries get ascending discriminators ending with max_discriminator
+                                    entry.discriminator = current_discriminator.min(max_discriminator);
+                                    current_discriminator += 1;
                                 } else {
-                                    last_key = p.key.clone();
-                                    let multi: IndexMultiPair<_, _> = p.into();
-                                    discriminator = multi.discriminator;
-                                    multi
+                                    // Other keys: assign sequential discriminators (they don't affect max_value lookup)
+                                    entry.discriminator = current_discriminator.min(max_discriminator);
+                                    current_discriminator += 1;
                                 }
-                            }).collect::<Vec<_>>();
-                            inner.sort();
-                            #i.attach_multi_node(inner);
+                            }
+
+                            // Ensure the very last entry has max_discriminator
+                            if let Some(last) = sorted.last_mut() {
+                                last.discriminator = max_discriminator;
+                            }
+
+                            #i.attach_multi_node(sorted);
                         }
                     };
                     quote! {
