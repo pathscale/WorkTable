@@ -6,15 +6,15 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
-    GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, IndexPage, IndexPageUtility, Link, PageType,
-    SizeMeasurable, SpaceId, SpaceInfoPage, get_index_page_size_from_data_length, parse_page,
-    persist_page, persist_pages_batch,
+    get_index_page_size_from_data_length, parse_page, persist_page, persist_pages_batch, GeneralHeader, GeneralPage, IndexPage,
+    IndexPageUtility, Link, PageType, SizeMeasurable, SpaceId,
+    SpaceInfoPage, GENERAL_HEADER_SIZE,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -22,15 +22,15 @@ use indexset::concurrent::map::BTreeMap;
 use indexset::core::pair::Pair;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
-use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
+use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
-use rkyv::{Archive, Deserialize, Serialize, rancor};
+use rkyv::{rancor, Archive, Deserialize, Serialize};
 use tokio::fs::File;
 
+use crate::persistence::space::{open_or_create_file, BatchChangeEvent};
 use crate::persistence::SpaceIndexOps;
-use crate::persistence::space::{BatchChangeEvent, open_or_create_file};
 use crate::prelude::WT_INDEX_EXTENSION;
 
 pub use table_of_contents::IndexTableOfContents;
@@ -433,14 +433,15 @@ where
                 ChangeEvent::InsertAt { max_value, .. }
                 | ChangeEvent::RemoveAt { max_value, .. } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
-                    let Some(page_index) = self.table_of_contents.get(page_id) else {
-                        panic!("page should be available in table of contents")
-                    };
+
+                    let page_index = self
+                        .table_of_contents
+                        .get(page_id)
+                        .expect("page should be available in table of contents");
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
                     } else {
-                        //println!("Trying to parse page {}", page_index);
                         let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(
                             &mut self.index_file,
                             page_index.into(),
@@ -526,7 +527,6 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
-                    // println!("Event: {:?}", &ev);
                     let splitted_page = page_to_update.inner.split(*split_index);
                     let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
                         id
@@ -567,7 +567,7 @@ where
 #[cfg(test)]
 mod test {
     use data_bucket::{
-        INNER_PAGE_SIZE, IndexPage, IndexValue, Persistable, get_index_page_size_from_data_length,
+        get_index_page_size_from_data_length, IndexPage, IndexValue, Persistable, INNER_PAGE_SIZE,
     };
 
     #[test]

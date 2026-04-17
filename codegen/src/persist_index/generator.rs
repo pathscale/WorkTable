@@ -372,7 +372,7 @@ impl Generator {
                         }
                     } else {
                         quote! {
-                            let inner: Vec<_> = page
+                            let mut inner: Vec<_> = page
                                 .inner
                                 .get_node()
                                 .into_iter()
@@ -381,22 +381,28 @@ impl Generator {
                                     value: OffsetEqLink(p.value),
                                 })
                                 .collect();
-                            let mut last_key = inner.first().expect("Node should be not empty").key.clone();
-                            let mut discriminator = 0;
-                            let mut inner = inner.into_iter().map(move |p| {
-                                if p.key == last_key {
-                                    let multi = p.with_last_discriminator(discriminator) ;
-                                    discriminator = multi.discriminator;
-                                    multi
-                                } else {
-                                    last_key = p.key.clone();
-                                    let multi: IndexMultiPair<_, _> = p.into();
-                                    discriminator = multi.discriminator;
-                                    multi
-                                }
-                            }).collect::<Vec<_>>();
-                            inner.sort();
-                            let node = UnsizedNode::from_inner(inner, #const_name);
+
+                            let node_id = inner.pop();
+
+                            let mut sorted: Vec<_> = inner.into_iter()
+                                .map(|p| IndexMultiPair {
+                                    key: p.key,
+                                    value: p.value,
+                                    discriminator: 0,
+                                })
+                                .collect();
+                            sorted.sort();
+
+                            let mut current_discriminator = 1u64;
+                            for entry in sorted.iter_mut() {
+                                entry.discriminator = current_discriminator.min(u64::MAX - 1);
+                                current_discriminator += 1;
+                            }
+                            if let Some(node_id) = node_id {
+                                sorted.push(IndexMultiPair { key: node_id.key, value: node_id.value, discriminator: u64::MAX - 1 });
+                            }
+
+                            let node = UnsizedNode::from_inner(sorted, #const_name);
                             #i.attach_multi_node(node);
                         }
                     };
@@ -422,7 +428,7 @@ impl Generator {
                         }
                     } else {
                         quote! {
-                            let inner: Vec<_> = page
+                            let mut inner: Vec<_> = page
                                 .inner
                                 .get_node()
                                 .into_iter()
@@ -431,22 +437,28 @@ impl Generator {
                                     value: OffsetEqLink(p.value),
                                 })
                                 .collect();
-                            let mut last_key = inner.first().expect("Node should be not empty").key.clone();
-                            let mut discriminator = 0;
-                            let mut inner = inner.into_iter().map(move |p| {
-                                if p.key == last_key {
-                                    let multi = p.with_last_discriminator(discriminator) ;
-                                    discriminator = multi.discriminator;
-                                    multi
-                                } else {
-                                    last_key = p.key.clone();
-                                    let multi: IndexMultiPair<_, _> = p.into();
-                                    discriminator = multi.discriminator;
-                                    multi
-                                }
-                            }).collect::<Vec<_>>();
-                            inner.sort();
-                            #i.attach_multi_node(inner);
+
+                            let node_id = inner.pop();
+
+                            let mut sorted: Vec<_> = inner.into_iter()
+                                .map(|p| IndexMultiPair {
+                                    key: p.key,
+                                    value: p.value,
+                                    discriminator: 0,
+                                })
+                                .collect();
+                            sorted.sort();
+
+                            let mut current_discriminator = 1u64;
+                            for entry in sorted.iter_mut() {
+                                entry.discriminator = current_discriminator.min(u64::MAX - 1);
+                                current_discriminator += 1;
+                            }
+                            if let Some(node_id) = node_id {
+                                sorted.push(IndexMultiPair { key: node_id.key, value: node_id.value, discriminator: u64::MAX - 1 });
+                            }
+
+                            #i.attach_multi_node(sorted);
                         }
                     };
                     quote! {
