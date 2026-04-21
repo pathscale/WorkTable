@@ -11,6 +11,16 @@ pub struct ReadOnlyPersistenceEngine<C: PersistenceConfig> {
     config: C,
 }
 
+impl<C: PersistenceConfig + Send> ReadOnlyPersistenceEngine<C> {
+    pub async fn create(config: C) -> eyre::Result<Self> {
+        Ok(Self { config })
+    }
+
+    pub fn config_ref(&self) -> &C {
+        &self.config
+    }
+}
+
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes, C>
     PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
     for ReadOnlyPersistenceEngine<C>

@@ -61,7 +61,7 @@ impl Generator {
         let persistence_task = name_generator.get_persistence_task_ident();
         let lock_ident = name_generator.get_lock_type_ident();
 
-        let persist_type_part = if self.is_persist {
+        let persist_type_part = if self.is_persist && !self.read_only {
             quote! {
                 , #persistence_task
             }
@@ -87,6 +87,11 @@ impl Generator {
                 quote! {
                     #[derive(Debug, PersistTable)]
                     #[table(pk_unsized)]
+                }
+            } else if self.read_only {
+                quote! {
+                    #[derive(Debug, PersistTable)]
+                    #[table(read_only)]
                 }
             } else {
                 quote! {

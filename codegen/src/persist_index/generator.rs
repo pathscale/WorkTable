@@ -254,7 +254,13 @@ impl Generator {
         let name_ident = name_generator.get_persisted_index_ident();
 
         let get_persisted_index_fn = if self.attributes.read_only {
-            quote! {}
+            let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+            let name_ident = name_generator.get_persisted_index_ident();
+            quote! {
+                fn get_persisted_index(&self) -> Self::PersistedIndex {
+                    #name_ident::default()
+                }
+            }
         } else {
             self.gen_get_persisted_index_fn()
         };

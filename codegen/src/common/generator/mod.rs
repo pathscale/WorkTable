@@ -15,6 +15,7 @@ use crate::common::model::{Columns, Config, PrimaryKey, Queries};
 pub struct Generator {
     pub name: Ident,
     pub is_persist: bool,
+    pub read_only: bool,
     pub pk: Option<PrimaryKey>,
     pub queries: Option<Queries>,
     pub config: Option<Config>,
@@ -27,10 +28,15 @@ impl Generator {
         Self {
             name,
             is_persist,
+            read_only: false,
             pk: None,
             queries: None,
             config: None,
             columns,
         }
+    }
+
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
     }
 }

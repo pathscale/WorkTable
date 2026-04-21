@@ -5,6 +5,7 @@ mod persist_table;
 #[cfg(feature = "s3-support")]
 mod s3_persistence;
 mod worktable;
+mod worktable_version;
 
 use proc_macro::TokenStream;
 // TODO: Refactor this codegen stuff because it's now too strange.
@@ -24,7 +25,7 @@ pub fn s3_sync_persistence(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(PersistIndex)]
+#[proc_macro_derive(PersistIndex, attributes(index))]
 pub fn persist_index(input: TokenStream) -> TokenStream {
     persist_index::expand(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
@@ -41,6 +42,13 @@ pub fn persist_table(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(MemStat)]
 pub fn mem_stat(input: TokenStream) -> TokenStream {
     mem_stat::expand(input.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+#[proc_macro]
+pub fn worktable_version(input: TokenStream) -> TokenStream {
+    worktable_version::expand(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

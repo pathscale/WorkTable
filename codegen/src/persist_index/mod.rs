@@ -73,8 +73,8 @@ mod tests {
             "read_only index should not have persist method"
         );
         assert!(
-            !output.contains("fn get_persisted_index"),
-            "read_only index should not have get_persisted_index method"
+            output.contains("fn get_persisted_index"),
+            "read_only index should have get_persisted_index returning default"
         );
         assert!(
             output.contains("pub async fn parse_from_file"),

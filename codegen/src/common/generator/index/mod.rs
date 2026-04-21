@@ -77,8 +77,15 @@ impl Generator {
             .collect::<Result<Vec<_>, syn::Error>>()?;
 
         let derive = if self.is_persist {
-            quote! {
-                #[derive(Debug, MemStat, PersistIndex)]
+            if self.read_only {
+                quote! {
+                    #[derive(Debug, MemStat, PersistIndex)]
+                    #[index(read_only)]
+                }
+            } else {
+                quote! {
+                    #[derive(Debug, MemStat, PersistIndex)]
+                }
             }
         } else {
             quote! {

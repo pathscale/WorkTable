@@ -82,37 +82,72 @@ impl Generator {
                     });
                 }
             };
-            quote! {
-                impl<E, C> PersistedWorkTable<E> for #ident
-                where
-                    E: PersistenceEngine<
-                        <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
-                        #pk_type,
-                        #secondary_index_events,
-                        #avt_index_ident,
-                        Config=C
-                    > + Send
-                        + 'static,
-                    C: Clone + PersistenceConfig,
-                {
-                    async fn new(engine: E) -> eyre::Result<Self> {
-                        let mut inner = WorkTable::default();
-                        inner.table_name = #table_name;
-                        #index_setup
-                        core::result::Result::Ok(Self(
-                            inner,
-                            #task::run_engine(engine)
-                        ))
-                    }
 
-                    async fn load(engine: E) -> eyre::Result<Self> {
-                        let table_path = engine.config().table_path();
-                        if !std::path::Path::new(table_path).exists() {
-                            return Self::new(engine).await;
-                        };
-                        let space = #space_ident::parse_file(table_path).await?;
-                        let table = space.into_worktable(engine).await;
-                        Ok(table)
+            if self.read_only {
+                quote! {
+                    impl<E, C> PersistedWorkTable<E> for #ident
+                    where
+                        E: PersistenceEngine<
+                            <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                            #pk_type,
+                            #secondary_index_events,
+                            #avt_index_ident,
+                            Config=C
+                        > + Send
+                            + 'static,
+                        C: Clone + PersistenceConfig,
+                    {
+                        async fn new(engine: E) -> eyre::Result<Self> {
+                            let mut inner = WorkTable::default();
+                            inner.table_name = #table_name;
+                            #index_setup
+                            core::result::Result::Ok(Self(inner))
+                        }
+
+                        async fn load(engine: E) -> eyre::Result<Self> {
+                            let table_path = engine.config().table_path();
+                            if !std::path::Path::new(table_path).exists() {
+                                return Self::new(engine).await;
+                            };
+                            let space = #space_ident::parse_file(table_path).await?;
+                            let table = space.into_worktable();
+                            Ok(table)
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    impl<E, C> PersistedWorkTable<E> for #ident
+                    where
+                        E: PersistenceEngine<
+                            <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                            #pk_type,
+                            #secondary_index_events,
+                            #avt_index_ident,
+                            Config=C
+                        > + Send
+                            + 'static,
+                        C: Clone + PersistenceConfig,
+                    {
+                        async fn new(engine: E) -> eyre::Result<Self> {
+                            let mut inner = WorkTable::default();
+                            inner.table_name = #table_name;
+                            #index_setup
+                            core::result::Result::Ok(Self(
+                                inner,
+                                #task::run_engine(engine)
+                            ))
+                        }
+
+                        async fn load(engine: E) -> eyre::Result<Self> {
+                            let table_path = engine.config().table_path();
+                            if !std::path::Path::new(table_path).exists() {
+                                return Self::new(engine).await;
+                            };
+                            let space = #space_ident::parse_file(table_path).await?;
+                            let table = space.into_worktable(engine).await;
+                            Ok(table)
+                        }
                     }
                 }
             }
@@ -155,23 +190,27 @@ impl Generator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
 
-        let insert = if self.is_persist {
-            quote! {
-                let (op, res) = self.0.insert_cdc::<#secondary_events_ident>(row);
-                if let Some(op) = op {
-                    self.1.apply_operation(op);
-                }
-                res
-            }
+        if self.read_only {
+            quote! {}
         } else {
-            quote! {
-                self.0.insert(row)
-            }
-        };
+            let insert = if self.is_persist {
+                quote! {
+                    let (op, res) = self.0.insert_cdc::<#secondary_events_ident>(row);
+                    if let Some(op) = op {
+                        self.1.apply_operation(op);
+                    }
+                    res
+                }
+            } else {
+                quote! {
+                    self.0.insert(row)
+                }
+            };
 
-        quote! {
-            pub fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
-                #insert
+            quote! {
+                pub fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+                    #insert
+                }
             }
         }
     }
@@ -182,23 +221,27 @@ impl Generator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
 
-        let reinsert = if self.is_persist {
-            quote! {
-                let (op, res) = self.0.reinsert_cdc::<#secondary_events_ident>(row_old, row_new);
-                if let Some(op) = op {
-                    self.1.apply_operation(op);
-                }
-                res
-            }
+        if self.read_only {
+            quote! {}
         } else {
-            quote! {
-                self.0.reinsert(row_old, row_new).await
-            }
-        };
+            let reinsert = if self.is_persist {
+                quote! {
+                    let (op, res) = self.0.reinsert_cdc::<#secondary_events_ident>(row_old, row_new);
+                    if let Some(op) = op {
+                        self.1.apply_operation(op);
+                    }
+                    res
+                }
+            } else {
+                quote! {
+                    self.0.reinsert(row_old, row_new).await
+                }
+            };
 
-        quote! {
-            pub async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
-                #reinsert
+            quote! {
+                pub async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+                    #reinsert
+                }
             }
         }
     }
@@ -207,22 +250,26 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type = name_generator.get_row_type_ident();
 
-        quote! {
-            pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
-                let pk = row.get_primary_key();
-                let need_to_update = {
-                    if let Some(link) = self.0.primary_index.pk_map.get(&pk) {
-                        true
+        if self.read_only {
+            quote! {}
+        } else {
+            quote! {
+                pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
+                    let pk = row.get_primary_key();
+                    let need_to_update = {
+                        if let Some(link) = self.0.primary_index.pk_map.get(&pk) {
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if need_to_update {
+                        self.update(row).await?;
                     } else {
-                        false
+                        self.insert(row)?;
                     }
-                };
-                if need_to_update {
-                    self.update(row).await?;
-                } else {
-                    self.insert(row)?;
+                    core::result::Result::Ok(())
                 }
-                core::result::Result::Ok(())
             }
         }
     }
@@ -335,7 +382,9 @@ impl Generator {
         let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
         let lock_type = name_generator.get_lock_type_ident();
 
-        if self.is_persist {
+        if self.read_only {
+            quote! {}
+        } else if self.is_persist {
             quote! {
                 pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
                     std::sync::Arc::new(EmptyDataVacuum::<
