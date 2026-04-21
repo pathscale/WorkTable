@@ -11,6 +11,7 @@ mod space_file;
 
 pub struct PersistTableAttributes {
     pub pk_unsized: bool,
+    pub read_only: bool,
 }
 
 pub struct Generator {

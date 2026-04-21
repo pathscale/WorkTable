@@ -33,13 +33,17 @@ impl Parser {
     }
 
     pub fn parse_attributes(attrs: &Vec<Attribute>) -> PersistTableAttributes {
-        let mut res = PersistTableAttributes { pk_unsized: false };
+        let mut res = PersistTableAttributes { pk_unsized: false, read_only: false };
 
         for attr in attrs {
             if attr.path().to_token_stream().to_string().as_str() == "table" {
                 attr.parse_nested_meta(|meta| {
                     if meta.path.is_ident("pk_unsized") {
                         res.pk_unsized = true;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("read_only") {
+                        res.read_only = true;
                         return Ok(());
                     }
                     Ok(())

@@ -123,10 +123,6 @@ where
         })
     }
 
-    fn config(&self) -> &DiskConfig {
-        &self.config
-    }
-
     async fn apply_operation(
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
@@ -204,5 +200,9 @@ where
         }
 
         Ok(())
+    }
+
+    fn config(&self) -> &DiskConfig {
+        &self.config
     }
 }
