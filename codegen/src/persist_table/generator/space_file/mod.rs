@@ -3,7 +3,7 @@ mod worktable_impls;
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use crate::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 
 pub const WT_INDEX_EXTENSION: &str = ".wt.idx";

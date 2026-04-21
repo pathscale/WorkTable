@@ -1,5 +1,5 @@
+mod common;
 mod mem_stat;
-mod name_generator;
 mod persist_index;
 mod persist_table;
 #[cfg(feature = "s3-support")]

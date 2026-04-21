@@ -2,7 +2,7 @@ use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span};
 use syn::ItemStruct;
 
-use crate::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::WorktableNameGenerator;
 
 pub use space_file::WT_INDEX_EXTENSION;
 

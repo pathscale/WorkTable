@@ -1,12 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-mod generator;
-mod model;
-mod parser;
-
-use crate::worktable::generator::Generator;
-pub use parser::Parser;
+use crate::common::{Generator, Parser};
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut parser = Parser::new(input);

@@ -5,7 +5,7 @@ use quote::__private::Span;
 use quote::{ToTokens, quote};
 use syn::ItemStruct;
 
-use crate::name_generator::{WorktableNameGenerator, is_unsized};
+use crate::common::name_generator::{WorktableNameGenerator, is_unsized};
 use crate::persist_table::WT_INDEX_EXTENSION;
 
 pub struct PersistIndexAttributes {
