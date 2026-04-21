@@ -10,7 +10,8 @@ mod space;
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let input_struct = Parser::parse_struct(input)?;
-    let mut generator = Generator::new(input_struct);
+    let attributes = Parser::parse_attributes(&input_struct.attrs);
+    let mut generator = Generator::with_attributes(input_struct, attributes);
 
     let type_def = generator.gen_persist_type()?;
     let persistable_def = generator.gen_persistable_impl()?;
@@ -51,7 +52,37 @@ mod tests {
             }
         };
 
+        let _res = expand(input).unwrap();
+    }
+
+    #[test]
+    fn test_read_only() {
+        let input = quote! {
+            #[derive(Debug, Default, Clone)]
+            #[index(read_only)]
+            pub struct ReadOnlyIndex {
+                test_idx: TreeIndex<i64, Link>,
+            }
+        };
+
         let res = expand(input).unwrap();
-        println!("{:?}", res.to_string())
+        let output = res.to_string();
+
+        assert!(
+            !output.contains("pub async fn persist"),
+            "read_only index should not have persist method"
+        );
+        assert!(
+            !output.contains("fn get_persisted_index"),
+            "read_only index should not have get_persisted_index method"
+        );
+        assert!(
+            output.contains("pub async fn parse_from_file"),
+            "read_only index should have parse_from_file method"
+        );
+        assert!(
+            output.contains("fn from_persisted"),
+            "read_only index should have from_persisted method"
+        );
     }
 }
