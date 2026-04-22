@@ -33,6 +33,24 @@ impl WorktableNameGenerator {
         Self { name }
     }
 
+    pub fn get_dir_name(&self) -> String {
+        self.name.from_case(Case::Pascal).to_case(Case::Snake)
+    }
+
+    pub fn get_update_query_lock_ident(snake_case_name: &String) -> Ident {
+        Ident::new(
+            format!("lock_update_{snake_case_name}").as_str(),
+            Span::mixed_site(),
+        )
+    }
+
+    pub fn get_update_in_place_query_lock_ident(snake_case_name: &String) -> Ident {
+        Ident::new(
+            format!("lock_update_in_place_{snake_case_name}").as_str(),
+            Span::mixed_site(),
+        )
+    }
+
     pub fn get_work_table_literal_name(&self) -> Literal {
         Literal::string(self.name.as_str())
     }

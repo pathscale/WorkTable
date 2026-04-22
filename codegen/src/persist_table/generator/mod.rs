@@ -1,4 +1,3 @@
-use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span};
 use syn::ItemStruct;
 
@@ -26,10 +25,6 @@ impl WorktableNameGenerator {
             format!("{}SpaceFile", self.name).as_str(),
             Span::mixed_site(),
         )
-    }
-
-    pub fn get_dir_name(&self) -> String {
-        self.name.from_case(Case::Pascal).to_case(Case::Snake)
     }
 
     pub fn get_persistence_engine_ident(&self) -> Ident {

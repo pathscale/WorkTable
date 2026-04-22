@@ -8,14 +8,9 @@ use syn::ItemStruct;
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized};
 use crate::persist_table::WT_INDEX_EXTENSION;
 
+#[derive(Default)]
 pub struct PersistIndexAttributes {
     pub read_only: bool,
-}
-
-impl Default for PersistIndexAttributes {
-    fn default() -> Self {
-        Self { read_only: false }
-    }
 }
 
 pub struct Generator {

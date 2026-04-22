@@ -1,4 +1,5 @@
 mod common;
+mod generators;
 mod mem_stat;
 mod persist_index;
 mod persist_table;

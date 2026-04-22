@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
-use quote::quote;
 use syn::Error;
 
-use crate::common::{Generator, Parser};
+use crate::common::Parser;
+use crate::generators::read_only;
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut parser = Parser::new(input);
@@ -36,28 +36,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         columns.indexes = i
     }
 
-    let mut generator = Generator::new(name, true, columns);
-    generator.set_read_only(true);
-
-    let pk_def = generator.gen_primary_key_def()?;
-    let row_def = generator.gen_row_def();
-    let query_available_def = generator.gen_available_types_def()?;
-    let wrapper_def = generator.gen_wrapper_def();
-    let locks_def = generator.gen_locks_def();
-    let index_def = generator.gen_index_def()?;
-    let table_def = generator.gen_table_def()?;  // includes column_range_type and select_query_executor_impl
-    let select_impls = generator.gen_query_select_impl()?;  // select_all method
-
-    Ok(quote! {
-        #pk_def
-        #row_def
-        #query_available_def
-        #wrapper_def
-        #locks_def
-        #index_def
-        #table_def
-        #select_impls
-    })
+    read_only::expand(name, columns)
 }
 
 #[cfg(test)]
