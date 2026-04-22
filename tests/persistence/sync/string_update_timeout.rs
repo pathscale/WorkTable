@@ -44,6 +44,7 @@ fn test_string_update_doesnt_block_persistence() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/sync/string_update_timeout",
         UserWorkTable::name_snake_case(),
+        UserWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

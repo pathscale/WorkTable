@@ -39,6 +39,10 @@ impl PersistenceConfig for S3DiskConfig {
     fn table_path(&self) -> &str {
         self.disk.table_path()
     }
+
+    fn version(&self) -> u32 {
+        todo!()
+    }
 }
 
 #[derive(Debug)]

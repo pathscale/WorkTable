@@ -6,6 +6,7 @@ fn test_insert_two_indexes_first_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/insert_two_first",
         TwoUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -102,6 +103,7 @@ fn test_insert_two_indexes_second_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/insert_two_second",
         TwoUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -200,6 +202,7 @@ fn test_insert_three_indexes_first_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/insert_three_first",
         ThreeUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -294,6 +297,7 @@ fn test_insert_three_indexes_middle_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/insert_three_middle",
         ThreeUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -391,6 +395,7 @@ fn test_insert_three_indexes_last_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/insert_three_last",
         ThreeUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -488,6 +493,7 @@ fn test_insert_primary_duplicate() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/insert_primary_dup",
         PrimaryOnlyWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();

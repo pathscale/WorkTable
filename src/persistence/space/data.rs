@@ -58,7 +58,7 @@ where
         Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
     SpaceInfoPage<PkGenState>: Persistable,
 {
-    async fn from_table_files_path<S: AsRef<str> + Send>(table_path: S) -> eyre::Result<Self> {
+    async fn from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
         let path = format!("{}/{}", table_path.as_ref(), WT_DATA_EXTENSION);
         let mut data_file = if !Path::new(&path).exists() {
             let name = table_path
@@ -70,7 +70,7 @@ where
                 .from_case(Case::Snake)
                 .to_case(Case::Pascal);
             let mut data_file = open_or_create_file(path).await?;
-            Self::bootstrap(&mut data_file, name).await?;
+            Self::bootstrap(&mut data_file, name, version).await?;
             data_file
         } else {
             open_or_create_file(path).await?
@@ -89,12 +89,12 @@ where
         })
     }
 
-    async fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()> {
+    async fn bootstrap(file: &mut File, table_name: String, version: u32) -> eyre::Result<()> {
         let info = SpaceInfoPage {
             id: 0.into(),
             page_count: 0,
             name: table_name,
-            version: 1,
+            version,
             row_schema: vec![],
             primary_key_fields: vec![],
             secondary_index_types: vec![],

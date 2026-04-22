@@ -10,6 +10,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut indexes = None;
 
     let name = parser.parse_name()?;
+    let version = parser.parse_version()?.unwrap_or(1);
 
     while let Some(ident) = parser.peek_next() {
         match ident.to_string().as_str() {
@@ -27,6 +28,12 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                     "worktable_version! does not support config",
                 ))
             }
+            "version" => {
+                return Err(Error::new(
+                    ident.span(),
+                    "version must be specified before columns/indexes",
+                ))
+            }
             _ => return Err(Error::new(ident.span(), "Unexpected identifier")),
         }
     }
@@ -36,7 +43,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         columns.indexes = i
     }
 
-    read_only::expand(name, columns)
+    read_only::expand(name, columns, version)
 }
 
 #[cfg(test)]
@@ -117,5 +124,38 @@ mod tests {
 
         let res = expand(input);
         assert!(res.is_err(), "should reject config section");
+    }
+
+    #[test]
+    fn test_explicit_version() {
+        let input = quote! {
+            name: UserV1,
+            version: 2,
+            columns: {
+                id: u64 primary_key,
+            },
+        };
+
+        let res = expand(input).unwrap();
+        let output = res.to_string();
+
+        assert!(
+            output.contains("index (read_only)"),
+            "should generate read_only index attribute"
+        );
+    }
+
+    #[test]
+    fn test_rejects_version_after_columns() {
+        let input = quote! {
+            name: UserV1,
+            columns: {
+                id: u64 primary_key,
+            },
+            version: 2,
+        };
+
+        let res = expand(input);
+        assert!(res.is_err(), "should reject version after columns");
     }
 }

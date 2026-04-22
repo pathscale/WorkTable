@@ -55,8 +55,8 @@ where
         + 'static,
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq + Debug,
 {
-    pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId) -> eyre::Result<Self> {
-        let space_index = SpaceIndex::<T, DATA_LENGTH>::new(index_file_path, space_id).await?;
+    pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId, version: u32) -> eyre::Result<Self> {
+        let space_index = SpaceIndex::<T, DATA_LENGTH>::new(index_file_path, space_id, version).await?;
         Ok(Self {
             space_id,
             table_of_contents: space_index.table_of_contents,
@@ -325,14 +325,16 @@ where
 {
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(
         table_path: S,
+        version: u32,
     ) -> eyre::Result<Self> {
         let path = format!("{}/primary{}", table_path.as_ref(), WT_INDEX_EXTENSION);
-        Self::new(path, 0.into()).await
+        Self::new(path, 0.into(), version).await
     }
 
     async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
         table_path: S1,
         name: S2,
+        version: u32,
     ) -> eyre::Result<Self>
     where
         Self: Sized,
@@ -343,11 +345,11 @@ where
             name.as_ref(),
             WT_INDEX_EXTENSION
         );
-        Self::new(path, 0.into()).await
+        Self::new(path, 0.into(), version).await
     }
 
-    async fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()> {
-        SpaceIndex::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name).await
+    async fn bootstrap(file: &mut File, table_name: String, version: u32) -> eyre::Result<()> {
+        SpaceIndex::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name, version).await
     }
 
     async fn process_change_event(

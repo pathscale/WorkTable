@@ -52,13 +52,14 @@ impl Generator {
     fn gen_space_file_get_primary_index_info_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let literal_name = name_generator.get_work_table_literal_name();
+        let version_const = name_generator.get_version_const_ident();
 
         quote! {
             fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
                 let mut info = {
                     let inner = SpaceInfoPage {
                         id: 0.into(),
-                        version: 1,
+                        version: #version_const,
                         page_count: 0,
                         name: #literal_name.to_string(),
                         pk_gen_state: (),

@@ -15,20 +15,22 @@ pub struct ReadOnlyGenerator {
     pub name: Ident,
     pub columns: Columns,
     pub pk: Option<crate::common::model::PrimaryKey>,
+    pub version: u32,
 }
 
 impl ReadOnlyGenerator {
-    pub fn new(name: Ident, columns: Columns) -> Self {
+    pub fn new(name: Ident, columns: Columns, version: u32) -> Self {
         Self {
             name,
             columns,
             pk: None,
+            version,
         }
     }
 }
 
-pub fn expand(name: proc_macro2::Ident, columns: crate::common::model::Columns) -> syn::Result<proc_macro2::TokenStream> {
-    let mut generator = ReadOnlyGenerator::new(name, columns);
+pub fn expand(name: proc_macro2::Ident, columns: crate::common::model::Columns, version: u32) -> syn::Result<proc_macro2::TokenStream> {
+    let mut generator = ReadOnlyGenerator::new(name, columns, version);
 
     let pk_def = generator.gen_primary_key_def()?;
     let row_def = generator.gen_row_def();

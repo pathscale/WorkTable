@@ -24,12 +24,14 @@ pub type BatchChangeEvent<T> = Vec<ChangeEvent<Pair<T, Link>>>;
 pub trait SpaceDataOps<PkGenState> {
     fn from_table_files_path<S: AsRef<str> + Send>(
         path: S,
+        version: u32,
     ) -> impl Future<Output = eyre::Result<Self>> + Send
     where
         Self: Sized;
     fn bootstrap(
         file: &mut File,
         table_name: String,
+        version: u32,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
     fn save_data(
         &mut self,
@@ -50,18 +52,21 @@ where
 {
     fn primary_from_table_files_path<S: AsRef<str> + Send>(
         path: S,
+        version: u32,
     ) -> impl Future<Output = eyre::Result<Self>> + Send
     where
         Self: Sized;
     fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
         path: S1,
         name: S2,
+        version: u32,
     ) -> impl Future<Output = eyre::Result<Self>> + Send
     where
         Self: Sized;
     fn bootstrap(
         file: &mut File,
         table_name: String,
+        version: u32,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
     fn process_change_event(
         &mut self,
@@ -76,6 +81,7 @@ where
 pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
     fn from_table_files_path<S: AsRef<str> + Send>(
         path: S,
+        version: u32,
     ) -> impl Future<Output = eyre::Result<Self>> + Send
     where
         Self: Sized;

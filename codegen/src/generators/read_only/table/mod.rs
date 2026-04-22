@@ -11,6 +11,7 @@ use crate::generators::read_only::ReadOnlyGenerator;
 impl ReadOnlyGenerator {
     pub fn gen_table_def(&mut self) -> syn::Result<TokenStream> {
         let page_size_consts = self.gen_page_size_consts();
+        let version_const = self.gen_version_const();
         let type_ = self.gen_table_type();
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
@@ -19,6 +20,7 @@ impl ReadOnlyGenerator {
 
         Ok(quote! {
             #page_size_consts
+            #version_const
             #type_
             #impl_
             #index_fns
@@ -35,6 +37,16 @@ impl ReadOnlyGenerator {
         quote! {
             const #page_const_name: usize = PAGE_SIZE;
             const #inner_const_name: usize = #page_const_name - GENERAL_HEADER_SIZE;
+        }
+    }
+
+    fn gen_version_const(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let version_const_name = name_generator.get_version_const_ident();
+        let version = self.version;
+
+        quote! {
+            const #version_const_name: u32 = #version;
         }
     }
 

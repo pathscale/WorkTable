@@ -58,6 +58,7 @@ fn test_concurrent() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/concurrent/test",
         TestConcurrentWorkTable::name_snake_case(),
+        TestConcurrentWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

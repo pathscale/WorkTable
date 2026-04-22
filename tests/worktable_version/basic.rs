@@ -33,6 +33,7 @@ fn test_version_reads_persisted_data() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/version/basic",
         UserWorkTable::name_snake_case(),
+        UserWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

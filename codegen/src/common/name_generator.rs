@@ -136,6 +136,14 @@ impl WorktableNameGenerator {
         )
     }
 
+    pub fn get_version_const_ident(&self) -> Ident {
+        let upper_snake_case_name = self.name.from_case(Case::Pascal).to_case(Case::UpperSnake);
+        Ident::new(
+            format!("{}_VERSION", upper_snake_case_name.to_uppercase()).as_str(),
+            Span::mixed_site(),
+        )
+    }
+
     pub fn get_space_secondary_index_ident(&self) -> Ident {
         Ident::new(
             format!("{}SpaceSecondaryIndex", self.name).as_str(),

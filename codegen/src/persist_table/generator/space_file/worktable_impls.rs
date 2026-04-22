@@ -38,11 +38,12 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk = name_generator.get_primary_key_type_ident();
         let literal_name = name_generator.get_work_table_literal_name();
+        let version_const = name_generator.get_version_const_ident();
 
         quote! {
             pub fn space_info_default() -> GeneralPage<SpaceInfoPage<<<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>> {
                 let inner = SpaceInfoPage {
-                    version: 1,
+                    version: #version_const,
                     id: 0.into(),
                     page_count: 0,
                     name: #literal_name.to_string(),

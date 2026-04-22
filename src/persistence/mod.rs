@@ -25,6 +25,8 @@ mod task;
 // TODO: remove this
 pub trait PersistenceConfig {
     fn table_path(&self) -> &str;
+
+    fn version(&self) -> u32;
 }
 
 pub trait PersistedWorkTable<E>: Sized

@@ -1,7 +1,7 @@
 mod sized {
     use std::fs::copy;
 
-    use data_bucket::{INNER_PAGE_SIZE, Link};
+    use data_bucket::{Link, INNER_PAGE_SIZE};
     use indexset::concurrent::map::BTreeMap;
     use worktable::prelude::{SpaceIndex, SpaceIndexOps};
 
@@ -17,6 +17,7 @@ mod sized {
         let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index/indexset/process_create_node.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -54,6 +55,7 @@ mod sized {
         let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index/indexset/process_insert_at.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -91,6 +93,7 @@ mod sized {
         let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -134,11 +137,11 @@ mod unsized_ {
     use std::fs::copy;
 
     use crate::{check_if_files_are_same, remove_file_if_exists};
-    use data_bucket::{INNER_PAGE_SIZE, Link};
+    use data_bucket::{Link, INNER_PAGE_SIZE};
     use indexset::concurrent::map::BTreeMap;
     use indexset::core::pair::Pair;
-    use worktable::UnsizedNode;
     use worktable::prelude::{SpaceIndexOps, SpaceIndexUnsized};
+    use worktable::UnsizedNode;
 
     #[tokio::test]
     async fn test_indexset_node_creation() {
@@ -150,6 +153,7 @@ mod unsized_ {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/indexset/process_create_node.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -188,6 +192,7 @@ mod unsized_ {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/indexset/process_insert_at.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -226,6 +231,7 @@ mod unsized_ {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();

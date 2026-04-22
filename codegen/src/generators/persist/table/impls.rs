@@ -12,6 +12,7 @@ impl PersistGenerator {
 
         let persisted_impl = self.gen_table_new_fn();
         let name_fn = self.gen_table_name_fn();
+        let version_fn = self.gen_table_version_fn();
         let select_fn = self.gen_table_select_fn();
         let insert_fn = self.gen_table_insert_fn();
         let reinsert_fn = self.gen_table_reinsert_fn();
@@ -27,6 +28,7 @@ impl PersistGenerator {
             #persisted_impl
             impl #ident {
                 #name_fn
+                #version_fn
                 #select_fn
                 #insert_fn
                 #reinsert_fn
@@ -129,6 +131,16 @@ impl PersistGenerator {
 
             pub fn name_snake_case() -> &'static str {
                 #dir_name
+            }
+        }
+    }
+
+    fn gen_table_version_fn(&self) -> TokenStream {
+        let version = self.version;
+
+        quote! {
+            pub fn version() -> u32 {
+                #version
             }
         }
     }

@@ -19,19 +19,22 @@ use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 pub struct DiskConfig {
     pub config_path: String,
     pub tables_path: String,
+    pub version: u32,
 }
 
 impl DiskConfig {
-    pub fn new<S1: Into<String>, S2: Into<String>>(config_path: S1, table_files_dir: S2) -> Self {
+    pub fn new<S1: Into<String>, S2: Into<String>>(config_path: S1, table_files_dir: S2, version: u32) -> Self {
         Self {
             config_path: config_path.into(),
             tables_path: table_files_dir.into(),
+            version,
         }
     }
 
     pub fn new_with_table_name<S1: Into<String>, S2: AsRef<str>>(
         config_path: S1,
         table_name_snake_case: S2,
+        version: u32,
     ) -> Self {
         let config_path = config_path.into();
         let table_name = table_name_snake_case.as_ref();
@@ -39,6 +42,7 @@ impl DiskConfig {
         Self {
             config_path,
             tables_path,
+            version,
         }
     }
 }
@@ -46,6 +50,10 @@ impl DiskConfig {
 impl PersistenceConfig for DiskConfig {
     fn table_path(&self) -> &str {
         &self.tables_path
+    }
+
+    fn version(&self) -> u32 {
+        self.version
     }
 }
 
@@ -112,12 +120,13 @@ where
 
         Ok(Self {
             config: config.clone(),
-            data: SpaceData::from_table_files_path(config.tables_path.clone()).await?,
+            data: SpaceData::from_table_files_path(config.tables_path.clone(), config.version).await?,
             primary_index: SpacePrimaryIndex::primary_from_table_files_path(
                 config.tables_path.clone(),
+                config.version,
             )
             .await?,
-            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path)
+            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path, config.version)
                 .await?,
             phantom_data: PhantomData,
         })
