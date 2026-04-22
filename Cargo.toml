@@ -19,9 +19,9 @@ s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktabl
 [dependencies]
 async-trait = "0.1.89"
 convert_case = "0.6.0"
-data_bucket = "=0.3.14"
+# data_bucket = "=0.3.14"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
-# data_bucket = { path = "../DataBucket", version = "0.3.11" }
+data_bucket = { path = "../DataBucket", version = "0.3.14" }
 derive_more = { version = "2.0.1", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6.12"
 fastrand = "2.3.0"

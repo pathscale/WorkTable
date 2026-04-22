@@ -377,6 +377,7 @@ where
             id: 0.into(),
             page_count: 0,
             name: table_name,
+            version: 1,
             row_schema: vec![],
             primary_key_fields: vec![],
             secondary_index_types: vec![],

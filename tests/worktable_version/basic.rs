@@ -19,7 +19,7 @@ worktable!(
 worktable_version!(
     name: UserV1,
     columns: {
-        id: u64 primary_key,
+        id: u64 primary_key autoincrement,
         name: String,
         email: String,
     },
@@ -45,11 +45,8 @@ fn test_version_reads_persisted_data() {
     runtime.block_on(async {
         remove_dir_if_exists("tests/data/version/basic".to_string()).await;
 
-        // Phase 1: Write data with normal worktable
         {
-            let engine = UserPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = UserPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UserWorkTable::load(engine).await.unwrap();
 
             table
@@ -71,9 +68,10 @@ fn test_version_reads_persisted_data() {
             table.wait_for_ops().await
         }
 
-        // Phase 2: Read data with version worktable
         {
-            let engine = ReadOnlyPersistenceEngine::create(config.clone()).await.unwrap();
+            let engine = ReadOnlyPersistenceEngine::create(config.clone())
+                .await
+                .unwrap();
             let table = UserV1WorkTable::load(engine).await.unwrap();
 
             // Verify count

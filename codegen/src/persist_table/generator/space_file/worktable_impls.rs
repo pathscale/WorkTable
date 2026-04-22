@@ -42,6 +42,7 @@ impl Generator {
         quote! {
             pub fn space_info_default() -> GeneralPage<SpaceInfoPage<<<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>> {
                 let inner = SpaceInfoPage {
+                    version: 1,
                     id: 0.into(),
                     page_count: 0,
                     name: #literal_name.to_string(),

@@ -57,15 +57,16 @@ impl Generator {
             fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
                 let mut info = {
                     let inner = SpaceInfoPage {
-                    id: 0.into(),
-                    page_count: 0,
-                    name: #literal_name.to_string(),
-                    pk_gen_state: (),
-                    empty_links_list: vec![],
-                    primary_key_fields: vec![],
-                    row_schema: vec![],
-                    secondary_index_types: vec![],
-                };
+                        id: 0.into(),
+                        version: 1,
+                        page_count: 0,
+                        name: #literal_name.to_string(),
+                        pk_gen_state: (),
+                        empty_links_list: vec![],
+                        primary_key_fields: vec![],
+                        row_schema: vec![],
+                        secondary_index_types: vec![],
+                    };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,
                     page_id: 0.into(),
