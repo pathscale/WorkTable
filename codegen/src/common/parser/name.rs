@@ -42,8 +42,8 @@ impl Parser {
     }
 
     pub fn parse_version(&mut self) -> syn::Result<Option<u32>> {
-        if let Some(ident) = self.peek_next() {
-            if ident.to_string().as_str() == "version" {
+        if let Some(ident) = self.peek_next()
+            && ident.to_string().as_str() == "version" {
                 self.input_iter.next();
 
                 self.parse_colon()?;
@@ -67,7 +67,6 @@ impl Parser {
 
                 return Ok(Some(version));
             }
-        }
         Ok(None)
     }
 }

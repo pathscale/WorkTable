@@ -1,7 +1,7 @@
 use proc_macro2::{Ident, TokenStream};
-use quote::quote;
+use quote::{quote, ToTokens};
 
-use super::parser::{MigrationEngineInput, TablePath};
+use super::parser::MigrationEngineInput;
 
 pub fn generate(input: MigrationEngineInput) -> TokenStream {
     let migration = &input.migration;
@@ -12,21 +12,17 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
         input.migration.span(),
     );
 
-    let table_name_snake = input.table_name_snake();
+    let table_name_snake = input.name_generator.get_dir_name();
     let table_name_lit = proc_macro2::Literal::string(&table_name_snake);
-    let persistence_engine = input.persistence_engine_type();
-    let pk_gen_state = input.pk_gen_state_type_tokens();
+    let persistence_engine = input.name_generator.get_persistence_engine_ident();
+    let pk_type = input.name_generator.get_primary_key_type_ident();
 
-    let current_row = MigrationEngineInput::row_type_for(&TablePath {
-        module: None,
-        ident: current_table.clone(),
-    });
+    let current_table_path = syn::Path::from(input.current.clone());
+    let current_row = MigrationEngineInput::row_type_for(&current_table_path);
 
-    // Collect sorted versions
     let sorted_versions: Vec<u32> = input.version_tables.keys().copied().collect();
     let current_version: u32 = sorted_versions.last().map(|v| v + 1).unwrap_or(1);
 
-    // Generate per-version migration functions
     let version_fns = input.version_tables.iter().map(|(version, table_path)| {
         let fn_name = Ident::new(
             &format!("migrate_v{}", version),
@@ -49,8 +45,8 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                 target: &#current_table,
                 ctx: &#ctx_type,
             ) -> eyre::Result<()> {
-                let config = worktable::prelude::DiskConfig::new_with_table_name(source_path, #table_name_lit, #version);
-                let engine = worktable::prelude::ReadOnlyPersistenceEngine::create(config).await?;
+                let config = DiskConfig::new_with_table_name(source_path, #table_name_lit, #version);
+                let engine = ReadOnlyPersistenceEngine::create(config).await?;
                 let source = #table_path::load(engine).await?;
 
                 let rows = source.select_all().execute()?;
@@ -64,11 +60,8 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
     });
 
     // Generate the version match arms
-    let match_arms = input.version_tables.iter().map(|(version, _)| {
-        let fn_name = Ident::new(
-            &format!("migrate_v{}", version),
-            current_table.span(),
-        );
+    let match_arms = input.version_tables.keys().map(|version| {
+        let fn_name = Ident::new(&format!("migrate_v{}", version), current_table.span());
         quote! {
             #version => Self::#fn_name(source_path, &target, ctx).await?,
         }
@@ -86,11 +79,12 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                 ctx: &#ctx_type,
             ) -> eyre::Result<MigrationReport> {
                 let source_table_path = format!("{}/{}", source_path, #table_name_lit);
-                let version = worktable::migration::detect_version::<#pk_gen_state>(&source_table_path).await?;
+                println!("hmmm here?");
+                let version = worktable::migration::detect_version::<<<#pk_type as worktable::prelude::TablePrimaryKey>::Generator as worktable::prelude::PrimaryKeyGeneratorState>::State>(&source_table_path).await?;
 
-                let target_config = worktable::prelude::DiskConfig::new_with_table_name(target_path, #table_name_lit, #current_version);
+                let target_config = DiskConfig::new_with_table_name(target_path, #table_name_lit, #current_version);
                 let target_engine = #persistence_engine::new(target_config).await?;
-                let target = #current_table::load(target_engine).await?;
+                let target = #current_table::new(target_engine).await?;
 
                 match version {
                     #( #match_arms )*
@@ -111,57 +105,59 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
 fn build_chain_steps(
     sorted_versions: &[u32],
     start_version: u32,
-    start_table: &TablePath,
+    start_table: &syn::Path,
     migration_type: &Ident,
-    current_row: &TablePath,
-    version_tables: &std::collections::BTreeMap<u32, TablePath>,
+    current_row: &syn::Path,
+    version_tables: &std::collections::BTreeMap<u32, syn::Path>,
 ) -> TokenStream {
-    let start_idx = sorted_versions.iter().position(|v| *v == start_version).unwrap_or(0);
+    let start_idx = sorted_versions
+        .iter()
+        .position(|v| *v == start_version)
+        .unwrap_or(0);
     let total = sorted_versions.len();
+
+    let span = start_table
+        .segments
+        .last()
+        .map(|s| s.ident.span())
+        .unwrap_or(proc_macro2::Span::call_site());
 
     if sorted_versions.is_empty() {
         let from_row = MigrationEngineInput::row_type_for(start_table);
-        let from_tokens = from_row.to_tokens();
-        let to_tokens = current_row.to_tokens();
+        let to_row = current_row.to_token_stream();
         return quote! {
-            let current_row = <#migration_type as Migration<#from_tokens, #to_tokens>>::migrate(row, ctx);
+            let current_row = <#migration_type as Migration<#from_row, #to_row>>::migrate(row, ctx);
         };
     }
 
-    // If starting from the last version, single step to current
     if start_idx == total - 1 {
         let from_row = MigrationEngineInput::row_type_for(start_table);
-        let from_tokens = from_row.to_tokens();
-        let to_tokens = current_row.to_tokens();
+        let to_row = current_row.to_token_stream();
         return quote! {
-            let current_row = <#migration_type as Migration<#from_tokens, #to_tokens>>::migrate(row, ctx);
+            let current_row = <#migration_type as Migration<#from_row, #to_row>>::migrate(row, ctx);
         };
     }
 
-    // Chain: start -> next_version -> ... -> last_version -> current
     let mut steps = TokenStream::new();
     let mut current_var = quote! { row };
 
     for i in (start_idx + 1)..=total {
         let from_row_tokens = if i == start_idx + 1 {
-            MigrationEngineInput::row_type_for(start_table).to_tokens()
+            MigrationEngineInput::row_type_for(start_table).to_token_stream()
         } else {
             let from_version = sorted_versions[i - 1];
             let from_table = version_tables.get(&from_version).unwrap();
-            MigrationEngineInput::row_type_for(from_table).to_tokens()
+            MigrationEngineInput::row_type_for(from_table).to_token_stream()
         };
 
-        let to_var = Ident::new(
-            &format!("next_{}", i),
-            start_table.ident.span(),
-        );
+        let to_var = Ident::new(&format!("next_{}", i), span);
 
         let to_row_tokens = if i < total {
             let to_version = sorted_versions[i];
             let to_table = version_tables.get(&to_version).unwrap();
-            MigrationEngineInput::row_type_for(to_table).to_tokens()
+            MigrationEngineInput::row_type_for(to_table).to_token_stream()
         } else {
-            current_row.to_tokens()
+            current_row.to_token_stream()
         };
 
         steps = quote! {
