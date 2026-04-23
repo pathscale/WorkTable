@@ -37,6 +37,38 @@ impl Parser {
 
         Ok(())
     }
+
+    /// Parses '=>' from token stream.
+    pub fn parse_fat_arrow(&mut self) -> syn::Result<()> {
+        let iter = &mut self.input_iter;
+
+        let first = iter
+            .next()
+            .ok_or(syn::Error::new(self.input.span(), "Expected token."))?;
+        if let TokenTree::Punct(p) = first {
+            if p.as_char() == '=' {
+                // next should be '>'
+                let second = iter
+                    .next()
+                    .ok_or(syn::Error::new(self.input.span(), "Expected '>' after '='"))?;
+                if let TokenTree::Punct(p2) = second {
+                    if p2.as_char() == '>' {
+                        return Ok(());
+                    }
+                    return Err(syn::Error::new(
+                        p2.span(),
+                        format!("Expected '>' found: '{}'", p2.as_char()),
+                    ));
+                }
+                return Err(syn::Error::new(second.span(), "Expected '>'"));
+            }
+            return Err(syn::Error::new(
+                p.span(),
+                format!("Expected '=' found: '{}'", p.as_char()),
+            ));
+        }
+        Err(syn::Error::new(first.span(), "Expected '=>'"))
+    }
 }
 
 fn comma(tt: &TokenTree) -> syn::Result<()> {

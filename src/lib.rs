@@ -1,6 +1,7 @@
 pub mod in_memory;
 mod index;
 pub mod lock;
+pub mod migration;
 mod mem_stat;
 pub mod persistence;
 mod primary_key;
@@ -17,6 +18,7 @@ pub use row::*;
 pub use table::*;
 
 pub use data_bucket;
+pub use worktable_codegen::migration_engine;
 pub use worktable_codegen::worktable;
 pub use worktable_codegen::worktable_version;
 

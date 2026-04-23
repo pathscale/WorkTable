@@ -1,6 +1,7 @@
 use std::io::{BufReader, Read};
 use std::path::Path;
 
+mod migration;
 mod persistence;
 mod worktable;
 mod worktable_version;
