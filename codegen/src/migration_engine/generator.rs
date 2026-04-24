@@ -79,7 +79,6 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                 ctx: &#ctx_type,
             ) -> eyre::Result<MigrationReport> {
                 let source_table_path = format!("{}/{}", source_path, #table_name_lit);
-                println!("hmmm here?");
                 let version = worktable::migration::detect_version::<<<#pk_type as worktable::prelude::TablePrimaryKey>::Generator as worktable::prelude::PrimaryKeyGeneratorState>::State>(&source_table_path).await?;
 
                 let target_config = DiskConfig::new_with_table_name(target_path, #table_name_lit, #current_version);
@@ -90,6 +89,8 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                     #( #match_arms )*
                     v => return Err(eyre::eyre!("Unsupported version: {}", v)),
                 };
+
+                target.wait_for_ops().await;
 
                 Ok(MigrationReport { source_version: version })
             }

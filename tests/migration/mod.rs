@@ -175,179 +175,96 @@ fn test_migrate_v1_to_current() {
         }
     });
 }
-//
-// /// v2 → current: single step migration
-// #[test]
-// fn test_migrate_v2_to_current() {
-//     let runtime = tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(2)
-//         .enable_io()
-//         .enable_time()
-//         .build()
-//         .unwrap();
-//
-//     runtime.block_on(async {
-//         let src = "tests/data/migration/v2_to_current";
-//         let dst = "tests/data/migration/v2_to_current_new";
-//         remove_dir_if_exists(src.to_string()).await;
-//         remove_dir_if_exists(dst.to_string()).await;
-//
-//         // Write v2 data
-//         {
-//             let table_dir = format!("{}/user", src);
-//             let config = DiskConfig::new(src, &table_dir, 2);
-//             let engine = v2::UserV2PersistenceEngine::new(config).await.unwrap();
-//             let table = v2::UserV2WorkTable::load(engine).await.unwrap();
-//
-//             table
-//                 .insert(v2::UserV2Row {
-//                     id: table.get_next_pk().into(),
-//                     name: "Charlie".to_string(),
-//                     email: "charlie@test.com".to_string(),
-//                 })
-//                 .unwrap();
-//             table
-//                 .insert(v2::UserV2Row {
-//                     id: table.get_next_pk().into(),
-//                     name: "Diana".to_string(),
-//                     email: "diana@test.com".to_string(),
-//                 })
-//                 .unwrap();
-//
-//             table.wait_for_ops().await;
-//             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-//         }
-//
-//         let ctx = UserMigrationContext {
-//             default_email: "fallback@example.com".to_string(),
-//             default_created_at: 2_000_000,
-//         };
-//
-//         let report = UserMigrationEngine::migrate(src, dst, &ctx)
-//             .await
-//             .unwrap();
-//         assert_eq!(report.source_version, 2);
-//
-//         // Verify migrated data
-//         {
-//             let config = DiskConfig::new_with_table_name(
-//                 dst,
-//                 UserWorkTable::name_snake_case(),
-//                 UserWorkTable::version(),
-//             );
-//             let engine = UserPersistenceEngine::new(config).await.unwrap();
-//             let table = UserWorkTable::load(engine).await.unwrap();
-//
-//             let rows = table.select_all().execute().unwrap();
-//             assert_eq!(rows.len(), 2);
-//
-//             let charlie = rows.iter().find(|r| r.name == "Charlie").unwrap();
-//             assert_eq!(charlie.email, "charlie@test.com");
-//             assert_eq!(charlie.created_at, 2_000_000);
-//
-//             let diana = rows.iter().find(|r| r.name == "Diana").unwrap();
-//             assert_eq!(diana.email, "diana@test.com");
-//             assert_eq!(diana.created_at, 2_000_000);
-//         }
-//     });
-// }
-//
-// /// v1 → v2 → current: chained migration
-// #[test]
-// fn test_migrate_v1_chain() {
-//     let runtime = tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(2)
-//         .enable_io()
-//         .enable_time()
-//         .build()
-//         .unwrap();
-//
-//     runtime.block_on(async {
-//         let src = "tests/data/migration/v1_chain";
-//         let dst = "tests/data/migration/v1_chain_new";
-//         remove_dir_if_exists(src.to_string()).await;
-//         remove_dir_if_exists(dst.to_string()).await;
-//
-//         // Write v1 data
-//         {
-//             let table_dir = format!("{}/user", src);
-//             let config = DiskConfig::new(src, &table_dir, 1);
-//             let engine = v1::UserV1PersistenceEngine::new(config).await.unwrap();
-//             let table = v1::UserV1WorkTable::load(engine).await.unwrap();
-//
-//             table
-//                 .insert(v1::UserV1Row {
-//                     id: table.get_next_pk().into(),
-//                     name: "Eve".to_string(),
-//                 })
-//                 .unwrap();
-//             table
-//                 .insert(v1::UserV1Row {
-//                     id: table.get_next_pk().into(),
-//                     name: "Frank".to_string(),
-//                 })
-//                 .unwrap();
-//
-//             table.wait_for_ops().await;
-//             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-//         }
-//
-//         let ctx = UserMigrationContext {
-//             default_email: "chained@example.com".to_string(),
-//             default_created_at: 3_000_000,
-//         };
-//
-//         let report = UserMigrationEngine::migrate(src, dst, &ctx)
-//             .await
-//             .unwrap();
-//         assert_eq!(report.source_version, 1);
-//
-//         // Verify the chain: v1(name) → v2(name + default_email) → current(name + email + created_at)
-//         {
-//             let config = DiskConfig::new_with_table_name(
-//                 dst,
-//                 UserWorkTable::name_snake_case(),
-//                 UserWorkTable::version(),
-//             );
-//             let engine = UserPersistenceEngine::new(config).await.unwrap();
-//             let table = UserWorkTable::load(engine).await.unwrap();
-//
-//             let rows = table.select_all().execute().unwrap();
-//             assert_eq!(rows.len(), 2);
-//
-//             for row in &rows {
-//                 assert_eq!(row.email, "chained@example.com");
-//                 assert_eq!(row.created_at, 3_000_000);
-//             }
-//
-//             let names: Vec<_> = rows.iter().map(|r| r.name.clone()).collect();
-//             assert!(names.contains(&"Eve".to_string()));
-//             assert!(names.contains(&"Frank".to_string()));
-//         }
-//     });
-// }
-//
-// /// Nonexistent source returns an error
-// #[test]
-// fn test_nonexistent_source_error() {
-//     let runtime = tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(2)
-//         .enable_io()
-//         .enable_time()
-//         .build()
-//         .unwrap();
-//
-//     runtime.block_on(async {
-//         let dst = "tests/data/migration/nonexistent_new";
-//         remove_dir_if_exists(dst.to_string()).await;
-//
-//         let ctx = UserMigrationContext::default();
-//         let result = UserMigrationEngine::migrate(
-//             "tests/data/migration/does_not_exist",
-//             dst,
-//             &ctx,
-//         )
-//         .await;
-//         assert!(result.is_err());
-//     });
-// }
+
+#[test]
+fn test_migrate_v2_to_current() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        let src = "tests/data/migration/v2_to_current";
+        let dst = "tests/data/migration/v2_to_current/dst";
+        remove_dir_if_exists(src.to_string()).await;
+
+        {
+            let config = DiskConfig::new_with_table_name(
+                src,
+                v2::UserWorkTable::name_snake_case(),
+                v2::UserWorkTable::version(),
+            );
+            let engine = v2::UserPersistenceEngine::new(config).await.unwrap();
+            let table = v2::UserWorkTable::load(engine).await.unwrap();
+
+            table
+                .insert(v2::UserRow {
+                    id: table.get_next_pk().into(),
+                    name: "Charlie".to_string(),
+                    email: "charlie@test.com".to_string(),
+                })
+                .unwrap();
+            table
+                .insert(v2::UserRow {
+                    id: table.get_next_pk().into(),
+                    name: "Diana".to_string(),
+                    email: "diana@test.com".to_string(),
+                })
+                .unwrap();
+
+            table.wait_for_ops().await;
+        }
+
+        let ctx = UserMigrationContext {
+            default_email: "unknown@example.com".to_string(),
+            default_created_at: chrono::Utc::now().timestamp() as u64,
+        };
+
+        let report = UserMigrationEngine::migrate(src, dst, &ctx).await.unwrap();
+        assert_eq!(report.source_version, v2::UserWorkTable::version());
+
+        {
+            let config = DiskConfig::new_with_table_name(
+                dst,
+                UserWorkTable::name_snake_case(),
+                UserWorkTable::version(),
+            );
+            let engine = UserPersistenceEngine::new(config).await.unwrap();
+            let table = UserWorkTable::load(engine).await.unwrap();
+
+            let rows = table.select_all().execute().unwrap();
+            assert_eq!(rows.len(), 2);
+
+            let charlie = rows.iter().find(|r| r.name == "Charlie").unwrap();
+            assert_eq!(charlie.email, "charlie@test.com");
+            assert_eq!(charlie.created_at, ctx.default_created_at);
+
+            let diana = rows.iter().find(|r| r.name == "Diana").unwrap();
+            assert_eq!(diana.email, "diana@test.com");
+            assert_eq!(diana.created_at, ctx.default_created_at);
+        }
+    });
+}
+
+/// Nonexistent source returns an error
+#[test]
+fn test_nonexistent_source_error() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        let dst = "tests/data/migration/nonexistent_new";
+        remove_dir_if_exists(dst.to_string()).await;
+
+        let ctx = UserMigrationContext::default();
+        let result =
+            UserMigrationEngine::migrate("tests/data/migration/does_not_exist", dst, &ctx).await;
+        assert!(result.is_err());
+    });
+}

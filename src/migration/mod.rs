@@ -26,7 +26,6 @@ where
     SpaceInfoPage<PkGenState>: Persistable,
 {
     let data_file_path = format!("{}/{}", table_path, WT_DATA_EXTENSION);
-    print!("here??? {:?}", data_file_path);
     let mut file = File::open(&data_file_path).await?;
     let info: GeneralPage<SpaceInfoPage<PkGenState>> = parse_page::<_, 4096>(&mut file, 0).await?;
     Ok(info.inner.version)
