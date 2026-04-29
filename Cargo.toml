@@ -3,7 +3,7 @@ members = ["codegen", "examples", "performance_measurement", "performance_measur
 
 [package]
 name = "worktable"
-version = "0.9.0-beta0.1.4"
+version = "0.9.0-beta0.2.0"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -19,9 +19,9 @@ s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktabl
 [dependencies]
 async-trait = "0.1.89"
 convert_case = "0.6.0"
-# data_bucket = "=0.3.14"
+data_bucket = "=0.3.15"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
-data_bucket = { path = "../DataBucket", version = "0.3.14" }
+# data_bucket = { path = "../DataBucket", version = "0.3.14" }
 derive_more = { version = "2.0.1", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6.12"
 fastrand = "2.3.0"
@@ -46,7 +46,7 @@ tracing = "0.1"
 url = { version = "2", optional = true }
 uuid = { version = "1.10.0", features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
-worktable_codegen = { path = "codegen", version = "=0.9.0-beta0.1.3" }
+worktable_codegen = { path = "codegen", version = "=0.9.0-beta0.2.0" }
 
 [dev-dependencies]
 chrono = "0.4.43"
