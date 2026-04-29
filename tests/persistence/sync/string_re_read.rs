@@ -33,6 +33,7 @@ fn test_key() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/key",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -102,6 +103,7 @@ fn test_key_delete_scenario() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/delete_scenario",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -221,6 +223,7 @@ fn test_key_delete() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/delete",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -295,6 +298,7 @@ fn test_key_delete_all() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/delete_all",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -372,6 +376,7 @@ fn test_key_delete_all_and_insert() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/delete_all_and_insert",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -468,6 +473,7 @@ fn test_key_delete_by_unique() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/delete_unique",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -545,6 +551,7 @@ fn test_key_delete_by_non_unique() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/delete_non_unique",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -621,6 +628,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/toc_link_bug",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -714,7 +722,11 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
 
             assert_eq!(table.select_all().execute().unwrap().len(), 3);
             assert_eq!(
-                table.select_by_first("same_first".to_string()).execute().unwrap().len(),
+                table
+                    .select_by_first("same_first".to_string())
+                    .execute()
+                    .unwrap()
+                    .len(),
                 3
             );
         }
@@ -726,6 +738,7 @@ fn test_big_amount_reread() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/big_amount",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -790,6 +803,7 @@ fn test_unique_index_same_value_link_changes() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/key/unique_link_change",
         StringReReadWorkTable::name_snake_case(),
+        StringReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -870,8 +884,16 @@ fn test_unique_index_same_value_link_changes() {
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             assert_eq!(table.select_all().execute().unwrap().len(), 2);
-            assert!(table.select_by_second("unique_second".to_string()).is_some());
-            assert!(table.select_by_second("unique_second_2".to_string()).is_some());
+            assert!(
+                table
+                    .select_by_second("unique_second".to_string())
+                    .is_some()
+            );
+            assert!(
+                table
+                    .select_by_second("unique_second_2".to_string())
+                    .is_some()
+            );
 
             let row1 = table.select_by_second("unique_second".to_string()).unwrap();
             assert_eq!(row1.first, "first_updated");

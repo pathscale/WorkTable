@@ -1,8 +1,10 @@
 use std::io::{BufReader, Read};
 use std::path::Path;
 
+mod migration;
 mod persistence;
 mod worktable;
+mod worktable_version;
 
 pub fn check_if_files_are_same(got: String, expected: String) -> bool {
     let got = std::fs::File::open(got).unwrap();

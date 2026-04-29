@@ -11,6 +11,7 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/sync/failure_update_pk",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -87,6 +88,7 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/sync/failure_update_unique",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -163,6 +165,7 @@ fn test_failed_delete_by_pk_doesnt_corrupt_persistence() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/sync/failure_delete_pk",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

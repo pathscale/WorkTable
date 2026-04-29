@@ -3,7 +3,7 @@ use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{Ident, Result};
 
-use crate::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::WorktableNameGenerator;
 
 struct S3PersistenceInput {
     table_name: Ident,

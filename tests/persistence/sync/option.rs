@@ -31,6 +31,7 @@ fn test_option_insert_none_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/insert_none",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -74,6 +75,7 @@ fn test_option_insert_some_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/insert_some",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -117,6 +119,7 @@ fn test_option_update_full_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/update_full",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -170,6 +173,7 @@ fn test_option_update_by_id_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/update_by_id",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -218,6 +222,7 @@ fn test_option_update_none_to_some_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/none_to_some",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -266,6 +271,7 @@ fn test_option_update_some_to_none_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/some_to_none",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -314,6 +320,7 @@ fn test_option_update_by_another_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/update_by_another",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -362,6 +369,7 @@ fn test_option_update_by_exchange_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/update_by_exchange",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -410,6 +418,7 @@ fn test_option_multiple_rows_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/multiple_rows",
         TestOptionSyncWorkTable::name_snake_case(),
+        TestOptionSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -490,6 +499,7 @@ fn test_option_indexed_insert_none_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/indexed_insert_none",
         TestOptionSyncIndexWorkTable::name_snake_case(),
+        TestOptionSyncIndexWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -535,6 +545,7 @@ fn test_option_indexed_insert_some_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/indexed_insert_some",
         TestOptionSyncIndexWorkTable::name_snake_case(),
+        TestOptionSyncIndexWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -580,6 +591,7 @@ fn test_option_indexed_update_none_to_some_by_id_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/indexed_none_to_some",
         TestOptionSyncIndexWorkTable::name_snake_case(),
+        TestOptionSyncIndexWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -630,6 +642,7 @@ fn test_option_indexed_update_some_to_none_by_id_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/indexed_some_to_none",
         TestOptionSyncIndexWorkTable::name_snake_case(),
+        TestOptionSyncIndexWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -680,6 +693,7 @@ fn test_option_indexed_update_by_another_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/indexed_update_by_another",
         TestOptionSyncIndexWorkTable::name_snake_case(),
+        TestOptionSyncIndexWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -730,6 +744,7 @@ fn test_option_indexed_multiple_rows_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/indexed_multiple_rows",
         TestOptionSyncIndexWorkTable::name_snake_case(),
+        TestOptionSyncIndexWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -803,6 +818,7 @@ fn test_option_indexed_full_row_update_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/option_sync/indexed_full_update",
         TestOptionSyncIndexWorkTable::name_snake_case(),
+        TestOptionSyncIndexWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

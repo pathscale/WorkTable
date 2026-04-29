@@ -63,7 +63,7 @@ where
         + 'static,
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq + Debug,
 {
-    pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId) -> eyre::Result<Self> {
+    pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId, version: u32) -> eyre::Result<Self> {
         let mut index_file = if !Path::new(index_file_path.as_ref()).exists() {
             let name = index_file_path
                 .as_ref()
@@ -77,7 +77,7 @@ where
                 .from_case(Case::Snake)
                 .to_case(Case::Pascal);
             let mut index_file = open_or_create_file(index_file_path.as_ref()).await?;
-            Self::bootstrap(&mut index_file, name).await?;
+            Self::bootstrap(&mut index_file, name, version).await?;
             index_file
         } else {
             open_or_create_file(index_file_path).await?
@@ -351,14 +351,16 @@ where
 {
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(
         table_path: S,
+        version: u32,
     ) -> eyre::Result<Self> {
         let path = format!("{}/primary{}", table_path.as_ref(), WT_INDEX_EXTENSION);
-        Self::new(path, 0.into()).await
+        Self::new(path, 0.into(), version).await
     }
 
     async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
         table_path: S1,
         name: S2,
+        version: u32,
     ) -> eyre::Result<Self>
     where
         Self: Sized,
@@ -369,14 +371,15 @@ where
             name.as_ref(),
             WT_INDEX_EXTENSION
         );
-        Self::new(path, 0.into()).await
+        Self::new(path, 0.into(), version).await
     }
 
-    async fn bootstrap(file: &mut File, table_name: String) -> eyre::Result<()> {
+    async fn bootstrap(file: &mut File, table_name: String, version: u32) -> eyre::Result<()> {
         let info = SpaceInfoPage {
             id: 0.into(),
             page_count: 0,
             name: table_name,
+            version,
             row_schema: vec![],
             primary_key_fields: vec![],
             secondary_index_types: vec![],

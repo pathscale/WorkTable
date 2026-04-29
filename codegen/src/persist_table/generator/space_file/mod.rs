@@ -3,7 +3,7 @@ mod worktable_impls;
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use crate::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 
 pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
@@ -52,20 +52,22 @@ impl Generator {
     fn gen_space_file_get_primary_index_info_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let literal_name = name_generator.get_work_table_literal_name();
+        let version_const = name_generator.get_version_const_ident();
 
         quote! {
             fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
                 let mut info = {
                     let inner = SpaceInfoPage {
-                    id: 0.into(),
-                    page_count: 0,
-                    name: #literal_name.to_string(),
-                    pk_gen_state: (),
-                    empty_links_list: vec![],
-                    primary_key_fields: vec![],
-                    row_schema: vec![],
-                    secondary_index_types: vec![],
-                };
+                        id: 0.into(),
+                        version: #version_const,
+                        page_count: 0,
+                        name: #literal_name.to_string(),
+                        pk_gen_state: (),
+                        empty_links_list: vec![],
+                        primary_key_fields: vec![],
+                        row_schema: vec![],
+                        secondary_index_types: vec![],
+                    };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,
                     page_id: 0.into(),
@@ -165,49 +167,83 @@ impl Generator {
             }
         };
 
-        quote! {
-            pub async fn into_worktable<E, C>(self, engine: E) -> #wt_ident
-            where
-                E: PersistenceEngine<
-                    <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
-                    #pk_type,
-                    #secondary_index_events,
-                    #avt_index_ident,
-                    Config=C
-                > + Send
-                    + 'static,
-                C: Clone + PersistenceConfig,
-            {
-                let mut page_id = 1;
-                let data = self.data.into_iter().map(|p| {
-                    let mut data = Data::from_data_page(p);
-                    data.set_page_id(page_id.into());
-                    page_id += 1;
+        if self.attributes.read_only {
+            quote! {
+                pub fn into_worktable(self) -> #wt_ident {
+                    let mut page_id = 1;
+                    let data = self.data.into_iter().map(|p| {
+                        let mut data = Data::from_data_page(p);
+                        data.set_page_id(page_id.into());
+                        page_id += 1;
 
-                    std::sync::Arc::new(data)
-                })
-                    .collect();
-                let data = DataPages::from_data(data)
-                    .with_empty_links(self.data_info.inner.empty_links_list);
-                let indexes = #index_ident::from_persisted(self.indexes);
+                        std::sync::Arc::new(data)
+                    })
+                        .collect();
+                    let data = DataPages::from_data(data)
+                        .with_empty_links(self.data_info.inner.empty_links_list);
+                    let indexes = #index_ident::from_persisted(self.indexes);
 
-                #primary_index_init
+                    #primary_index_init
 
-                let table = WorkTable {
-                    data: std::sync::Arc::new(data),
-                    primary_index: std::sync::Arc::new(primary_index),
-                    indexes: std::sync::Arc::new(indexes),
-                    pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
-                    lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
-                    update_state: IndexMap::default(),
-                    table_name: #table_name,
-                    pk_phantom: std::marker::PhantomData,
-                };
+                    let table = WorkTable {
+                        data: std::sync::Arc::new(data),
+                        primary_index: std::sync::Arc::new(primary_index),
+                        indexes: std::sync::Arc::new(indexes),
+                        pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
+                        lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
+                        update_state: IndexMap::default(),
+                        table_name: #table_name,
+                        pk_phantom: std::marker::PhantomData,
+                    };
 
-                #wt_ident(
-                    table,
-                    #task_ident::run_engine(engine)
-                )
+                    #wt_ident(table)
+                }
+            }
+        } else {
+            quote! {
+                pub async fn into_worktable<E, C>(self, engine: E) -> #wt_ident
+                where
+                    E: PersistenceEngine<
+                        <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                        #pk_type,
+                        #secondary_index_events,
+                        #avt_index_ident,
+                        Config=C
+                    > + Send
+                        + 'static,
+                    C: Clone + PersistenceConfig,
+                {
+                    let mut page_id = 1;
+                    let data = self.data.into_iter().map(|p| {
+                        let mut data = Data::from_data_page(p);
+                        data.set_page_id(page_id.into());
+                        page_id += 1;
+
+                        std::sync::Arc::new(data)
+                    })
+                        .collect();
+                    let data = DataPages::from_data(data)
+                        .with_empty_links(self.data_info.inner.empty_links_list);
+                    let indexes = #index_ident::from_persisted(self.indexes);
+
+                    #primary_index_init
+
+                    let table = WorkTable {
+                        data: std::sync::Arc::new(data),
+                        primary_index: std::sync::Arc::new(primary_index),
+                        indexes: std::sync::Arc::new(indexes),
+                        pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
+                        lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
+                        update_state: IndexMap::default(),
+                        table_name: #table_name,
+                        pk_phantom: std::marker::PhantomData,
+                    };
+
+                    #wt_ident(
+                        table,
+                        #task_ident::run_engine(engine)
+                    )
+                }
             }
         }
     }

@@ -2,11 +2,13 @@
 use super::*;
 use crate::remove_dir_if_exists;
 
+
 #[test]
 fn test_update_non_unique_middle_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_non_unique_middle",
         MixedIdxWorkTable::name_snake_case(),
+        MixedIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -108,6 +110,7 @@ fn test_update_non_unique_last_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_non_unique_last",
         MixedIdxWorkTable::name_snake_case(),
+        MixedIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();

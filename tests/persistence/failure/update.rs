@@ -2,11 +2,13 @@
 use super::*;
 use crate::remove_dir_if_exists;
 
+
 #[test]
 fn test_update_unique_secondary_conflict() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_unique_conflict",
         TwoUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -99,6 +101,7 @@ fn test_update_pk_based_success() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_pk_success",
         TwoUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();

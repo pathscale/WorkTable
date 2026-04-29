@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 
 impl Generator {
@@ -21,9 +21,15 @@ impl Generator {
     }
 
     fn gen_worktable_wait_for_ops_fn(&self) -> TokenStream {
-        quote! {
-            pub async fn wait_for_ops(&self) {
-               self.1.wait_for_ops().await
+        if self.attributes.read_only {
+            quote! {
+                pub async fn wait_for_ops(&self) {}
+            }
+        } else {
+            quote! {
+                pub async fn wait_for_ops(&self) {
+                   self.1.wait_for_ops().await
+                }
             }
         }
     }
@@ -32,10 +38,12 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk = name_generator.get_primary_key_type_ident();
         let literal_name = name_generator.get_work_table_literal_name();
+        let version_const = name_generator.get_version_const_ident();
 
         quote! {
             pub fn space_info_default() -> GeneralPage<SpaceInfoPage<<<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>> {
                 let inner = SpaceInfoPage {
+                    version: #version_const,
                     id: 0.into(),
                     page_count: 0,
                     name: #literal_name.to_string(),

@@ -1,8 +1,7 @@
-use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span};
 use syn::ItemStruct;
 
-use crate::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::WorktableNameGenerator;
 
 pub use space_file::WT_INDEX_EXTENSION;
 
@@ -11,6 +10,7 @@ mod space_file;
 
 pub struct PersistTableAttributes {
     pub pk_unsized: bool,
+    pub read_only: bool,
 }
 
 pub struct Generator {
@@ -25,10 +25,6 @@ impl WorktableNameGenerator {
             format!("{}SpaceFile", self.name).as_str(),
             Span::mixed_site(),
         )
-    }
-
-    pub fn get_dir_name(&self) -> String {
-        self.name.from_case(Case::Pascal).to_case(Case::Snake)
     }
 
     pub fn get_persistence_engine_ident(&self) -> Ident {

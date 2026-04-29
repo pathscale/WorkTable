@@ -1,6 +1,6 @@
 use std::fs::copy;
 
-use data_bucket::{INNER_PAGE_SIZE, Link};
+use data_bucket::{Link, INNER_PAGE_SIZE};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use worktable::prelude::{SpaceIndexOps, SpaceIndexUnsized};
@@ -20,6 +20,7 @@ mod run_first {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/process_create_node.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -60,6 +61,7 @@ mod run_first {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/process_create_second_node.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -100,6 +102,7 @@ mod run_first {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/process_remove_node.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -140,6 +143,7 @@ mod run_first {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/process_insert_at.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -189,6 +193,7 @@ mod run_first {
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/process_insert_at_big_amount.wt.idx",
             0.into(),
+            1,
         )
         .await
         .unwrap();
@@ -264,6 +269,7 @@ async fn test_space_index_process_remove_at() {
     let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
         "tests/data/space_index_unsized/process_remove_at.wt.idx",
         0.into(),
+        1,
     )
     .await
     .unwrap();
@@ -313,6 +319,7 @@ async fn test_space_index_process_remove_at_node_id() {
     let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
         "tests/data/space_index_unsized/process_remove_at_node_id.wt.idx",
         0.into(),
+        1,
     )
     .await
     .unwrap();
@@ -362,6 +369,7 @@ async fn test_space_index_process_insert_at_with_node_id_update() {
     let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
         "tests/data/space_index_unsized/process_insert_at_with_node_id_update.wt.idx",
         0.into(),
+        1,
     )
     .await
     .unwrap();
@@ -412,6 +420,7 @@ async fn test_space_index_process_insert_at_removed_place() {
     let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
         "tests/data/space_index_unsized/process_insert_at_removed_place.wt.idx",
         0.into(),
+        1,
     )
     .await
     .unwrap();
@@ -508,6 +517,7 @@ async fn test_space_index_process_create_node_after_remove() {
     let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
         "tests/data/space_index_unsized/process_create_node_after_remove.wt.idx",
         0.into(),
+        1,
     )
     .await
     .unwrap();
@@ -547,6 +557,7 @@ async fn test_space_index_process_split_node() {
     let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
         "tests/data/space_index_unsized/process_split_node.wt.idx",
         0.into(),
+        1,
     )
     .await
     .unwrap();

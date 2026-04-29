@@ -4,6 +4,7 @@ use crate::persistence::operation::BatchOperation;
 
 pub use engine::DiskConfig;
 pub use engine::DiskPersistenceEngine;
+pub use readonly_engine::ReadOnlyPersistenceEngine;
 pub use operation::{
     AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,
@@ -17,12 +18,15 @@ pub use task::PersistenceTask;
 
 mod engine;
 pub mod operation;
+mod readonly_engine;
 mod space;
 mod task;
 
 // TODO: remove this
 pub trait PersistenceConfig {
     fn table_path(&self) -> &str;
+
+    fn version(&self) -> u32;
 }
 
 pub trait PersistedWorkTable<E>: Sized

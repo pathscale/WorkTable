@@ -1,0 +1,253 @@
+use proc_macro2::TokenStream;
+use quote::quote;
+
+use crate::common::name_generator::WorktableNameGenerator;
+use crate::generators::in_memory::InMemoryGenerator;
+use crate::common::model::GeneratorType;
+
+impl InMemoryGenerator {
+    pub fn gen_table_impl(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let ident = name_generator.get_work_table_ident();
+
+        let persisted_impl = self.gen_table_new_fn();
+        let name_fn = self.gen_table_name_fn();
+        let select_fn = self.gen_table_select_fn();
+        let insert_fn = self.gen_table_insert_fn();
+        let reinsert_fn = self.gen_table_reinsert_fn();
+        let upsert_fn = self.gen_table_upsert_fn();
+        let get_next_fn = self.gen_table_get_next_fn();
+        let iter_with_fn = self.gen_table_iter_with_fn();
+        let iter_with_async_fn = self.gen_table_iter_with_async_fn();
+        let count_fn = self.gen_table_count_fn();
+        let system_info_fn = self.gen_system_info_fn();
+        let vacuum_fn = self.gen_table_vacuum_fn();
+
+        quote! {
+            #persisted_impl
+            impl #ident {
+                #name_fn
+                #select_fn
+                #insert_fn
+                #reinsert_fn
+                #upsert_fn
+                #count_fn
+                #get_next_fn
+                #iter_with_fn
+                #iter_with_async_fn
+                #system_info_fn
+                #vacuum_fn
+            }
+        }
+    }
+
+    fn gen_table_new_fn(&self) -> TokenStream {
+        // InMemory tables don't have PersistedWorkTable impl
+        quote! {}
+    }
+
+    fn gen_table_name_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let dir_name = name_generator.get_dir_name();
+
+        quote! {
+            pub fn name(&self) -> &'static str {
+                &self.0.table_name
+            }
+
+            pub fn name_snake_case() -> &'static str {
+                #dir_name
+            }
+        }
+    }
+
+    fn gen_table_select_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+
+        quote! {
+            pub fn select<Pk>(&self, pk: Pk) -> Option<#row_type>
+            where #primary_key_type: From<Pk> {
+                self.0.select(pk.into())
+            }
+        }
+    }
+
+    fn gen_table_insert_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+
+        quote! {
+            pub fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+                self.0.insert(row)
+            }
+        }
+    }
+
+    fn gen_table_reinsert_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+
+        quote! {
+            pub async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+                self.0.reinsert(row_old, row_new).await
+            }
+        }
+    }
+
+    fn gen_table_upsert_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+
+        quote! {
+            pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
+                let pk = row.get_primary_key();
+                let need_to_update = {
+                    if let Some(link) = self.0.primary_index.pk_map.get(&pk) {
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if need_to_update {
+                    self.update(row).await?;
+                } else {
+                    self.insert(row)?;
+                }
+                core::result::Result::Ok(())
+            }
+        }
+    }
+
+    fn gen_table_get_next_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+
+        match self.columns.generator_type {
+            GeneratorType::Custom | GeneratorType::Autoincrement => {
+                quote! {
+                    pub fn get_next_pk(&self) -> #primary_key_type {
+                        self.0.get_next_pk()
+                    }
+                }
+            }
+            GeneratorType::None => {
+                quote! {}
+            }
+        }
+    }
+
+    fn gen_table_iter_with_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+        let inner = self.gen_table_iter_inner(quote! {
+            f(data)?;
+        });
+
+        quote! {
+            pub fn iter_with<
+                F: Fn(#row_type) -> core::result::Result<(), WorkTableError>
+            >(&self, f: F) -> core::result::Result<(), WorkTableError> {
+                #inner
+            }
+        }
+    }
+
+    fn gen_table_iter_with_async_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+        let inner = self.gen_table_iter_inner(quote! {
+             f(data).await?;
+        });
+
+        quote! {
+            pub async fn iter_with_async<
+                F: Fn(#row_type) -> Fut,
+                Fut: std::future::Future<Output = core::result::Result<(), WorkTableError>>
+            >(&self, f: F) -> core::result::Result<(), WorkTableError> {
+                #inner
+            }
+        }
+    }
+
+    fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
+        quote! {
+            let first = self.0.primary_index.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
+            let Some((mut k, link)) = first else {
+                return Ok(())
+            };
+
+            let data = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
+            #func
+
+            let mut ind = false;
+            while !ind {
+                let next = {
+                    let mut iter = self.0.primary_index.pk_map.range(k.clone()..);
+                    let next = iter.next().map(|(k, v)| (k.clone(), v.0)).filter(|(key, _)| key != &k);
+                    if next.is_some() {
+                        next
+                    } else {
+                        iter.next().map(|(k, v)| (k.clone(), v.0))
+                    }
+                };
+                if let Some((key, link)) = next {
+                    let data = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
+                   #func
+                    k = key
+                } else {
+                    ind = true;
+                };
+            }
+
+            core::result::Result::Ok(())
+        }
+    }
+
+    fn gen_table_count_fn(&self) -> TokenStream {
+        quote! {
+            pub fn count(&self) -> usize {
+                let count = self.0.primary_index.pk_map.len();
+                count
+            }
+        }
+    }
+
+    fn gen_system_info_fn(&self) -> TokenStream {
+        quote! {
+            pub fn system_info(&self) -> SystemInfo {
+                self.0.system_info()
+            }
+        }
+    }
+
+    fn gen_table_vacuum_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let table_name = name_generator.get_work_table_literal_name();
+        let lock_type = name_generator.get_lock_type_ident();
+
+        quote! {
+            pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
+                std::sync::Arc::new(EmptyDataVacuum::<
+                    _,
+                    _,
+                    _,
+                    _,
+                    _,
+                    _,
+                    #lock_type,
+                    _
+                >::new(
+                    #table_name,
+                    std::sync::Arc::clone(&self.0.data),
+                    std::sync::Arc::clone(&self.0.lock_manager),
+                    std::sync::Arc::clone(&self.0.primary_index),
+                    std::sync::Arc::clone(&self.0.indexes),
+                ))
+            }
+        }
+    }
+}

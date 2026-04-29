@@ -1,7 +1,7 @@
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use crate::name_generator::{WorktableNameGenerator, is_unsized};
+use crate::common::name_generator::{WorktableNameGenerator, is_unsized};
 use crate::persist_index::generator::Generator;
 
 impl Generator {
@@ -62,18 +62,18 @@ impl Generator {
                 let literal_name = Literal::string(i.to_string().as_str());
                 if is_unsized(&t.to_string()) {
                     quote! {
-                        #i: SpaceIndexUnsized::secondary_from_table_files_path(path, #literal_name).await?,
+                        #i: SpaceIndexUnsized::secondary_from_table_files_path(path, #literal_name, version).await?,
                     }
                 } else {
                     quote! {
-                        #i: SpaceIndex::secondary_from_table_files_path(path, #literal_name).await?,
+                        #i: SpaceIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
                     }
                 }
             })
             .collect();
 
         quote! {
-            async fn from_table_files_path<S: AsRef<str>>(path: S) -> eyre::Result<Self> {
+            async fn from_table_files_path<S: AsRef<str>>(path: S, version: u32) -> eyre::Result<Self> {
                 let path = path.as_ref();
                 Ok(Self {
                     #(#fields)*
