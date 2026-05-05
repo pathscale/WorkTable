@@ -244,7 +244,7 @@ fn test_pk_range_select_basic() {
     }
 
     let results = table
-        .select_by_pk_range(PkRangeTestPrimaryKey(5)..PkRangeTestPrimaryKey(10))
+        .select_by_pk_range(5..10)
         .execute()
         .unwrap();
     assert_eq!(results.len(), 5);
@@ -264,7 +264,7 @@ fn test_pk_range_select_inclusive() {
     }
 
     let results = table
-        .select_by_pk_range(PkRangeTestPrimaryKey(5)..=PkRangeTestPrimaryKey(10))
+        .select_by_pk_range(5..=10)
         .execute()
         .unwrap();
     assert_eq!(results.len(), 6);
@@ -284,7 +284,7 @@ fn test_pk_range_select_open_from() {
     }
 
     let results = table
-        .select_by_pk_range(PkRangeTestPrimaryKey(15)..)
+        .select_by_pk_range(15..)
         .execute()
         .unwrap();
     assert_eq!(results.len(), 5);
@@ -304,7 +304,7 @@ fn test_pk_range_select_open_to() {
     }
 
     let results = table
-        .select_by_pk_range(..PkRangeTestPrimaryKey(5))
+        .select_by_pk_range(..5)
         .execute()
         .unwrap();
     assert_eq!(results.len(), 5);
@@ -324,7 +324,7 @@ fn test_pk_range_select_with_limit() {
     }
 
     let results = table
-        .select_by_pk_range(PkRangeTestPrimaryKey(10)..)
+        .select_by_pk_range(10..)
         .limit(5)
         .execute()
         .unwrap();
@@ -345,7 +345,7 @@ fn test_pk_range_select_with_order() {
     }
 
     let results = table
-        .select_by_pk_range(PkRangeTestPrimaryKey(5)..=PkRangeTestPrimaryKey(10))
+        .select_by_pk_range(5..=10)
         .order_on(PkRangeTestRowFields::Id, Order::Desc)
         .execute()
         .unwrap();

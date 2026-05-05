@@ -168,15 +168,21 @@ impl PersistGenerator {
         let row_fields_ident = name_generator.get_row_fields_enum_ident();
 
         quote! {
-            pub fn select_by_pk_range<R>(&self, range: R) -> SelectQueryBuilder<#row_type,
+            pub fn select_by_pk_range<R, Pk>(&self, range: R) -> SelectQueryBuilder<#row_type,
                                                                      impl DoubleEndedIterator<Item = #row_type> + '_,
                                                                      #column_range_type,
                                                                      #row_fields_ident>
             where
-                R: std::ops::RangeBounds<#primary_key_type>
+                #primary_key_type: From<Pk>,
+                R: std::ops::RangeBounds<Pk>,
+                Pk: Clone,
             {
+                let converted_range = (
+                    range.start_bound().map(|v| #primary_key_type::from(v.clone())),
+                    range.end_bound().map(|v| #primary_key_type::from(v.clone())),
+                );
                 let rows = self.0.primary_index.pk_map
-                    .range(range)
+                    .range(converted_range)
                     .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
 
                 SelectQueryBuilder::new(rows)
