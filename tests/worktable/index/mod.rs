@@ -1,5 +1,6 @@
 mod insert;
 mod order;
+mod range;
 mod update_by_pk;
 mod update_full;
 mod update_query;
