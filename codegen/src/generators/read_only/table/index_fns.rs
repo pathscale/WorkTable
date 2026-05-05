@@ -20,8 +20,8 @@ impl ReadOnlyGenerator {
             .indexes
             .iter()
             .map(|(i, idx)| {
-                if idx.is_unique {
-                    Self::gen_unique_index_fn(i, idx, &self.columns.columns_map, row_ident.clone())
+                let point_fn = if idx.is_unique {
+                    Self::gen_unique_index_fn(i, idx, &self.columns.columns_map, row_ident.clone())?
                 } else {
                     Self::gen_non_unique_index_fn(
                         i,
@@ -30,8 +30,19 @@ impl ReadOnlyGenerator {
                         row_ident.clone(),
                         &column_range_type,
                         &row_fields_ident,
-                    )
-                }
+                    )?
+                };
+
+                let range_fn = Self::gen_range_index_fn(
+                    i,
+                    idx,
+                    &self.columns.columns_map,
+                    row_ident.clone(),
+                    &column_range_type,
+                    &row_fields_ident,
+                )?;
+
+                Ok(quote! { #point_fn #range_fn })
             })
             .collect::<Result<Vec<_>, syn::Error>>()?;
 
@@ -106,6 +117,54 @@ impl ReadOnlyGenerator {
                     .into_iter()
                     .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok())
                     .filter(move |r| &r.#row_field_ident == &by);
+
+                SelectQueryBuilder::new(rows)
+            }
+        })
+    }
+
+    fn gen_range_index_fn(
+        i: &Ident,
+        idx: &Index,
+        columns_map: &HashMap<Ident, TokenStream>,
+        row_ident: Ident,
+        column_range_type: &Ident,
+        row_fields_ident: &Ident,
+    ) -> syn::Result<TokenStream> {
+        let type_ = columns_map
+            .get(i)
+            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let fn_name = Ident::new(format!("select_by_{i}_range").as_str(), Span::mixed_site());
+        let field_ident = &idx.name;
+
+        let (range_bounds, range_arg) = if is_float(type_.to_string().as_str()) {
+            (
+                quote! { std::ops::RangeBounds<#type_> },
+                quote! {
+                    (
+                        range.start_bound().map(|v| OrderedFloat(*v)),
+                        range.end_bound().map(|v| OrderedFloat(*v)),
+                    )
+                },
+            )
+        } else {
+            (
+                quote! { std::ops::RangeBounds<#type_> },
+                quote! { range },
+            )
+        };
+
+        Ok(quote! {
+            pub fn #fn_name<R>(&self, range: R) -> SelectQueryBuilder<#row_ident,
+                                                                     impl DoubleEndedIterator<Item = #row_ident> + '_,
+                                                                     #column_range_type,
+                                                                     #row_fields_ident>
+            where
+                R: #range_bounds
+            {
+                let rows = self.0.indexes.#field_ident
+                    .range(#range_arg)
+                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
 
                 SelectQueryBuilder::new(rows)
             }

@@ -14,6 +14,7 @@ impl PersistGenerator {
         let name_fn = self.gen_table_name_fn();
         let version_fn = self.gen_table_version_fn();
         let select_fn = self.gen_table_select_fn();
+        let select_range_fn = self.gen_table_select_range_fn();
         let insert_fn = self.gen_table_insert_fn();
         let reinsert_fn = self.gen_table_reinsert_fn();
         let upsert_fn = self.gen_table_upsert_fn();
@@ -30,6 +31,7 @@ impl PersistGenerator {
                 #name_fn
                 #version_fn
                 #select_fn
+                #select_range_fn
                 #insert_fn
                 #reinsert_fn
                 #upsert_fn
@@ -154,6 +156,36 @@ impl PersistGenerator {
             pub fn select<Pk>(&self, pk: Pk) -> Option<#row_type>
             where #primary_key_type: From<Pk> {
                 self.0.select(pk.into())
+            }
+        }
+    }
+
+    fn gen_table_select_range_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+        let column_range_type = name_generator.get_column_range_type_ident();
+        let row_fields_ident = name_generator.get_row_fields_enum_ident();
+
+        quote! {
+            pub fn select_by_pk_range<R, Pk>(&self, range: R) -> SelectQueryBuilder<#row_type,
+                                                                     impl DoubleEndedIterator<Item = #row_type> + '_,
+                                                                     #column_range_type,
+                                                                     #row_fields_ident>
+            where
+                #primary_key_type: From<Pk>,
+                R: std::ops::RangeBounds<Pk>,
+                Pk: Clone,
+            {
+                let converted_range = (
+                    range.start_bound().map(|v| #primary_key_type::from(v.clone())),
+                    range.end_bound().map(|v| #primary_key_type::from(v.clone())),
+                );
+                let rows = self.0.primary_index.pk_map
+                    .range(converted_range)
+                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
+
+                SelectQueryBuilder::new(rows)
             }
         }
     }
