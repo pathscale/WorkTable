@@ -137,10 +137,21 @@ impl PersistGenerator {
         let fn_name = Ident::new(format!("select_by_{i}_range").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
 
-        let range_bounds = if is_float(type_.to_string().as_str()) {
-            quote! { std::ops::RangeBounds<OrderedFloat<#type_>> }
+        let (range_bounds, range_arg) = if is_float(type_.to_string().as_str()) {
+            (
+                quote! { std::ops::RangeBounds<#type_> },
+                quote! {
+                    (
+                        range.start_bound().map(|v| OrderedFloat(*v)),
+                        range.end_bound().map(|v| OrderedFloat(*v)),
+                    )
+                },
+            )
         } else {
-            quote! { std::ops::RangeBounds<#type_> }
+            (
+                quote! { std::ops::RangeBounds<#type_> },
+                quote! { range },
+            )
         };
 
         Ok(quote! {
@@ -152,7 +163,7 @@ impl PersistGenerator {
                 R: #range_bounds
             {
                 let rows = self.0.indexes.#field_ident
-                    .range(range)
+                    .range(#range_arg)
                     .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
 
                 SelectQueryBuilder::new(rows)
