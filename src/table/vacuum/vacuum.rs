@@ -122,7 +122,7 @@ where
         // to avoid some rewrites of ops that used link from empty links registry
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        per_page_info.sort_by(|l, r| OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio)));
+        per_page_info.sort_by_key(|l| OrderedFloat(l.filled_empty_ratio));
         let initial_bytes_freed: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
         let additional_allocated_page = self.data_pages.allocate_new_or_pop_free();
 
