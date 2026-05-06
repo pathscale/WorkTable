@@ -16,4 +16,5 @@ pub struct QueryParams<ColumnRange, RowFields> {
     pub offset: Option<usize>,
     pub order: VecDeque<(Order, RowFields)>,
     pub range: VecDeque<(ColumnRange, RowFields)>,
+    pub sorted_by: Option<RowFields>,
 }

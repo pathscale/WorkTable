@@ -1,4 +1,5 @@
-use proc_macro2::TokenStream;
+use convert_case::{Case, Casing};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 use crate::common::model::GeneratorType;
@@ -167,6 +168,18 @@ impl PersistGenerator {
         let column_range_type = name_generator.get_column_range_type_ident();
         let row_fields_ident = name_generator.get_row_fields_enum_ident();
 
+        let pk_sorted_by = if self.columns.primary_keys.len() == 1 {
+            let pk_field = &self.columns.primary_keys[0];
+            let pk_pascal = Ident::new(&pk_field.to_string().to_case(Case::Pascal), Span::mixed_site());
+            quote! {
+                SelectQueryBuilder::new_sorted(rows, #row_fields_ident::#pk_pascal)
+            }
+        } else {
+            quote! {
+                SelectQueryBuilder::new(rows)
+            }
+        };
+
         quote! {
             pub fn select_by_pk_range<R, Pk>(&self, range: R) -> SelectQueryBuilder<#row_type,
                                                                      impl DoubleEndedIterator<Item = #row_type> + '_,
@@ -185,7 +198,7 @@ impl PersistGenerator {
                     .range(converted_range)
                     .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
 
-                SelectQueryBuilder::new(rows)
+                #pk_sorted_by
             }
         }
     }

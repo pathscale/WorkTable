@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
@@ -130,6 +131,7 @@ impl InMemoryGenerator {
         let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_by_{i}_range").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
+        let column_pascal = Ident::new(&i.to_string().to_case(Case::Pascal), Span::mixed_site());
 
         let (range_bounds, range_arg) = if is_float(type_.to_string().as_str()) {
             (
@@ -157,7 +159,7 @@ impl InMemoryGenerator {
                     .range(#range_arg)
                     .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
 
-                SelectQueryBuilder::new(rows)
+                SelectQueryBuilder::new_sorted(rows, #row_fields_ident::#column_pascal)
             }
         })
     }

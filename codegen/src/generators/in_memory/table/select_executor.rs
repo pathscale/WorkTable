@@ -155,6 +155,20 @@ impl InMemoryGenerator {
             }
         };
 
+        let fallback_sort = quote! {
+            let mut items: Vec<#row_type> = iter.collect();
+            items.sort_by(|a, b| {
+                for (order, col) in &self.params.order {
+                    match col {
+                        #(#order_matches)*
+                        _ => continue,
+                    }
+                }
+                std::cmp::Ordering::Equal
+            });
+            iter = Box::new(items.into_iter());
+        };
+
         quote! {
             impl<I> SelectQueryExecutor<#row_type, I, #column_range_type, #row_fields_ident>
             for SelectQueryBuilder<#row_type, I, #column_range_type, #row_fields_ident>
@@ -181,19 +195,30 @@ impl InMemoryGenerator {
                     #range
 
                     if !self.params.order.is_empty() {
-                        let mut items: Vec<#row_type> = iter.collect();
+                        // Optimization: single order on pre-sorted column with no additional range filters
+                        let can_optimize = self.params.sorted_by.is_some()
+                            && self.params.range.is_empty()
+                            && self.params.order.len() == 1;
 
-                        items.sort_by(|a, b| {
-                            for (order, col) in &self.params.order {
-                                match col {
-                                    #(#order_matches)*
-                                    _ => continue,
+                        if can_optimize {
+                            let (order, col) = &self.params.order[0];
+                            let sorted_col = self.params.sorted_by.as_ref().unwrap();
+
+                            if col == sorted_col {
+                                match order {
+                                    Order::Desc => {
+                                        iter = Box::new(iter.rev());
+                                    }
+                                    Order::Asc => {
+                                        // Already sorted correctly, no action needed
+                                    }
                                 }
+                            } else {
+                                #fallback_sort
                             }
-                            std::cmp::Ordering::Equal
-                        });
-
-                        iter = Box::new(items.into_iter());
+                        } else {
+                            #fallback_sort
+                        }
                     }
 
                     let iter_result: Box<dyn Iterator<Item = #row_type>> = if let Some(offset) = self.params.offset {
