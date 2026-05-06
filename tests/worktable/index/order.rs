@@ -29,7 +29,7 @@ fn index_struct_field_order() {
 
 #[test]
 fn available_indexes_enum_order() {
-    let variants = vec![
+    let variants = [
         OrderTestAvailableIndexes::IdxC,
         OrderTestAvailableIndexes::IdxA,
         OrderTestAvailableIndexes::IdxB,
