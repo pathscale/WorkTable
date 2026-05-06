@@ -46,12 +46,11 @@ async fn test_primary_index_parse() {
     assert_eq!(index.header.page_type, PageType::Index);
     assert_eq!(index.header.data_length, 16350);
 
-    let mut key = 1;
     let length = 24;
     let mut offset = 0;
     let page_id = 1.into();
 
-    for val in &index.inner.index_values[..index.inner.current_length as usize] {
+    for (key, val) in (1..).zip(index.inner.index_values[..index.inner.current_length as usize].iter()) {
         assert_eq!(val.key, key);
         assert_eq!(
             val.link,
@@ -62,7 +61,6 @@ async fn test_primary_index_parse() {
             }
         );
 
-        key += 1;
         offset += length;
     }
 }
@@ -83,12 +81,11 @@ async fn test_another_idx_index_parse() {
     assert_eq!(index.header.page_type, PageType::Index);
     assert_eq!(index.header.data_length, 16350);
 
-    let mut key = 1;
     let length = 24;
     let mut offset = 0;
     let page_id = 1.into();
 
-    for val in &index.inner.index_values[..index.inner.current_length as usize] {
+    for (key, val) in (1..).zip(index.inner.index_values[..index.inner.current_length as usize].iter()) {
         assert_eq!(val.key, key);
         assert_eq!(
             val.link,
@@ -99,7 +96,6 @@ async fn test_another_idx_index_parse() {
             }
         );
 
-        key += 1;
         offset += length;
     }
 }
