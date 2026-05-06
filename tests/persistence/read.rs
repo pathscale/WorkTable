@@ -4,8 +4,8 @@ use worktable::prelude::*;
 
 // TODO: Fix naming.
 use crate::persistence::{
-    TEST_PERSIST_INNER_SIZE, TEST_PERSIST_PAGE_SIZE, TestPersistPersistenceEngine,
-    TestPersistWorkTable, get_empty_test_wt, get_test_wt,
+    get_empty_test_wt, get_test_wt, TestPersistPersistenceEngine,
+    TestPersistWorkTable, TEST_PERSIST_INNER_SIZE, TEST_PERSIST_PAGE_SIZE,
 };
 use crate::remove_dir_if_exists;
 
@@ -130,6 +130,7 @@ async fn test_space_parse() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/expected",
         TestPersistWorkTable::name_snake_case(),
+        TestPersistWorkTable::version(),
     );
     let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
     let table = TestPersistWorkTable::load(engine).await.unwrap();
@@ -148,6 +149,7 @@ async fn test_space_parse_no_file() {
     let config = DiskConfig::new_with_table_name(
         "tests/non-existent",
         TestPersistWorkTable::name_snake_case(),
+        TestPersistWorkTable::version(),
     );
     let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
     let table = TestPersistWorkTable::load(engine).await.unwrap();

@@ -24,6 +24,7 @@ fn test_uuid() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/uuid/reread",
         UuidReReadWorkTable::name_snake_case(),
+        UuidReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -87,6 +88,7 @@ fn test_big_amount_reread() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/uuid/big_amount",
         UuidReReadWorkTable::name_snake_case(),
+        UuidReReadWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

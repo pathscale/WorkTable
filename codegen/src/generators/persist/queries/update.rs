@@ -1,0 +1,712 @@
+use proc_macro2::Literal;
+use std::collections::HashMap;
+
+use crate::common::name_generator::{WorktableNameGenerator, is_float};
+use crate::generators::persist::PersistGenerator;
+use crate::common::model::Operation;
+use convert_case::{Case, Casing};
+use proc_macro2::{Ident, Span, TokenStream};
+use quote::quote;
+
+impl PersistGenerator {
+    pub fn gen_query_update_impl(&mut self) -> syn::Result<TokenStream> {
+        let custom_updates = if let Some(q) = &self.queries {
+            let custom_updates = self.gen_custom_updates(q.updates.clone());
+
+            quote! {
+                #custom_updates
+            }
+        } else {
+            quote! {}
+        };
+        let full_row_update = self.gen_full_row_update();
+
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let table_ident = name_generator.get_work_table_ident();
+        Ok(quote! {
+            impl #table_ident {
+                #full_row_update
+                #custom_updates
+            }
+        })
+    }
+
+    fn gen_full_row_update(&mut self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_ident = name_generator.get_row_type_ident();
+
+        let row_updates = self
+            .columns
+            .columns_map
+            .keys()
+            .map(|i| {
+                quote! {
+                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let idents: Vec<_> = self
+            .columns
+            .indexes
+            .values()
+            .map(|idx| idx.field.clone())
+            .collect();
+
+        let diff_process_insert =
+            self.gen_process_diffs_insert_on_index(idents.as_slice(), Some(&idents));
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(Some(&idents));
+        let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
+        let full_row_lock = self.gen_full_lock_for_update();
+        let size_check = if self.columns.is_sized {
+            quote! {}
+        } else {
+            quote! {
+                if true {
+                    drop(_guard);
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
+                    let row_old = self.0.data.select_non_ghosted(link)?;
+                    if let Err(e) = self.reinsert(row_old, row).await {
+                        self.0.update_state.remove(&pk);
+
+                        return Err(e);
+                    }
+
+                    self.0.update_state.remove(&pk);
+
+                    return core::result::Result::Ok(());
+                }
+            }
+        };
+
+        quote! {
+            pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
+                let pk = row.get_primary_key();
+                let op_lock = { #full_row_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
+
+                let mut link: Link = self.0
+                    .primary_index
+                    .pk_map
+                    .get(&pk)
+                    .map(|v| v.get().value.into())
+                    .ok_or(WorkTableError::NotFound)?;
+
+                let row_old = self.0.data.select_non_ghosted(link)?;
+                self.0.update_state.insert(pk.clone(), row_old);
+
+                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                #size_check
+
+                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                #diff_process_insert
+                #persist_op
+
+                unsafe { self.0.data.with_mut_ref(link, move |archived| {
+                    #(#row_updates)*
+                }).map_err(WorkTableError::PagesError)? };
+
+                #diff_process_remove
+
+                self.0.update_state.remove(&pk);
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        }
+    }
+
+    fn gen_custom_updates(&mut self, updates: HashMap<Ident, Operation>) -> TokenStream {
+        let defs = updates
+            .iter()
+            .map(|(name, op)| {
+                let snake_case_name = name
+                    .to_string()
+                    .from_case(Case::Pascal)
+                    .to_case(Case::Snake);
+                let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
+
+                let indexes_columns: Option<Vec<_>> = {
+                    let columns: Vec<_> = self
+                        .columns
+                        .indexes
+                        .values()
+                        .filter(|idx| op.columns.contains(&idx.field))
+                        .map(|idx| idx.field.clone())
+                        .collect();
+
+                    if columns.is_empty() {
+                        None
+                    } else {
+                        Some(columns)
+                    }
+                };
+                let unsized_columns = if self.columns.is_sized {
+                    None
+                } else {
+                    let fields = op
+                        .columns
+                        .iter()
+                        .filter(|c| {
+                            self.columns.columns_map.get(c).unwrap().to_string() == "String"
+                        })
+                        .collect::<Vec<_>>();
+                    if fields.is_empty() {
+                        None
+                    } else {
+                        Some(fields)
+                    }
+                };
+
+                let idents = &op.columns;
+                if let Some(index) = index {
+                    let index_name = &index.name;
+
+                    if index.is_unique {
+                        self.gen_unique_update(
+                            snake_case_name,
+                            name,
+                            index_name,
+                            idents,
+                            indexes_columns.as_ref(),
+                            unsized_columns,
+                        )
+                    } else {
+                        self.gen_non_unique_update(
+                            snake_case_name,
+                            name,
+                            index_name,
+                            idents,
+                            indexes_columns.as_ref(),
+                            unsized_columns,
+                        )
+                    }
+                } else if self.columns.primary_keys.len() == 1 {
+                    if *self.columns.primary_keys.first().unwrap() == op.by {
+                        self.gen_pk_update(
+                            snake_case_name,
+                            name,
+                            idents,
+                            indexes_columns.as_ref(),
+                            unsized_columns,
+                        )
+                    } else {
+                        todo!()
+                    }
+                } else {
+                    todo!()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        quote! {
+            #(#defs)*
+        }
+    }
+
+    fn gen_persist_call(&self) -> TokenStream {
+        quote! {
+            if let Operation::Update(op) = &mut op {
+                 op.bytes = self.0.data.select_raw(link)?;
+            } else {
+                unreachable!("")
+            };
+            self.1.apply_operation(op);
+        }
+    }
+
+    fn gen_size_check(&self, unsized_fields: Option<Vec<&Ident>>, idents: &[Ident]) -> TokenStream {
+        if let Some(f) = unsized_fields {
+            let fields_check: Vec<_> = f
+                .iter()
+                .map(|f| {
+                    let fn_ident = Ident::new(format!("get_{f}_size").as_str(), Span::call_site());
+                    quote! {
+                        need_to_reinsert |= archived_row.#fn_ident() != self.#fn_ident(link)?;
+                    }
+                })
+                .collect();
+            let row_updates = idents
+                .iter()
+                .map(|i| {
+                    quote! {
+                        row_new.#i = row.#i;
+                    }
+                })
+                .collect::<Vec<_>>();
+            let full_row_lock = self.gen_full_lock_for_update();
+
+            quote! {
+                let mut need_to_reinsert = true;
+                #(#fields_check)*
+                if need_to_reinsert {
+                    drop(_guard);
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
+
+                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
+                    let mut row_new = row_old.clone();
+                    #(#row_updates)*
+                    if let Err(e) = self.reinsert(row_old, row_new).await {
+                        self.0.update_state.remove(&pk);
+
+                        return Err(e);
+                    }
+
+                    return core::result::Result::Ok(());
+                }
+            }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn gen_persist_op(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
+        let primary_key_ident = name_generator.get_primary_key_type_ident();
+
+        quote! {
+            let mut op: Operation<
+                <<#primary_key_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                #primary_key_ident,
+                #secondary_events_ident
+            > = Operation::Update(UpdateOperation {
+                id: op_id,
+                secondary_keys_events,
+                bytes: updated_bytes,
+                link,
+            });
+        }
+    }
+
+    fn gen_process_diffs_insert_on_index(
+        &self,
+        idents: &[Ident],
+        idx_idents: Option<&Vec<Ident>>,
+    ) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let avt_type_ident = name_generator.get_available_type_ident();
+        let diff_container = if idx_idents.is_some() {
+            quote! {
+                let row_old = self.0.data.select_non_ghosted(link)?;
+                let row_new = row.clone();
+                let updated_bytes: Vec<u8> = vec![];
+                let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
+            }
+        } else {
+            quote! {
+                let updated_bytes: Vec<u8> = vec![];
+            }
+        };
+
+        let diff = if let Some(idx_idents) = idx_idents {
+            idents
+                .iter()
+                .filter(|i| idx_idents.contains(i))
+                .map(|i| {
+                    let diff_key = Literal::string(i.to_string().as_str());
+                    quote! {
+                        let old = &row_old.#i;
+                        let new = &row_new.#i;
+
+                        if old != new {
+                            let diff = Difference::<#avt_type_ident> {
+                                old: old.clone().into(),
+                                new: new.clone().into(),
+                            };
+
+                            diffs.insert(#diff_key, diff);
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+
+        let process_difference = {
+            let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
+            if idx_idents.is_some() {
+                quote! {
+                    let (secondary_events, indexes_res): (#secondary_events_ident, _) = self.0.indexes.process_difference_insert_cdc(link, diffs.clone());
+                    if let Err(e) = indexes_res {
+                        return match e {
+                            IndexError::AlreadyExists {
+                                at,
+                                inserted_already,
+                            } => {
+                                let (rollback_secondary_events, _): (#secondary_events_ident, _) = self.0.indexes.delete_from_indexes_cdc(
+                                    row_new.merge(row_old.clone()),
+                                    link,
+                                    inserted_already
+                                );
+
+                                let mut merged_events = secondary_events.clone();
+                                merged_events.extend(rollback_secondary_events);
+
+                                let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: merged_events,
+                                });
+                                self.1.apply_operation(ack_op);
+
+                                Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                            }
+                            IndexError::NotFound => Err(WorkTableError::NotFound),
+                        };
+                    }
+                    let mut secondary_keys_events = secondary_events;
+                }
+            } else {
+                quote! {
+                    let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
+                }
+            }
+        };
+
+        quote! {
+            #diff_container
+            #(#diff)*
+            #process_difference
+        }
+    }
+
+    fn gen_process_diffs_remove_on_index(&self, idx_idents: Option<&Vec<Ident>>) -> TokenStream {
+        if idx_idents.is_some() {
+            quote! {
+                let (secondary_keys_events_remove, res) = self.0.indexes.process_difference_remove_cdc(link, diffs);
+                res?;
+                op.extend_secondary_key_events(secondary_keys_events_remove);
+            }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn gen_pk_update(
+        &self,
+        snake_case_name: String,
+        name: &Ident,
+        idents: &[Ident],
+        idx_idents: Option<&Vec<Ident>>,
+        unsized_fields: Option<Vec<&Ident>>,
+    ) -> TokenStream {
+        let pk_ident = &self.pk.as_ref().unwrap().ident;
+        let method_ident = Ident::new(
+            format!("update_{snake_case_name}").as_str(),
+            Span::mixed_site(),
+        );
+        let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
+        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
+
+        let row_updates = idents
+            .iter()
+            .map(|i| {
+                quote! {
+                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let size_check = self.gen_size_check(unsized_fields, idents);
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
+        let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
+        let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+
+        quote! {
+            pub async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
+            where #pk_ident: From<Pk>
+            {
+                let pk = pk.into();
+                let op_lock = { #custom_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
+
+                let mut link: Link = self.0
+                        .primary_index
+                        .pk_map
+                        .get(&pk)
+                        .map(|v| v.get().value.into())
+                        .ok_or(WorkTableError::NotFound)?;
+
+                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                #size_check
+                #diff_process_insert
+                #persist_op
+
+                unsafe { self.0.data.with_mut_ref(link, |archived| {
+                    #(#row_updates)*
+                }).map_err(WorkTableError::PagesError)? };
+
+                #diff_process_remove
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        }
+    }
+
+    fn gen_non_unique_update(
+        &self,
+        snake_case_name: String,
+        name: &Ident,
+        index: &Ident,
+        idents: &[Ident],
+        idx_idents: Option<&Vec<Ident>>,
+        unsized_fields: Option<Vec<&Ident>>,
+    ) -> TokenStream {
+        let method_ident = Ident::new(
+            format!("update_{snake_case_name}").as_str(),
+            Span::mixed_site(),
+        );
+
+        let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
+        let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
+        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
+
+        let row_updates = idents
+            .iter()
+            .map(|i| {
+                quote! {
+                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let size_check = if let Some(f) = unsized_fields {
+            let fields_check: Vec<_> = f
+                .iter()
+                .map(|f| {
+                    let fn_ident = Ident::new(format!("get_{f}_size").as_str(), Span::call_site());
+                    quote! {
+                        need_to_reinsert |= archived_row.#fn_ident() != self.#fn_ident(link)?;
+                    }
+                })
+                .collect();
+            let row_updates = idents
+                .iter()
+                .map(|i| {
+                    quote! {
+                        row_new.#i = row.#i.clone();
+                    }
+                })
+                .collect::<Vec<_>>();
+            let full_row_lock = self.gen_full_lock_for_update();
+
+            quote! {
+                let mut need_to_reinsert = true;
+                #(#fields_check)*
+                if need_to_reinsert {
+                    let old_guard = guards.remove(&pk).expect("guard should exist for this pk");
+                    drop(old_guard);
+
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
+                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
+                    let mut row_new = row_old.clone();
+                    #(#row_updates)*
+                    if let Err(e) = self.reinsert(row_old, row_new).await {
+                        self.0.update_state.remove(&pk);
+                        return Err(e);
+                    }
+
+                    continue;
+                }
+            }
+        } else {
+            quote! {}
+        };
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
+        let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
+        let by = if is_float(by_ident.to_string().as_str()) {
+            quote! {
+                &OrderedFloat(by)
+            }
+        } else {
+            quote! {
+                &by
+            }
+        };
+        let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+
+        quote! {
+            pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
+                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
+
+                let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+                for link in links.iter() {
+                    let pk = self.0.data.select_non_ghosted(*link)?.get_primary_key().clone();
+                    let op_lock = { #custom_lock };
+                    guards.insert(pk.clone(), LockGuard::new(op_lock, self.0.lock_manager.clone(), pk.clone()));
+                }
+
+                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
+                let op_id = OperationId::Multi(uuid::Uuid::now_v7());
+                for link in links.into_iter() {
+                    let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
+                    let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                        .map_err(|_| WorkTableError::SerializeError)?;
+
+                    let mut archived_row = unsafe {
+                        rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                            .unseal_unchecked()
+                    };
+
+                    #size_check
+                    #diff_process_insert
+                    #persist_op
+
+                    unsafe {
+                        self.0.data.with_mut_ref(link, |archived| {
+                            #(#row_updates)*
+                        }).map_err(WorkTableError::PagesError)?;
+                    }
+
+                    #diff_process_remove
+
+                    #persist_call
+
+                    guards.remove(&pk);
+                }
+                core::result::Result::Ok(())
+            }
+        }
+    }
+
+    fn gen_unique_update(
+        &self,
+        snake_case_name: String,
+        name: &Ident,
+        index: &Ident,
+        idents: &[Ident],
+        idx_idents: Option<&Vec<Ident>>,
+        unsized_fields: Option<Vec<&Ident>>,
+    ) -> TokenStream {
+        let method_ident = Ident::new(
+            format!("update_{snake_case_name}").as_str(),
+            Span::mixed_site(),
+        );
+
+        let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
+        let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
+        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
+
+        let row_updates = idents
+            .iter()
+            .map(|i| {
+                quote! {
+                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                }
+            })
+            .collect::<Vec<_>>();
+        let size_check = self.gen_size_check(unsized_fields, idents);
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
+        let persist_call = self.gen_persist_call();
+        let persist_op = self.gen_persist_op();
+        let by = if is_float(by_ident.to_string().as_str()) {
+            quote! {
+                &OrderedFloat(by)
+            }
+        } else {
+            quote! {
+                &by
+            }
+        };
+        let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+
+        quote! {
+            pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
+                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                    .map_err(|_| WorkTableError::SerializeError)?;
+
+                let mut archived_row = unsafe {
+                    rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                        .unseal_unchecked()
+                };
+
+                let mut link: Link = self.0.indexes
+                    .#index
+                    .get(#by)
+                    .map(|v| v.get().value.into())
+                    .ok_or(WorkTableError::NotFound)?;
+
+                let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
+
+                let op_lock = { #custom_lock };
+                let _guard = LockGuard::new(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
+
+                let link = loop {
+                    let link = self.0.indexes.#index
+                        .get(#by)
+                        .map(|v| v.get().value.into())
+                        .ok_or(WorkTableError::NotFound)?;
+
+                    if let Err(e) = self.0.data.select_non_vacuumed(link) {
+                        if e.is_vacuumed() {
+                            continue;
+                        }
+                        return Err(e.into());
+                    } else  {
+                        break link;
+                    }
+                };
+
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                #size_check
+                #diff_process_insert
+                #persist_op
+
+                unsafe {
+                    self.0.data.with_mut_ref(link, |archived| {
+                        #(#row_updates)*
+                    }).map_err(WorkTableError::PagesError)?;
+                }
+
+                #diff_process_remove
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        }
+    }
+}

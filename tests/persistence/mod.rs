@@ -52,7 +52,7 @@ worktable!(
 
 pub async fn get_empty_test_wt() -> TestPersistWorkTable {
     let config =
-        DiskConfig::new_with_table_name("tests/data", TestPersistWorkTable::name_snake_case());
+        DiskConfig::new_with_table_name("tests/data", TestPersistWorkTable::name_snake_case(), TestPersistWorkTable::version());
     let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
     TestPersistWorkTable::new(engine).await.unwrap()
 }

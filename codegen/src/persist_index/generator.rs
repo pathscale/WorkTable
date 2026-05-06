@@ -2,15 +2,21 @@ use std::collections::HashMap;
 
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::__private::Span;
-use quote::{ToTokens, quote};
+use quote::{quote, ToTokens};
 use syn::ItemStruct;
 
-use crate::name_generator::{WorktableNameGenerator, is_unsized};
+use crate::common::name_generator::{is_unsized, WorktableNameGenerator};
 use crate::persist_table::WT_INDEX_EXTENSION;
+
+#[derive(Default)]
+pub struct PersistIndexAttributes {
+    pub read_only: bool,
+}
 
 pub struct Generator {
     pub struct_def: ItemStruct,
     pub field_types: HashMap<Ident, TokenStream>,
+    pub attributes: PersistIndexAttributes,
 }
 
 impl WorktableNameGenerator {
@@ -33,7 +39,7 @@ impl WorktableNameGenerator {
 }
 
 impl Generator {
-    pub fn new(struct_def: ItemStruct) -> Self {
+    pub fn with_attributes(struct_def: ItemStruct, attributes: PersistIndexAttributes) -> Self {
         let mut fields = vec![];
         let mut types = vec![];
 
@@ -46,7 +52,7 @@ impl Generator {
             );
 
             let syn::Type::Path(type_path) = &field.ty else {
-                unreachable!()
+                unreachable!();
             };
 
             let last_segment = type_path
@@ -75,6 +81,7 @@ impl Generator {
         Self {
             struct_def,
             field_types: map,
+            attributes,
         }
     }
 
@@ -114,7 +121,11 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let name_ident = name_generator.get_persisted_index_ident();
 
-        let persist_fn = self.gen_persist_fn();
+        let persist_fn = if self.attributes.read_only {
+            quote! {}
+        } else {
+            self.gen_persist_fn()
+        };
         let parse_from_file_fn = self.gen_parse_from_file_fn();
 
         Ok(quote! {
@@ -237,7 +248,17 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let name_ident = name_generator.get_persisted_index_ident();
 
-        let get_persisted_index_fn = self.gen_get_persisted_index_fn();
+        let get_persisted_index_fn = if self.attributes.read_only {
+            let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+            let name_ident = name_generator.get_persisted_index_ident();
+            quote! {
+                fn get_persisted_index(&self) -> Self::PersistedIndex {
+                    #name_ident::default()
+                }
+            }
+        } else {
+            self.gen_get_persisted_index_fn()
+        };
         let from_persisted_fn = self.gen_from_persisted_fn()?;
 
         Ok(quote! {
@@ -489,7 +510,7 @@ mod tests {
     use proc_macro2::{Ident, Span};
     use quote::quote;
 
-    use crate::persist_index::generator::Generator;
+    use crate::persist_index::generator::{Generator, PersistIndexAttributes};
     use crate::persist_index::parser::Parser;
 
     #[test]
@@ -502,7 +523,7 @@ mod tests {
             }
         };
         let struct_ = Parser::parse_struct(input).unwrap();
-        let generator = Generator::new(struct_);
+        let generator = Generator::with_attributes(struct_, PersistIndexAttributes::default());
 
         assert_eq!(
             generator
@@ -522,5 +543,40 @@ mod tests {
                 .as_str(),
             "String"
         );
+    }
+
+    #[test]
+    fn parses_read_only_attribute() {
+        let input = quote! {
+            #[derive(Debug, Default, Clone)]
+            #[index(read_only)]
+            pub struct TestIndex {
+                test_idx: TreeIndex<i64, Link>,
+            }
+        };
+        let struct_ = Parser::parse_struct(input).unwrap();
+        let attrs = Parser::parse_attributes(&struct_.attrs);
+
+        assert!(attrs.read_only);
+    }
+
+    #[test]
+    fn default_attributes_are_false() {
+        let attrs = PersistIndexAttributes::default();
+        assert!(!attrs.read_only);
+    }
+
+    #[test]
+    fn without_read_only_attribute() {
+        let input = quote! {
+            #[derive(Debug, Default, Clone)]
+            pub struct TestIndex {
+                test_idx: TreeIndex<i64, Link>,
+            }
+        };
+        let struct_ = Parser::parse_struct(input).unwrap();
+        let attrs = Parser::parse_attributes(&struct_.attrs);
+
+        assert!(!attrs.read_only);
     }
 }

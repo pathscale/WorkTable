@@ -34,6 +34,7 @@ fn test_space_insert_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/insert",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -74,6 +75,7 @@ fn test_space_insert_many_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/insert_many",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -123,6 +125,7 @@ fn test_space_update_full_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/update_full",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -173,6 +176,7 @@ fn test_space_update_query_pk_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/update_query_pk",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -218,6 +222,7 @@ fn test_space_update_query_unique_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/update_query_unique",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -264,6 +269,7 @@ fn test_space_update_query_non_unique_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/update_query_non_unique",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -310,6 +316,7 @@ fn test_space_delete_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/delete",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -358,6 +365,7 @@ fn test_space_delete_query_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_sync/delete_query",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

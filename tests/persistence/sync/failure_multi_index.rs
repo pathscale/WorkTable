@@ -34,6 +34,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/sync/failure_multi_index_insert",
         MultiUniqueIdxWorkTable::name_snake_case(),
+        MultiUniqueIdxWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

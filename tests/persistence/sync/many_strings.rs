@@ -1,8 +1,7 @@
+use crate::remove_dir_if_exists;
 use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable_codegen::worktable;
-
-use crate::remove_dir_if_exists;
 
 worktable! (
     name: TestSync,
@@ -24,6 +23,7 @@ fn test_space_update_query_pk_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_and_other_sync/update_query_pk",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -96,6 +96,7 @@ fn test_space_update_query_pk_many_times_sync() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/unsized_primary_and_other_sync/update_query_pk_many",
         TestSyncWorkTable::name_snake_case(),
+        TestSyncWorkTable::version(),
     );
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

@@ -1,6 +1,9 @@
 use proc_macro2::TokenStream;
-use syn::ItemStruct;
+use quote::ToTokens;
+use syn::{Attribute, ItemStruct};
 use syn::spanned::Spanned;
+
+use crate::persist_index::generator::PersistIndexAttributes;
 
 pub struct Parser;
 
@@ -10,6 +13,25 @@ impl Parser {
             Ok(data) => Ok(data),
             Err(err) => Err(syn::Error::new(input.span(), err.to_string())),
         }
+    }
+
+    pub fn parse_attributes(attrs: &Vec<Attribute>) -> PersistIndexAttributes {
+        let mut res = PersistIndexAttributes::default();
+
+        for attr in attrs {
+            if attr.path().to_token_stream().to_string().as_str() == "index" {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("read_only") {
+                        res.read_only = true;
+                        return Ok(());
+                    }
+                    Ok(())
+                })
+                .expect("always ok even on unrecognized attrs");
+            }
+        }
+
+        res
     }
 }
 

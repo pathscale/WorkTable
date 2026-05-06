@@ -6,6 +6,7 @@ fn test_reinsert_pk_mismatch() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/reinsert_pk_mismatch",
         TwoUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -91,6 +92,7 @@ fn test_reinsert_two_indexes_first_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/reinsert_two_first",
         TwoUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -193,6 +195,7 @@ fn test_reinsert_two_indexes_second_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/reinsert_two_second",
         TwoUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -294,6 +297,7 @@ fn test_reinsert_three_indexes_first_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/reinsert_three_first",
         ThreeUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -396,6 +400,7 @@ fn test_reinsert_three_indexes_middle_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/reinsert_three_middle",
         ThreeUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -501,6 +506,7 @@ fn test_reinsert_three_indexes_last_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/reinsert_three_last",
         ThreeUniqueIdxWorkTable::name_snake_case(),
+        TwoUniqueIdxWorkTable::version(),
     );
 
     let runtime = get_runtime();

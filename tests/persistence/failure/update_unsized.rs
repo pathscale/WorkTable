@@ -2,11 +2,13 @@
 use super::*;
 use crate::remove_dir_if_exists;
 
+
 #[test]
 fn test_update_unsized_same_size() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_unsized_same_size",
         NonUniqueUnsizedWorkTable::name_snake_case(),
+        NonUniqueUnsizedWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -95,7 +97,9 @@ fn test_update_unsized_same_size() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             assert!(table.select(row1_pk).is_some());
@@ -111,6 +115,7 @@ fn test_update_unsized_larger_all_success() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_unsized_larger_success",
         NonUniqueUnsizedWorkTable::name_snake_case(),
+        NonUniqueUnsizedWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -183,7 +188,9 @@ fn test_update_unsized_larger_all_success() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let row = table.select(row_pk).unwrap();
@@ -198,6 +205,7 @@ fn test_update_unsized_larger_middle_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_unsized_larger_middle",
         NonUniqueUnsizedWorkTable::name_snake_case(),
+        NonUniqueUnsizedWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -295,7 +303,9 @@ fn test_update_unsized_larger_middle_fail() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let row2 = table.select(row2_pk).unwrap();
@@ -318,6 +328,7 @@ fn test_update_unsized_larger_last_fail() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/failure/update_unsized_larger_last",
         NonUniqueUnsizedWorkTable::name_snake_case(),
+        NonUniqueUnsizedWorkTable::version(),
     );
 
     let runtime = get_runtime();
@@ -399,7 +410,9 @@ fn test_update_unsized_larger_last_fail() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
+                .await
+                .unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             // Row2: unchanged (failed to update)

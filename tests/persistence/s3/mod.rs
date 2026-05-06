@@ -31,6 +31,7 @@ fn test_s3_engine_compiles() {
             disk: DiskConfig::new_with_table_name(
                 "tests/data/s3/compile_test",
                 TestS3WorkTable::name_snake_case(),
+                TestS3WorkTable::version(),
             ),
             s3: S3Config {
                 bucket_name: "test".to_string(),
