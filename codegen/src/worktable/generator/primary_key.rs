@@ -7,6 +7,17 @@ use crate::worktable::model::{GeneratorType, PrimaryKey};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
+const COPY_TYPES: &[&str] = &[
+    "u8", "u16", "u32", "u64", "u128", "usize",
+    "i8", "i16", "i32", "i64", "i128", "isize",
+    "f32", "f64",
+    "bool", "char",
+];
+
+fn is_copy_type(type_str: &str) -> bool {
+    COPY_TYPES.contains(&type_str) || type_str == "uuid::Uuid"
+}
+
 impl Generator {
     /// Generates primary key type and it's impls.
     pub fn gen_primary_key_def(&mut self) -> syn::Result<TokenStream> {
@@ -56,6 +67,7 @@ impl Generator {
                     .expect("should exist as got from definition")
             })
             .collect::<Vec<_>>();
+
         let unsized_derive =
             if is_unsized_vec(&types.iter().map(|v| v.to_string()).collect::<Vec<_>>()) {
                 quote! {
@@ -65,9 +77,20 @@ impl Generator {
                 quote! {}
             };
 
+        let all_types_copy = types
+            .iter()
+            .all(|t| is_copy_type(&t.to_string().replace(" ", "")));
+
+        let copy_derive = if all_types_copy {
+            quote! { Copy, }
+        } else {
+            quote! {}
+        };
+
         quote! {
             #[derive(
                 Clone,
+                #copy_derive
                 rkyv::Archive,
                 Debug,
                 Default,
