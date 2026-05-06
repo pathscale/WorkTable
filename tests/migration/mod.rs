@@ -72,7 +72,7 @@ impl Migration<v2::UserRow, UserRow> for UserMigration {
 
     fn migrate(row: v2::UserRow, ctx: &Self::Context) -> UserRow {
         UserRow {
-            id: row.id.into(),
+            id: row.id,
             name: row.name,
             email: row.email,
             created_at: ctx.default_created_at,

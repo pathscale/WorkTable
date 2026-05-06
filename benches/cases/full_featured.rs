@@ -43,7 +43,7 @@ fn select_by_pk(c: &mut Criterion) {
 
     c.bench_function("full_featured_select_by_pk", |b| {
         b.iter(|| {
-            let pk = pks[fastrand::usize(0..pks.len())];
+            let pk = pks[fastrand::usize(0..pks.len())].clone();
             black_box(table.select(pk))
         })
     });
@@ -320,7 +320,7 @@ fn batch_insert(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter_batched(
-                || FullFeaturedWorkTable::default(),
+                FullFeaturedWorkTable::default,
                 |table: FullFeaturedWorkTable| {
                     for i in 0..size {
                         let row = FullFeaturedRow {
@@ -365,7 +365,7 @@ fn batch_select_pk(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| {
                 for pk in &pks {
-                    black_box(table.select(*pk));
+                    black_box(table.select(pk.clone()));
                 }
             })
         });
