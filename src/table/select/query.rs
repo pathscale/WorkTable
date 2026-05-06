@@ -22,6 +22,20 @@ where
                 offset: None,
                 order: VecDeque::new(),
                 range: VecDeque::new(),
+                sorted_by: None,
+            },
+            iter,
+        }
+    }
+
+    pub fn new_sorted(iter: I, sorted_by: RowFields) -> Self {
+        Self {
+            params: QueryParams {
+                limit: None,
+                offset: None,
+                order: VecDeque::new(),
+                range: VecDeque::new(),
+                sorted_by: Some(sorted_by),
             },
             iter,
         }
@@ -38,6 +52,9 @@ where
     }
 
     pub fn order_on(mut self, column: RowFields, order: Order) -> Self {
+        if !self.params.order.is_empty() {
+            self.params.sorted_by = None;
+        }
         self.params.order.push_back((order, column));
         self
     }
@@ -46,6 +63,7 @@ where
     where
         R: Into<ColumnRange>,
     {
+        self.params.sorted_by = None;
         self.params.range.push_back((range.into(), column));
         self
     }
