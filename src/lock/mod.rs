@@ -17,6 +17,9 @@ use parking_lot::Mutex;
 pub use map::LockMap;
 pub use row_lock::{FullRowLock, RowLock};
 
+/// Maximum number of spin iterations before falling back to async waiting.
+const MAX_SPINS: u32 = 12;
+
 /// RAII guard that automatically unlocks a [`Lock`] when dropped.
 ///
 /// The [`Lock`] is automatically released when the [`LockGuard`] is
@@ -144,12 +147,21 @@ impl Future for LockWait {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Fast path: already unlocked
         if !self.locked.load(Ordering::Acquire) {
             return Poll::Ready(());
         }
 
-        self.waker.register(cx.waker());
+        // Spin phase: try up to MAX_SPINS before going async
+        for _ in 0..MAX_SPINS {
+            std::hint::spin_loop();
+            if !self.locked.load(Ordering::Acquire) {
+                return Poll::Ready(());
+            }
+        }
 
+        // Async phase: register waker and wait
+        self.waker.register(cx.waker());
         if self.locked.load(Ordering::Acquire) {
             Poll::Pending
         } else {
