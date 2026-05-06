@@ -1,13 +1,13 @@
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
+use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
-use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 use tokio::fs::File;
 
-use crate::prelude::{parse_page, GeneralPage, Persistable, SpaceInfoPage, WT_DATA_EXTENSION};
+use crate::prelude::{GeneralPage, Persistable, SpaceInfoPage, WT_DATA_EXTENSION, parse_page};
 
 pub trait Migration<FromRow, ToRow> {
     type Context: Default + Send + Sync;
@@ -19,10 +19,8 @@ pub trait Migration<FromRow, ToRow> {
 pub async fn detect_version<PkGenState>(table_path: &str) -> eyre::Result<u32>
 where
     PkGenState: Default + Clone + Archive + Send,
-    for<'a> PkGenState:
-        Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-    <PkGenState as Archive>::Archived:
-        Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
+    for<'a> PkGenState: Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+    <PkGenState as Archive>::Archived: Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
     SpaceInfoPage<PkGenState>: Persistable,
 {
     let data_file_path = format!("{}/{}", table_path, WT_DATA_EXTENSION);

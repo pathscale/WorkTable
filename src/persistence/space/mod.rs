@@ -28,20 +28,9 @@ pub trait SpaceDataOps<PkGenState> {
     ) -> impl Future<Output = eyre::Result<Self>> + Send
     where
         Self: Sized;
-    fn bootstrap(
-        file: &mut File,
-        table_name: String,
-        version: u32,
-    ) -> impl Future<Output = eyre::Result<()>> + Send;
-    fn save_data(
-        &mut self,
-        link: Link,
-        bytes: &[u8],
-    ) -> impl Future<Output = eyre::Result<()>> + Send;
-    fn save_batch_data(
-        &mut self,
-        batch_data: BatchData,
-    ) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn bootstrap(file: &mut File, table_name: String, version: u32) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn save_data(&mut self, link: Link, bytes: &[u8]) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn save_batch_data(&mut self, batch_data: BatchData) -> impl Future<Output = eyre::Result<()>> + Send;
     fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>>;
     fn save_info(&mut self) -> impl Future<Output = eyre::Result<()>> + Send;
 }
@@ -63,11 +52,7 @@ where
     ) -> impl Future<Output = eyre::Result<Self>> + Send
     where
         Self: Sized;
-    fn bootstrap(
-        file: &mut File,
-        table_name: String,
-        version: u32,
-    ) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn bootstrap(file: &mut File, table_name: String, version: u32) -> impl Future<Output = eyre::Result<()>> + Send;
     fn process_change_event(
         &mut self,
         event: ChangeEvent<Pair<T, Link>>,
@@ -85,10 +70,7 @@ pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
     ) -> impl Future<Output = eyre::Result<Self>> + Send
     where
         Self: Sized;
-    fn process_change_events(
-        &mut self,
-        events: SecondaryIndexEvents,
-    ) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn process_change_events(&mut self, events: SecondaryIndexEvents) -> impl Future<Output = eyre::Result<()>> + Send;
     fn process_change_event_batch(
         &mut self,
         events: SecondaryIndexEvents,

@@ -16,9 +16,7 @@ pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Acknowledge(AcknowledgeOperation<PrimaryKey, SecondaryKeys>),
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Hash
-    for Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-{
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Hash for Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Hash::hash(&self.operation_id(), state)
     }
@@ -32,14 +30,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> PartialEq
     }
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Eq
-    for Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-{
-}
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Eq for Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {}
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-    Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-{
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub fn operation_type(&self) -> OperationType {
         match &self {
             Operation::Insert(_) => OperationType::Insert,

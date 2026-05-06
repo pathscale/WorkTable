@@ -16,29 +16,23 @@ impl Parser {
                 return Err(syn::Error::new(ident.span(), "Expected `indexes` field"));
             }
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         self.parse_colon()?;
 
         let tt = {
-            let group = self.input_iter.next().ok_or(syn::Error::new(
-                self.input.span(),
-                "Expected `indexes` declarations",
-            ))?;
+            let group = self
+                .input_iter
+                .next()
+                .ok_or(syn::Error::new(self.input.span(), "Expected `indexes` declarations"))?;
             if let TokenTree::Group(group) = group {
                 if group.delimiter() != Delimiter::Brace {
                     return Err(syn::Error::new(group.span(), "Expected brace"));
                 }
                 group.stream()
             } else {
-                return Err(syn::Error::new(
-                    group.span(),
-                    "Expected `indexes` declarations",
-                ));
+                return Err(syn::Error::new(group.span(), "Expected `indexes` declarations"));
             }
         };
 

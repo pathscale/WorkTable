@@ -16,9 +16,7 @@ fn test_reinsert_pk_mismatch() {
 
         // Phase 1: Setup
         let existing_pk = {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row = TwoUniqueIdxRow {
@@ -33,9 +31,7 @@ fn test_reinsert_pk_mismatch() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = TwoUniqueIdxRow {
@@ -102,9 +98,7 @@ fn test_reinsert_two_indexes_first_fail() {
 
         // Phase 1: Setup - insert two rows
         let (row1_pk, row2_pk, conflict_a) = {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = TwoUniqueIdxRow {
@@ -127,9 +121,7 @@ fn test_reinsert_two_indexes_first_fail() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = TwoUniqueIdxRow {
@@ -165,10 +157,7 @@ fn test_reinsert_two_indexes_first_fail() {
             table.insert(valid_row3).unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
-            assert!(
-                wait_result.is_ok(),
-                "BUG: persistence blocked after reinsert failure!"
-            );
+            assert!(wait_result.is_ok(), "BUG: persistence blocked after reinsert failure!");
         }
 
         // Phase 3: Verify
@@ -205,9 +194,7 @@ fn test_reinsert_two_indexes_second_fail() {
 
         // Phase 1: Setup
         let conflict_b = {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = TwoUniqueIdxRow {
@@ -230,9 +217,7 @@ fn test_reinsert_two_indexes_second_fail() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = TwoUniqueIdxRow {
@@ -283,10 +268,7 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_a: 500,
                 unique_b: 600,
             };
-            assert!(
-                table.insert(new_row).is_ok(),
-                "BUG: orphaned entry in unique_a_idx!"
-            );
+            assert!(table.insert(new_row).is_ok(), "BUG: orphaned entry in unique_a_idx!");
             table.wait_for_ops().await;
         }
     });
@@ -307,9 +289,7 @@ fn test_reinsert_three_indexes_first_fail() {
 
         // Phase 1: Setup
         let conflict_a = {
-            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = ThreeUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = ThreeUniqueIdxRow {
@@ -334,9 +314,7 @@ fn test_reinsert_three_indexes_first_fail() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = ThreeUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = ThreeUniqueIdxRow {
@@ -410,9 +388,7 @@ fn test_reinsert_three_indexes_middle_fail() {
 
         // Phase 1: Setup
         let conflict_b = {
-            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = ThreeUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = ThreeUniqueIdxRow {
@@ -437,9 +413,7 @@ fn test_reinsert_three_indexes_middle_fail() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = ThreeUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = ThreeUniqueIdxRow {
@@ -516,9 +490,7 @@ fn test_reinsert_three_indexes_last_fail() {
 
         // Phase 1: Setup
         let conflict_c = {
-            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = ThreeUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = ThreeUniqueIdxRow {
@@ -543,9 +515,7 @@ fn test_reinsert_three_indexes_last_fail() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = ThreeUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = ThreeUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = ThreeUniqueIdxRow {

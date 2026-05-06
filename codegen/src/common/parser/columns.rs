@@ -18,29 +18,23 @@ impl Parser {
                 ));
             }
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         self.parse_colon()?;
 
         let tt = {
-            let group = self.input_iter.next().ok_or(syn::Error::new(
-                self.input.span(),
-                "Expected `columns` declarations",
-            ))?;
+            let group = self
+                .input_iter
+                .next()
+                .ok_or(syn::Error::new(self.input.span(), "Expected `columns` declarations"))?;
             if let TokenTree::Group(group) = group {
                 if group.delimiter() != Delimiter::Brace {
                     return Err(syn::Error::new(group.span(), "Expected brace"));
                 }
                 group.stream()
             } else {
-                return Err(syn::Error::new(
-                    group.span(),
-                    "Expected `columns` declarations",
-                ));
+                return Err(syn::Error::new(group.span(), "Expected `columns` declarations"));
             }
         };
         let mut parser = Parser::new(tt);
@@ -199,10 +193,7 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         assert_eq!(map.get("id"), Some(&"i64".to_string()));
-        assert_eq!(
-            map.get("test"),
-            Some(&"core :: option :: Option < u64 >".to_string())
-        );
+        assert_eq!(map.get("test"), Some(&"core :: option :: Option < u64 >".to_string()));
     }
 
     #[test]

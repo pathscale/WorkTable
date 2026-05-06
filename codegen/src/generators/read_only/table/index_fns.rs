@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
+use crate::common::model::Index;
 use crate::common::name_generator::{WorktableNameGenerator, is_float};
 use crate::generators::read_only::ReadOnlyGenerator;
-use crate::common::model::Index;
 
 impl ReadOnlyGenerator {
     pub fn gen_table_index_fns(&self) -> syn::Result<TokenStream> {
@@ -59,9 +59,7 @@ impl ReadOnlyGenerator {
         columns_map: &HashMap<Ident, TokenStream>,
         row_ident: Ident,
     ) -> syn::Result<TokenStream> {
-        let type_ = columns_map
-            .get(i)
-            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_by_{i}").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
         let by = if is_float(type_.to_string().as_str()) {
@@ -90,9 +88,7 @@ impl ReadOnlyGenerator {
         column_range_type: &Ident,
         row_fields_ident: &Ident,
     ) -> syn::Result<TokenStream> {
-        let type_ = columns_map
-            .get(i)
-            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_by_{i}").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
         let row_field_ident = &idx.field;
@@ -131,9 +127,7 @@ impl ReadOnlyGenerator {
         column_range_type: &Ident,
         row_fields_ident: &Ident,
     ) -> syn::Result<TokenStream> {
-        let type_ = columns_map
-            .get(i)
-            .ok_or(syn::Error::new(i.span(), "Row not found"))?;
+        let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_by_{i}_range").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
 
@@ -148,10 +142,7 @@ impl ReadOnlyGenerator {
                 },
             )
         } else {
-            (
-                quote! { std::ops::RangeBounds<#type_> },
-                quote! { range },
-            )
+            (quote! { std::ops::RangeBounds<#type_> }, quote! { range })
         };
 
         Ok(quote! {

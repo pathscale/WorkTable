@@ -40,10 +40,8 @@ impl Generator {
         let ident = name_generator.get_space_secondary_index_ident();
 
         let from_table_files_path_fn = self.gen_space_secondary_index_from_table_files_path_fn();
-        let index_process_change_events_fn =
-            self.gen_space_secondary_index_process_change_events_fn();
-        let index_process_change_event_batch_fn =
-            self.gen_space_secondary_index_process_change_event_batch_fn();
+        let index_process_change_events_fn = self.gen_space_secondary_index_process_change_events_fn();
+        let index_process_change_event_batch_fn = self.gen_space_secondary_index_process_change_event_batch_fn();
 
         quote! {
             impl SpaceSecondaryIndexOps<#events_ident> for #ident {

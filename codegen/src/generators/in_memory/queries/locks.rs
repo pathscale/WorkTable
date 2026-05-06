@@ -4,9 +4,9 @@ use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
+use crate::common::model::Operation;
 use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::in_memory::InMemoryGenerator;
-use crate::common::model::Operation;
 
 impl InMemoryGenerator {
     pub fn gen_query_locks_impl(&mut self) -> syn::Result<TokenStream> {
@@ -32,13 +32,9 @@ impl InMemoryGenerator {
         let fns = updates
             .keys()
             .map(|name| {
-                let snake_case_name = name
-                    .to_string()
-                    .from_case(Case::Pascal)
-                    .to_case(Case::Snake);
+                let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
 
-                let lock_ident =
-                    WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
+                let lock_ident = WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
 
                 let columns = &updates.get(name).as_ref().expect("exists").columns;
                 let lock_fn = Self::gen_rows_lock_fn(columns, lock_ident);
@@ -58,13 +54,9 @@ impl InMemoryGenerator {
         let fns = updates
             .keys()
             .map(|name| {
-                let snake_case_name = name
-                    .to_string()
-                    .from_case(Case::Pascal)
-                    .to_case(Case::Snake);
+                let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
 
-                let lock_ident =
-                    WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
+                let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
                 let columns = &updates.get(name).as_ref().expect("exists").columns;
                 let lock_fn = Self::gen_rows_lock_fn(columns, lock_ident);

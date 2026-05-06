@@ -64,10 +64,7 @@ fn test_range_select_inclusive() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_num_range(base..=base + 5)
-        .execute()
-        .unwrap();
+    let results = table.select_by_num_range(base..=base + 5).execute().unwrap();
     assert_eq!(results.len(), 6);
 }
 
@@ -121,11 +118,7 @@ fn test_range_select_with_limit() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_num_range(base..)
-        .limit(5)
-        .execute()
-        .unwrap();
+    let results = table.select_by_num_range(base..).limit(5).execute().unwrap();
     assert_eq!(results.len(), 5);
 }
 
@@ -143,11 +136,7 @@ fn test_range_select_with_offset() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_num_range(base..=base + 10)
-        .offset(3)
-        .execute()
-        .unwrap();
+    let results = table.select_by_num_range(base..=base + 10).offset(3).execute().unwrap();
     assert_eq!(results.len(), 8);
 }
 
@@ -243,10 +232,7 @@ fn test_pk_range_select_basic() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_pk_range(5..10)
-        .execute()
-        .unwrap();
+    let results = table.select_by_pk_range(5..10).execute().unwrap();
     assert_eq!(results.len(), 5);
 }
 
@@ -263,10 +249,7 @@ fn test_pk_range_select_inclusive() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_pk_range(5..=10)
-        .execute()
-        .unwrap();
+    let results = table.select_by_pk_range(5..=10).execute().unwrap();
     assert_eq!(results.len(), 6);
 }
 
@@ -283,10 +266,7 @@ fn test_pk_range_select_open_from() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_pk_range(15..)
-        .execute()
-        .unwrap();
+    let results = table.select_by_pk_range(15..).execute().unwrap();
     assert_eq!(results.len(), 5);
 }
 
@@ -303,10 +283,7 @@ fn test_pk_range_select_open_to() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_pk_range(..5)
-        .execute()
-        .unwrap();
+    let results = table.select_by_pk_range(..5).execute().unwrap();
     assert_eq!(results.len(), 5);
 }
 
@@ -323,11 +300,7 @@ fn test_pk_range_select_with_limit() {
             .unwrap();
     }
 
-    let results = table
-        .select_by_pk_range(10..)
-        .limit(5)
-        .execute()
-        .unwrap();
+    let results = table.select_by_pk_range(10..).limit(5).execute().unwrap();
     assert_eq!(results.len(), 5);
 }
 

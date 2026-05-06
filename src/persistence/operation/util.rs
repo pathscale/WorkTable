@@ -5,9 +5,7 @@ use std::fmt::Debug;
 
 pub const MAX_CHECK_DEPTH: usize = 30;
 
-pub fn validate_events<T>(
-    evs: &mut Vec<ChangeEvent<Pair<T, Link>>>,
-) -> Vec<ChangeEvent<Pair<T, Link>>>
+pub fn validate_events<T>(evs: &mut Vec<ChangeEvent<Pair<T, Link>>>) -> Vec<ChangeEvent<Pair<T, Link>>>
 where
     T: Debug,
 {

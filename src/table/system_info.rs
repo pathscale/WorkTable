@@ -55,18 +55,7 @@ impl<
     PkGen,
     const DATA_LENGTH: usize,
     NodeType,
->
-    WorkTable<
-        Row,
-        PrimaryKey,
-        AvailableTypes,
-        AvailableIndexes,
-        SecondaryIndexes,
-        LockType,
-        PkGen,
-        DATA_LENGTH,
-        NodeType,
-    >
+> WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, NodeType>
 where
     PrimaryKey: Debug + Clone + Ord + Send + 'static + std::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
@@ -82,10 +71,7 @@ where
 
         let bytes = self.data.get_bytes();
 
-        let memory_usage_bytes = bytes
-            .iter()
-            .map(|(_buf, free_offset)| *free_offset as u64)
-            .sum();
+        let memory_usage_bytes = bytes.iter().map(|(_buf, free_offset)| *free_offset as u64).sum();
 
         let idx_size = self.indexes.heap_size();
 
@@ -122,15 +108,7 @@ impl Display for SystemInfo {
 
         let mut table = Table::new();
         table.set_format(*FORMAT_NO_BORDER_LINE_SEPARATOR);
-        table.add_row(row![
-            "Index",
-            "Type",
-            "Keys",
-            "Capacity",
-            "Node Count",
-            "Heap",
-            "Used"
-        ]);
+        table.add_row(row!["Index", "Type", "Keys", "Capacity", "Node Count", "Heap", "Used"]);
 
         for idx in &self.indexes_info {
             table.add_row(row![

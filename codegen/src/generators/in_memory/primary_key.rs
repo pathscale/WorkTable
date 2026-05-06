@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use crate::common::model::{GeneratorType, PrimaryKey};
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized_vec};
 use crate::generators::in_memory::InMemoryGenerator;
-use crate::common::model::{GeneratorType, PrimaryKey};
 
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
@@ -57,14 +57,13 @@ impl InMemoryGenerator {
             })
             .collect::<Vec<_>>();
 
-        let unsized_derive =
-            if is_unsized_vec(&types.iter().map(|v| v.to_string()).collect::<Vec<_>>()) {
-                quote! {
-                    VariableSizeMeasure,
-                }
-            } else {
-                quote! {}
-            };
+        let unsized_derive = if is_unsized_vec(&types.iter().map(|v| v.to_string()).collect::<Vec<_>>()) {
+            quote! {
+                VariableSizeMeasure,
+            }
+        } else {
+            quote! {}
+        };
 
         quote! {
             #[derive(
@@ -141,10 +140,7 @@ impl InMemoryGenerator {
             "i32" => quote! { std::sync::atomic::AtomicI32 },
             "i64" => quote! { std::sync::atomic::AtomicI64 },
             _ => {
-                return Err(syn::Error::new(
-                    i.span(),
-                    "Type is not supported for autoincrement",
-                ));
+                return Err(syn::Error::new(i.span(), "Type is not supported for autoincrement"));
             }
         })
     }

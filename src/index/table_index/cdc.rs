@@ -15,11 +15,7 @@ pub trait TableIndexCdc<T> {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>);
     fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>>;
     #[allow(clippy::type_complexity)]
-    fn remove_cdc(
-        &self,
-        value: T,
-        link: Link,
-    ) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>);
+    fn remove_cdc(&self, value: T, link: Link) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>);
 }
 
 impl<T, Node, const N: usize> TableIndexCdc<T> for IndexMultiMap<T, OffsetEqLink<N>, Node>
@@ -44,11 +40,7 @@ where
         }
     }
 
-    fn remove_cdc(
-        &self,
-        value: T,
-        link: Link,
-    ) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
+    fn remove_cdc(&self, value: T, link: Link) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
         let (res, evs) = self.remove_cdc(&value, &OffsetEqLink(link));
         let pair_evs = evs.into_iter().map(Into::into).collect();
         let res_pair = res.map(|(k, v)| (k, v.into()));
@@ -72,11 +64,7 @@ where
         res.map(|evs| convert_change_events(evs))
     }
 
-    fn remove_cdc(
-        &self,
-        value: T,
-        _: Link,
-    ) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
+    fn remove_cdc(&self, value: T, _: Link) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
         let (res, evs) = self.remove_cdc(&value);
         let res_pair = res.map(|(k, v)| (k, v.0));
         (res_pair, convert_change_events(evs))

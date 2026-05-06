@@ -1,9 +1,9 @@
+mod index;
 mod locks;
 mod primary_key;
 pub mod queries;
 mod row;
 mod table;
-mod index;
 mod wrapper;
 
 use proc_macro2::{Ident, TokenStream};

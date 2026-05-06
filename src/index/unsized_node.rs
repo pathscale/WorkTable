@@ -78,10 +78,9 @@ where
     }
 
     fn halve(&mut self) -> Self {
-        let middle_length = (self.length
-            - self.removed_length
-            - (self.max().unwrap().aligned_size() + UNSIZED_HEADER_LENGTH as usize))
-            / 2;
+        let middle_length =
+            (self.length - self.removed_length - (self.max().unwrap().aligned_size() + UNSIZED_HEADER_LENGTH as usize))
+                / 2;
         let mut middle_variance = f64::INFINITY;
         let mut ind = false;
         let mut i = 1;
@@ -94,8 +93,7 @@ where
             };
             current_length += val.aligned_size();
             current_length += UnsizedIndexPageUtility::<T>::slots_value_size();
-            let current_middle_variance =
-                (middle_length as f64 - current_length as f64) / (middle_length as f64);
+            let current_middle_variance = (middle_length as f64 - current_length as f64) / (middle_length as f64);
             if current_middle_variance.abs() < middle_variance {
                 middle_variance = current_middle_variance.abs();
                 middle_idx = i;
@@ -173,8 +171,7 @@ where
     {
         // TODO: Refactor this when empty links logic will be added to the page
         if let Some((val, i)) = NodeLike::delete(&mut self.inner, value) {
-            self.removed_length +=
-                val.aligned_size() + UnsizedIndexPageUtility::<T>::slots_value_size();
+            self.removed_length += val.aligned_size() + UnsizedIndexPageUtility::<T>::slots_value_size();
 
             if self.removed_length > self.length_capacity / 2 {
                 self.rebuild()
@@ -277,7 +274,9 @@ mod test {
     #[test]
     fn test_get_works_as_expected_at_big_amounts() {
         let maximum_node_size = 1000;
-        let map = BTreeMultiMap::<String, Link, UnsizedNode<MultiPair<String, Link>>>::with_maximum_node_size(maximum_node_size);
+        let map = BTreeMultiMap::<String, Link, UnsizedNode<MultiPair<String, Link>>>::with_maximum_node_size(
+            maximum_node_size,
+        );
 
         for i in 1..2000 {
             map.insert(

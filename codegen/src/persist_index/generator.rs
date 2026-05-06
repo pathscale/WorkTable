@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::__private::Span;
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 use syn::ItemStruct;
 
-use crate::common::name_generator::{is_unsized, WorktableNameGenerator};
+use crate::common::name_generator::{WorktableNameGenerator, is_unsized};
 use crate::persist_table::WT_INDEX_EXTENSION;
 
 #[derive(Default)]
@@ -31,10 +31,7 @@ impl WorktableNameGenerator {
     }
 
     pub fn get_persisted_index_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}IndexPersisted", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}IndexPersisted", self.name).as_str(), Span::mixed_site())
     }
 }
 
@@ -44,12 +41,7 @@ impl Generator {
         let mut types = vec![];
 
         for field in &struct_def.fields {
-            fields.push(
-                field
-                    .ident
-                    .clone()
-                    .expect("index fields should always be named fields"),
-            );
+            fields.push(field.ident.clone().expect("index fields should always be named fields"));
 
             let syn::Type::Path(type_path) = &field.ty else {
                 unreachable!();
@@ -224,11 +216,7 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| {
-                f.ident
-                    .as_ref()
-                    .expect("index fields should always be named fields")
-            })
+            .map(|f| f.ident.as_ref().expect("index fields should always be named fields"))
             .collect::<Vec<_>>();
 
         quote! {
@@ -281,11 +269,7 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| {
-                f.ident
-                    .as_ref()
-                    .expect("index fields should always be named fields")
-            })
+            .map(|f| f.ident.as_ref().expect("index fields should always be named fields"))
             .collect::<Vec<_>>();
         let field_names_init: Vec<_> = self
             .struct_def
@@ -346,11 +330,7 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| {
-                f.ident
-                    .as_ref()
-                    .expect("index fields should always be named fields")
-            })
+            .map(|f| f.ident.as_ref().expect("index fields should always be named fields"))
             .collect::<Vec<_>>();
         let index_gen = self
             .struct_def

@@ -40,11 +40,7 @@ where
 {
     /// Creates a new [`LockGuard`] that will clean up the [`Lock`] entry from
     /// the [`LockMap`] on [`Drop`].
-    pub fn new(
-        lock: Arc<Lock>,
-        lock_map: Arc<LockMap<LockType, PrimaryKey>>,
-        primary_key: PrimaryKey,
-    ) -> Self {
+    pub fn new(lock: Arc<Lock>, lock_map: Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
         Self {
             lock,
             lock_map,

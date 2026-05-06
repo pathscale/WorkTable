@@ -39,8 +39,7 @@ where
     }
 
     fn remove(&self, value: &T, link: Link) -> Option<(T, Link)> {
-        self.remove(value, &OffsetEqLink(link))
-            .map(|(v, l)| (v, l.0))
+        self.remove(value, &OffsetEqLink(link)).map(|(v, l)| (v, l.0))
     }
 }
 

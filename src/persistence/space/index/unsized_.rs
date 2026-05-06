@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    parse_page, persist_page, persist_pages_batch, GeneralHeader, GeneralPage, IndexPageUtility, IndexValue,
-    Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage, UnsizedIndexPage,
-    VariableSizeMeasurable,
+    GeneralHeader, GeneralPage, IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
+    UnsizedIndexPage, VariableSizeMeasurable, parse_page, persist_page, persist_pages_batch,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -16,17 +15,17 @@ use indexset::concurrent::map::BTreeMap;
 use indexset::core::pair::Pair;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
+use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
-use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
-use rkyv::{rancor, Archive, Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Serialize, rancor};
 use tokio::fs::File;
 
+use crate::UnsizedNode;
 use crate::persistence::space::BatchChangeEvent;
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
-use crate::UnsizedNode;
 
 #[derive(Debug)]
 pub struct SpaceIndexUnsized<T: Ord + Eq, const DATA_LENGTH: u32> {
@@ -66,25 +65,14 @@ where
         })
     }
 
-    async fn add_new_index_page(
-        &mut self,
-        node_id: Pair<T, Link>,
-        page_id: PageId,
-    ) -> eyre::Result<()> {
+    async fn add_new_index_page(&mut self, node_id: Pair<T, Link>, page_id: PageId) -> eyre::Result<()> {
         let page = UnsizedIndexPage::new(node_id.clone().into())?;
         self.add_index_page(page, page_id).await
     }
 
-    async fn add_index_page(
-        &mut self,
-        node: UnsizedIndexPage<T, DATA_LENGTH>,
-        page_id: PageId,
-    ) -> eyre::Result<()> {
+    async fn add_index_page(&mut self, node: UnsizedIndexPage<T, DATA_LENGTH>, page_id: PageId) -> eyre::Result<()> {
         let header = GeneralHeader::new(page_id, PageType::Index, self.space_id);
-        let mut general_page = GeneralPage {
-            inner: node,
-            header,
-        };
+        let mut general_page = GeneralPage { inner: node, header };
         persist_page(&mut general_page, &mut self.index_file).await?;
         Ok(())
     }
@@ -123,10 +111,8 @@ where
             .insert_on_index_page(page_id, node_id.clone(), index, value)
             .await?
         {
-            self.table_of_contents.update_key(
-                &(node_id.key, node_id.value),
-                (new_node_id.key, new_node_id.value),
-            );
+            self.table_of_contents
+                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value));
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -141,11 +127,8 @@ where
     ) -> eyre::Result<Option<Pair<T, Link>>> {
         let mut new_node_id = None;
 
-        let mut utility = UnsizedIndexPage::<T, DATA_LENGTH>::parse_index_page_utility(
-            &mut self.index_file,
-            page_id,
-        )
-        .await?;
+        let mut utility =
+            UnsizedIndexPage::<T, DATA_LENGTH>::parse_index_page_utility(&mut self.index_file, page_id).await?;
         let index_value = IndexValue {
             key: value.key.clone(),
             link: value.value,
@@ -160,22 +143,16 @@ where
         .await?;
         utility.slots_size += 1;
         utility.last_value_offset = value_offset;
-        utility.slots.insert(
-            index,
-            (value_offset, (value_offset - previous_offset) as u16),
-        );
+        utility
+            .slots
+            .insert(index, (value_offset, (value_offset - previous_offset) as u16));
 
         if node_id.key < value.key {
             utility.update_node_id(value.clone().into())?;
             new_node_id = Some(value);
         }
 
-        UnsizedIndexPage::<T, DATA_LENGTH>::persist_index_page_utility(
-            &mut self.index_file,
-            page_id,
-            utility,
-        )
-        .await?;
+        UnsizedIndexPage::<T, DATA_LENGTH>::persist_index_page_utility(&mut self.index_file, page_id, utility).await?;
 
         Ok(new_node_id)
     }
@@ -194,10 +171,8 @@ where
             .remove_from_index_page(page_id, node_id.clone(), index, value)
             .await?
         {
-            self.table_of_contents.update_key(
-                &(node_id.key, node_id.value),
-                (new_node_id.key, new_node_id.value),
-            );
+            self.table_of_contents
+                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value));
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -212,11 +187,8 @@ where
     ) -> eyre::Result<Option<Pair<T, Link>>> {
         let mut new_node_id = None;
 
-        let mut utility = UnsizedIndexPage::<T, DATA_LENGTH>::parse_index_page_utility(
-            &mut self.index_file,
-            page_id,
-        )
-        .await?;
+        let mut utility =
+            UnsizedIndexPage::<T, DATA_LENGTH>::parse_index_page_utility(&mut self.index_file, page_id).await?;
         utility.slots.remove(index);
         utility.slots_size -= 1;
 
@@ -225,41 +197,25 @@ where
                 .slots
                 .get(index - 1)
                 .expect("slots always should exist in `size` bounds");
-            let node_id = UnsizedIndexPage::<T, DATA_LENGTH>::read_value_with_offset(
-                &mut self.index_file,
-                page_id,
-                offset,
-                len,
-            )
-            .await?;
+            let node_id =
+                UnsizedIndexPage::<T, DATA_LENGTH>::read_value_with_offset(&mut self.index_file, page_id, offset, len)
+                    .await?;
             utility.update_node_id(node_id)?;
             new_node_id = Some(utility.node_id.clone().into())
         }
 
-        UnsizedIndexPage::<T, DATA_LENGTH>::persist_index_page_utility(
-            &mut self.index_file,
-            page_id,
-            utility,
-        )
-        .await?;
+        UnsizedIndexPage::<T, DATA_LENGTH>::persist_index_page_utility(&mut self.index_file, page_id, utility).await?;
 
         Ok(new_node_id)
     }
 
-    async fn process_split_node(
-        &mut self,
-        node_id: Pair<T, Link>,
-        split_index: usize,
-    ) -> eyre::Result<()> {
+    async fn process_split_node(&mut self, node_id: Pair<T, Link>, split_index: usize) -> eyre::Result<()> {
         let page_id = self
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
-        let mut page = parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(
-            &mut self.index_file,
-            page_id.into(),
-        )
-        .await?;
+        let mut page =
+            parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(&mut self.index_file, page_id.into()).await?;
         let splitted_page = page.inner.split(split_index);
         let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
             id
@@ -272,10 +228,7 @@ where
             (page.inner.node_id.key.clone(), page.inner.node_id.link),
         );
         self.table_of_contents.insert(
-            (
-                splitted_page.node_id.key.clone(),
-                splitted_page.node_id.link,
-            ),
+            (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
             new_page_id,
         );
         self.table_of_contents.persist(&mut self.index_file).await?;
@@ -286,18 +239,12 @@ where
         Ok(())
     }
 
-    pub async fn parse_indexset(
-        &mut self,
-    ) -> eyre::Result<BTreeMap<T, Link, UnsizedNode<Pair<T, Link>>>> {
-        let indexset = BTreeMap::<T, Link, UnsizedNode<Pair<T, Link>>>::with_maximum_node_size(
-            DATA_LENGTH as usize,
-        );
+    pub async fn parse_indexset(&mut self) -> eyre::Result<BTreeMap<T, Link, UnsizedNode<Pair<T, Link>>>> {
+        let indexset = BTreeMap::<T, Link, UnsizedNode<Pair<T, Link>>>::with_maximum_node_size(DATA_LENGTH as usize);
         for (_, page_id) in self.table_of_contents.iter() {
-            let page = parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(
-                &mut self.index_file,
-                (*page_id).into(),
-            )
-            .await?;
+            let page =
+                parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(&mut self.index_file, (*page_id).into())
+                    .await?;
             let node = page.inner.get_node();
             indexset.attach_node(UnsizedNode::from_inner(node, DATA_LENGTH as usize))
         }
@@ -323,10 +270,7 @@ where
         + 'static,
     <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq + Debug,
 {
-    async fn primary_from_table_files_path<S: AsRef<str> + Send>(
-        table_path: S,
-        version: u32,
-    ) -> eyre::Result<Self> {
+    async fn primary_from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
         let path = format!("{}/primary{}", table_path.as_ref(), WT_INDEX_EXTENSION);
         Self::new(path, 0.into(), version).await
     }
@@ -339,12 +283,7 @@ where
     where
         Self: Sized,
     {
-        let path = format!(
-            "{}/{}{}",
-            table_path.as_ref(),
-            name.as_ref(),
-            WT_INDEX_EXTENSION
-        );
+        let path = format!("{}/{}{}", table_path.as_ref(), name.as_ref(), WT_INDEX_EXTENSION);
         Self::new(path, 0.into(), version).await
     }
 
@@ -352,10 +291,7 @@ where
         SpaceIndex::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name, version).await
     }
 
-    async fn process_change_event(
-        &mut self,
-        event: ChangeEvent<Pair<T, Link>>,
-    ) -> eyre::Result<()> {
+    async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
         match event {
             ChangeEvent::InsertAt {
                 event_id: _,
@@ -385,15 +321,11 @@ where
         }
     }
 
-    async fn process_change_event_batch(
-        &mut self,
-        events: BatchChangeEvent<T>,
-    ) -> eyre::Result<()> {
+    async fn process_change_event_batch(&mut self, events: BatchChangeEvent<T>) -> eyre::Result<()> {
         let mut pages: HashMap<PageId, _> = HashMap::new();
         for ev in events {
             match &ev {
-                ChangeEvent::InsertAt { max_value, .. }
-                | ChangeEvent::RemoveAt { max_value, .. } => {
+                ChangeEvent::InsertAt { max_value, .. } | ChangeEvent::RemoveAt { max_value, .. } => {
                     let page_id = &(max_value.key.clone(), max_value.value);
 
                     let page_index = self
@@ -404,12 +336,11 @@ where
                     let page_to_update = if let Some(page) = page {
                         page
                     } else {
-                        let page =
-                            parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
-                                &mut self.index_file,
-                                page_index.into(),
-                            )
-                            .await?;
+                        let page = parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
+                            &mut self.index_file,
+                            page_index.into(),
+                        )
+                        .await?;
                         pages.insert(page_index, page);
                         pages
                             .get_mut(&page_index)
@@ -430,10 +361,7 @@ where
                         );
                     }
                 }
-                ChangeEvent::CreateNode {
-                    event_id: _,
-                    max_value,
-                } => {
+                ChangeEvent::CreateNode { event_id: _, max_value } => {
                     let page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
                         id
                     } else {
@@ -442,23 +370,15 @@ where
                     self.table_of_contents
                         .insert((max_value.key.clone(), max_value.value), page_id);
 
-                    let page =
-                        UnsizedIndexPage::<T, INNER_PAGE_SIZE>::new(max_value.clone().into())?;
+                    let page = UnsizedIndexPage::<T, INNER_PAGE_SIZE>::new(max_value.clone().into())?;
                     let header = GeneralHeader::new(page_id, PageType::IndexUnsized, self.space_id);
-                    let general_page = GeneralPage {
-                        inner: page,
-                        header,
-                    };
+                    let general_page = GeneralPage { inner: page, header };
                     pages.insert(page_id, general_page);
                     self.table_of_contents
                         .insert((max_value.key.clone(), max_value.value), page_id)
                 }
-                ChangeEvent::RemoveNode {
-                    event_id: _,
-                    max_value,
-                } => {
-                    self.table_of_contents
-                        .remove(&(max_value.key.clone(), max_value.value));
+                ChangeEvent::RemoveNode { event_id: _, max_value } => {
+                    self.table_of_contents.remove(&(max_value.key.clone(), max_value.value));
                 }
                 ChangeEvent::SplitNode {
                     event_id: _,
@@ -475,12 +395,11 @@ where
                     let page_to_update = if let Some(page) = page {
                         page
                     } else {
-                        let page =
-                            parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
-                                &mut self.index_file,
-                                page_index.into(),
-                            )
-                            .await?;
+                        let page = parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
+                            &mut self.index_file,
+                            page_index.into(),
+                        )
+                        .await?;
                         pages.insert(page_index, page);
                         pages
                             .get_mut(&page_index)
@@ -502,10 +421,7 @@ where
                         ),
                     );
                     self.table_of_contents.insert(
-                        (
-                            splitted_page.node_id.key.clone(),
-                            splitted_page.node_id.link,
-                        ),
+                        (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
                         new_page_id,
                     );
                     let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);

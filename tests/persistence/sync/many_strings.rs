@@ -34,15 +34,10 @@ fn test_space_update_query_pk_sync() {
         .unwrap();
 
     runtime.block_on(async {
-        remove_dir_if_exists(
-            "tests/data/unsized_primary_and_other_sync/update_query_pk".to_string(),
-        )
-        .await;
+        remove_dir_if_exists("tests/data/unsized_primary_and_other_sync/update_query_pk".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -60,9 +55,7 @@ fn test_space_update_query_pk_sync() {
             row.id
         };
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
@@ -70,23 +63,15 @@ fn test_space_update_query_pk_sync() {
                 field: "Some field value".to_string(),
                 another: 0,
             };
-            table
-                .update_field_another_by_id(q, pk.clone())
-                .await
-                .unwrap();
+            table.update_field_another_by_id(q, pk.clone()).await.unwrap();
             table.wait_for_ops().await;
         }
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 0);
-            assert_eq!(
-                table.select(pk).unwrap().field,
-                "Some field value".to_string()
-            );
+            assert_eq!(table.select(pk).unwrap().field, "Some field value".to_string());
         }
     });
 }
@@ -107,15 +92,10 @@ fn test_space_update_query_pk_many_times_sync() {
         .unwrap();
 
     runtime.block_on(async {
-        remove_dir_if_exists(
-            "tests/data/unsized_primary_and_other_sync/update_query_pk_many".to_string(),
-        )
-        .await;
+        remove_dir_if_exists("tests/data/unsized_primary_and_other_sync/update_query_pk_many".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: 42,
@@ -133,9 +113,7 @@ fn test_space_update_query_pk_many_times_sync() {
             row.id
         };
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 43);
@@ -144,25 +122,17 @@ fn test_space_update_query_pk_many_times_sync() {
                     field: "Some field value".to_string(),
                     another: i,
                 };
-                table
-                    .update_field_another_by_id(q, pk.clone())
-                    .await
-                    .unwrap();
+                table.update_field_another_by_id(q, pk.clone()).await.unwrap();
             }
 
             table.wait_for_ops().await;
         }
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             assert!(table.select(pk.clone()).is_some());
             assert_eq!(table.select(pk.clone()).unwrap().another, 511);
-            assert_eq!(
-                table.select(pk).unwrap().field,
-                "Some field value".to_string()
-            );
+            assert_eq!(table.select(pk).unwrap().field, "Some field value".to_string());
         }
     });
 }

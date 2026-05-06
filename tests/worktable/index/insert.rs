@@ -71,16 +71,7 @@ async fn insert_when_pk_exists() {
             .is_empty()
     );
     assert!(table.0.indexes.attr2_idx.get(&next_row.attr2).is_none());
-    assert_eq!(
-        table
-            .0
-            .indexes
-            .attr1_idx
-            .get(&row.attr1)
-            .collect::<Vec<_>>()
-            .len(),
-        1
-    );
+    assert_eq!(table.0.indexes.attr1_idx.get(&row.attr1).collect::<Vec<_>>().len(), 1);
     assert!(table.0.indexes.attr2_idx.get(&row.attr2).is_some())
 }
 
@@ -115,23 +106,9 @@ fn insert_when_secondary_unique_exists() {
             .collect::<Vec<_>>()
             .is_empty()
     );
+    assert_eq!(table.0.indexes.attr1_idx.get(&row.attr1).collect::<Vec<_>>().len(), 1);
     assert_eq!(
-        table
-            .0
-            .indexes
-            .attr1_idx
-            .get(&row.attr1)
-            .collect::<Vec<_>>()
-            .len(),
-        1
-    );
-    assert_eq!(
-        table
-            .0
-            .indexes
-            .attr2_idx
-            .get(&row.attr2)
-            .map(|r| r.get().value.0),
+        table.0.indexes.attr2_idx.get(&row.attr2).map(|r| r.get().value.0),
         table
             .0
             .primary_index
@@ -173,23 +150,9 @@ fn insert_when_secondary_unique_string_exists() {
             .is_empty()
     );
     assert!(table.0.indexes.attr4_idx.get(&row.attr4).is_some());
+    assert_eq!(table.0.indexes.attr1_idx.get(&row.attr1).collect::<Vec<_>>().len(), 1);
     assert_eq!(
-        table
-            .0
-            .indexes
-            .attr1_idx
-            .get(&row.attr1)
-            .collect::<Vec<_>>()
-            .len(),
-        1
-    );
-    assert_eq!(
-        table
-            .0
-            .indexes
-            .attr4_idx
-            .get(&row.attr4)
-            .map(|r| r.get().value.0),
+        table.0.indexes.attr4_idx.get(&row.attr4).map(|r| r.get().value.0),
         table
             .0
             .primary_index
@@ -274,11 +237,7 @@ fn insert_after_unique_violated() {
     }
 
     for i in 2..5_000 {
-        let attr2 = if i % 2 == 0 {
-            i as i16 / 2
-        } else {
-            -i as i16 / 2
-        };
+        let attr2 = if i % 2 == 0 { i as i16 / 2 } else { -i as i16 / 2 };
         let row = TestRow {
             id: table.get_next_pk().into(),
             val: 13,

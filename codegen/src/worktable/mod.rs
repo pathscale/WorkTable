@@ -34,7 +34,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new(
                     ident.span(),
                     "version must be specified before columns/indexes/queries/config",
-                ))
+                ));
             }
             _ => return Err(syn::Error::new(ident.span(), "Unexpected identifier")),
         }

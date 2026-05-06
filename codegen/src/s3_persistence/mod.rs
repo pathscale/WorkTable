@@ -20,10 +20,7 @@ pub fn expand(input: TokenStream) -> Result<TokenStream> {
     let input: S3PersistenceInput = syn::parse2(input)?;
 
     let name_str = input.table_name.to_string();
-    let base_name = name_str
-        .strip_suffix("WorkTable")
-        .unwrap_or(&name_str)
-        .to_string();
+    let base_name = name_str.strip_suffix("WorkTable").unwrap_or(&name_str).to_string();
 
     let generator = WorktableNameGenerator::from_table_name(base_name);
 

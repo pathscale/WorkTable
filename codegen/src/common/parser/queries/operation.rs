@@ -27,10 +27,7 @@ impl Parser {
         let name = if let TokenTree::Ident(ident) = ident {
             ident
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         let columns = self.input_iter.next().ok_or(syn::Error::new(
@@ -72,10 +69,7 @@ impl Parser {
         let by_name = if let TokenTree::Ident(ident) = ident {
             ident
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected by name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected by name identifier."));
         };
 
         Ok(Operation {
@@ -93,10 +87,7 @@ impl Parser {
         if let TokenTree::Ident(ident) = ident {
             Ok(ident)
         } else {
-            Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ))
+            Err(syn::Error::new(ident.span(), "Expected field name identifier."))
         }
     }
 }

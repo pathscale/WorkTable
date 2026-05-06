@@ -74,20 +74,7 @@ impl Default for OperationId {
     }
 }
 
-#[derive(
-    Archive,
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Deserialize,
-    Serialize,
-    Eq,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Hash,
-)]
+#[derive(Archive, Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd, Hash)]
 #[rkyv(compare(PartialEq), derive(Debug))]
 #[repr(u8)]
 pub enum OperationType {

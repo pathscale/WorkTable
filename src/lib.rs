@@ -1,8 +1,8 @@
 pub mod in_memory;
 mod index;
 pub mod lock;
-pub mod migration;
 mod mem_stat;
+pub mod migration;
 pub mod persistence;
 mod primary_key;
 mod row;
@@ -26,18 +26,16 @@ pub use worktable_codegen::worktable_version;
 pub use worktable_codegen::s3_sync_persistence;
 
 pub mod prelude {
-    pub use crate::in_memory::{
-        ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow,
-    };
+    pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};
     pub use crate::lock::FullRowLock;
     pub use crate::lock::{Lock, RowLock};
     pub use crate::lock::{LockGuard, LockMap};
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
-        AcknowledgeOperation, DeleteOperation, DiskConfig, DiskPersistenceEngine, IndexTableOfContents, InsertOperation,
-        Operation, OperationId, PersistedWorkTable, PersistenceConfig, PersistenceEngine,
-        PersistenceTask, ReadOnlyPersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
-        SpaceSecondaryIndexOps, UpdateOperation, map_index_pages_to_toc_and_general,
+        AcknowledgeOperation, DeleteOperation, DiskConfig, DiskPersistenceEngine, IndexTableOfContents,
+        InsertOperation, Operation, OperationId, PersistedWorkTable, PersistenceConfig, PersistenceEngine,
+        PersistenceTask, ReadOnlyPersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps,
+        SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, map_index_pages_to_toc_and_general,
         map_unsized_index_pages_to_toc_and_general, validate_events,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
@@ -45,18 +43,17 @@ pub mod prelude {
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
-        AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
-        PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
-        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UnsizedNode,
-        WorkTable, WorkTableError, vacuum::EmptyDataVacuum, vacuum::WorkTableVacuum,
+        AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PrimaryIndex, TableIndex,
+        TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
+        TableSecondaryIndexInfo, UnsizedNode, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
+        vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
-        DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE,
-        IndexPage, Interval, Link, PAGE_SIZE, PageType, Persistable, PersistableIndex,
-        SizeMeasurable, SizeMeasure, SpaceInfoPage, TableOfContentsPage, UnsizedIndexPage,
-        VariableSizeMeasurable, VariableSizeMeasure, align, get_index_page_size_from_data_length,
-        map_data_pages_to_general, parse_data_page, parse_page, persist_page, seek_to_page_start,
-        update_at,
+        DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,
+        Link, PAGE_SIZE, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoPage,
+        TableOfContentsPage, UnsizedIndexPage, VariableSizeMeasurable, VariableSizeMeasure, align,
+        get_index_page_size_from_data_length, map_data_pages_to_general, parse_data_page, parse_page, persist_page,
+        seek_to_page_start, update_at,
     };
     pub use derive_more::{Display as MoreDisplay, From, Into};
     pub use indexset::{

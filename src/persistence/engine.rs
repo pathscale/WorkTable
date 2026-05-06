@@ -10,9 +10,7 @@ use futures::stream::FuturesUnordered;
 
 use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
-use crate::persistence::{
-    PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
-};
+use crate::persistence::{PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 
 #[derive(Debug, Clone)]
@@ -66,10 +64,9 @@ pub struct DiskPersistenceEngine<
     SecondaryIndexEvents,
     AvailableIndexes,
     PrimaryKeyGenState = <<PrimaryKey as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
->
-where
+> where
     PrimaryKey: TablePrimaryKey,
-    <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState
+    <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
 {
     config: DiskConfig,
     pub data: SpaceData,
@@ -102,8 +99,7 @@ where
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send,
-    SecondaryIndexEvents:
-        Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send,
+    SecondaryIndexEvents: Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send,
     PrimaryKeyGenState: Clone + Debug + Send,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send,
 {
@@ -121,13 +117,9 @@ where
         Ok(Self {
             config: config.clone(),
             data: SpaceData::from_table_files_path(config.tables_path.clone(), config.version).await?,
-            primary_index: SpacePrimaryIndex::primary_from_table_files_path(
-                config.tables_path.clone(),
-                config.version,
-            )
-            .await?,
-            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path, config.version)
+            primary_index: SpacePrimaryIndex::primary_from_table_files_path(config.tables_path.clone(), config.version)
                 .await?,
+            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path, config.version).await?,
             phantom_data: PhantomData,
         })
     }
@@ -138,9 +130,7 @@ where
     ) -> eyre::Result<()> {
         match op {
             Operation::Insert(insert) => {
-                self.data
-                    .save_data(insert.link, insert.bytes.as_ref())
-                    .await?;
+                self.data.save_data(insert.link, insert.bytes.as_ref()).await?;
                 for event in insert.primary_key_events {
                     self.primary_index.process_change_event(event).await?;
                 }
@@ -152,9 +142,7 @@ where
                     .await
             }
             Operation::Update(update) => {
-                self.data
-                    .save_data(update.link, update.bytes.as_ref())
-                    .await?;
+                self.data.save_data(update.link, update.bytes.as_ref()).await?;
                 self.secondary_indexes
                     .process_change_events(update.secondary_keys_events)
                     .await
@@ -176,27 +164,19 @@ where
 
     async fn apply_batch_operation(
         &mut self,
-        batch_op: BatchOperation<
-            PrimaryKeyGenState,
-            PrimaryKey,
-            SecondaryIndexEvents,
-            AvailableIndexes,
-        >,
+        batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> eyre::Result<()> {
         let batch_data_op = batch_op.get_batch_data_op()?;
 
         let (pk_evs, secondary_evs) = batch_op.get_indexes_evs()?;
         {
             let mut futs = FuturesUnordered::new();
-            futs.push(Either::Left(Either::Right(
-                self.data.save_batch_data(batch_data_op),
-            )));
+            futs.push(Either::Left(Either::Right(self.data.save_batch_data(batch_data_op))));
             futs.push(Either::Left(Either::Left(
                 self.primary_index.process_change_event_batch(pk_evs),
             )));
             futs.push(Either::Right(
-                self.secondary_indexes
-                    .process_change_event_batch(secondary_evs),
+                self.secondary_indexes.process_change_event_batch(secondary_evs),
             ));
 
             while (futs.next().await).is_some() {}

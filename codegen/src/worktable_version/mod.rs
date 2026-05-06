@@ -17,22 +17,16 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             "columns" => columns = Some(parser.parse_columns()?),
             "indexes" => indexes = Some(parser.parse_indexes()?),
             "queries" => {
-                return Err(Error::new(
-                    ident.span(),
-                    "worktable_version! does not support queries",
-                ))
+                return Err(Error::new(ident.span(), "worktable_version! does not support queries"));
             }
             "config" => {
-                return Err(Error::new(
-                    ident.span(),
-                    "worktable_version! does not support config",
-                ))
+                return Err(Error::new(ident.span(), "worktable_version! does not support config"));
             }
             "version" => {
                 return Err(Error::new(
                     ident.span(),
                     "version must be specified before columns/indexes",
-                ))
+                ));
             }
             _ => return Err(Error::new(ident.span(), "Unexpected identifier")),
         }

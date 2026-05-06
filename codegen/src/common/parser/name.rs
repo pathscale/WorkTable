@@ -18,10 +18,7 @@ impl Parser {
                 ));
             }
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         self.parse_colon()?;
@@ -43,30 +40,31 @@ impl Parser {
 
     pub fn parse_version(&mut self) -> syn::Result<Option<u32>> {
         if let Some(ident) = self.peek_next()
-            && ident.to_string().as_str() == "version" {
-                self.input_iter.next();
+            && ident.to_string().as_str() == "version"
+        {
+            self.input_iter.next();
 
-                self.parse_colon()?;
+            self.parse_colon()?;
 
-                let value = self.input_iter.next().ok_or(syn::Error::new(
-                    self.input.span(),
-                    "Expected version value",
-                ))?;
-                let value = if let TokenTree::Literal(value) = value {
-                    value
-                } else {
-                    return Err(syn::Error::new(value.span(), "Expected literal for version."));
-                };
+            let value = self
+                .input_iter
+                .next()
+                .ok_or(syn::Error::new(self.input.span(), "Expected version value"))?;
+            let value = if let TokenTree::Literal(value) = value {
+                value
+            } else {
+                return Err(syn::Error::new(value.span(), "Expected literal for version."));
+            };
 
-                self.try_parse_comma()?;
+            self.try_parse_comma()?;
 
-                let value_str = value.to_string().replace("_", "");
-                let version = value_str.parse::<u32>().map_err(|_| {
-                    syn::Error::new(value.span(), "Expected valid u32 number for version.")
-                })?;
+            let value_str = value.to_string().replace("_", "");
+            let version = value_str
+                .parse::<u32>()
+                .map_err(|_| syn::Error::new(value.span(), "Expected valid u32 number for version."))?;
 
-                return Ok(Some(version));
-            }
+            return Ok(Some(version));
+        }
         Ok(None)
     }
 }

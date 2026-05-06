@@ -50,12 +50,7 @@ where
 
     async fn apply_batch_operation(
         &mut self,
-        _batch_op: BatchOperation<
-            PrimaryKeyGenState,
-            PrimaryKey,
-            SecondaryIndexEvents,
-            AvailableIndexes,
-        >,
+        _batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> eyre::Result<()> {
         Ok(())
     }

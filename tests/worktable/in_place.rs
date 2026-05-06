@@ -41,9 +41,7 @@ async fn test_update_val_by_id() -> eyre::Result<()> {
     };
     let pk = table.insert(row)?;
     for _ in 0..10000 {
-        table
-            .update_val_by_id_in_place(|val| *val += 1, pk.0)
-            .await?
+        table.update_val_by_id_in_place(|val| *val += 1, pk.0).await?
     }
     let row = table.select(pk).unwrap();
     assert_eq!(row.val, 10000);
@@ -63,9 +61,7 @@ async fn test_update_val2_by_id() -> eyre::Result<()> {
     };
     let pk = table.insert(row)?;
     for _ in 0..100 {
-        table
-            .update_val_2_by_id_in_place(|val| *val += 1, pk.0)
-            .await?
+        table.update_val_2_by_id_in_place(|val| *val += 1, pk.0).await?
     }
     let row = table.select(pk).unwrap();
     assert_eq!(row.val2, 100);
@@ -94,9 +90,7 @@ async fn test_update_val_by_id_two_thread() -> eyre::Result<()> {
         }
     });
     for _ in 0..10_000 {
-        table
-            .update_val_by_id_in_place(|val| *val += 1, pk.0)
-            .await?
+        table.update_val_by_id_in_place(|val| *val += 1, pk.0).await?
     }
     h.await?;
     let row = table.select(pk).unwrap();
@@ -144,9 +138,7 @@ async fn test_update_val_and_val2_by_id_four_thread() -> eyre::Result<()> {
         }
     });
     for _ in 0..10_000 {
-        table
-            .update_val_2_by_id_in_place(|val| *val += 1, pk.0)
-            .await?
+        table.update_val_2_by_id_in_place(|val| *val += 1, pk.0).await?
     }
     h1.await?;
     h2.await?;
@@ -197,9 +189,7 @@ async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
         }
     });
     for _ in 0..10_000 {
-        table
-            .update_val_by_id_in_place(|val| *val += 1, pk.0)
-            .await?
+        table.update_val_by_id_in_place(|val| *val += 1, pk.0).await?
     }
     h1.await?;
     h2.await?;
@@ -238,10 +228,7 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
                 .unwrap();
             {
                 let mut guard = shared_val_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
         }
     });
@@ -257,10 +244,7 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
                 .unwrap();
             {
                 let mut guard = shared_val2_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
         }
     });
@@ -273,10 +257,7 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
             .await?;
         {
             let mut guard = i_state.lock();
-            guard
-                .entry(id_to_update)
-                .and_modify(|v| *v = val)
-                .or_insert(val);
+            guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
         }
     }
     h1.await?;
@@ -326,10 +307,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
                 .unwrap();
             {
                 let mut guard = shared_val_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
         }
     });
@@ -345,10 +323,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
                 .unwrap();
             {
                 let mut guard = shared_val2_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
         }
     });

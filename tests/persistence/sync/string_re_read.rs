@@ -47,9 +47,7 @@ fn test_key() {
         remove_dir_if_exists("tests/data/key/key".to_string()).await;
 
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -73,9 +71,7 @@ fn test_key() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -89,9 +85,7 @@ fn test_key() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 3);
         }
@@ -117,9 +111,7 @@ fn test_key_delete_scenario() {
         remove_dir_if_exists("tests/data/key/delete_scenario".to_string()).await;
 
         let (pk0, pk) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -144,30 +136,19 @@ fn test_key_delete_scenario() {
             (pk0, pk)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk.clone()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
             assert!(table.select(pk).is_none());
-            assert_eq!(
-                table
-                    .select_by_first("first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
-                1
-            );
+            assert_eq!(table.select_by_first("first".to_string()).execute().unwrap().len(), 1);
             assert!(table.select_by_second("second_again".to_string()).is_none());
             table
                 .insert(StringReReadRow {
@@ -182,30 +163,19 @@ fn test_key_delete_scenario() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk0.clone()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
             assert!(table.select(pk0).is_none());
-            assert_eq!(
-                table
-                    .select_by_first("first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
-                1
-            );
+            assert_eq!(table.select_by_first("first".to_string()).execute().unwrap().len(), 1);
             assert!(table.select_by_second("second".to_string()).is_none());
         }
     })
@@ -237,9 +207,7 @@ fn test_key_delete() {
         remove_dir_if_exists("tests/data/key/delete".to_string()).await;
 
         let pk = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -264,30 +232,19 @@ fn test_key_delete() {
             pk
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk.clone()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
             assert!(table.select(pk).is_none());
-            assert_eq!(
-                table
-                    .select_by_first("first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
-                1
-            );
+            assert_eq!(table.select_by_first("first".to_string()).execute().unwrap().len(), 1);
             assert!(table.select_by_second("second_again".to_string()).is_none())
         }
     })
@@ -312,9 +269,7 @@ fn test_key_delete_all() {
         remove_dir_if_exists("tests/data/key/delete_all".to_string()).await;
 
         let (pk0, pk1) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -339,9 +294,7 @@ fn test_key_delete_all() {
             (pk0, pk1)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk0.clone()).await.unwrap();
             table.delete(pk1.clone()).await.unwrap();
@@ -349,22 +302,13 @@ fn test_key_delete_all() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
             assert!(table.select(pk0).is_none());
             assert!(table.select(pk1).is_none());
-            assert_eq!(
-                table
-                    .select_by_first("first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
-                0
-            );
+            assert_eq!(table.select_by_first("first".to_string()).execute().unwrap().len(), 0);
             assert!(table.select_by_second("second_again".to_string()).is_none());
             assert!(table.select_by_second("second".to_string()).is_none())
         }
@@ -390,9 +334,7 @@ fn test_key_delete_all_and_insert() {
         remove_dir_if_exists("tests/data/key/delete_all_and_insert".to_string()).await;
 
         let (pk0, pk1) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -417,9 +359,7 @@ fn test_key_delete_all_and_insert() {
             (pk0, pk1)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk0.clone()).await.unwrap();
             table.delete(pk1.clone()).await.unwrap();
@@ -427,9 +367,7 @@ fn test_key_delete_all_and_insert() {
             table.wait_for_ops().await
         }
         let pk = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
@@ -447,22 +385,13 @@ fn test_key_delete_all_and_insert() {
             pk
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
             assert!(table.select(pk).is_some());
-            assert_eq!(
-                table
-                    .select_by_first("first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
-                1
-            );
+            assert_eq!(table.select_by_first("first".to_string()).execute().unwrap().len(), 1);
             assert!(table.select_by_second("second".to_string()).is_some())
         }
     })
@@ -487,9 +416,7 @@ fn test_key_delete_by_unique() {
         remove_dir_if_exists("tests/data/key/delete_unique".to_string()).await;
 
         let pk = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -514,33 +441,19 @@ fn test_key_delete_by_unique() {
             pk
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
-            table
-                .delete_by_second("second_again".to_string())
-                .await
-                .unwrap();
+            table.delete_by_second("second_again".to_string()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
 
             assert!(table.select(pk).is_none());
-            assert_eq!(
-                table
-                    .select_by_first("first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
-                1
-            );
+            assert_eq!(table.select_by_first("first".to_string()).execute().unwrap().len(), 1);
             assert!(table.select_by_second("second_again".to_string()).is_none())
         }
     })
@@ -565,9 +478,7 @@ fn test_key_delete_by_non_unique() {
         remove_dir_if_exists("tests/data/key/delete_non_unique".to_string()).await;
 
         let (pk0, pk1) = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             let pk0 = table
                 .insert(StringReReadRow {
@@ -592,31 +503,20 @@ fn test_key_delete_by_non_unique() {
             (pk0, pk1)
         };
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete_by_first("first".to_string()).await.unwrap();
 
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 0);
 
             assert!(table.select(pk0).is_none());
             assert!(table.select(pk1).is_none());
-            assert_eq!(
-                table
-                    .select_by_first("first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
-                0
-            );
+            assert_eq!(table.select_by_first("first".to_string()).execute().unwrap().len(), 0);
             assert!(table.select_by_second("second".to_string()).is_none());
             assert!(table.select_by_second("second_again".to_string()).is_none())
         }
@@ -642,9 +542,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
         remove_dir_if_exists("tests/data/key/toc_link_bug".to_string()).await;
 
         let pk1 = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             let pk1 = table
@@ -672,9 +570,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
         };
 
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             table
@@ -692,9 +588,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
         }
 
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             let result = table.insert(StringReReadRow {
@@ -705,10 +599,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
                 last: "last_3".to_string(),
             });
 
-            assert!(
-                result.is_ok(),
-                "TOC entry is stale after update with same index value"
-            );
+            assert!(result.is_ok(), "TOC entry is stale after update with same index value");
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
             if wait_result.is_err() {
@@ -722,11 +613,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
 
             assert_eq!(table.select_all().execute().unwrap().len(), 3);
             assert_eq!(
-                table
-                    .select_by_first("same_first".to_string())
-                    .execute()
-                    .unwrap()
-                    .len(),
+                table.select_by_first("same_first".to_string()).execute().unwrap().len(),
                 3
             );
         }
@@ -752,9 +639,7 @@ fn test_big_amount_reread() {
         remove_dir_if_exists("tests/data/key/big_amount".to_string()).await;
 
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             for i in 0..1000 {
                 table
@@ -771,9 +656,7 @@ fn test_big_amount_reread() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(StringReReadRow {
@@ -788,9 +671,7 @@ fn test_big_amount_reread() {
             table.wait_for_ops().await
         }
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1001);
             assert!(table.select_by_second("second_last".to_string()).is_some());
@@ -818,9 +699,7 @@ fn test_unique_index_same_value_link_changes() {
 
         // Phase 1: Insert initial value
         let pk1 = {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             let pk1 = table
@@ -839,9 +718,7 @@ fn test_unique_index_same_value_link_changes() {
 
         // Phase 2: Update (same unique value) + Insert new (same block)
         {
-            let engine = StringReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             // Update: same second value, other fields change
@@ -884,16 +761,8 @@ fn test_unique_index_same_value_link_changes() {
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             assert_eq!(table.select_all().execute().unwrap().len(), 2);
-            assert!(
-                table
-                    .select_by_second("unique_second".to_string())
-                    .is_some()
-            );
-            assert!(
-                table
-                    .select_by_second("unique_second_2".to_string())
-                    .is_some()
-            );
+            assert!(table.select_by_second("unique_second".to_string()).is_some());
+            assert!(table.select_by_second("unique_second_2".to_string()).is_some());
 
             let row1 = table.select_by_second("unique_second".to_string()).unwrap();
             assert_eq!(row1.first, "first_updated");

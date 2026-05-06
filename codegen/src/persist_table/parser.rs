@@ -16,14 +16,7 @@ impl Parser {
 
     pub fn parse_pk_ident(item: &ItemStruct) -> Ident {
         // WorkTable<#row_type, #pk_type, <#pk_type as TablePrimaryKey>::Generator, #const_name>
-        let type_str = item
-            .fields
-            .iter()
-            .next()
-            .unwrap()
-            .ty
-            .to_token_stream()
-            .to_string();
+        let type_str = item.fields.iter().next().unwrap().ty.to_token_stream().to_string();
         let mut split = type_str.split("<");
         split.next();
         let mut gens = split.next().unwrap().split(",");
@@ -33,7 +26,10 @@ impl Parser {
     }
 
     pub fn parse_attributes(attrs: &Vec<Attribute>) -> PersistTableAttributes {
-        let mut res = PersistTableAttributes { pk_unsized: false, read_only: false };
+        let mut res = PersistTableAttributes {
+            pk_unsized: false,
+            read_only: false,
+        };
 
         for attr in attrs {
             if attr.path().to_token_stream().to_string().as_str() == "table" {

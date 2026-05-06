@@ -2,18 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::time::Duration;
 
 use data_bucket::page::PageId;
 use tokio::sync::Notify;
 use worktable_codegen::worktable;
 
-use crate::persistence::operation::{
-    BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery,
-};
 use crate::persistence::PersistenceEngine;
+use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery};
 use crate::prelude::*;
 use crate::util::OptimizedVec;
 
@@ -97,10 +95,7 @@ where
         }
     }
 
-    pub fn push(
-        &mut self,
-        value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
-    ) -> eyre::Result<()> {
+    pub fn push(&mut self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> eyre::Result<()> {
         let link = value.link();
         let mut row = QueueInnerRow {
             id: self.queue_inner_wt.get_next_pk().into(),
@@ -138,9 +133,7 @@ where
     pub async fn collect_batch_from_op_id(
         &mut self,
         op_id: OperationId,
-    ) -> eyre::Result<
-        Option<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>>,
-    >
+    ) -> eyre::Result<Option<BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>>>
     where
         PrimaryKeyGenState: Clone,
         PrimaryKey: Clone,
@@ -152,10 +145,7 @@ where
         let mut next_op_id = op_id;
         let mut no_more_ops = false;
         while used_page_ids.len() < self.page_limit && !no_more_ops {
-            let ops_rows = self
-                .queue_inner_wt
-                .select_by_operation_id(next_op_id)
-                .execute()?;
+            let ops_rows = self.queue_inner_wt.select_by_operation_id(next_op_id).execute()?;
             match next_op_id {
                 OperationId::Single(_) => {
                     let page_id = ops_rows
@@ -184,10 +174,7 @@ where
                         OperationId::Single(_) => false,
                         OperationId::Multi(_) => true,
                     }) {
-                        let rows = self
-                            .queue_inner_wt
-                            .select_by_operation_id(*op_id)
-                            .execute()?;
+                        let rows = self.queue_inner_wt.select_by_operation_id(*op_id).execute()?;
                         let pages = rows.iter().map(|r| r.page_id).collect::<HashSet<_>>();
                         // if pages used by multi op are not available is used_page_ids set, it's blocker op
                         for page in pages.iter() {
@@ -215,12 +202,7 @@ where
                     no_more_ops = true;
                 }
             };
-            let mut range = self
-                .queue_inner_wt
-                .0
-                .indexes
-                .operation_id_idx
-                .range(next_op_id..);
+            let mut range = self.queue_inner_wt.0.indexes.operation_id_idx.range(next_op_id..);
             if let Some((id, _)) = range.nth(1) {
                 next_op_id = *id;
             } else {
@@ -230,21 +212,14 @@ where
         // After this point, we have ops set ready for batch generation.
         let mut ops_pos_set = HashSet::new();
         for op_id in ops_set {
-            let rows = self
-                .queue_inner_wt
-                .select_by_operation_id(op_id)
-                .execute()?;
+            let rows = self.queue_inner_wt.select_by_operation_id(op_id).execute()?;
             ops_pos_set.extend(rows.into_iter().map(|r| (r.pos, r.id)))
         }
 
         let mut ops = Vec::with_capacity(ops_pos_set.len());
         let info_wt = BatchInnerWorkTable::default();
         for (pos, id) in ops_pos_set {
-            let mut row: BatchInnerRow = self
-                .queue_inner_wt
-                .select(id)
-                .expect("exists as Id exists")
-                .into();
+            let mut row: BatchInnerRow = self.queue_inner_wt.select(id).expect("exists as Id exists").into();
             let op = self
                 .operations
                 .remove(pos)
@@ -301,9 +276,7 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     len: Arc<AtomicU16>,
 }
 
-impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-    Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
-{
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub fn new() -> Self {
         Self {
             queue: lockfree::queue::Queue::new(),
@@ -331,9 +304,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         }
     }
 
-    pub fn immediate_pop(
-        &self,
-    ) -> Option<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
+    pub fn immediate_pop(&self) -> Option<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         if let Some(v) = self.queue.pop() {
             self.len.fetch_sub(1, Ordering::Release);
             Some(v)
@@ -342,9 +313,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
         }
     }
 
-    pub fn pop_iter(
-        &self,
-    ) -> impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
+    pub fn pop_iter(&self) -> impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         let iter_count = self.len.clone();
         self.queue.pop_iter().inspect(move |_| {
             iter_count.fetch_sub(1, Ordering::Release);
@@ -376,16 +345,8 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 
     pub fn run_engine<E>(mut engine: E) -> Self
     where
-        E: PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
-            + Send
-            + 'static,
-        SecondaryKeys: Clone
-            + Debug
-            + Default
-            + TableSecondaryIndexEventsOps<AvailableIndexes>
-            + Send
-            + Sync
-            + 'static,
+        E: PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> + Send + 'static,
+        SecondaryKeys: Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync + 'static,
         PrimaryKeyGenState: Clone + Debug + Send + Sync + 'static,
         PrimaryKey: Clone + Debug + Send + Sync + 'static,
         AvailableIndexes: Copy + Clone + Debug + Hash + Eq + Send + Sync + 'static,
@@ -429,10 +390,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     } else if let Some(batch_op) = batch_op.unwrap() {
                         let res = engine.apply_batch_operation(batch_op).await;
                         if let Err(e) = res {
-                            tracing::warn!(
-                                "Persistence engine failed while applying batch op: {}",
-                                e
-                            );
+                            tracing::warn!("Persistence engine failed while applying batch op: {}", e);
                         }
                     } else {
                         tokio::time::sleep(Duration::from_millis(500)).await;

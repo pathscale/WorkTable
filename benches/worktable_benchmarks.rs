@@ -1,5 +1,5 @@
-mod common;
 mod cases;
+mod common;
 
 use criterion::criterion_main;
 

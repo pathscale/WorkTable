@@ -121,11 +121,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 
     pub fn remove_link_for_page(&self, page_id: PageId) {
         let _g = self.op_lock.lock();
-        let links = self
-            .page_links_map
-            .get(&page_id)
-            .map(|(_, l)| *l)
-            .collect::<Vec<_>>();
+        let links = self.page_links_map.get(&page_id).map(|(_, l)| *l).collect::<Vec<_>>();
         for l in links {
             self.remove_link(l);
         }
@@ -139,9 +135,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             let mut iter = self.index_ord_links.range(..index_ord_link).rev();
             if let Some(possible_left_neighbor) = iter.next() {
                 let possible_left_neighbor = *possible_left_neighbor;
-                if let Some(united_link) =
-                    index_ord_link.unite_with_left_neighbor(&possible_left_neighbor)
-                {
+                if let Some(united_link) = index_ord_link.unite_with_left_neighbor(&possible_left_neighbor) {
                     drop(iter);
 
                     // Remove left neighbor
@@ -156,9 +150,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             let mut iter = self.index_ord_links.range(index_ord_link..);
             if let Some(possible_right_neighbor) = iter.next() {
                 let possible_right_neighbor = *possible_right_neighbor;
-                if let Some(united_link) =
-                    index_ord_link.unite_with_right_neighbor(&possible_right_neighbor)
-                {
+                if let Some(united_link) = index_ord_link.unite_with_right_neighbor(&possible_right_neighbor) {
                     drop(iter);
 
                     // Remove right neighbor

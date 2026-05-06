@@ -97,14 +97,9 @@ where
 
     pub fn insert(&self, row: Row) -> Result<Link, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
@@ -135,8 +130,7 @@ where
         loop {
             let (link, tried_page) = {
                 let pages = self.pages.read();
-                let current_page =
-                    page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
+                let current_page = page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
                 let page = &pages[current_page];
 
                 (page.save_row(&general_row), current_page)
@@ -148,14 +142,11 @@ where
                 }
                 Err(e) => match e {
                     DataExecutionError::PageIsFull { .. } => {
-                        if tried_page
-                            == page_id_mapper(self.current_page_id.load(Ordering::Relaxed) as usize)
-                        {
+                        if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Relaxed) as usize) {
                             let mut g = self.empty_pages.write();
                             if let Some(page_id) = g.pop_front() {
                                 let _pages = self.pages.write();
-                                self.current_page_id
-                                    .store(page_id.into(), Ordering::Release);
+                                self.current_page_id.store(page_id.into(), Ordering::Release);
                             } else {
                                 drop(g);
                                 self.add_next_page(tried_page);
@@ -174,13 +165,10 @@ where
     pub fn insert_cdc(&self, row: Row) -> Result<(Link, Vec<u8>), ExecutionError>
     where
         Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            > + Clone,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>
+            + Clone,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
         let link = self.insert(row.clone())?;
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
@@ -202,9 +190,7 @@ where
 
     /// Allocates a new page or reuses a free page from `empty_pages`.
     /// Does **NOT** set the page as `current`.
-    pub fn allocate_new_or_pop_free(
-        &self,
-    ) -> Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>> {
+    pub fn allocate_new_or_pop_free(&self) -> Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>> {
         let page_id = {
             let mut empty_pages = self.empty_pages.write();
             empty_pages.pop_front()
@@ -227,18 +213,12 @@ where
         page
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataPages"))]
     pub fn select<L: Into<Link>>(&self, link: L) -> Result<Row, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
-            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived:
+            Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let link = link.into();
         let pages = self.pages.read();
@@ -251,12 +231,9 @@ where
 
     pub fn select_non_ghosted(&self, link: Link) -> Result<Row, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
-            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived:
+            Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let pages = self.pages.read();
         let page = pages
@@ -271,12 +248,9 @@ where
 
     pub fn select_non_vacuumed(&self, link: Link) -> Result<Row, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
-            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived:
+            Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let pages = self.pages.read();
         let page = pages
@@ -292,44 +266,26 @@ where
         Ok(gen_row.get_inner())
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataPages"))]
     pub fn with_ref<Op, Res>(&self, link: Link, op: Op) -> Result<Res, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
         let pages = self.pages.read();
         let page = pages
             .get::<usize>(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let gen_row = page
-            .get_row_ref(link)
-            .map_err(ExecutionError::DataPageError)?;
+        let gen_row = page.get_row_ref(link).map_err(ExecutionError::DataPageError)?;
         let res = op(gen_row);
         Ok(res)
     }
 
     #[allow(clippy::missing_safety_doc)]
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataPages")
-    )]
-    pub unsafe fn with_mut_ref<Op, Res>(
-        &self,
-        link: Link,
-        mut op: Op,
-    ) -> Result<Res, ExecutionError>
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataPages"))]
+    pub unsafe fn with_mut_ref<Op, Res>(&self, link: Link, mut op: Op) -> Result<Res, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
@@ -352,17 +308,11 @@ where
     /// - The `link` is valid and points to a properly initialized row.
     /// - No other references to the same row exist during modification.
     /// - The operation does not cause data races or memory corruption.
-    pub unsafe fn update<const N: usize>(
-        &self,
-        row: Row,
-        link: Link,
-    ) -> Result<Link, ExecutionError>
+    pub unsafe fn update<const N: usize>(&self, row: Row, link: Link) -> Result<Link, ExecutionError>
     where
         Row: Archive,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
         let pages = self.pages.read();
         let page = pages
@@ -377,14 +327,9 @@ where
 
     pub fn delete(&self, link: Link) -> Result<(), ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
     {
         unsafe { self.with_mut_ref(link, |r| r.delete())? }
@@ -398,8 +343,7 @@ where
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        page.get_raw_row(link)
-            .map_err(ExecutionError::DataPageError)
+        page.get_raw_row(link).map_err(ExecutionError::DataPageError)
     }
 
     pub fn mark_page_empty(&self, page_id: PageId) {
@@ -435,8 +379,7 @@ where
                 self.empty_links.push(link);
             }
 
-            page.free_offset
-                .store(DATA_LENGTH as u32, Ordering::Release);
+            page.free_offset.store(DATA_LENGTH as u32, Ordering::Release);
         }
     }
 
@@ -445,10 +388,7 @@ where
         g.iter().copied().collect()
     }
 
-    pub fn get_page(
-        &self,
-        page_id: PageId,
-    ) -> Option<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>> {
+    pub fn get_page(&self, page_id: PageId) -> Option<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>> {
         let pages = self.pages.read();
         let page = pages.get(page_id_mapper(page_id.into()))?;
         Some(page.clone())
@@ -527,9 +467,7 @@ mod tests {
     use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::ArchivedRowWrapper;
 
-    #[derive(
-        Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-    )]
+    #[derive(Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
     struct TestRow {
         a: u64,
         b: u64,
@@ -881,10 +819,7 @@ mod tests {
 
         let _allocated_page = pages.allocate_new_or_pop_free();
 
-        assert_eq!(
-            pages.last_page_id.load(Ordering::Relaxed),
-            initial_last_id + 1
-        );
+        assert_eq!(pages.last_page_id.load(Ordering::Relaxed), initial_last_id + 1);
 
         assert_eq!(
             pages.current_page_id.load(Ordering::Relaxed),
@@ -909,14 +844,8 @@ mod tests {
         let _page3 = pages.allocate_new_or_pop_free();
         let _page4 = pages.allocate_new_or_pop_free();
 
-        assert_eq!(
-            pages.last_page_id.load(Ordering::Relaxed),
-            initial_last_id + 3
-        );
-        assert_eq!(
-            pages.current_page_id.load(Ordering::Relaxed),
-            initial_current
-        );
+        assert_eq!(pages.last_page_id.load(Ordering::Relaxed), initial_last_id + 3);
+        assert_eq!(pages.current_page_id.load(Ordering::Relaxed), initial_current);
         assert_eq!(pages.get_page_count(), 4);
     }
 
@@ -988,11 +917,7 @@ mod tests {
         let row = TestRow { a: 999, b: 888 };
         let new_link = pages.insert(row).unwrap();
 
-        assert_eq!(
-            new_link.page_id,
-            3.into(),
-            "New insert should go to page 3, not page 2"
-        );
+        assert_eq!(new_link.page_id, 3.into(), "New insert should go to page 3, not page 2");
         assert_eq!(pages.current_page_id.load(Ordering::Relaxed), 3);
         assert_eq!(pages.get_page_count(), 3);
     }
@@ -1049,10 +974,7 @@ mod tests {
 
     #[test]
     fn mark_page_full_adds_empty_link_and_sets_free_offset() {
-        let pages = DataPages::<TestRow>::from_data(vec![
-            Arc::new(Data::new(1.into())),
-            Arc::new(Data::new(2.into())),
-        ]);
+        let pages = DataPages::<TestRow>::from_data(vec![Arc::new(Data::new(1.into())), Arc::new(Data::new(2.into()))]);
 
         // to manually insert on page 1
         pages.current_page_id.store(1, Ordering::Release);
@@ -1109,10 +1031,7 @@ mod tests {
 
     #[test]
     fn mark_page_full_with_partial_page() {
-        let pages = DataPages::<TestRow>::from_data(vec![
-            Arc::new(Data::new(1.into())),
-            Arc::new(Data::new(2.into())),
-        ]);
+        let pages = DataPages::<TestRow>::from_data(vec![Arc::new(Data::new(1.into())), Arc::new(Data::new(2.into()))]);
 
         for _ in 0..10 {
             let row = TestRow { a: 42, b: 99 };
@@ -1131,22 +1050,15 @@ mod tests {
         assert_eq!(link.offset, free_offset_before);
         assert_eq!(link.length, expected_remaining);
 
-        assert_eq!(
-            page.free_offset.load(Ordering::Relaxed),
-            DATA_INNER_LENGTH as u32
-        );
+        assert_eq!(page.free_offset.load(Ordering::Relaxed), DATA_INNER_LENGTH as u32);
     }
 
     #[test]
     fn mark_page_full_with_no_remaining_space() {
-        let pages = DataPages::<TestRow>::from_data(vec![
-            Arc::new(Data::new(1.into())),
-            Arc::new(Data::new(2.into())),
-        ]);
+        let pages = DataPages::<TestRow>::from_data(vec![Arc::new(Data::new(1.into())), Arc::new(Data::new(2.into()))]);
 
         let page = pages.get_page(1.into()).unwrap();
-        page.free_offset
-            .store(DATA_INNER_LENGTH as u32, Ordering::Release);
+        page.free_offset.store(DATA_INNER_LENGTH as u32, Ordering::Release);
 
         pages.current_page_id.store(2, Ordering::Release);
         pages.mark_page_full(1.into());

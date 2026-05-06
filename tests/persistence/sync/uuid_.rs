@@ -38,9 +38,7 @@ fn test_uuid() {
         remove_dir_if_exists("tests/data/uuid/reread".to_string()).await;
 
         {
-            let engine = UuidReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UuidReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(UuidReReadRow {
@@ -60,9 +58,7 @@ fn test_uuid() {
             table.wait_for_ops().await
         }
         {
-            let engine = UuidReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UuidReReadWorkTable::load(engine).await.unwrap();
             table
                 .insert(UuidReReadRow {
@@ -74,9 +70,7 @@ fn test_uuid() {
             table.wait_for_ops().await
         }
         {
-            let engine = UuidReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UuidReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 3);
         }
@@ -102,9 +96,7 @@ fn test_big_amount_reread() {
         remove_dir_if_exists("tests/data/uuid/big_amount".to_string()).await;
 
         {
-            let engine = UuidReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UuidReReadWorkTable::load(engine).await.unwrap();
             for _ in 0..1000 {
                 table
@@ -120,9 +112,7 @@ fn test_big_amount_reread() {
         }
         let second_last = Uuid::now_v7();
         {
-            let engine = UuidReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UuidReReadWorkTable::load(engine).await.unwrap();
 
             table
@@ -135,9 +125,7 @@ fn test_big_amount_reread() {
             table.wait_for_ops().await
         }
         {
-            let engine = UuidReReadPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UuidReReadWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1001);
             assert!(table.select_by_second(second_last).is_some());

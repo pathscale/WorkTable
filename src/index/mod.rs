@@ -12,8 +12,7 @@ pub use multipair::MultiPairRecreate;
 pub use primary_index::PrimaryIndex;
 pub use table_index::{TableIndex, TableIndexCdc, convert_change_events};
 pub use table_secondary_index::{
-    IndexError, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
-    TableSecondaryIndexInfo,
+    IndexError, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
 };
 pub use unsized_node::UnsizedNode;
 

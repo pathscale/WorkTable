@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, Criterion, BatchSize, BenchmarkId, Throughput};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use worktable::prelude::SelectQueryExecutor;
@@ -200,11 +200,8 @@ fn in_place_update(c: &mut Criterion) {
     };
 
     c.bench_function("full_featured_in_place_update_val", |b| {
-        b.to_async(&rt).iter(|| async {
-            table
-                .update_val_by_id_in_place(|val| *val += 1, black_box(pk))
-                .await
-        })
+        b.to_async(&rt)
+            .iter(|| async { table.update_val_by_id_in_place(|val| *val += 1, black_box(pk)).await })
     });
 }
 
@@ -224,11 +221,7 @@ fn delete(c: &mut Criterion) {
                 };
                 table.insert(row).unwrap()
             },
-            |pk: FullFeaturedPrimaryKey| {
-                rt.block_on(async {
-                    table.delete(black_box(pk)).await.unwrap()
-                })
-            },
+            |pk: FullFeaturedPrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
         )
     });
@@ -252,11 +245,7 @@ fn delete_by_index_query(c: &mut Criterion) {
                 table.insert(row).unwrap();
                 another
             },
-            |another: String| {
-                rt.block_on(async {
-                    table.delete_by_another(another).await.unwrap()
-                })
-            },
+            |another: String| rt.block_on(async { table.delete_by_another(another).await.unwrap() }),
             BatchSize::SmallInput,
         )
     });

@@ -2,7 +2,6 @@
 use super::*;
 use crate::remove_dir_if_exists;
 
-
 #[test]
 fn test_update_unsized_same_size() {
     let config = DiskConfig::new_with_table_name(
@@ -18,9 +17,7 @@ fn test_update_unsized_same_size() {
 
         // Phase 1: Setup
         let (row1_pk, row2_pk, row3_pk) = {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let row1 = NonUniqueUnsizedRow {
@@ -53,9 +50,7 @@ fn test_update_unsized_same_size() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = NonUniqueUnsizedRow {
@@ -97,9 +92,7 @@ fn test_update_unsized_same_size() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             assert!(table.select(row1_pk).is_some());
@@ -125,9 +118,7 @@ fn test_update_unsized_larger_all_success() {
 
         // Phase 1: Setup
         let row_pk = {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let row = NonUniqueUnsizedRow {
@@ -143,9 +134,7 @@ fn test_update_unsized_larger_all_success() {
 
         // Phase 2: 2 valid inserts -> success update -> valid insert -> wait_for_ops
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = NonUniqueUnsizedRow {
@@ -188,9 +177,7 @@ fn test_update_unsized_larger_all_success() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let row = table.select(row_pk).unwrap();
@@ -215,9 +202,7 @@ fn test_update_unsized_larger_middle_fail() {
 
         // Phase 1: Setup
         let (conflict_pk, row2_pk, row3_pk) = {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let conflict = NonUniqueUnsizedRow {
@@ -258,9 +243,7 @@ fn test_update_unsized_larger_middle_fail() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = NonUniqueUnsizedRow {
@@ -303,9 +286,7 @@ fn test_update_unsized_larger_middle_fail() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let row2 = table.select(row2_pk).unwrap();
@@ -338,9 +319,7 @@ fn test_update_unsized_larger_last_fail() {
 
         // Phase 1: Setup
         let (row1_pk, row2_pk) = {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let row1 = NonUniqueUnsizedRow {
@@ -365,9 +344,7 @@ fn test_update_unsized_larger_last_fail() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config.clone()).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = NonUniqueUnsizedRow {
@@ -410,9 +387,7 @@ fn test_update_unsized_larger_last_fail() {
 
         // Phase 3: Verify
         {
-            let engine = NonUniqueUnsizedPersistenceEngine::new(config)
-                .await
-                .unwrap();
+            let engine = NonUniqueUnsizedPersistenceEngine::new(config).await.unwrap();
             let table = NonUniqueUnsizedWorkTable::load(engine).await.unwrap();
 
             // Row2: unchanged (failed to update)

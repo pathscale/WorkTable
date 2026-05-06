@@ -1,9 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use crate::common::model::GeneratorType;
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized_vec};
 use crate::generators::persist::PersistGenerator;
-use crate::common::model::GeneratorType;
 
 impl PersistGenerator {
     pub fn gen_table_impl(&self) -> TokenStream {

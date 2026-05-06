@@ -4,9 +4,9 @@ use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
+use crate::common::model::Operation;
 use crate::common::name_generator::{WorktableNameGenerator, is_float};
 use crate::generators::persist::PersistGenerator;
-use crate::common::model::Operation;
 
 impl PersistGenerator {
     pub fn gen_query_delete_impl(&mut self) -> syn::Result<TokenStream> {
@@ -131,14 +131,8 @@ impl PersistGenerator {
         let defs = deleted
             .iter()
             .map(|(name, op)| {
-                let snake_case_name = name
-                    .to_string()
-                    .from_case(Case::Pascal)
-                    .to_case(Case::Snake);
-                let method_ident = Ident::new(
-                    format!("delete_{snake_case_name}").as_str(),
-                    Span::mixed_site(),
-                );
+                let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
+                let method_ident = Ident::new(format!("delete_{snake_case_name}").as_str(), Span::mixed_site());
                 let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
                 let type_ = self.columns.columns_map.get(&op.by).unwrap();
                 if let Some(index) = index {
@@ -160,11 +154,7 @@ impl PersistGenerator {
         }
     }
 
-    fn gen_brute_force_delete_field(
-        field: &Ident,
-        type_: &TokenStream,
-        name: &Ident,
-    ) -> TokenStream {
+    fn gen_brute_force_delete_field(field: &Ident, type_: &TokenStream, name: &Ident) -> TokenStream {
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 self.iter_with_async(|row| {

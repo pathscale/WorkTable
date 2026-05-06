@@ -18,10 +18,7 @@ pub fn map_to_uppercase(str: &str) -> String {
     } else if str.contains("Option") {
         let mut split = str.split("<");
         let _ = split.next();
-        let inner_type = split
-            .next()
-            .expect("Option def contains inner type")
-            .replace(">", "");
+        let inner_type = split.next().expect("Option def contains inner type").replace(">", "");
         format!("Option{}", inner_type.to_uppercase().trim())
     } else {
         str.to_uppercase()
@@ -104,10 +101,8 @@ impl PersistGenerator {
                                     .expect("OrderedFloat def contains inner type")
                                     .to_uppercase()
                                     .replace(">", "");
-                                let ident = Ident::new(
-                                    format!("Ordered{}Def", inner_type.trim()).as_str(),
-                                    Span::call_site(),
-                                );
+                                let ident =
+                                    Ident::new(format!("Ordered{}Def", inner_type.trim()).as_str(), Span::call_site());
                                 quote! {
                                     #[rkyv(with = #ident)]
                                     pub #i: #type_,

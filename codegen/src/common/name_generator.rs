@@ -38,10 +38,7 @@ impl WorktableNameGenerator {
     }
 
     pub fn get_update_query_lock_ident(snake_case_name: &String) -> Ident {
-        Ident::new(
-            format!("lock_update_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("lock_update_{snake_case_name}").as_str(), Span::mixed_site())
     }
 
     pub fn get_update_in_place_query_lock_ident(snake_case_name: &String) -> Ident {
@@ -60,45 +57,27 @@ impl WorktableNameGenerator {
     }
 
     pub fn get_row_fields_enum_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}RowFields", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}RowFields", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_available_type_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}AvaiableTypes", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}AvaiableTypes", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_available_indexes_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}AvailableIndexes", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}AvailableIndexes", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_column_range_type_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}ColumnRange", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}ColumnRange", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_work_table_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}WorkTable", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}WorkTable", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_primary_key_type_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}PrimaryKey", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}PrimaryKey", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_wrapper_type_ident(&self) -> Ident {
@@ -106,10 +85,7 @@ impl WorktableNameGenerator {
     }
 
     pub fn get_archived_wrapper_type_ident(&self) -> Ident {
-        Ident::new(
-            format!("Archived{}Wrapper", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("Archived{}Wrapper", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_lock_type_ident(&self) -> Ident {
@@ -145,10 +121,7 @@ impl WorktableNameGenerator {
     }
 
     pub fn get_space_secondary_index_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}SpaceSecondaryIndex", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}SpaceSecondaryIndex", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_space_secondary_index_events_ident(&self) -> Ident {

@@ -70,9 +70,7 @@ fn test_version_reads_persisted_data() {
         }
 
         {
-            let engine = ReadOnlyPersistenceEngine::create(config.clone())
-                .await
-                .unwrap();
+            let engine = ReadOnlyPersistenceEngine::create(config.clone()).await.unwrap();
             let table = UserV1WorkTable::load(engine).await.unwrap();
 
             // Verify count

@@ -49,14 +49,7 @@ impl PersistGenerator {
                     .to_case(Case::Pascal);
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
-                let row = if is_float(
-                    self.columns
-                        .columns_map
-                        .get(i)
-                        .unwrap()
-                        .to_string()
-                        .as_str(),
-                ) {
+                let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
                     }
@@ -102,14 +95,7 @@ impl PersistGenerator {
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
-                let row = if is_float(
-                    self.columns
-                        .columns_map
-                        .get(i)
-                        .unwrap()
-                        .to_string()
-                        .as_str(),
-                ) {
+                let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
                     }
@@ -189,14 +175,7 @@ impl PersistGenerator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
-                let row = if is_float(
-                    self.columns
-                        .columns_map
-                        .get(i)
-                        .unwrap()
-                        .to_string()
-                        .as_str(),
-                ) {
+                let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
                     }
@@ -339,14 +318,7 @@ impl PersistGenerator {
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
-                let row = if is_float(
-                    self.columns
-                        .columns_map
-                        .get(i)
-                        .unwrap()
-                        .to_string()
-                        .as_str(),
-                ) {
+                let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
                     }

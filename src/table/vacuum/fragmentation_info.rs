@@ -35,15 +35,8 @@ pub struct FragmentationInfo {
 impl FragmentationInfo {
     /// Creates new fragmentation info from component parts of
     /// [`PageFragmentationInfo`].
-    pub fn new(
-        table_name: &'static str,
-        total_pages: usize,
-        per_page_info: Vec<PageFragmentationInfo>,
-    ) -> Self {
-        let page_size = per_page_info
-            .first()
-            .map(|i| i.page_size)
-            .unwrap_or(INNER_PAGE_SIZE);
+    pub fn new(table_name: &'static str, total_pages: usize, per_page_info: Vec<PageFragmentationInfo>) -> Self {
+        let page_size = per_page_info.first().map(|i| i.page_size).unwrap_or(INNER_PAGE_SIZE);
         let total_empty_bytes: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
         let filled_bytes = total_pages as u64 * page_size as u64;
         Self {
@@ -72,10 +65,7 @@ pub struct PageFragmentationInfo {
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     /// Returns all empty [`Link`]s for a specific page.
     pub fn get_page_empty_links(&self, page_id: PageId) -> Vec<Link> {
-        self.page_links_map
-            .get(&page_id)
-            .map(|(_, link)| *link)
-            .collect()
+        self.page_links_map.get(&page_id).map(|(_, link)| *link).collect()
     }
 
     /// Calculates [`PageFragmentationInfo`] information for all pages with

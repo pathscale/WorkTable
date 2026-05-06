@@ -59,9 +59,7 @@ pub fn parse_name(iter: &mut token_stream::IntoIter, attr: &TokenStream) -> syn:
         return Err(syn::Error::new(attr.span(), "Expected `prefix_name` field"));
     }
 
-    let eq = iter
-        .next()
-        .ok_or(syn::Error::new(attr.span(), "Expected `=`"))?;
+    let eq = iter.next().ok_or(syn::Error::new(attr.span(), "Expected `=`"))?;
     if let TokenTree::Punct(eq) = eq {
         if eq.to_string() != *"=" {
             return Err(syn::Error::new(attr.span(), "Expected `=`"));

@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::ToTokens;
-use syn::{Attribute, ItemStruct};
 use syn::spanned::Spanned;
+use syn::{Attribute, ItemStruct};
 
 use crate::persist_index::generator::PersistIndexAttributes;
 

@@ -208,8 +208,7 @@ async fn test_index_table_of_contents_read_from_space_index_unsized_after_remove
 }
 
 #[tokio::test]
-async fn test_index_table_of_contents_read_from_space_index_unsized_after_create_node_after_remove()
-{
+async fn test_index_table_of_contents_read_from_space_index_unsized_after_create_node_after_remove() {
     let mut file = OpenOptions::new()
         .write(true)
         .read(true)

@@ -179,11 +179,7 @@ where
             .as_ref()
             .expect("should be set before 0 iteration");
 
-        let primary_id = prepared_evs
-            .primary_evs
-            .last()
-            .map(|ev| ev.id())
-            .unwrap_or_default();
+        let primary_id = prepared_evs.primary_evs.last().map(|ev| ev.id()).unwrap_or_default();
         let secondary_ids = prepared_evs.secondary_evs.last_evs();
         let secondary_ids = secondary_ids
             .into_iter()
@@ -313,9 +309,7 @@ where
         Ok(Some(ops_to_remove))
     }
 
-    fn prepare_indexes_evs(
-        &self,
-    ) -> eyre::Result<PreparedIndexEvents<PrimaryKey, SecondaryEvents>> {
+    fn prepare_indexes_evs(&self) -> eyre::Result<PreparedIndexEvents<PrimaryKey, SecondaryEvents>> {
         let mut primary_evs = vec![];
         let mut secondary_evs = SecondaryEvents::default();
 

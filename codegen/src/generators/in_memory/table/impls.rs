@@ -1,9 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use crate::common::model::GeneratorType;
 use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::in_memory::InMemoryGenerator;
-use crate::common::model::GeneratorType;
 
 impl InMemoryGenerator {
     pub fn gen_table_impl(&self) -> TokenStream {

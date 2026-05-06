@@ -1,9 +1,9 @@
 use proc_macro2::Literal;
 use std::collections::HashMap;
 
+use crate::common::model::Operation;
 use crate::common::name_generator::{WorktableNameGenerator, is_float};
 use crate::generators::in_memory::InMemoryGenerator;
-use crate::common::model::Operation;
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
@@ -46,15 +46,9 @@ impl InMemoryGenerator {
             })
             .collect::<Vec<_>>();
 
-        let idents: Vec<_> = self
-            .columns
-            .indexes
-            .values()
-            .map(|idx| idx.field.clone())
-            .collect();
+        let idents: Vec<_> = self.columns.indexes.values().map(|idx| idx.field.clone()).collect();
 
-        let diff_process_insert =
-            self.gen_process_diffs_insert_on_index(idents.as_slice(), Some(&idents));
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents.as_slice(), Some(&idents));
         let diff_process_remove = self.gen_process_diffs_remove_on_index(Some(&idents));
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
@@ -133,10 +127,7 @@ impl InMemoryGenerator {
         let defs = updates
             .iter()
             .map(|(name, op)| {
-                let snake_case_name = name
-                    .to_string()
-                    .from_case(Case::Pascal)
-                    .to_case(Case::Snake);
+                let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
                 let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
 
                 let indexes_columns: Option<Vec<_>> = {
@@ -148,11 +139,7 @@ impl InMemoryGenerator {
                         .map(|idx| idx.field.clone())
                         .collect();
 
-                    if columns.is_empty() {
-                        None
-                    } else {
-                        Some(columns)
-                    }
+                    if columns.is_empty() { None } else { Some(columns) }
                 };
                 let unsized_columns = if self.columns.is_sized {
                     None
@@ -160,15 +147,9 @@ impl InMemoryGenerator {
                     let fields = op
                         .columns
                         .iter()
-                        .filter(|c| {
-                            self.columns.columns_map.get(c).unwrap().to_string() == "String"
-                        })
+                        .filter(|c| self.columns.columns_map.get(c).unwrap().to_string() == "String")
                         .collect::<Vec<_>>();
-                    if fields.is_empty() {
-                        None
-                    } else {
-                        Some(fields)
-                    }
+                    if fields.is_empty() { None } else { Some(fields) }
                 };
 
                 let idents = &op.columns;
@@ -196,13 +177,7 @@ impl InMemoryGenerator {
                     }
                 } else if self.columns.primary_keys.len() == 1 {
                     if *self.columns.primary_keys.first().unwrap() == op.by {
-                        self.gen_pk_update(
-                            snake_case_name,
-                            name,
-                            idents,
-                            indexes_columns.as_ref(),
-                            unsized_columns,
-                        )
+                        self.gen_pk_update(snake_case_name, name, idents, indexes_columns.as_ref(), unsized_columns)
                     } else {
                         todo!()
                     }
@@ -305,11 +280,7 @@ impl InMemoryGenerator {
         }
     }
 
-    fn gen_process_diffs_insert_on_index(
-        &self,
-        idents: &[Ident],
-        idx_idents: Option<&Vec<Ident>>,
-    ) -> TokenStream {
+    fn gen_process_diffs_insert_on_index(&self, idents: &[Ident], idx_idents: Option<&Vec<Ident>>) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();
         let diff_container = if idx_idents.is_some() {
@@ -454,10 +425,7 @@ impl InMemoryGenerator {
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
         let pk_ident = &self.pk.as_ref().unwrap().ident;
-        let method_ident = Ident::new(
-            format!("update_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        );
+        let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
@@ -526,10 +494,7 @@ impl InMemoryGenerator {
         idx_idents: Option<&Vec<Ident>>,
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
-        let method_ident = Ident::new(
-            format!("update_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        );
+        let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
@@ -659,10 +624,7 @@ impl InMemoryGenerator {
         idx_idents: Option<&Vec<Ident>>,
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
-        let method_ident = Ident::new(
-            format!("update_{snake_case_name}").as_str(),
-            Span::mixed_site(),
-        );
+        let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());

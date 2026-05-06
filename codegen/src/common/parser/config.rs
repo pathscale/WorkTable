@@ -23,10 +23,7 @@ impl Parser {
                 ));
             }
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         self.parse_colon()?;

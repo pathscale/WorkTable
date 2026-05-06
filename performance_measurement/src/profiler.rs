@@ -6,18 +6,11 @@ use lazy_static::lazy_static;
 use lockfree::map::Map;
 
 lazy_static! {
-    static ref GLOBAL_PERFORMANCE_MEASUREMENTS: Map<&'static str, PerformanceMeasurement> =
-        Map::new();
+    static ref GLOBAL_PERFORMANCE_MEASUREMENTS: Map<&'static str, PerformanceMeasurement> = Map::new();
 }
 
 #[derive(Copy, Clone, Debug, Display)]
-#[display(
-    "{}, max={:.6} min={:.6} avg={:.6}",
-    name,
-    max_duration,
-    min_duration,
-    avg_duration
-)]
+#[display("{}, max={:.6} min={:.6} avg={:.6}", name, max_duration, min_duration, avg_duration)]
 pub struct PerformanceMeasurement {
     pub name: &'static str,
 
@@ -42,8 +35,7 @@ impl PerformanceProfiler {
 
         if let Some(guard) = global_performance_measurements.get(function_name) {
             let v = guard.val();
-            let avg = ((v.avg_duration * v.measurement_count as f64) + duration_ms)
-                / (v.measurement_count + 1) as f64;
+            let avg = ((v.avg_duration * v.measurement_count as f64) + duration_ms) / (v.measurement_count + 1) as f64;
             let m = PerformanceMeasurement {
                 name: v.name,
                 min_duration: f64::min(v.min_duration, duration_ms),

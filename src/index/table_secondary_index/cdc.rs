@@ -5,11 +5,7 @@ use data_bucket::Link;
 use crate::{Difference, IndexError, TableSecondaryIndex};
 
 pub trait TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes> {
-    fn save_row_cdc(
-        &self,
-        row: Row,
-        link: Link,
-    ) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
+    fn save_row_cdc(&self, row: Row, link: Link) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
     fn reinsert_row_cdc(
         &self,
         row_old: Row,
@@ -17,11 +13,7 @@ pub trait TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, Available
         row_new: Row,
         link_new: Link,
     ) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
-    fn delete_row_cdc(
-        &self,
-        row: Row,
-        link: Link,
-    ) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
+    fn delete_row_cdc(&self, row: Row, link: Link) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
     fn delete_from_indexes_cdc(
         &self,
         row: Row,
@@ -40,8 +32,7 @@ pub trait TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, Available
     ) -> (SecondaryEvents, Result<(), IndexError<AvailableIndexes>>);
 }
 
-impl<T, Row, AvailableTypes, AvailableIndexes>
-    TableSecondaryIndexCdc<Row, AvailableTypes, (), AvailableIndexes> for T
+impl<T, Row, AvailableTypes, AvailableIndexes> TableSecondaryIndexCdc<Row, AvailableTypes, (), AvailableIndexes> for T
 where
     T: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
 {

@@ -153,11 +153,8 @@ fn test_migrate_v1_to_current() {
         assert_eq!(report.source_version, v1::UserWorkTable::version());
 
         {
-            let config = DiskConfig::new_with_table_name(
-                dst,
-                UserWorkTable::name_snake_case(),
-                UserWorkTable::version(),
-            );
+            let config =
+                DiskConfig::new_with_table_name(dst, UserWorkTable::name_snake_case(), UserWorkTable::version());
             let engine = UserPersistenceEngine::new(config).await.unwrap();
             let table = UserWorkTable::load(engine).await.unwrap();
 
@@ -226,11 +223,8 @@ fn test_migrate_v2_to_current() {
         assert_eq!(report.source_version, v2::UserWorkTable::version());
 
         {
-            let config = DiskConfig::new_with_table_name(
-                dst,
-                UserWorkTable::name_snake_case(),
-                UserWorkTable::version(),
-            );
+            let config =
+                DiskConfig::new_with_table_name(dst, UserWorkTable::name_snake_case(), UserWorkTable::version());
             let engine = UserPersistenceEngine::new(config).await.unwrap();
             let table = UserWorkTable::load(engine).await.unwrap();
 
@@ -263,8 +257,7 @@ fn test_nonexistent_source_error() {
         remove_dir_if_exists(dst.to_string()).await;
 
         let ctx = UserMigrationContext::default();
-        let result =
-            UserMigrationEngine::migrate("tests/data/migration/does_not_exist", dst, &ctx).await;
+        let result = UserMigrationEngine::migrate("tests/data/migration/does_not_exist", dst, &ctx).await;
         assert!(result.is_err());
     });
 }

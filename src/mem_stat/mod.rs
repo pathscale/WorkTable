@@ -37,8 +37,7 @@ impl<T: MemStat> MemStat for Option<T> {
 
 impl<T: MemStat> MemStat for Vec<T> {
     fn heap_size(&self) -> usize {
-        self.capacity() * std::mem::size_of::<T>()
-            + self.iter().map(|v| v.heap_size()).sum::<usize>()
+        self.capacity() * std::mem::size_of::<T>() + self.iter().map(|v| v.heap_size()).sum::<usize>()
     }
     fn used_size(&self) -> usize {
         self.len() * std::mem::size_of::<T>() + self.iter().map(|v| v.used_size()).sum::<usize>()
@@ -64,10 +63,7 @@ where
         let slot_size = std::mem::size_of::<Pair<K, V>>();
         let base_heap = self.capacity() * slot_size;
 
-        let kv_heap: usize = self
-            .iter()
-            .map(|(k, v)| k.heap_size() + v.heap_size())
-            .sum();
+        let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
 
         base_heap + kv_heap
     }
@@ -76,10 +72,7 @@ where
         let pair_size = std::mem::size_of::<Pair<K, V>>();
         let base = self.len() * pair_size;
 
-        let used: usize = self
-            .iter()
-            .map(|(k, v)| k.used_size() + v.used_size())
-            .sum();
+        let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
 
         base + used
     }
@@ -95,10 +88,7 @@ where
         let slot_size = std::mem::size_of::<MultiPair<K, V>>();
         let base_heap = self.capacity() * slot_size;
 
-        let kv_heap: usize = self
-            .iter()
-            .map(|(k, v)| k.heap_size() + v.heap_size())
-            .sum();
+        let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
 
         base_heap + kv_heap
     }
@@ -107,10 +97,7 @@ where
         let pair_size = std::mem::size_of::<MultiPair<K, V>>();
         let base = self.len() * pair_size;
 
-        let used: usize = self
-            .iter()
-            .map(|(k, v)| k.used_size() + v.used_size())
-            .sum();
+        let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
 
         base + used
     }
@@ -148,10 +135,7 @@ impl<K: MemStat + Eq + std::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
         let bucket_size = size_of::<(K, V)>();
         let base_heap = self.capacity() * bucket_size;
 
-        let kv_heap: usize = self
-            .iter()
-            .map(|(k, v)| k.heap_size() + v.heap_size())
-            .sum();
+        let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
 
         base_heap + kv_heap
     }
@@ -159,10 +143,7 @@ impl<K: MemStat + Eq + std::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
         let bucket_size = size_of::<(K, V)>();
         let base_used = self.len() * bucket_size;
 
-        let kv_used: usize = self
-            .iter()
-            .map(|(k, v)| k.used_size() + v.used_size())
-            .sum();
+        let kv_used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
 
         base_used + kv_used
     }

@@ -44,8 +44,7 @@ pub trait TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> {
     ) -> Result<(), IndexError<AvailableIndexes>>;
 }
 
-impl<Row, AvailableTypes, AvailableIndexes>
-    TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> for ()
+impl<Row, AvailableTypes, AvailableIndexes> TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> for ()
 where
     AvailableTypes: 'static,
     AvailableIndexes: 'static,
@@ -54,13 +53,7 @@ where
         Ok(())
     }
 
-    fn reinsert_row(
-        &self,
-        _: Row,
-        _: Link,
-        _: Row,
-        _: Link,
-    ) -> Result<(), IndexError<AvailableIndexes>> {
+    fn reinsert_row(&self, _: Row, _: Link, _: Row, _: Link) -> Result<(), IndexError<AvailableIndexes>> {
         Ok(())
     }
 

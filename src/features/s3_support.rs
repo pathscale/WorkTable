@@ -9,15 +9,13 @@ use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 use url::Url;
 use walkdir::WalkDir;
 
+use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
-    DiskConfig, DiskPersistenceEngine, PersistenceConfig, PersistenceEngine, SpaceDataOps,
-    SpaceIndexOps, SpaceSecondaryIndexOps,
+    DiskConfig, DiskPersistenceEngine, PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps,
+    SpaceSecondaryIndexOps,
 };
-use crate::prelude::{
-    PrimaryKeyGeneratorState, TablePrimaryKey, WT_DATA_EXTENSION, WT_INDEX_EXTENSION,
-};
-use crate::TableSecondaryIndexEventsOps;
+use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey, WT_DATA_EXTENSION, WT_INDEX_EXTENSION};
 
 #[derive(Debug, Clone)]
 pub struct S3Config {
@@ -54,8 +52,7 @@ pub struct S3SyncDiskPersistenceEngine<
     SecondaryIndexEvents,
     AvailableIndexes,
     PrimaryKeyGenState = <<PrimaryKey as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
->
-where
+> where
     PrimaryKey: TablePrimaryKey,
     <PrimaryKey as TablePrimaryKey>::Generator: PrimaryKeyGeneratorState,
 {
@@ -99,8 +96,7 @@ where
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send + Sync,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send + Sync,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send + Sync,
-    SecondaryIndexEvents:
-        Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
+    SecondaryIndexEvents: Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
@@ -144,12 +140,7 @@ where
             let action = self.bucket.put_object(Some(&self.credentials), &s3_key);
             let url = action.sign(Duration::from_secs(3600));
 
-            self.client
-                .put(url)
-                .body(content)
-                .send()
-                .await?
-                .error_for_status()?;
+            self.client.put(url).body(content).send().await?.error_for_status()?;
         }
 
         tracing::debug!("S3 sync complete");
@@ -254,8 +245,7 @@ where
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send + Sync,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send + Sync,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send + Sync,
-    SecondaryIndexEvents:
-        Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
+    SecondaryIndexEvents: Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
@@ -294,12 +284,7 @@ where
 
     async fn apply_batch_operation(
         &mut self,
-        batch_op: BatchOperation<
-            PrimaryKeyGenState,
-            PrimaryKey,
-            SecondaryIndexEvents,
-            AvailableIndexes,
-        >,
+        batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> eyre::Result<()> {
         self.inner.apply_batch_operation(batch_op).await?;
         self.sync_to_s3().await?;

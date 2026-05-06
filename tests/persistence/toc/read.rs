@@ -14,13 +14,10 @@ async fn test_index_table_of_contents_read() {
         .await
         .unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(1));
-    let toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(
-        &mut file,
-        0.into(),
-        next_id_gen,
-    )
-    .await
-    .unwrap();
+    let toc =
+        IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::parse_from_file(&mut file, 0.into(), next_id_gen)
+            .await
+            .unwrap();
 
     assert_eq!(toc.get(&13), Some(1.into()))
 }

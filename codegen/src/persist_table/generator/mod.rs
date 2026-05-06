@@ -21,23 +21,14 @@ pub struct Generator {
 
 impl WorktableNameGenerator {
     pub fn get_space_file_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}SpaceFile", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}SpaceFile", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_persistence_engine_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}PersistenceEngine", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}PersistenceEngine", self.name).as_str(), Span::mixed_site())
     }
 
     pub fn get_persistence_task_ident(&self) -> Ident {
-        Ident::new(
-            format!("{}PersistenceTask", self.name).as_str(),
-            Span::mixed_site(),
-        )
+        Ident::new(format!("{}PersistenceTask", self.name).as_str(), Span::mixed_site())
     }
 }

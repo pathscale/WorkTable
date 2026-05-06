@@ -84,9 +84,7 @@ fn delete(c: &mut Criterion) {
                 };
                 table.insert(row).unwrap()
             },
-            |pk: SimplePrimaryKey| {
-                rt.block_on(async { table.delete(black_box(pk)).await.unwrap() })
-            },
+            |pk: SimplePrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
         )
     });

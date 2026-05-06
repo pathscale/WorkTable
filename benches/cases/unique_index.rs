@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, Criterion, BatchSize, BenchmarkId, Throughput};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
@@ -109,11 +109,7 @@ fn delete(c: &mut Criterion) {
                 };
                 table.insert(row).unwrap()
             },
-            |pk: UniqueIndexPrimaryKey| {
-                rt.block_on(async {
-                    table.delete(black_box(pk)).await.unwrap()
-                })
-            },
+            |pk: UniqueIndexPrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
         )
     });

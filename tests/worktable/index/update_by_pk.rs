@@ -1,8 +1,8 @@
 use worktable::prelude::SelectQueryExecutor;
 
 use crate::worktable::index::{
-    Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable,
-    ThreeAttrByIdQuery, UniqueThreeAttrByIdQuery,
+    Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable, ThreeAttrByIdQuery,
+    UniqueThreeAttrByIdQuery,
 };
 
 #[tokio::test]
@@ -89,37 +89,19 @@ async fn update_by_pk_non_unique_indexes() {
         .unwrap();
 
     // Checks idx updated
-    let updated = test_table
-        .select_by_attr1(attr1_new.clone())
-        .execute()
-        .expect("rows");
+    let updated = test_table.select_by_attr1(attr1_new.clone()).execute().expect("rows");
     assert_eq!(updated.first().unwrap().attr1, attr1_new);
-    let updated = test_table
-        .select_by_attr2(attr2_new)
-        .execute()
-        .expect("rows");
+    let updated = test_table.select_by_attr2(attr2_new).execute().expect("rows");
     assert_eq!(updated.first().unwrap().attr2, attr2_new);
-    let updated = test_table
-        .select_by_attr3(attr3_new)
-        .execute()
-        .expect("rows");
+    let updated = test_table.select_by_attr3(attr3_new).execute().expect("rows");
     assert_eq!(updated.first().unwrap().attr3, attr3_new);
 
     // Check old idx removed
-    let updated = test_table
-        .select_by_attr1(attr1_old.clone())
-        .execute()
-        .expect("rows");
+    let updated = test_table.select_by_attr1(attr1_old.clone()).execute().expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table
-        .select_by_attr2(attr2_old)
-        .execute()
-        .expect("rows");
+    let updated = test_table.select_by_attr2(attr2_old).execute().expect("rows");
     assert_eq!(updated.first(), None);
-    let updated = test_table
-        .select_by_attr3(attr3_old)
-        .execute()
-        .expect("rows");
+    let updated = test_table.select_by_attr3(attr3_old).execute().expect("rows");
     assert_eq!(updated.first(), None);
 }
 
@@ -155,17 +137,11 @@ async fn update_by_pk_with_reinsert_and_secondary_unique_violation() {
             .is_err()
     );
 
-    assert_eq!(
-        test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
-        row1
-    );
+    assert_eq!(test_table.select_by_attr1(row1.attr1.clone()).unwrap(), row1);
     assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
     assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
 
-    assert_eq!(
-        test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
-        row2
-    );
+    assert_eq!(test_table.select_by_attr1(row2.attr1.clone()).unwrap(), row2);
     assert_eq!(test_table.select_by_attr2(row2.attr2).unwrap(), row2);
     assert_eq!(test_table.select_by_attr3(row2.attr3).unwrap(), row2);
 }
@@ -202,17 +178,11 @@ async fn update_by_pk_with_secondary_unique_violation() {
             .is_err()
     );
 
-    assert_eq!(
-        test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
-        row1
-    );
+    assert_eq!(test_table.select_by_attr1(row1.attr1.clone()).unwrap(), row1);
     assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
     assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
 
-    assert_eq!(
-        test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
-        row2
-    );
+    assert_eq!(test_table.select_by_attr1(row2.attr1.clone()).unwrap(), row2);
     assert_eq!(test_table.select_by_attr2(row2.attr2).unwrap(), row2);
     assert_eq!(test_table.select_by_attr3(row2.attr3).unwrap(), row2);
 }

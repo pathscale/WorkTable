@@ -29,7 +29,11 @@ impl ReadOnlyGenerator {
     }
 }
 
-pub fn expand(name: proc_macro2::Ident, columns: crate::common::model::Columns, version: u32) -> syn::Result<proc_macro2::TokenStream> {
+pub fn expand(
+    name: proc_macro2::Ident,
+    columns: crate::common::model::Columns,
+    version: u32,
+) -> syn::Result<proc_macro2::TokenStream> {
     let mut generator = ReadOnlyGenerator::new(name, columns, version);
 
     let pk_def = generator.gen_primary_key_def()?;

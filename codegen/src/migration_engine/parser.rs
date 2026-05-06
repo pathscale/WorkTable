@@ -2,7 +2,7 @@ use proc_macro2::{Ident, TokenStream, TokenTree};
 use std::collections::BTreeMap;
 use syn::spanned::Spanned as _;
 
-use crate::common::{name_generator::WorktableNameGenerator, Parser};
+use crate::common::{Parser, name_generator::WorktableNameGenerator};
 
 pub struct MigrationEngineInput {
     pub migration: Ident,
@@ -49,8 +49,7 @@ impl MigrationEngineInput {
             migration: migration.ok_or_else(|| syn::Error::new(span, "missing `migration`"))?,
             current,
             ctx: ctx.ok_or_else(|| syn::Error::new(span, "missing `ctx`"))?,
-            version_tables: version_tables
-                .ok_or_else(|| syn::Error::new(span, "missing `version_tables`"))?,
+            version_tables: version_tables.ok_or_else(|| syn::Error::new(span, "missing `version_tables`"))?,
             name_generator,
         })
     }
@@ -59,22 +58,14 @@ impl MigrationEngineInput {
     /// e.g. `v1::UserV1WorkTable` -> `v1::UserV1Row`
     /// e.g. `UserWorkTable` -> `UserRow`
     pub fn row_type_for(table: &syn::Path) -> syn::Path {
-        let last_segment = table
-            .segments
-            .last()
-            .expect("path should have at least one segment");
+        let last_segment = table.segments.last().expect("path should have at least one segment");
         let ident_str = last_segment.ident.to_string();
         let base = ident_str
             .strip_suffix("WorkTable")
             .expect("table type should end with `WorkTable`");
         let row_ident = Ident::new(&format!("{}Row", base), last_segment.ident.span());
 
-        let leading_segments: Vec<_> = table
-            .segments
-            .iter()
-            .take(table.segments.len() - 1)
-            .cloned()
-            .collect();
+        let leading_segments: Vec<_> = table.segments.iter().take(table.segments.len() - 1).cloned().collect();
 
         let mut new_path = syn::Path {
             leading_colon: table.leading_colon,

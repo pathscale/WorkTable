@@ -12,7 +12,6 @@ use tokio::time::timeout;
 use worktable::prelude::*;
 use worktable::worktable;
 
-
 // Table with TWO unique indexes to trigger the bug scenario
 worktable!(
     name: MultiUniqueIdx,
@@ -49,9 +48,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
 
         // Phase 1: Insert initial rows to populate indexes
         let pk = {
-            let engine = MultiUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = MultiUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = MultiUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row = MultiUniqueIdxRow {
@@ -67,9 +64,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
         // Phase 2: The critical test - failed insert followed by valid insert
         // This tests if the persistence system gets stuck after a failed insert
         let valid_insert_pk = {
-            let engine = MultiUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = MultiUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = MultiUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row = MultiUniqueIdxRow {
@@ -96,10 +91,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
 
             let result = table.insert(failing_row);
             assert!(result.is_err());
-            assert!(matches!(
-                result.unwrap_err(),
-                WorkTableError::AlreadyExists(_)
-            ));
+            assert!(matches!(result.unwrap_err(), WorkTableError::AlreadyExists(_)));
 
             let failing_row = MultiUniqueIdxRow {
                 id: table.get_next_pk().0,
@@ -109,10 +101,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
 
             let result = table.insert(failing_row);
             assert!(result.is_err());
-            assert!(matches!(
-                result.unwrap_err(),
-                WorkTableError::AlreadyExists(_)
-            ));
+            assert!(matches!(result.unwrap_err(), WorkTableError::AlreadyExists(_)));
 
             let valid_row = MultiUniqueIdxRow {
                 id: table.get_next_pk().0,

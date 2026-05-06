@@ -67,12 +67,7 @@ impl InMemoryGenerator {
                 }
             })
             .collect::<Vec<_>>();
-        let idents = self
-            .columns
-            .indexes
-            .values()
-            .map(|idx| &idx.name)
-            .collect::<Vec<_>>();
+        let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
 
         quote! {
             fn save_row_cdc(&self, row: #row_type_ident, link: Link) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
@@ -152,12 +147,7 @@ impl InMemoryGenerator {
                 (insert, remove)
             })
             .unzip();
-        let idents = self
-            .columns
-            .indexes
-            .values()
-            .map(|idx| &idx.name)
-            .collect::<Vec<_>>();
+        let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
 
         quote! {
             fn reinsert_row_cdc(
@@ -197,12 +187,7 @@ impl InMemoryGenerator {
                 }
             })
             .collect::<Vec<_>>();
-        let idents = self
-            .columns
-            .indexes
-            .values()
-            .map(|idx| &idx.name)
-            .collect::<Vec<_>>();
+        let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
 
         quote! {
             fn delete_row_cdc(&self, row: #row_type_ident, link: Link) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
@@ -231,11 +216,7 @@ impl InMemoryGenerator {
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
-                let type_str = self.columns
-                    .columns_map
-                    .get(i)
-                    .unwrap()
-                    .to_string();
+                let type_str = self.columns.columns_map.get(i).unwrap().to_string();
                 let row = if is_float(type_str.as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
@@ -324,12 +305,7 @@ impl InMemoryGenerator {
                 quote! {}
             }
         });
-        let idents = self
-            .columns
-            .indexes
-            .values()
-            .map(|idx| &idx.name)
-            .collect::<Vec<_>>();
+        let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
 
         quote! {
             fn process_difference_remove_cdc(
@@ -399,12 +375,7 @@ impl InMemoryGenerator {
                 quote! {}
             }
         });
-        let idents = self
-            .columns
-            .indexes
-            .values()
-            .map(|idx| &idx.name)
-            .collect::<Vec<_>>();
+        let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
 
         quote! {
             fn process_difference_insert_cdc(

@@ -48,9 +48,7 @@ fn test_space_insert_sync() {
         remove_dir_if_exists("tests/data/unsized_secondary_sync/insert".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: "Some string to test".to_string(),
@@ -91,9 +89,7 @@ fn test_space_insert_many_sync() {
 
         let mut pks = vec![];
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             for i in 0..20 {
                 let pk = {
@@ -142,9 +138,7 @@ fn test_space_update_full_sync() {
         remove_dir_if_exists("tests/data/unsized_secondary_sync/update_full".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: "Some string before".to_string(),
@@ -201,9 +195,7 @@ fn test_space_update_query_pk_sync() {
         remove_dir_if_exists("tests/data/unsized_secondary_sync/update_query_pk".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: "Some string before".to_string(),
@@ -253,13 +245,10 @@ fn test_space_update_query_unique_sync() {
         .unwrap();
 
     runtime.block_on(async {
-        remove_dir_if_exists("tests/data/unsized_secondary_sync/update_query_unique".to_string())
-            .await;
+        remove_dir_if_exists("tests/data/unsized_secondary_sync/update_query_unique".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: "Some string before".to_string(),
@@ -269,10 +258,7 @@ fn test_space_update_query_unique_sync() {
             };
             table.insert(row.clone()).unwrap();
             table
-                .update_field_by_another(
-                    FieldByAnotherQuery { field: 1.0 },
-                    "Some string before".to_string(),
-                )
+                .update_field_by_another(FieldByAnotherQuery { field: 1.0 }, "Some string before".to_string())
                 .await
                 .unwrap();
             table.wait_for_ops().await;
@@ -304,15 +290,10 @@ fn test_space_update_query_non_unique_sync() {
         .unwrap();
 
     runtime.block_on(async {
-        remove_dir_if_exists(
-            "tests/data/unsized_secondary_sync/update_query_non_unique".to_string(),
-        )
-        .await;
+        remove_dir_if_exists("tests/data/unsized_secondary_sync/update_query_non_unique".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: "Some string before".to_string(),
@@ -365,9 +346,7 @@ fn test_space_delete_sync() {
         remove_dir_if_exists("tests/data/unsized_secondary_sync/delete".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: "Some string before".to_string(),
@@ -408,9 +387,7 @@ fn test_space_delete_query_sync() {
         remove_dir_if_exists("tests/data/unsized_secondary_sync/delete_query".to_string()).await;
 
         let pk = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let row = TestSyncRow {
                 another: "Some string before".to_string(),

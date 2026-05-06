@@ -2,7 +2,6 @@
 use super::*;
 use crate::remove_dir_if_exists;
 
-
 #[test]
 fn test_update_unique_secondary_conflict() {
     let config = DiskConfig::new_with_table_name(
@@ -18,9 +17,7 @@ fn test_update_unique_secondary_conflict() {
 
         // Phase 1: Setup
         let row1_pk = {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = TwoUniqueIdxRow {
@@ -42,9 +39,7 @@ fn test_update_unique_secondary_conflict() {
 
         // Phase 2: 2 valid inserts -> failure update -> valid insert -> wait_for_ops
         {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = TwoUniqueIdxRow {
@@ -111,9 +106,7 @@ fn test_update_pk_based_success() {
 
         // Phase 1: Setup
         let row1_pk = {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = TwoUniqueIdxRow {
@@ -128,9 +121,7 @@ fn test_update_pk_based_success() {
 
         // Phase 2: 2 valid inserts -> success update -> valid insert -> wait_for_ops
         {
-            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TwoUniqueIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TwoUniqueIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = TwoUniqueIdxRow {

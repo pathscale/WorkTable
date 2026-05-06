@@ -4,8 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use data_bucket::page::PageId;
 use data_bucket::{
-    GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId, TableOfContentsPage, parse_page,
-    persist_page,
+    GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId, TableOfContentsPage, parse_page, persist_page,
 };
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
@@ -44,11 +43,7 @@ where
     pub fn get(&self, node_id: &T) -> Option<PageId> {
         for page in &self.pages {
             if page.inner.contains(node_id) {
-                return Some(
-                    page.inner
-                        .get(node_id)
-                        .expect("should exist as checked in `contains`"),
-                );
+                return Some(page.inner.get(node_id).expect("should exist as checked in `contains`"));
             }
         }
 
@@ -140,9 +135,8 @@ where
         T: Archive
             + Clone
             + SizeMeasurable
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
-            > + Send
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>
+            + Send
             + Sync,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
     {
@@ -153,18 +147,12 @@ where
         Ok(())
     }
 
-    pub async fn parse_from_file(
-        file: &mut File,
-        space_id: SpaceId,
-        next_page_id: Arc<AtomicU32>,
-    ) -> eyre::Result<Self>
+    pub async fn parse_from_file(file: &mut File, space_id: SpaceId, next_page_id: Arc<AtomicU32>) -> eyre::Result<Self>
     where
         T: Archive
             + Clone
             + SizeMeasurable
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>,
-            >,
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
         <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
     {
         let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1).await;
@@ -181,8 +169,7 @@ where
                 let mut ind = false;
 
                 while !ind {
-                    let page =
-                        parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, index).await?;
+                    let page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, index).await?;
                     ind = page.header.next_id.is_empty();
                     index = page.header.next_id.into();
                     table_of_contents_pages.push(page);
@@ -301,16 +288,10 @@ mod tests {
             toc.current_page,
         );
         assert_eq!(
-            toc.pages[after_remove_current_page]
-                .inner
-                .clone()
-                .pop_empty_page(),
+            toc.pages[after_remove_current_page].inner.clone().pop_empty_page(),
             None,
             "After insertion page contains empty page {:?}, but shouldn't",
-            toc.pages[after_remove_current_page]
-                .inner
-                .clone()
-                .pop_empty_page(),
+            toc.pages[after_remove_current_page].inner.clone().pop_empty_page(),
         );
     }
 }

@@ -93,19 +93,12 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         self.id = id;
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataRow")
-    )]
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataRow"))]
     pub fn save_row(&self, row: &Row) -> Result<Link, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(row)
-            .map_err(|_| ExecutionError::SerializeError)?;
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(row).map_err(|_| ExecutionError::SerializeError)?;
         let length = bytes.len();
         if length > DATA_LENGTH {
             return Err(ExecutionError::PageTooSmall {
@@ -135,16 +128,10 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     }
 
     #[allow(clippy::missing_safety_doc)]
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataRow")
-    )]
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataRow"))]
     pub unsafe fn save_row_by_link(&self, row: &Row, link: Link) -> Result<Link, ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
         let bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
         let length = bytes.len() as u32;
@@ -153,23 +140,15 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         }
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
-        inner_data[link.offset as usize..][..link.length as usize]
-            .copy_from_slice(bytes.as_slice());
+        inner_data[link.offset as usize..][..link.length as usize].copy_from_slice(bytes.as_slice());
 
         Ok(link)
     }
 
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe fn try_save_row_by_link(
-        &self,
-        row: &Row,
-        mut link: Link,
-    ) -> Result<(Link, Option<Link>), ExecutionError>
+    pub unsafe fn try_save_row_by_link(&self, row: &Row, mut link: Link) -> Result<(Link, Option<Link>), ExecutionError>
     where
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
         let bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
         let length = bytes.len() as u32;
@@ -190,8 +169,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         };
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
-        inner_data[link.offset as usize..][..link.length as usize]
-            .copy_from_slice(bytes.as_slice());
+        inner_data[link.offset as usize..][..link.length as usize].copy_from_slice(bytes.as_slice());
 
         Ok((link, link_left))
     }
@@ -200,10 +178,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     /// This function is `unsafe` because it returns a mutable reference to an archived row.
     /// The caller must ensure that there are no other references to the same data
     /// while this function is being used, as it could lead to undefined behavior.
-    pub unsafe fn get_mut_row_ref(
-        &self,
-        link: Link,
-    ) -> Result<Seal<'_, <Row as Archive>::Archived>, ExecutionError>
+    pub unsafe fn get_mut_row_ref(&self, link: Link) -> Result<Seal<'_, <Row as Archive>::Archived>, ExecutionError>
     where
         Row: Archive,
         <Row as Archive>::Archived: Portable,
@@ -213,10 +188,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(unsafe { rkyv::access_unchecked_mut::<<Row as Archive>::Archived>(&mut bytes[..]) })
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "DataRow")
-    )]
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataRow"))]
     pub fn get_row_ref(&self, link: Link) -> Result<&<Row as Archive>::Archived, ExecutionError>
     where
         Row: Archive,
@@ -232,8 +204,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         <Row as Archive>::Archived: Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>,
     {
         let row = self.get_row_ref(link)?;
-        rkyv::deserialize::<_, rkyv::rancor::Error>(row)
-            .map_err(|_| ExecutionError::DeserializeError)
+        rkyv::deserialize::<_, rkyv::rancor::Error>(row).map_err(|_| ExecutionError::DeserializeError)
     }
 
     pub fn get_raw_row(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
@@ -349,9 +320,7 @@ mod tests {
     use crate::in_memory::data::{Data, ExecutionError, INNER_PAGE_SIZE};
     use crate::prelude::Link;
 
-    #[derive(
-        Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-    )]
+    #[derive(Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
     #[rkyv(compare(PartialEq), derive(Debug))]
     struct TestRow {
         a: u64,
@@ -438,10 +407,7 @@ mod tests {
         thread::spawn(move || {
             let mut links = Vec::new();
             for i in 1..10 {
-                let row = TestRow {
-                    a: 10 + i,
-                    b: 20 + i,
-                };
+                let row = TestRow { a: 10 + i, b: 20 + i };
 
                 let link = second_shared.save_row(&row);
                 links.push(link)
@@ -452,10 +418,7 @@ mod tests {
 
         let mut links = Vec::new();
         for i in 1..10 {
-            let row = TestRow {
-                a: 30 + i,
-                b: 40 + i,
-            };
+            let row = TestRow { a: 30 + i, b: 40 + i };
 
             let link = shared.save_row(&row);
             links.push(link)
@@ -473,10 +436,7 @@ mod tests {
         let mut rows = Vec::new();
         let mut links = Vec::new();
         for i in 1..10 {
-            let row = TestRow {
-                a: 10 + i,
-                b: 20 + i,
-            };
+            let row = TestRow { a: 10 + i, b: 20 + i };
             rows.push(row);
 
             let link = page.save_row(&row);
@@ -530,10 +490,7 @@ mod tests {
         thread::spawn(move || {
             let mut links = Vec::new();
             for i in 1..10 {
-                let row = TestRow {
-                    a: 10 + i,
-                    b: 20 + i,
-                };
+                let row = TestRow { a: 10 + i, b: 20 + i };
 
                 let link = second_shared.save_row(&row);
                 links.push(link)
@@ -544,10 +501,7 @@ mod tests {
 
         let mut links = Vec::new();
         for i in 1..10 {
-            let row = TestRow {
-                a: 30 + i,
-                b: 40 + i,
-            };
+            let row = TestRow { a: 30 + i, b: 40 + i };
 
             let link = shared.save_row(&row);
             links.push(link)

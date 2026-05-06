@@ -1,7 +1,7 @@
 mod sized {
     use std::fs::copy;
 
-    use data_bucket::{Link, INNER_PAGE_SIZE};
+    use data_bucket::{INNER_PAGE_SIZE, Link};
     use indexset::concurrent::map::BTreeMap;
     use worktable::prelude::{SpaceIndex, SpaceIndexOps};
 
@@ -9,10 +9,7 @@ mod sized {
 
     #[tokio::test]
     async fn test_indexset_node_creation() {
-        remove_file_if_exists(
-            "tests/data/space_index/indexset/process_create_node.wt.idx".to_string(),
-        )
-        .await;
+        remove_file_if_exists("tests/data/space_index/indexset/process_create_node.wt.idx".to_string()).await;
 
         let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index/indexset/process_create_node.wt.idx",
@@ -42,10 +39,7 @@ mod sized {
 
     #[tokio::test]
     async fn test_space_index_process_insert_at() {
-        remove_file_if_exists(
-            "tests/data/space_index/indexset/process_insert_at.wt.idx".to_string(),
-        )
-        .await;
+        remove_file_if_exists("tests/data/space_index/indexset/process_insert_at.wt.idx".to_string()).await;
         copy(
             "tests/data/expected/space_index/process_create_node.wt.idx",
             "tests/data/space_index/indexset/process_insert_at.wt.idx",
@@ -80,10 +74,7 @@ mod sized {
 
     #[tokio::test]
     async fn test_space_index_process_insert_at_big_amount() {
-        remove_file_if_exists(
-            "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string(),
-        )
-        .await;
+        remove_file_if_exists("tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string()).await;
         copy(
             "tests/data/expected/space_index/process_create_node.wt.idx",
             "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx",
@@ -127,8 +118,7 @@ mod sized {
 
         assert!(check_if_files_are_same(
             "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string(),
-            "tests/data/expected/space_index/indexset/process_insert_at_big_amount.wt.idx"
-                .to_string()
+            "tests/data/expected/space_index/indexset/process_insert_at_big_amount.wt.idx".to_string()
         ))
     }
 }
@@ -137,18 +127,15 @@ mod unsized_ {
     use std::fs::copy;
 
     use crate::{check_if_files_are_same, remove_file_if_exists};
-    use data_bucket::{Link, INNER_PAGE_SIZE};
+    use data_bucket::{INNER_PAGE_SIZE, Link};
     use indexset::concurrent::map::BTreeMap;
     use indexset::core::pair::Pair;
-    use worktable::prelude::{SpaceIndexOps, SpaceIndexUnsized};
     use worktable::UnsizedNode;
+    use worktable::prelude::{SpaceIndexOps, SpaceIndexUnsized};
 
     #[tokio::test]
     async fn test_indexset_node_creation() {
-        remove_file_if_exists(
-            "tests/data/space_index_unsized/indexset/process_create_node.wt.idx".to_string(),
-        )
-        .await;
+        remove_file_if_exists("tests/data/space_index_unsized/indexset/process_create_node.wt.idx".to_string()).await;
 
         let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
             "tests/data/space_index_unsized/indexset/process_create_node.wt.idx",
@@ -172,17 +159,13 @@ mod unsized_ {
 
         assert!(check_if_files_are_same(
             "tests/data/space_index_unsized/indexset/process_create_node.wt.idx".to_string(),
-            "tests/data/expected/space_index_unsized/indexset/process_create_node.wt.idx"
-                .to_string()
+            "tests/data/expected/space_index_unsized/indexset/process_create_node.wt.idx".to_string()
         ))
     }
 
     #[tokio::test]
     async fn test_space_index_process_insert_at() {
-        remove_file_if_exists(
-            "tests/data/space_index_unsized/indexset/process_insert_at.wt.idx".to_string(),
-        )
-        .await;
+        remove_file_if_exists("tests/data/space_index_unsized/indexset/process_insert_at.wt.idx".to_string()).await;
         copy(
             "tests/data/expected/space_index_unsized/process_create_node.wt.idx",
             "tests/data/space_index_unsized/indexset/process_insert_at.wt.idx",
@@ -218,8 +201,7 @@ mod unsized_ {
     #[tokio::test]
     async fn test_space_index_process_insert_at_big_amount() {
         remove_file_if_exists(
-            "tests/data/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx"
-                .to_string(),
+            "tests/data/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx".to_string(),
         )
         .await;
         copy(
@@ -252,10 +234,8 @@ mod unsized_ {
         }
 
         assert!(check_if_files_are_same(
-            "tests/data/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx"
-                .to_string(),
-            "tests/data/expected/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx"
-                .to_string()
+            "tests/data/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx".to_string(),
+            "tests/data/expected/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx".to_string()
         ))
     }
 }

@@ -4,15 +4,14 @@ use crate::persistence::operation::BatchOperation;
 
 pub use engine::DiskConfig;
 pub use engine::DiskPersistenceEngine;
-pub use readonly_engine::ReadOnlyPersistenceEngine;
 pub use operation::{
     AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,
 };
+pub use readonly_engine::ReadOnlyPersistenceEngine;
 pub use space::{
     IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
-    SpaceSecondaryIndexOps, map_index_pages_to_toc_and_general,
-    map_unsized_index_pages_to_toc_and_general,
+    SpaceSecondaryIndexOps, map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
 };
 pub use task::PersistenceTask;
 
@@ -38,8 +37,7 @@ where
     fn load(engine: E) -> impl Future<Output = eyre::Result<Self>> + Send;
 }
 
-pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>
-{
+pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes> {
     type Config: PersistenceConfig;
 
     fn new(config: Self::Config) -> impl Future<Output = eyre::Result<Self>> + Send
@@ -53,12 +51,7 @@ pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents
 
     fn apply_batch_operation(
         &mut self,
-        batch_op: BatchOperation<
-            PrimaryKeyGenState,
-            PrimaryKey,
-            SecondaryIndexEvents,
-            AvailableIndexes,
-        >,
+        batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
 
     fn config(&self) -> &Self::Config;

@@ -71,9 +71,7 @@ fn test_concurrent() {
     runtime.block_on(async {
         remove_dir_if_exists("tests/data/concurrent/test".to_string()).await;
         {
-            let engine = TestConcurrentPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestConcurrentPersistenceEngine::new(config.clone()).await.unwrap();
             let table = Arc::new(TestConcurrentWorkTable::load(engine).await.unwrap());
 
             let total: u64 = 5_000;
@@ -83,11 +81,7 @@ fn test_concurrent() {
             let mut handles = Vec::with_capacity(tasks as usize);
             for t in 0..tasks {
                 let start_id = t * chunk;
-                let end_id = if t == tasks - 1 {
-                    total
-                } else {
-                    (t + 1) * chunk
-                };
+                let end_id = if t == tasks - 1 { total } else { (t + 1) * chunk };
                 let task_table = table.clone();
 
                 handles.push(task::spawn(async move {
@@ -114,9 +108,7 @@ fn test_concurrent() {
             table.wait_for_ops().await;
         }
         {
-            let engine = TestConcurrentPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestConcurrentPersistenceEngine::new(config.clone()).await.unwrap();
             let table = Arc::new(TestConcurrentWorkTable::load(engine).await.unwrap());
             assert_eq!(table.count(), 5_000)
         }

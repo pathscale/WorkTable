@@ -207,12 +207,7 @@ async fn custom_update_by_another() {
     let pk = table.insert(row.clone()).unwrap();
     let test_uuid = Uuid::new_v4();
     table
-        .update_custom_test_by_another(
-            CustomTestByAnotherQuery {
-                test: Some(test_uuid),
-            },
-            1,
-        )
+        .update_custom_test_by_another(CustomTestByAnotherQuery { test: Some(test_uuid) }, 1)
         .await
         .unwrap();
     let selected_row = table.select(pk).unwrap();
@@ -231,12 +226,7 @@ async fn custom_update_by_exchange() {
     let pk = table.insert(row.clone()).unwrap();
     let test_uuid = Uuid::new_v4();
     table
-        .update_custom_test_by_exchange(
-            CustomTestByExchangeQuery {
-                test: Some(test_uuid),
-            },
-            1,
-        )
+        .update_custom_test_by_exchange(CustomTestByExchangeQuery { test: Some(test_uuid) }, 1)
         .await
         .unwrap();
     let selected_row = table.select(pk).unwrap();
@@ -257,12 +247,7 @@ async fn custom_update_none_to_some() {
 
     let test_uuid = Uuid::new_v4();
     table
-        .update_custom_test_by_id(
-            CustomTestByIdQuery {
-                test: Some(test_uuid),
-            },
-            pk.clone(),
-        )
+        .update_custom_test_by_id(CustomTestByIdQuery { test: Some(test_uuid) }, pk.clone())
         .await
         .unwrap();
 
@@ -543,12 +528,7 @@ async fn indexed_update_from_none_to_some() {
     // Update to Some UUID
     let test_uuid = Uuid::new_v4();
     table
-        .update_index_test_by_id(
-            IndexTestByIdQuery {
-                test: Some(test_uuid),
-            },
-            pk.clone(),
-        )
+        .update_index_test_by_id(IndexTestByIdQuery { test: Some(test_uuid) }, pk.clone())
         .await
         .unwrap();
 

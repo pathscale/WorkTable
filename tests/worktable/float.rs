@@ -110,10 +110,7 @@ fn select_by_another_range_test() {
     let results = table.select_by_another_range(20.0..50.0).execute().unwrap();
     assert_eq!(results.len(), 3);
 
-    let results = table
-        .select_by_another_range(20.0..=50.0)
-        .execute()
-        .unwrap();
+    let results = table.select_by_another_range(20.0..=50.0).execute().unwrap();
     assert_eq!(results.len(), 4);
 
     let results = table.select_by_another_range(70.0..).execute().unwrap();
@@ -125,11 +122,7 @@ fn select_by_another_range_test() {
     let results = table.select_by_another_range(..).execute().unwrap();
     assert_eq!(results.len(), 10);
 
-    let results = table
-        .select_by_another_range(0.0..)
-        .limit(3)
-        .execute()
-        .unwrap();
+    let results = table.select_by_another_range(0.0..).limit(3).execute().unwrap();
     assert_eq!(results.len(), 3);
 
     let results = table

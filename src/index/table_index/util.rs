@@ -40,20 +40,14 @@ where
             },
             index,
         },
-        ChangeEvent::CreateNode {
-            event_id,
-            max_value,
-        } => ChangeEvent::CreateNode {
+        ChangeEvent::CreateNode { event_id, max_value } => ChangeEvent::CreateNode {
             event_id,
             max_value: Pair {
                 key: max_value.key,
                 value: max_value.value.into(),
             },
         },
-        ChangeEvent::RemoveNode {
-            event_id,
-            max_value,
-        } => ChangeEvent::RemoveNode {
+        ChangeEvent::RemoveNode { event_id, max_value } => ChangeEvent::RemoveNode {
             event_id,
             max_value: Pair {
                 key: max_value.key,
@@ -75,9 +69,7 @@ where
     }
 }
 
-pub fn convert_change_events<T, L1, L2>(
-    evs: Vec<ChangeEvent<Pair<T, L1>>>,
-) -> Vec<ChangeEvent<Pair<T, L2>>>
+pub fn convert_change_events<T, L1, L2>(evs: Vec<ChangeEvent<Pair<T, L1>>>) -> Vec<ChangeEvent<Pair<T, L2>>>
 where
     L1: Into<L2>,
 {

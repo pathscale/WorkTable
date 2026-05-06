@@ -26,13 +26,7 @@ impl InMemoryGenerator {
             .columns
             .columns_map
             .iter()
-            .filter_map(|(k, v)| {
-                if v.to_string() == "String" {
-                    Some(k)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(k, v)| if v.to_string() == "String" { Some(k) } else { None })
             .map(|f| {
                 let fn_ident = Ident::new(format!("get_{f}_size").as_str(), Span::call_site());
                 quote! {
@@ -63,17 +57,13 @@ impl InMemoryGenerator {
                         .any(|c| self.columns.columns_map.get(c).unwrap().to_string() == "String")
                 })
                 .map(|(i, op)| {
-                    let archived_ident =
-                        Ident::new(format!("Archived{i}Query").as_str(), Span::call_site());
+                    let archived_ident = Ident::new(format!("Archived{i}Query").as_str(), Span::call_site());
                     let unsized_fields: Vec<_> = op
                         .columns
                         .iter()
-                        .filter(|c| {
-                            self.columns.columns_map.get(c).unwrap().to_string() == "String"
-                        })
+                        .filter(|c| self.columns.columns_map.get(c).unwrap().to_string() == "String")
                         .map(|c| {
-                            let fn_ident =
-                                Ident::new(format!("get_{c}_size").as_str(), Span::call_site());
+                            let fn_ident = Ident::new(format!("get_{c}_size").as_str(), Span::call_site());
                             quote! {
                                 pub fn #fn_ident(&self) -> usize {
                                     self.#c.as_str().to_string().aligned_size()

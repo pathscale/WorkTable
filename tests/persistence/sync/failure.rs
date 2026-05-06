@@ -1,10 +1,7 @@
 use crate::remove_dir_if_exists;
 use worktable::prelude::*;
 
-use super::{
-    AnotherByIdQuery, FieldByAnotherQuery, TestSyncPersistenceEngine, TestSyncRow,
-    TestSyncWorkTable,
-};
+use super::{AnotherByIdQuery, FieldByAnotherQuery, TestSyncPersistenceEngine, TestSyncRow, TestSyncWorkTable};
 
 #[test]
 fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
@@ -25,9 +22,7 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
         remove_dir_if_exists("tests/data/sync/failure_update_pk".to_string()).await;
 
         let pks = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let mut pks = vec![];
             for i in 0..100 {
@@ -45,9 +40,7 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
         };
 
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
 
             let result = table
@@ -102,9 +95,7 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
         remove_dir_if_exists("tests/data/sync/failure_update_unique".to_string()).await;
 
         let pks = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let mut pks = vec![];
             for i in 0..100 {
@@ -122,9 +113,7 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
         };
 
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
 
             let result = table
@@ -179,9 +168,7 @@ fn test_failed_delete_by_pk_doesnt_corrupt_persistence() {
         remove_dir_if_exists("tests/data/sync/failure_delete_pk".to_string()).await;
 
         let pks = {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             let mut pks = vec![];
             for i in 0..100 {
@@ -199,9 +186,7 @@ fn test_failed_delete_by_pk_doesnt_corrupt_persistence() {
         };
 
         {
-            let engine = TestSyncPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
 
             let result = table.delete(9999).await;
@@ -216,10 +201,7 @@ fn test_failed_delete_by_pk_doesnt_corrupt_persistence() {
             let table = TestSyncWorkTable::load(engine).await.unwrap();
             for pk in &pks {
                 let row = table.select(*pk).unwrap();
-                assert_eq!(
-                    row.another,
-                    pks.iter().position(|p| p == pk).unwrap() as u64
-                );
+                assert_eq!(row.another, pks.iter().position(|p| p == pk).unwrap() as u64);
             }
             let last_pk = *pks.last().unwrap();
             assert_eq!(table.0.pk_gen.get_state(), last_pk + 1);

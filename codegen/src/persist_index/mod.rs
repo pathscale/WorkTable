@@ -33,9 +33,7 @@ mod tests {
 
     use crate::persist_index::expand;
 
-    #[derive(
-        Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-    )]
+    #[derive(Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
     pub struct Link {
         pub page_id: u32,
         pub offset: u32,

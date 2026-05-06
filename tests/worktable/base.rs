@@ -93,10 +93,7 @@ async fn iter_with_async() {
     };
     let _ = table.insert(row.clone()).unwrap();
 
-    table
-        .iter_with_async(|_| async move { Ok(()) })
-        .await
-        .unwrap()
+    table.iter_with_async(|_| async move { Ok(()) }).await.unwrap()
 }
 
 #[tokio::test]
@@ -228,10 +225,7 @@ async fn update_parallel() {
                 .unwrap();
             {
                 let mut guard = shared_i_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
             tokio::time::sleep(Duration::from_micros(5)).await;
         }
@@ -271,13 +265,7 @@ async fn delete() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let link = table
-        .0
-        .primary_index
-        .pk_map
-        .get(&pk)
-        .map(|kv| kv.get().value)
-        .unwrap();
+    let link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
     assert!(selected_row.is_none());
@@ -293,13 +281,7 @@ async fn delete() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(updated.clone()).unwrap();
-    let new_link = table
-        .0
-        .primary_index
-        .pk_map
-        .get(&pk)
-        .map(|kv| kv.get().value)
-        .unwrap();
+    let new_link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
 
     assert_eq!(link, new_link)
 }
@@ -384,13 +366,7 @@ async fn delete_and_insert_less() {
         exchange: "test1234567890".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let link = table
-        .0
-        .primary_index
-        .pk_map
-        .get(&pk)
-        .map(|kv| kv.get().value)
-        .unwrap();
+    let link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
     assert!(selected_row.is_none());
@@ -402,13 +378,7 @@ async fn delete_and_insert_less() {
         exchange: "test1".to_string(),
     };
     let pk = table.insert(updated.clone()).unwrap();
-    let new_link = table
-        .0
-        .primary_index
-        .pk_map
-        .get(&pk)
-        .map(|kv| kv.get().value)
-        .unwrap();
+    let new_link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
 
     assert_ne!(link.0, new_link.0)
 }
@@ -430,13 +400,7 @@ async fn delete_and_replace() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let link = table
-        .0
-        .primary_index
-        .pk_map
-        .get(&pk)
-        .map(|kv| kv.get().value)
-        .unwrap();
+    let link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
     assert!(selected_row.is_none());
@@ -448,13 +412,7 @@ async fn delete_and_replace() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(updated.clone()).unwrap();
-    let new_link = table
-        .0
-        .primary_index
-        .pk_map
-        .get(&pk)
-        .map(|kv| kv.get().value)
-        .unwrap();
+    let new_link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
 
     assert_eq!(link, new_link)
 }
@@ -526,10 +484,7 @@ async fn select_by_exchange() {
         exchange: "test".to_string(),
     };
     let _ = table.insert(row.clone()).unwrap();
-    let selected_rows = table
-        .select_by_exchange("test".to_string())
-        .execute()
-        .expect("rows");
+    let selected_rows = table.select_by_exchange("test".to_string()).execute().expect("rows");
 
     assert_eq!(selected_rows.len(), 1);
     assert!(selected_rows.contains(&row));
@@ -559,10 +514,7 @@ async fn select_multiple_by_exchange() {
         exchange: "test".to_string(),
     };
     let _ = table.insert(row_next.clone()).unwrap();
-    let selected_rows = table
-        .select_by_exchange("test".to_string())
-        .execute()
-        .expect("rows");
+    let selected_rows = table.select_by_exchange("test".to_string()).execute().expect("rows");
 
     assert_eq!(selected_rows.len(), 2);
     assert!(selected_rows.contains(&row));
@@ -750,10 +702,7 @@ async fn select_all_where_by_contains_string_test() {
     let _ = table.insert(row3.clone()).unwrap();
 
     let all = table.select_all();
-    let contains = all
-        .where_by(|row| row.exchange.contains("1"))
-        .execute()
-        .unwrap();
+    let contains = all.where_by(|row| row.exchange.contains("1")).execute().unwrap();
 
     assert_eq!(contains.len(), 3);
 }
@@ -1149,10 +1098,7 @@ async fn test_update_by_non_unique() {
     let _ = table.insert(row2.clone()).unwrap();
 
     let row = AnotherByExchangeQuery { another: 3 };
-    table
-        .update_another_by_exchange(row, "test".to_string())
-        .await
-        .unwrap();
+    table.update_another_by_exchange(row, "test".to_string()).await.unwrap();
 
     let all = table.select_all().execute().unwrap();
 

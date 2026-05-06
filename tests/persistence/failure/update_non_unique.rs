@@ -2,7 +2,6 @@
 use super::*;
 use crate::remove_dir_if_exists;
 
-
 #[test]
 fn test_update_non_unique_middle_fail() {
     let config = DiskConfig::new_with_table_name(
@@ -18,9 +17,7 @@ fn test_update_non_unique_middle_fail() {
 
         // Phase 1: Setup
         let (row1_pk, row2_pk, row3_pk) = {
-            let engine = MixedIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = MixedIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = MixedIdxWorkTable::load(engine).await.unwrap();
 
             let row1 = MixedIdxRow {
@@ -53,9 +50,7 @@ fn test_update_non_unique_middle_fail() {
 
         // Phase 2: 2 valid inserts -> failure bulk update -> valid insert -> wait_for_ops
         {
-            let engine = MixedIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = MixedIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = MixedIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = MixedIdxRow {
@@ -120,9 +115,7 @@ fn test_update_non_unique_last_fail() {
 
         // Phase 1: Setup
         let conflict_pk = {
-            let engine = MixedIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = MixedIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = MixedIdxWorkTable::load(engine).await.unwrap();
 
             let conflict_row = MixedIdxRow {
@@ -163,9 +156,7 @@ fn test_update_non_unique_last_fail() {
 
         // Phase 2: 2 valid inserts -> failure bulk update -> valid insert -> wait_for_ops
         {
-            let engine = MixedIdxPersistenceEngine::new(config.clone())
-                .await
-                .unwrap();
+            let engine = MixedIdxPersistenceEngine::new(config.clone()).await.unwrap();
             let table = MixedIdxWorkTable::load(engine).await.unwrap();
 
             let valid_row1 = MixedIdxRow {

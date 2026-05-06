@@ -2,20 +2,19 @@ use std::future::Future;
 use std::io::SeekFrom;
 use std::path::Path;
 
-use crate::persistence::space::{open_or_create_file, BatchData};
 use crate::persistence::SpaceDataOps;
+use crate::persistence::space::{BatchData, open_or_create_file};
 use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
 use data_bucket::{
-    parse_data_pages_batch, parse_general_header_by_index, parse_page, persist_page, persist_pages_batch, update_at, DataPage,
-    GeneralHeader, GeneralPage, Link, PageType, Persistable,
-    SizeMeasurable, SpaceInfoPage,
+    DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage,
+    parse_data_pages_batch, parse_general_header_by_index, parse_page, persist_page, persist_pages_batch, update_at,
 };
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
+use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
-use rkyv::ser::Serializer;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 use tokio::fs::File;
@@ -29,15 +28,11 @@ pub struct SpaceData<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: 
     pub data_file: File,
 }
 
-impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32>
-    SpaceData<PkGenState, INNER_PAGE_SIZE, PAGE_SIZE>
-{
+impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<PkGenState, INNER_PAGE_SIZE, PAGE_SIZE> {
     async fn update_data_length(&mut self) -> eyre::Result<()> {
         let offset = (u32::default().aligned_size() * 6) as u32;
         self.data_file
-            .seek(SeekFrom::Start(
-                (self.last_page_id * PAGE_SIZE + offset) as u64,
-            ))
+            .seek(SeekFrom::Start((self.last_page_id * PAGE_SIZE + offset) as u64))
             .await?;
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&self.current_data_length)?;
         self.data_file.write_all(bytes.as_ref()).await?;
@@ -49,13 +44,11 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceDataOp
     for SpaceData<PkGenState, INNER_PAGE_SIZE, PAGE_SIZE>
 where
     PkGenState: Default
-        + for<'a> Serialize<
-            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        > + Archive
+        + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>
+        + Archive
         + Send
         + Sync,
-    <PkGenState as Archive>::Archived:
-        Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
+    <PkGenState as Archive>::Archived: Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
     SpaceInfoPage<PkGenState>: Persistable,
 {
     async fn from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
@@ -78,8 +71,7 @@ where
         let info = parse_page::<_, PAGE_SIZE>(&mut data_file, 0).await?;
         let file_length = data_file.metadata().await?.len();
         let page_id = file_length / PAGE_SIZE as u64;
-        let last_page_header =
-            parse_general_header_by_index(&mut data_file, page_id as u32).await?;
+        let last_page_header = parse_general_header_by_index(&mut data_file, page_id as u32).await?;
 
         Ok(Self {
             data_file,
@@ -153,8 +145,7 @@ where
             })
             .collect::<Vec<_>>();
         let parsed_pages =
-            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE>(&mut self.data_file, ids_to_parse)
-                .await?;
+            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE>(&mut self.data_file, ids_to_parse).await?;
 
         let updated_pages = vec![parsed_pages, created_pages]
             .into_iter()

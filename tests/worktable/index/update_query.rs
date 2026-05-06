@@ -1,6 +1,6 @@
 use crate::worktable::index::{
-    Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable,
-    TwoAttrByThirdQuery, UniqueTwoAttrByThirdQuery,
+    Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable, TwoAttrByThirdQuery,
+    UniqueTwoAttrByThirdQuery,
 };
 use worktable::prelude::SelectQueryExecutor;
 
@@ -80,17 +80,11 @@ async fn update_with_reinsert_and_secondary_unique_violation() {
             .is_err()
     );
 
-    assert_eq!(
-        test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
-        row1
-    );
+    assert_eq!(test_table.select_by_attr1(row1.attr1.clone()).unwrap(), row1);
     assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
     assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
 
-    assert_eq!(
-        test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
-        row2
-    );
+    assert_eq!(test_table.select_by_attr1(row2.attr1.clone()).unwrap(), row2);
     assert_eq!(test_table.select_by_attr2(row2.attr2).unwrap(), row2);
     assert_eq!(test_table.select_by_attr3(row2.attr3).unwrap(), row2);
 }
@@ -126,17 +120,11 @@ async fn update_with_secondary_unique_violation() {
             .is_err()
     );
 
-    assert_eq!(
-        test_table.select_by_attr1(row1.attr1.clone()).unwrap(),
-        row1
-    );
+    assert_eq!(test_table.select_by_attr1(row1.attr1.clone()).unwrap(), row1);
     assert_eq!(test_table.select_by_attr2(row1.attr2).unwrap(), row1);
     assert_eq!(test_table.select_by_attr3(row1.attr3).unwrap(), row1);
 
-    assert_eq!(
-        test_table.select_by_attr1(row2.attr1.clone()).unwrap(),
-        row2
-    );
+    assert_eq!(test_table.select_by_attr1(row2.attr1.clone()).unwrap(), row2);
     assert_eq!(test_table.select_by_attr2(row2.attr2).unwrap(), row2);
     assert_eq!(test_table.select_by_attr3(row2.attr3).unwrap(), row2);
 }
@@ -173,10 +161,7 @@ async fn update_two_via_query_non_unique_indexes() {
         .unwrap();
 
     // Check old idx removed
-    let updated = test_table
-        .select_by_attr1(attr1_old.clone())
-        .execute()
-        .unwrap();
+    let updated = test_table.select_by_attr1(attr1_old.clone()).execute().unwrap();
     assert!(updated.is_empty());
     let updated = test_table.select_by_attr2(attr2_old).execute().unwrap();
     assert!(updated.is_empty());

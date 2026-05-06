@@ -41,7 +41,13 @@ impl PersistGenerator {
     }
 }
 
-pub fn expand(name: proc_macro2::Ident, columns: crate::common::model::Columns, queries: Option<Queries>, config: Option<Config>, version: u32) -> syn::Result<proc_macro2::TokenStream> {
+pub fn expand(
+    name: proc_macro2::Ident,
+    columns: crate::common::model::Columns,
+    queries: Option<Queries>,
+    config: Option<Config>,
+    version: u32,
+) -> syn::Result<proc_macro2::TokenStream> {
     let mut generator = PersistGenerator::new(name, columns, version);
     if let Some(q) = queries {
         generator.set_queries(q);

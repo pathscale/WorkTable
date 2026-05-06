@@ -3,26 +3,14 @@ use quote::quote;
 use syn::{Data, DeriveInput, Fields, Result, Type};
 
 fn gen_heap_size_body(data: &Data) -> Result<TokenStream> {
-    gen_mem_fn_body(
-        data,
-        quote! { heap_size() },
-        quote! { std::mem::size_of::<Self>() },
-    )
+    gen_mem_fn_body(data, quote! { heap_size() }, quote! { std::mem::size_of::<Self>() })
 }
 
 fn gen_used_size_body(data: &Data) -> Result<TokenStream> {
-    gen_mem_fn_body(
-        data,
-        quote! { used_size() },
-        quote! { std::mem::size_of::<Self>() },
-    )
+    gen_mem_fn_body(data, quote! { used_size() }, quote! { std::mem::size_of::<Self>() })
 }
 
-fn gen_mem_fn_body(
-    data: &Data,
-    method: TokenStream,
-    default_for_copy: TokenStream,
-) -> Result<TokenStream> {
+fn gen_mem_fn_body(data: &Data, method: TokenStream, default_for_copy: TokenStream) -> Result<TokenStream> {
     match data {
         Data::Struct(data_struct) => {
             let fields = match &data_struct.fields {
@@ -69,10 +57,7 @@ fn gen_mem_fn_body(
                             .map(|i| syn::Ident::new(&format!("f{i}"), variant.ident.span()))
                             .collect();
 
-                        let calls = bindings
-                            .iter()
-                            .map(|b| quote! { #b.#method })
-                            .collect::<Vec<_>>();
+                        let calls = bindings.iter().map(|b| quote! { #b.#method }).collect::<Vec<_>>();
                         quote! {
                             Self::#name(#(#bindings),*) => {
                                 0 #(+ #calls)*
@@ -80,16 +65,9 @@ fn gen_mem_fn_body(
                         }
                     }
                     Fields::Named(fields) => {
-                        let bindings: Vec<_> = fields
-                            .named
-                            .iter()
-                            .map(|f| f.ident.as_ref().unwrap())
-                            .collect();
+                        let bindings: Vec<_> = fields.named.iter().map(|f| f.ident.as_ref().unwrap()).collect();
 
-                        let calls = bindings
-                            .iter()
-                            .map(|b| quote! { #b.#method })
-                            .collect::<Vec<_>>();
+                        let calls = bindings.iter().map(|b| quote! { #b.#method }).collect::<Vec<_>>();
                         quote! {
                             Self::#name { #(#bindings),* } => {
                                 0 #(+ #calls)*

@@ -21,9 +21,7 @@ use crate::prelude::{OffsetEqLink, TablePrimaryKey};
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
-use crate::{
-    AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-};
+use crate::{AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
 use async_trait::async_trait;
 use ordered_float::OrderedFloat;
 use rkyv::api::high::HighDeserializer;
@@ -85,15 +83,12 @@ where
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
         + Clone
-        + for<'a> Serialize<
-            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        > + Debug,
-    <Row as StorableRow>::WrappedRow: Archive
-        + for<'a> Serialize<
-            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        >,
-    <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
-        + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>
+        + Debug,
+    <Row as StorableRow>::WrappedRow:
+        Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+    <<Row as StorableRow>::WrappedRow as Archive>::Archived:
+        ArchivedRowWrapper + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
     AvailableIndexes: Debug + AvailableIndex,
@@ -127,9 +122,7 @@ where
         // to avoid some rewrites of ops that used link from empty links registry
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        per_page_info.sort_by(|l, r| {
-            OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio))
-        });
+        per_page_info.sort_by(|l, r| OrderedFloat(l.filled_empty_ratio).cmp(&OrderedFloat(r.filled_empty_ratio)));
         let initial_bytes_freed: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
         let additional_allocated_page = self.data_pages.allocate_new_or_pop_free();
 
@@ -172,9 +165,9 @@ where
                         // from was not moved but to have NO space
                         continue;
                     }
-                    (false, false) => unreachable!(
-                        "at least one of two situations should appear to break from while cycle"
-                    ),
+                    (false, false) => {
+                        unreachable!("at least one of two situations should appear to break from while cycle")
+                    }
                 }
             }
             registry.remove_link_for_page(page_from);
@@ -197,22 +190,13 @@ where
     }
 
     fn free_page(&self, page_id: PageId) {
-        let p = self
-            .data_pages
-            .get_page(page_id)
-            .expect("should exist as called");
+        let p = self.data_pages.get_page(page_id).expect("should exist as called");
         p.reset()
     }
 
     async fn move_data_from(&self, from: PageId, to: PageId) -> (bool, bool) {
-        let to_page = self
-            .data_pages
-            .get_page(to)
-            .expect("should exist as link exists");
-        let from_page = self
-            .data_pages
-            .get_page(from)
-            .expect("should exist as link exists");
+        let to_page = self.data_pages.get_page(to).expect("should exist as link exists");
+        let from_page = self.data_pages.get_page(from).expect("should exist as link exists");
         let to_free_space = to_page.free_space();
 
         let page_start = OffsetEqLink::<_>(Link {
@@ -227,10 +211,7 @@ where
             length: 0,
         });
 
-        let mut range = self
-            .primary_index
-            .reverse_pk_map
-            .range(page_start..page_end);
+        let mut range = self.primary_index.reverse_pk_map.range(page_start..page_end);
         let mut sum_links_len = 0;
         let mut links = vec![];
         let mut from_page_will_be_moved = false;
@@ -362,16 +343,14 @@ where
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
         + Clone
-        + for<'a> Serialize<
-            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        > + Debug,
+        + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>
+        + Debug,
     <Row as StorableRow>::WrappedRow: Archive
-        + for<'a> Serialize<
-            Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-        > + Send
+        + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>
+        + Send
         + Sync,
-    <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
-        + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+    <<Row as StorableRow>::WrappedRow as Archive>::Archived:
+        ArchivedRowWrapper + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>
         + Send
@@ -715,10 +694,7 @@ mod tests {
             new_ids.insert(id, row);
         }
 
-        for (id, expected) in original_ids
-            .into_iter()
-            .filter(|(i, _)| !ids_to_delete.contains(i))
-        {
+        for (id, expected) in original_ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
             let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
@@ -787,10 +763,7 @@ mod tests {
         let vacuum = create_vacuum(&table);
         vacuum.defragment().await;
 
-        for (id, expected) in ids
-            .into_iter()
-            .filter(|(id, _)| !ids_to_delete.contains(id))
-        {
+        for (id, expected) in ids.into_iter().filter(|(id, _)| !ids_to_delete.contains(id)) {
             let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
@@ -855,10 +828,7 @@ mod tests {
 
         assert!(!table.0.data.get_empty_pages().is_empty());
 
-        for (id, expected) in ids
-            .into_iter()
-            .filter(|(id, _)| !ids_to_delete.contains(id))
-        {
+        for (id, expected) in ids.into_iter().filter(|(id, _)| !ids_to_delete.contains(id)) {
             let row = table.select(id);
             assert_eq!(row, Some(expected));
         }

@@ -1,5 +1,5 @@
 use proc_macro2::{Ident, TokenStream};
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 
 use super::parser::MigrationEngineInput;
 
@@ -7,10 +7,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
     let migration = &input.migration;
     let current_table = &input.current;
     let ctx_type = &input.ctx;
-    let engine_name = Ident::new(
-        &format!("{}Engine", input.migration),
-        input.migration.span(),
-    );
+    let engine_name = Ident::new(&format!("{}Engine", input.migration), input.migration.span());
 
     let table_name_snake = input.name_generator.get_dir_name();
     let table_name_lit = proc_macro2::Literal::string(&table_name_snake);
@@ -24,10 +21,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
     let current_version: u32 = sorted_versions.last().map(|v| v + 1).unwrap_or(1);
 
     let version_fns = input.version_tables.iter().map(|(version, table_path)| {
-        let fn_name = Ident::new(
-            &format!("migrate_v{}", version),
-            current_table.span(),
-        );
+        let fn_name = Ident::new(&format!("migrate_v{}", version), current_table.span());
 
         // Build the migration chain from this version to current
         let chain_steps = build_chain_steps(
@@ -111,10 +105,7 @@ fn build_chain_steps(
     current_row: &syn::Path,
     version_tables: &std::collections::BTreeMap<u32, syn::Path>,
 ) -> TokenStream {
-    let start_idx = sorted_versions
-        .iter()
-        .position(|v| *v == start_version)
-        .unwrap_or(0);
+    let start_idx = sorted_versions.iter().position(|v| *v == start_version).unwrap_or(0);
     let total = sorted_versions.len();
 
     let span = start_table

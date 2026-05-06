@@ -24,19 +24,16 @@ impl Parser {
                 ));
             }
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         self.parse_colon()?;
 
         let mut queries = Queries::default();
-        let ops = self.input_iter.next().ok_or(syn::Error::new(
-            self.input.span(),
-            "Expected operation declarations",
-        ))?;
+        let ops = self
+            .input_iter
+            .next()
+            .ok_or(syn::Error::new(self.input.span(), "Expected operation declarations"))?;
         if let TokenTree::Group(ops) = ops {
             let mut parser = Parser::new(ops.stream());
             while let Some(ident) = parser.peek_next() {
@@ -57,10 +54,7 @@ impl Parser {
                 }
             }
         } else {
-            return Err(syn::Error::new(
-                ops.span(),
-                "Expected operation declarations",
-            ));
+            return Err(syn::Error::new(ops.span(), "Expected operation declarations"));
         };
 
         self.try_parse_comma()?;

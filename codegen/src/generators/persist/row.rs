@@ -24,10 +24,7 @@ impl PersistGenerator {
         let ident = name_generator.get_row_type_ident();
         let primary_key_ident = name_generator.get_primary_key_type_ident();
 
-        let primary_key = self
-            .pk
-            .clone()
-            .expect("should be set in `Generator` at this point");
+        let primary_key = self.pk.clone().expect("should be set in `Generator` at this point");
         let primary_key_columns_clone = if primary_key.values.len() == 1 {
             let pk_field = primary_key
                 .values
@@ -72,14 +69,13 @@ impl PersistGenerator {
             rows[*pos] = quote! {pub #i: #type_,}
         }
 
-        let custom_derives =
-            if let Some(custom_derives) = &self.config.as_ref().map(|c| &c.row_derives) {
-                quote! {
-                    #[derive(#(#custom_derives),*)]
-                }
-            } else {
-                quote! {}
-            };
+        let custom_derives = if let Some(custom_derives) = &self.config.as_ref().map(|c| &c.row_derives) {
+            quote! {
+                #[derive(#(#custom_derives),*)]
+            }
+        } else {
+            quote! {}
+        };
 
         quote! {
             #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq, MemStat)]
@@ -116,10 +112,7 @@ impl PersistGenerator {
             .columns_map
             .keys()
             .map(|name| {
-                let name_pascal = Ident::new(
-                    name.to_string().to_case(Case::Pascal).as_str(),
-                    Span::mixed_site(),
-                );
+                let name_pascal = Ident::new(name.to_string().to_case(Case::Pascal).as_str(), Span::mixed_site());
                 quote! { #name_pascal, }
             })
             .collect();

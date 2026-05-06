@@ -335,10 +335,7 @@ async fn test_update_many_strings_by_unique() {
         exchange: "bigger test to test string update".to_string(),
         some_string: "some bigger some to test".to_string(),
     };
-    table
-        .update_exchange_and_some_by_test(row, 1)
-        .await
-        .unwrap();
+    table.update_exchange_and_some_by_test(row, 1).await.unwrap();
 
     let row = table.select_by_test(1).unwrap();
 
@@ -420,10 +417,7 @@ async fn test_update_many_strings_by_non_unique() {
         exchange: "bigger test to test string update".to_string(),
         some_string: "some bigger some to test".to_string(),
     };
-    table
-        .update_exchange_and_some_by_another(row, 1)
-        .await
-        .unwrap();
+    table.update_exchange_and_some_by_another(row, 1).await.unwrap();
 
     let all = table.select_all().execute().unwrap();
 
@@ -653,10 +647,7 @@ async fn update_parallel_more_strings_more_threads() {
                 .unwrap();
             {
                 let mut guard = shared_t_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
         }
     });
@@ -751,19 +742,13 @@ async fn update_parallel_more_strings_with_select_non_unique() {
                 .unwrap();
             {
                 let mut guard = shared_t_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
         }
     });
     for _ in 0..20_000 {
         let val = fastrand::u8(0..100);
-        let vals = table
-            .select_by_exchange(format!("test_{val}"))
-            .execute()
-            .unwrap();
+        let vals = table.select_by_exchange(format!("test_{val}")).execute().unwrap();
         for v in vals {
             assert_eq!(v.exchange, format!("test_{val}"))
         }
@@ -828,10 +813,7 @@ async fn delete_parallel() {
     });
     for _ in 0..5_000 {
         let val = fastrand::u8(0..100);
-        let vals = table
-            .select_by_exchange(format!("test_{val}"))
-            .execute()
-            .unwrap();
+        let vals = table.select_by_exchange(format!("test_{val}")).execute().unwrap();
         for v in vals {
             assert_eq!(v.exchange, format!("test_{val}"))
         }
@@ -899,10 +881,7 @@ async fn update_parallel_more_strings_with_select_unique() {
                 .unwrap();
             {
                 let mut guard = shared_t_state.lock();
-                guard
-                    .entry(id_to_update)
-                    .and_modify(|v| *v = val)
-                    .or_insert(val);
+                guard.entry(id_to_update).and_modify(|v| *v = val).or_insert(val);
             }
         }
     });

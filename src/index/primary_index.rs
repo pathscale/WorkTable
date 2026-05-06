@@ -12,7 +12,7 @@ use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 
 use crate::util::OffsetEqLink;
-use crate::{convert_change_events, IndexMap, TableIndex, TableIndexCdc};
+use crate::{IndexMap, TableIndex, TableIndexCdc, convert_change_events};
 
 /// Combined storage for primary and reverse indexes.
 ///
@@ -32,8 +32,7 @@ pub struct PrimaryIndex<
     pub reverse_pk_map: IndexMap<OffsetEqLink<DATA_LENGTH>, PrimaryKey>,
 }
 
-impl<PrimaryKey, const DATA_LENGTH: usize, PkNodeType> Default
-    for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>
+impl<PrimaryKey, const DATA_LENGTH: usize, PkNodeType> Default for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>
 where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
     PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
@@ -83,11 +82,7 @@ where
     PrimaryKey: Debug + Eq + Hash + Clone + Send + Ord,
     PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
 {
-    fn insert_cdc(
-        &self,
-        value: PrimaryKey,
-        link: Link,
-    ) -> (Option<Link>, Vec<ChangeEvent<Pair<PrimaryKey, Link>>>) {
+    fn insert_cdc(&self, value: PrimaryKey, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<PrimaryKey, Link>>>) {
         let offset_link = OffsetEqLink(link);
         let (res, evs) = self.pk_map.insert_cdc(value.clone(), offset_link);
         let res_link = res.map(|l| l.0);
@@ -99,11 +94,7 @@ where
         (res_link, convert_change_events(evs))
     }
 
-    fn insert_checked_cdc(
-        &self,
-        value: PrimaryKey,
-        link: Link,
-    ) -> Option<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
+    fn insert_checked_cdc(&self, value: PrimaryKey, link: Link) -> Option<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
         let offset_link = OffsetEqLink(link);
         let res = self.pk_map.checked_insert_cdc(value.clone(), offset_link);
 
@@ -119,10 +110,7 @@ where
         &self,
         value: PrimaryKey,
         _: Link,
-    ) -> (
-        Option<(PrimaryKey, Link)>,
-        Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
-    ) {
+    ) -> (Option<(PrimaryKey, Link)>, Vec<ChangeEvent<Pair<PrimaryKey, Link>>>) {
         let (res, evs) = self.pk_map.remove_cdc(&value);
 
         if let Some((pk, old_link)) = res {
@@ -142,8 +130,7 @@ mod tests {
 
     const TEST_DATA_LENGTH: usize = 4096;
 
-    type TestPrimaryIndex =
-        PrimaryIndex<u64, { TEST_DATA_LENGTH }, Vec<Pair<u64, OffsetEqLink<TEST_DATA_LENGTH>>>>;
+    type TestPrimaryIndex = PrimaryIndex<u64, { TEST_DATA_LENGTH }, Vec<Pair<u64, OffsetEqLink<TEST_DATA_LENGTH>>>>;
 
     #[test]
     fn test_default_creates_empty_indexes() {
@@ -165,10 +152,7 @@ mod tests {
 
         assert_eq!(index.pk_map.get(&42).map(|v| v.get().value.0), Some(link));
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link)).map(|v| v.get().value),
             Some(42)
         );
     }
@@ -193,10 +177,7 @@ mod tests {
         assert_eq!(old, Some(link1));
         assert_eq!(index.pk_map.get(&42).map(|v| v.get().value.0), Some(link2));
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link2))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link2)).map(|v| v.get().value),
             Some(42)
         );
         assert!(index.reverse_pk_map.get(&OffsetEqLink(link1)).is_none());
@@ -216,10 +197,7 @@ mod tests {
 
         assert_eq!(index.pk_map.get(&42).map(|v| v.get().value.0), Some(link));
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link)).map(|v| v.get().value),
             Some(42)
         );
     }
@@ -289,10 +267,7 @@ mod tests {
         assert_eq!(old_link, None);
         assert_eq!(index.pk_map.get(&42).map(|v| v.get().value.0), Some(link));
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link)).map(|v| v.get().value),
             Some(42)
         );
     }
@@ -318,10 +293,7 @@ mod tests {
         assert_eq!(index.pk_map.get(&42).map(|v| v.get().value.0), Some(link2));
         assert!(index.reverse_pk_map.get(&OffsetEqLink(link1)).is_none());
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link2))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link2)).map(|v| v.get().value),
             Some(42)
         );
     }
@@ -421,24 +393,15 @@ mod tests {
         assert_eq!(index.pk_map.get(&3).map(|v| v.get().value.0), Some(link3));
 
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link1))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link1)).map(|v| v.get().value),
             Some(1)
         );
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link2))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link2)).map(|v| v.get().value),
             Some(2)
         );
         assert_eq!(
-            index
-                .reverse_pk_map
-                .get(&OffsetEqLink(link3))
-                .map(|v| v.get().value),
+            index.reverse_pk_map.get(&OffsetEqLink(link3)).map(|v| v.get().value),
             Some(3)
         );
     }
@@ -454,10 +417,7 @@ mod tests {
 
         index.insert(42, link);
 
-        let pk = index
-            .reverse_pk_map
-            .get(&OffsetEqLink(link))
-            .map(|v| v.get().value);
+        let pk = index.reverse_pk_map.get(&OffsetEqLink(link)).map(|v| v.get().value);
         assert_eq!(pk, Some(42));
     }
 }

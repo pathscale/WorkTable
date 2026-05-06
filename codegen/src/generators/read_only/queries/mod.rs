@@ -1,2 +1,2 @@
-pub mod r#type;
 mod select;
+pub mod r#type;

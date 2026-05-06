@@ -138,11 +138,7 @@ impl ReadOnlyGenerator {
         let avt_type_ident = name_generator.get_available_indexes_ident();
 
         let indexes = self.columns.indexes.values().map(|i| {
-            let camel_case_name = i
-                .name
-                .to_string()
-                .from_case(Case::Snake)
-                .to_case(Case::Pascal);
+            let camel_case_name = i.name.to_string().from_case(Case::Snake).to_case(Case::Pascal);
             let i: TokenStream = camel_case_name.parse().unwrap();
             quote! {
                 #i,

@@ -24,10 +24,7 @@ impl ReadOnlyGenerator {
         let ident = name_generator.get_row_type_ident();
         let primary_key_ident = name_generator.get_primary_key_type_ident();
 
-        let primary_key = self
-            .pk
-            .clone()
-            .expect("should be set in `Generator` at this point");
+        let primary_key = self.pk.clone().expect("should be set in `Generator` at this point");
         let primary_key_columns_clone = if primary_key.values.len() == 1 {
             let pk_field = primary_key
                 .values
@@ -106,10 +103,7 @@ impl ReadOnlyGenerator {
             .columns_map
             .keys()
             .map(|name| {
-                let name_pascal = Ident::new(
-                    name.to_string().to_case(Case::Pascal).as_str(),
-                    Span::mixed_site(),
-                );
+                let name_pascal = Ident::new(name.to_string().to_case(Case::Pascal).as_str(), Span::mixed_site());
                 quote! { #name_pascal, }
             })
             .collect();

@@ -1,9 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use crate::common::model::Operation;
 use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::persist::PersistGenerator;
-use crate::common::model::Operation;
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span};
 use std::collections::HashMap;
@@ -33,10 +33,7 @@ impl PersistGenerator {
         let defs = in_place_queries
             .iter()
             .map(|(name, op)| {
-                let snake_case_name = name
-                    .to_string()
-                    .from_case(Case::Pascal)
-                    .to_case(Case::Snake);
+                let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
                 let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
                 if let Some(index) = index {
                     let _index_name = &index.name;
@@ -58,8 +55,7 @@ impl PersistGenerator {
     fn gen_primary_key_in_place(&self, snake_case_name: String, columns: &[Ident]) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_type = name_generator.get_primary_key_type_ident();
-        let lock_ident =
-            WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
+        let lock_ident = WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
 
         let method_ident = Ident::new(
             format!("update_{snake_case_name}_in_place").as_str(),

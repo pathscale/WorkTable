@@ -8,9 +8,8 @@ use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
-    AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow,
-    TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
-    convert_change_events, in_memory,
+    AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
+    TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, convert_change_events, in_memory,
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
@@ -145,25 +144,15 @@ where
     }
 
     /// Selects `Row` from table identified with provided primary key. Returns `None` if no value presented.
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "WorkTable")
-    )]
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]
     pub fn select(&self, pk: PrimaryKey) -> Option<Row>
     where
         LockType: 'static,
-        Row: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link: Option<Link> = self
-            .primary_index
-            .pk_map
-            .get(&pk)
-            .map(|v| v.get().value.into());
+        let link: Option<Link> = self.primary_index.pk_map.get(&pk).map(|v| v.get().value.into());
         if let Some(link) = link {
             self.data.select_non_ghosted(link).ok()
         } else {
@@ -171,21 +160,14 @@ where
         }
     }
 
-    #[cfg_attr(
-        feature = "perf_measurements",
-        performance_measurement(prefix_name = "WorkTable")
-    )]
+    #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]
     pub fn insert(&self, row: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
             + Clone
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
@@ -194,28 +176,17 @@ where
         LockType: 'static,
     {
         let pk = row.get_primary_key().clone();
-        let link = self
-            .data
-            .insert(row.clone())
-            .map_err(WorkTableError::PagesError)?;
-        if self
-            .primary_index
-            .insert_checked(pk.clone(), link)
-            .is_none()
-        {
+        let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
+        if self.primary_index.insert_checked(pk.clone(), link).is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::AlreadyExists("Primary".to_string()));
         };
         if let Err(e) = self.indexes.save_row(row.clone(), link) {
             return match e {
-                IndexError::AlreadyExists {
-                    at,
-                    inserted_already,
-                } => {
+                IndexError::AlreadyExists { at, inserted_already } => {
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
                     self.primary_index.remove(&pk, link);
-                    self.indexes
-                        .delete_from_indexes(row, link, inserted_already)?;
+                    self.indexes.delete_from_indexes(row, link, inserted_already)?;
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
@@ -242,13 +213,9 @@ where
     where
         Row: Archive
             + Clone
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
@@ -270,20 +237,14 @@ where
             if let Err(e) = self.data.delete(link) {
                 return (None, Err(WorkTableError::PagesError(e)));
             }
-            return (
-                None,
-                Err(WorkTableError::AlreadyExists("Primary".to_string())),
-            );
+            return (None, Err(WorkTableError::AlreadyExists("Primary".to_string())));
         };
         let primary_key_events = convert_change_events(primary_key_events);
 
         let (secondary_events, indexes_res) = self.indexes.save_row_cdc(row.clone(), link);
         if let Err(e) = indexes_res {
             let (ack_op, error) = match e {
-                IndexError::AlreadyExists {
-                    at,
-                    inserted_already,
-                } => {
+                IndexError::AlreadyExists { at, inserted_already } => {
                     let (_, rollback_pk_events) = self.primary_index.remove_cdc(pk.clone(), link);
                     let rollback_pk_events = convert_change_events(rollback_pk_events);
 
@@ -370,13 +331,9 @@ where
     where
         Row: Archive
             + Clone
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
@@ -394,10 +351,7 @@ where
             .get(&pk)
             .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
-        let new_link = self
-            .data
-            .insert(row_new.clone())
-            .map_err(WorkTableError::PagesError)?;
+        let new_link = self.data.insert(row_new.clone()).map_err(WorkTableError::PagesError)?;
         unsafe {
             self.data
                 .with_mut_ref(new_link, |r| r.unghost())
@@ -405,30 +359,20 @@ where
         }
         self.primary_index.insert(pk.clone(), new_link);
 
-        let indexes_res = self
-            .indexes
-            .reinsert_row(row_old, old_link, row_new.clone(), new_link);
+        let indexes_res = self.indexes.reinsert_row(row_old, old_link, row_new.clone(), new_link);
         if let Err(e) = indexes_res {
             return match e {
-                IndexError::AlreadyExists {
-                    at,
-                    inserted_already,
-                } => {
+                IndexError::AlreadyExists { at, inserted_already } => {
                     self.primary_index.insert(pk.clone(), old_link);
-                    self.indexes
-                        .delete_from_indexes(row_new, new_link, inserted_already)?;
-                    self.data
-                        .delete(new_link)
-                        .map_err(WorkTableError::PagesError)?;
+                    self.indexes.delete_from_indexes(row_new, new_link, inserted_already)?;
+                    self.data.delete(new_link).map_err(WorkTableError::PagesError)?;
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
                 IndexError::NotFound => Err(WorkTableError::NotFound),
             };
         }
-        self.data
-            .delete(old_link)
-            .map_err(WorkTableError::PagesError)?;
+        self.data.delete(old_link).map_err(WorkTableError::PagesError)?;
         Ok(pk)
     }
 
@@ -444,13 +388,9 @@ where
     where
         Row: Archive
             + Clone
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
-        <Row as StorableRow>::WrappedRow: Archive
-            + for<'a> Serialize<
-                Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>,
-            >,
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         PrimaryKey: Clone,
         SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
@@ -494,13 +434,9 @@ where
 
         if let Err(e) = indexes_res {
             let (ack_op, error) = match e {
-                IndexError::AlreadyExists {
-                    at,
-                    inserted_already,
-                } => {
+                IndexError::AlreadyExists { at, inserted_already } => {
                     // Rollback: generate CDC events for restoring old link in primary index
-                    let (_, rollback_pk_events) =
-                        self.primary_index.insert_cdc(pk.clone(), old_link);
+                    let (_, rollback_pk_events) = self.primary_index.insert_cdc(pk.clone(), old_link);
                     let rollback_pk_events = convert_change_events(rollback_pk_events);
 
                     // Rollback: generate CDC events for cleaning up new secondary indexes

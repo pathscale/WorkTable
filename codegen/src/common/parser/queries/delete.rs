@@ -17,26 +17,20 @@ impl Parser {
                 return Err(syn::Error::new(ident.span(), "Expected `delete` field"));
             }
         } else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         self.parse_colon()?;
 
-        let ops = self.input_iter.next().ok_or(syn::Error::new(
-            self.input.span(),
-            "Expected operation declarations",
-        ))?;
+        let ops = self
+            .input_iter
+            .next()
+            .ok_or(syn::Error::new(self.input.span(), "Expected operation declarations"))?;
         if let TokenTree::Group(ops) = ops {
             let mut parser = Parser::new(ops.stream());
             parser.parse_operations()
         } else {
-            Err(syn::Error::new(
-                ops.span(),
-                "Expected operation declarations",
-            ))
+            Err(syn::Error::new(ops.span(), "Expected operation declarations"))
         }
     }
 }
@@ -60,9 +54,7 @@ mod tests {
         let ops = parser.parse_updates().unwrap();
 
         assert_eq!(ops.len(), 2);
-        let op = ops
-            .get(&Ident::new("TestQuery", Span::mixed_site()))
-            .unwrap();
+        let op = ops.get(&Ident::new("TestQuery", Span::mixed_site())).unwrap();
 
         assert_eq!(op.name, "TestQuery");
         assert_eq!(op.columns.len(), 2);

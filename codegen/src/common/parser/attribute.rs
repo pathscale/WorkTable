@@ -10,10 +10,7 @@ impl Parser {
             return Ok(false);
         };
         let TokenTree::Ident(ident) = ident else {
-            return Err(syn::Error::new(
-                ident.span(),
-                "Expected field name identifier.",
-            ));
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
         if ident.to_string().as_str() == "persist" {
