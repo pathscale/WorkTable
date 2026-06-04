@@ -36,12 +36,13 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
         quote! {
             async fn #fn_name(
                 source_path: &str,
-                target: &#current_table,
+                target: &mut #current_table,
                 ctx: &#ctx_type,
             ) -> eyre::Result<()> {
                 let config = DiskConfig::new_with_table_name(source_path, #table_name_lit, #version);
                 let engine = ReadOnlyPersistenceEngine::create(config).await?;
                 let source = #table_path::load(engine).await?;
+                target.0.pk_gen = worktable::prelude::PrimaryKeyGeneratorState::from_state(source.pk_gen_state());
 
                 let rows = source.select_all().execute()?;
                 for row in rows {
@@ -57,7 +58,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
     let match_arms = input.version_tables.keys().map(|version| {
         let fn_name = Ident::new(&format!("migrate_v{}", version), current_table.span());
         quote! {
-            #version => Self::#fn_name(source_path, &target, ctx).await?,
+            #version => Self::#fn_name(source_path, &mut target, ctx).await?,
         }
     });
 
@@ -77,7 +78,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
 
                 let target_config = DiskConfig::new_with_table_name(target_path, #table_name_lit, #current_version);
                 let target_engine = #persistence_engine::new(target_config).await?;
-                let target = #current_table::new(target_engine).await?;
+                let mut target = #current_table::new(target_engine).await?;
 
                 match version {
                     #( #match_arms )*

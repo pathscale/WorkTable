@@ -20,6 +20,7 @@ impl PersistGenerator {
         let reinsert_fn = self.gen_table_reinsert_fn();
         let upsert_fn = self.gen_table_upsert_fn();
         let get_next_fn = self.gen_table_get_next_fn();
+        let pk_gen_state_fn = self.gen_table_pk_gen_state_fn();
         let iter_with_fn = self.gen_table_iter_with_fn();
         let iter_with_async_fn = self.gen_table_iter_with_async_fn();
         let count_fn = self.gen_table_count_fn();
@@ -38,6 +39,7 @@ impl PersistGenerator {
                 #upsert_fn
                 #count_fn
                 #get_next_fn
+                #pk_gen_state_fn
                 #iter_with_fn
                 #iter_with_async_fn
                 #system_info_fn
@@ -275,6 +277,17 @@ impl PersistGenerator {
             }
             GeneratorType::None => {
                 quote! {}
+            }
+        }
+    }
+
+    fn gen_table_pk_gen_state_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+
+        quote! {
+            pub fn pk_gen_state(&self) -> <<#primary_key_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State {
+                self.0.pk_gen.get_state()
             }
         }
     }

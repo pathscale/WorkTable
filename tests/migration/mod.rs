@@ -242,6 +242,108 @@ fn test_migrate_v2_to_current() {
     });
 }
 
+#[test]
+fn test_next_pk_and_indexes_after_migration() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        let src = "tests/data/migration/next_pk_after_migration";
+        let dst = "tests/data/migration/next_pk_after_migration/dst";
+        remove_dir_if_exists(src.to_string()).await;
+
+        {
+            let config = DiskConfig::new_with_table_name(
+                src,
+                v2::UserWorkTable::name_snake_case(),
+                v2::UserWorkTable::version(),
+            );
+            let engine = v2::UserPersistenceEngine::new(config).await.unwrap();
+            let table = v2::UserWorkTable::load(engine).await.unwrap();
+
+            table
+                .insert(v2::UserRow {
+                    id: table.get_next_pk().into(),
+                    name: "Eve".to_string(),
+                    email: "eve@test.com".to_string(),
+                })
+                .unwrap();
+            table
+                .insert(v2::UserRow {
+                    id: table.get_next_pk().into(),
+                    name: "Frank".to_string(),
+                    email: "frank@test.com".to_string(),
+                })
+                .unwrap();
+
+            table.wait_for_ops().await;
+        }
+
+        let ctx = UserMigrationContext {
+            default_email: "unknown@example.com".to_string(),
+            default_created_at: chrono::Utc::now().timestamp() as u64,
+        };
+
+        let report = UserMigrationEngine::migrate(src, dst, &ctx).await.unwrap();
+        assert_eq!(report.source_version, v2::UserWorkTable::version());
+
+        let inserted = {
+            let config =
+                DiskConfig::new_with_table_name(dst, UserWorkTable::name_snake_case(), UserWorkTable::version());
+            let engine = UserPersistenceEngine::new(config).await.unwrap();
+            let table = UserWorkTable::load(engine).await.unwrap();
+
+            let next_pk = table.get_next_pk();
+            assert_eq!(next_pk, 2_u64.into());
+
+            let inserted = UserRow {
+                id: next_pk.into(),
+                name: "Grace".to_string(),
+                email: "grace@test.com".to_string(),
+                created_at: ctx.default_created_at + 1,
+            };
+
+            table.insert(inserted.clone()).unwrap();
+            table.wait_for_ops().await;
+
+            assert_eq!(table.count(), 3);
+            assert_eq!(table.select(inserted.id), Some(inserted.clone()));
+
+            let by_name = table.select_by_name(inserted.name.clone()).execute().unwrap();
+            assert_eq!(by_name, vec![inserted.clone()]);
+
+            let by_name_range = table
+                .select_by_name_range(inserted.name.clone()..=inserted.name.clone())
+                .execute()
+                .unwrap();
+            assert_eq!(by_name_range, vec![inserted.clone()]);
+
+            let by_pk_range = table.select_by_pk_range(inserted.id..=inserted.id).execute().unwrap();
+            assert_eq!(by_pk_range, vec![inserted.clone()]);
+
+            inserted
+        };
+
+        {
+            let config =
+                DiskConfig::new_with_table_name(dst, UserWorkTable::name_snake_case(), UserWorkTable::version());
+            let engine = UserPersistenceEngine::new(config).await.unwrap();
+            let table = UserWorkTable::load(engine).await.unwrap();
+
+            assert_eq!(table.count(), 3);
+            assert_eq!(table.select(inserted.id), Some(inserted.clone()));
+            assert_eq!(
+                table.select_by_name(inserted.name.clone()).execute().unwrap(),
+                vec![inserted.clone()]
+            );
+        }
+    });
+}
+
 /// Nonexistent source returns an error
 #[test]
 fn test_nonexistent_source_error() {
