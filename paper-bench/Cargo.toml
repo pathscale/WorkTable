@@ -1,0 +1,17 @@
+[package]
+name = "wt-paper-bench"
+version = "0.1.0"
+edition = "2024"
+
+# Opt out of the parent WorkTable workspace
+[workspace]
+
+[dependencies]
+worktable = { path = ".." }
+tokio = { version = "1", features = ["full"] }
+parking_lot = "0.12"
+dashmap = "6"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
