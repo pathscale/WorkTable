@@ -103,31 +103,17 @@ impl PersistGenerator {
 
         quote! {
             let lock_id = self.0.lock_manager.next_id();
-            if let Some(lock) = self.0.lock_manager.get(&pk) {
-                let mut lock_guard = lock.write().await;
-                #[allow(clippy::mutable_key_type)]
-                let (locks, op_lock) = lock_guard.lock(lock_id);
-                drop(lock_guard);
-                futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
-
-                op_lock
-            } else {
-                #[allow(clippy::mutable_key_type)]
-                let (lock, op_lock) = #lock_ident::with_lock(lock_id);
-                let lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
-                let mut guard = lock.write().await;
-                if let Some(old_lock) = self.0.lock_manager.insert(pk.clone(), lock.clone()) {
-                    let mut old_lock_guard = old_lock.write().await;
-                    #[allow(clippy::mutable_key_type)]
-                    let locks = guard.merge(&mut *old_lock_guard);
-                    drop(old_lock_guard);
-                    drop(guard);
-
-                    futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
-                }
-
-                op_lock
-            }
+            // Same atomic acquire as the per-column path: see LockMap::get_or_insert_with.
+            let lock = self
+                .0
+                .lock_manager
+                .get_or_insert_with(pk.clone(), #lock_ident::new);
+            let mut lock_guard = lock.write().await;
+            #[allow(clippy::mutable_key_type)]
+            let (locks, op_lock) = lock_guard.lock(lock_id);
+            drop(lock_guard);
+            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            op_lock
         }
     }
 
@@ -137,31 +123,21 @@ impl PersistGenerator {
 
         quote! {
             let lock_id = self.0.lock_manager.next_id();
-            if let Some(lock) = self.0.lock_manager.get(&pk) {
-                let mut lock_guard = lock.write().await;
-                #[allow(clippy::mutable_key_type)]
-                let (locks, op_lock) = lock_guard.#ident(lock_id);
-                drop(lock_guard);
-                futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
-                op_lock
-            } else {
-                let mut lock = #lock_ident::new();
-                #[allow(clippy::mutable_key_type)]
-                let (_, op_lock) = lock.#ident(lock_id);
-                let lock = std::sync::Arc::new(tokio::sync::RwLock::new(lock));
-                let mut guard = lock.write().await;
-                if let Some(old_lock) = self.0.lock_manager.insert(pk.clone(), lock.clone()) {
-                    let mut old_lock_guard = old_lock.write().await;
-                    #[allow(clippy::mutable_key_type)]
-                    let locks = guard.merge(&mut *old_lock_guard);
-                    drop(old_lock_guard);
-                    drop(guard);
-
-                    futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
-                }
-
-                op_lock
-            }
+            // One atomic acquire, no check-then-act. Splitting this into `get`
+            // then `insert` let two tasks both miss, both build a lock and both
+            // enter the row: the loser merged into the winner's lock, but the
+            // winner had already registered its operation on a lock that was no
+            // longer the map's, so it never waited for the loser.
+            let lock = self
+                .0
+                .lock_manager
+                .get_or_insert_with(pk.clone(), #lock_ident::new);
+            let mut lock_guard = lock.write().await;
+            #[allow(clippy::mutable_key_type)]
+            let (locks, op_lock) = lock_guard.#ident(lock_id);
+            drop(lock_guard);
+            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            op_lock
         }
     }
 }
