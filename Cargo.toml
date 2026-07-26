@@ -33,7 +33,6 @@ futures = "0.3.30"
 indexset = { version = "=0.16.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }
-lockfree = { version = "0.5.1" }
 log = "0.4.29"
 ordered-float = "5.0.0"
 parking_lot = "0.12.3"

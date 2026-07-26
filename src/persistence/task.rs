@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::time::Duration;
 
 use data_bucket::page::PageId;
+use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::Notify;
 use worktable_codegen::worktable;
 
@@ -271,7 +272,11 @@ where
 
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
-    queue: lockfree::queue::Queue<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+    // Not `lockfree::queue::Queue`: its `Removable::empty` materializes the
+    // element type via `mem::uninitialized`, which aborts at runtime for
+    // `Operation` layouts that reject uninit bytes. The queue has a single
+    // consumer (the engine task), so a mutexed deque is uncontended here.
+    queue: ParkingMutex<VecDeque<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>>,
     notify: Notify,
     len: Arc<AtomicU16>,
 }
@@ -279,7 +284,7 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     pub fn new() -> Self {
         Self {
-            queue: lockfree::queue::Queue::new(),
+            queue: ParkingMutex::new(VecDeque::new()),
             notify: Notify::new(),
             len: Arc::new(AtomicU16::new(0)),
         }
@@ -287,14 +292,14 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
 
     pub fn push(&self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) {
         self.len.fetch_add(1, Ordering::Release);
-        self.queue.push(value);
+        self.queue.lock().push_back(value);
         self.notify.notify_one();
     }
 
     pub async fn pop(&self) -> Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
         loop {
             // Drain values
-            if let Some(value) = self.queue.pop() {
+            if let Some(value) = self.queue.lock().pop_front() {
                 self.len.fetch_sub(1, Ordering::Release);
                 return value;
             }
@@ -305,7 +310,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     }
 
     pub fn immediate_pop(&self) -> Option<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
-        if let Some(v) = self.queue.pop() {
+        if let Some(v) = self.queue.lock().pop_front() {
             self.len.fetch_sub(1, Ordering::Release);
             Some(v)
         } else {
@@ -314,10 +319,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     }
 
     pub fn pop_iter(&self) -> impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
-        let iter_count = self.len.clone();
-        self.queue.pop_iter().inspect(move |_| {
-            iter_count.fetch_sub(1, Ordering::Release);
-        })
+        std::iter::from_fn(|| self.immediate_pop())
     }
 
     pub fn len(&self) -> usize {
