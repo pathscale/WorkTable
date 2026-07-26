@@ -449,7 +449,7 @@ impl InMemoryGenerator {
             pub async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
             where #pk_ident: From<Pk>
             {
-                let pk = pk.into();
+                let pk: #pk_ident = pk.into();
                 let op_lock = { #custom_lock };
                 let _guard = LockGuard::new(
                     op_lock,
