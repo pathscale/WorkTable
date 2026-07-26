@@ -4,6 +4,7 @@ use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
+use crate::common::model::Index;
 use crate::common::model::Operation;
 use crate::common::name_generator::{WorktableNameGenerator, is_float};
 use crate::generators::in_memory::InMemoryGenerator;
@@ -148,7 +149,7 @@ impl InMemoryGenerator {
                     if index.is_unique {
                         Self::gen_unique_delete(type_, &method_ident, index_name)
                     } else {
-                        Self::gen_non_unique_delete(type_, &method_ident, index_name)
+                        Self::gen_non_unique_delete(type_, &method_ident, index)
                     }
                 } else {
                     Self::gen_brute_force_delete_field(&op.by, type_, &method_ident)
@@ -180,7 +181,9 @@ impl InMemoryGenerator {
         }
     }
 
-    fn gen_non_unique_delete(type_: &TokenStream, name: &Ident, index: &Ident) -> TokenStream {
+    fn gen_non_unique_delete(type_: &TokenStream, name: &Ident, index: &Index) -> TokenStream {
+        let by_field = &index.field;
+        let index = &index.name;
         let by = if is_float(type_.to_string().as_str()) {
             quote! {
                 &OrderedFloat(by)
@@ -192,10 +195,46 @@ impl InMemoryGenerator {
         };
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
-                let rows_to_update = self.0.indexes.#index.get(#by).map(|kv| kv.1).collect::<Vec<_>>();
-                for link in rows_to_update {
-                    let row = self.0.data.select_non_ghosted(link.0).map_err(WorkTableError::PagesError)?;
-                    self.delete(row.get_primary_key()).await?;
+                // Snapshot the matching rows as validated primary keys before
+                // deleting anything. Storage links are not stable identities:
+                // a concurrent delete can free a slot and an insert can reuse
+                // it for an unrelated row before this loop runs, so resolving
+                // a stale link later could delete the wrong row. Every
+                // candidate is resolved and checked against the predicate at
+                // snapshot time; a reused slot only stays in the set if the
+                // row now living there genuinely matches. Keys are sorted for
+                // a deterministic delete order (non-unique indexes iterate
+                // equal keys in random-discriminator order) and the per-row
+                // delete takes its own row lock and resolves by primary key,
+                // never through the snapshotted link.
+                let mut pks: Vec<_> = Vec::new();
+                for link in self.0.indexes.#index.get(#by).map(|kv| kv.1.0) {
+                    match self.0.data.select_non_ghosted(link) {
+                        core::result::Result::Ok(r) => {
+                            if r.#by_field == by {
+                                pks.push(r.get_primary_key());
+                            }
+                        }
+                        // The row vanished between the index read and the
+                        // resolve; it is simply not part of the snapshot.
+                        core::result::Result::Err(e) if e.is_row_absent() => {}
+                        // Anything else (corrupt page, invalid link, ...) is a
+                        // real storage error, not an empty snapshot slot.
+                        core::result::Result::Err(e) => {
+                            return core::result::Result::Err(WorkTableError::PagesError(e));
+                        }
+                    }
+                }
+                pks.sort_unstable();
+                pks.dedup();
+                for pk in pks {
+                    match self.delete(pk).await {
+                        core::result::Result::Ok(()) => {}
+                        // Deleted concurrently after the snapshot: the goal
+                        // state for this row is already reached.
+                        core::result::Result::Err(WorkTableError::NotFound) => {}
+                        core::result::Result::Err(e) => return core::result::Result::Err(e),
+                    }
                 }
                 core::result::Result::Ok(())
             }
