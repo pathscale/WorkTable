@@ -273,31 +273,15 @@ where
 
     async fn full_row_lock(&self, pk: &PrimaryKey) -> Arc<Lock> {
         let lock_id = self.lock_manager.next_id();
-        if let Some(lock) = self.lock_manager.get(pk) {
-            let mut lock_guard = lock.write().await;
-            #[allow(clippy::mutable_key_type)]
-            let (locks, op_lock) = lock_guard.lock(lock_id);
-            drop(lock_guard);
-            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+        // One atomic acquire, no check-then-act: see LockMap::get_or_insert_with.
+        let lock = self.lock_manager.get_or_insert_with(pk.clone(), LockType::new);
+        let mut lock_guard = lock.write().await;
+        #[allow(clippy::mutable_key_type)]
+        let (locks, op_lock) = lock_guard.lock(lock_id);
+        drop(lock_guard);
+        futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
 
-            op_lock
-        } else {
-            #[allow(clippy::mutable_key_type)]
-            let (lock, op_lock) = LockType::with_lock(lock_id);
-            let lock = Arc::new(tokio::sync::RwLock::new(lock));
-            let mut guard = lock.write().await;
-            if let Some(old_lock) = self.lock_manager.insert(pk.clone(), lock.clone()) {
-                let mut old_lock_guard = old_lock.write().await;
-                #[allow(clippy::mutable_key_type)]
-                let locks = guard.merge(&mut *old_lock_guard);
-                drop(old_lock_guard);
-                drop(guard);
-
-                futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
-            }
-
-            op_lock
-        }
+        op_lock
     }
 
     fn update_index_after_move(&self, pk: PrimaryKey, old_link: Link, new_link: Link) {
