@@ -2,6 +2,7 @@ use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable::worktable;
 
+mod bulk_load_stall;
 mod concurrent;
 mod failure;
 mod index_page;
