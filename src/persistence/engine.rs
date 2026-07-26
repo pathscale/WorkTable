@@ -143,6 +143,9 @@ where
             }
             Operation::Update(update) => {
                 self.data.save_data(update.link, update.bytes.as_ref()).await?;
+                for event in update.primary_key_events {
+                    self.primary_index.process_change_event(event).await?;
+                }
                 self.secondary_indexes
                     .process_change_events(update.secondary_keys_events)
                     .await

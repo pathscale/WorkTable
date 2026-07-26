@@ -15,6 +15,7 @@ use crate::persistence::PersistenceEngine;
 use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery};
 use crate::prelude::*;
 use crate::util::OptimizedVec;
+use crate::vacuum::VacuumPersistence;
 
 worktable! (
     name: QueueInner,
@@ -327,6 +328,30 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     }
 }
 
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> VacuumPersistence<PrimaryKey, SecondaryKeys>
+    for Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>
+where
+    PrimaryKeyGenState: Send,
+    PrimaryKey: Send,
+    SecondaryKeys: Send,
+{
+    fn apply_move(
+        &self,
+        bytes: Vec<u8>,
+        new_link: Link,
+        primary_key_events: Vec<IndexChangeEvent<IndexPair<PrimaryKey, Link>>>,
+        secondary_keys_events: SecondaryKeys,
+    ) {
+        self.push(Operation::Update(UpdateOperation {
+            id: OperationId::Single(uuid::Uuid::now_v7()),
+            primary_key_events,
+            secondary_keys_events,
+            bytes,
+            link: new_link,
+        }));
+    }
+}
+
 #[derive(Debug)]
 pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
     #[allow(dead_code)]
@@ -343,6 +368,17 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
     pub fn apply_operation(&self, op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) {
         self.queue.push(op);
+    }
+
+    /// Returns a sink that lets vacuum queue persistence operations for row
+    /// moves into this task's operation queue.
+    pub fn vacuum_sink(&self) -> Arc<dyn VacuumPersistence<PrimaryKey, SecondaryKeys>>
+    where
+        PrimaryKeyGenState: Send + Sync + 'static,
+        PrimaryKey: Send + Sync + 'static,
+        SecondaryKeys: Send + Sync + 'static,
+    {
+        self.queue.clone()
     }
 
     pub fn run_engine<E>(mut engine: E) -> Self

@@ -9,6 +9,7 @@ mod read;
 mod space_index;
 mod sync;
 mod toc;
+mod vacuum;
 
 #[cfg(feature = "s3-support")]
 mod s3;
