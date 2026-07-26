@@ -170,16 +170,53 @@ where
 
         let (pk_evs, secondary_evs) = batch_op.get_indexes_evs()?;
         {
+            let data = &mut self.data;
+            let primary_index = &mut self.primary_index;
+            let secondary_indexes = &mut self.secondary_indexes;
             let mut futs = FuturesUnordered::new();
-            futs.push(Either::Left(Either::Right(self.data.save_batch_data(batch_data_op))));
-            futs.push(Either::Left(Either::Left(
-                self.primary_index.process_change_event_batch(pk_evs),
-            )));
-            futs.push(Either::Right(
-                self.secondary_indexes.process_change_event_batch(secondary_evs),
-            ));
+            futs.push(Either::Left(Either::Right(async move {
+                data.save_batch_data(batch_data_op)
+                    .await
+                    .map_err(|e| e.wrap_err("batch data write"))
+            })));
+            futs.push(Either::Left(Either::Left(async move {
+                primary_index
+                    .process_change_event_batch(pk_evs)
+                    .await
+                    .map_err(|e| e.wrap_err("primary index batch apply"))
+            })));
+            futs.push(Either::Right(async move {
+                secondary_indexes
+                    .process_change_event_batch(secondary_evs)
+                    .await
+                    .map_err(|e| e.wrap_err("secondary index batch apply"))
+            }));
 
-            while (futs.next().await).is_some() {}
+            // Drain every future before surfacing errors: `?` on the first
+            // failure would drop the FuturesUnordered and cancel the remaining
+            // sub-operations at arbitrary await points, leaving e.g. a data
+            // page half-written while its index events were abandoned. These
+            // futures are not cancellation-safe, so let all started work run
+            // to completion. Every failed component is reported (each error is
+            // wrapped with its component name above); a mixed outcome means
+            // the durable state may already be inconsistent, and knowing WHICH
+            // parts failed is what an operator needs.
+            let mut errors: Vec<eyre::Report> = Vec::new();
+            while let Some(res) = futs.next().await {
+                if let Err(e) = res {
+                    errors.push(e);
+                }
+            }
+            if errors.len() == 1 {
+                return Err(errors.pop().expect("len checked"));
+            }
+            if !errors.is_empty() {
+                let summary = errors.iter().map(|e| format!("{e:#}")).collect::<Vec<_>>().join("; ");
+                return Err(eyre::eyre!(
+                    "batch apply failed in {} sub-operations: {summary}",
+                    errors.len()
+                ));
+            }
         }
 
         if let Some(pk_gen_state_update) = batch_op.get_pk_gen_state()? {
