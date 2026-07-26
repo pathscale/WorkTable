@@ -63,6 +63,9 @@ impl ReadOnlyGenerator {
 
         quote! {
             impl RowLock for #lock_ident {
+                fn new() -> Self {
+                    #lock_ident::new()
+                }
                 #is_locked_fn
                 #lock_fn
                 #with_lock_fn
