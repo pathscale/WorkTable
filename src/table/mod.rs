@@ -179,7 +179,7 @@ where
         let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
         if self.primary_index.insert_checked(pk.clone(), link).is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
-            return Err(WorkTableError::AlreadyExists("Primary".to_string()));
+            return Err(WorkTableError::PrimaryAlreadyExists);
         };
         if let Err(e) = self.indexes.save_row(row.clone(), link) {
             return match e {
@@ -237,7 +237,7 @@ where
             if let Err(e) = self.data.delete(link) {
                 return (None, Err(WorkTableError::PagesError(e)));
             }
-            return (None, Err(WorkTableError::AlreadyExists("Primary".to_string())));
+            return (None, Err(WorkTableError::PrimaryAlreadyExists));
         };
         let primary_key_events = convert_change_events(primary_key_events);
 
@@ -516,6 +516,8 @@ pub enum WorkTableError {
     NotFound,
     #[display("Value already exists for `{}` index", _0)]
     AlreadyExists(#[error(not(source))] String),
+    #[display("Row with this primary key already exists")]
+    PrimaryAlreadyExists,
     SerializeError,
     SecondaryIndexError,
     PrimaryUpdateTry,

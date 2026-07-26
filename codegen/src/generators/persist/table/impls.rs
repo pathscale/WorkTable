@@ -244,21 +244,63 @@ impl PersistGenerator {
         let row_type = name_generator.get_row_type_ident();
 
         quote! {
+            /// Inserts the row if its primary key is absent, updates it
+            /// otherwise.
+            ///
+            /// Concurrency: **system-wide lock-free, not wait-free per call.**
+            /// A retry is only taken when a concurrent delete or insert
+            /// flipped this key's existence between the existence check and
+            /// the operation, so some operation on this key completes on
+            /// every iteration -- but under sustained adversarial churn on
+            /// the same key an individual call can retry indefinitely. There
+            /// is deliberately no retry limit: upsert is semantically
+            /// infallible for primary-key conflicts, and a limit would trade
+            /// theoretical starvation for real spurious errors. Each
+            /// conflicting round yields to the scheduler before retrying so
+            /// the interfering task can complete.
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
-                let need_to_update = {
-                    if let Some(link) = self.0.primary_index.pk_map.get(&pk) {
-                        true
+                loop {
+                    let need_to_update = self.0.primary_index.pk_map.get(&pk).is_some();
+                    if need_to_update {
+                        match self.update(row.clone()).await {
+                            core::result::Result::Ok(_) => return core::result::Result::Ok(()),
+                            // Row was deleted concurrently between the check and the
+                            // update; retry as an insert.
+                            core::result::Result::Err(WorkTableError::NotFound) => {
+                                tokio::task::yield_now().await;
+                                continue;
+                            }
+                            // Row is mid-flight: a concurrent insert publishes
+                            // the primary-key entry before unghosting the row
+                            // data (and insert takes no row lock), and a
+                            // concurrent delete ghosts data it is about to
+                            // unindex. Both are transient; retry.
+                            core::result::Result::Err(WorkTableError::PagesError(e)) if e.is_row_absent() => {
+                                tokio::task::yield_now().await;
+                                continue;
+                            }
+                            core::result::Result::Err(e) => return core::result::Result::Err(e),
+                        }
                     } else {
-                        false
+                        match self.insert(row.clone()) {
+                            core::result::Result::Ok(_) => return core::result::Result::Ok(()),
+                            // Row was inserted concurrently between the check and the
+                            // insert; retry as an update. Secondary-index conflicts are
+                            // real errors and are propagated. Progress is lock-free,
+                            // not wait-free: a retry is only taken when a concurrent
+                            // delete/insert flipped this key's existence between the
+                            // check and the operation, so the system as a whole makes
+                            // progress on every retry, but this call can in principle
+                            // retry unboundedly under sustained same-key churn.
+                            core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) => {
+                                tokio::task::yield_now().await;
+                                continue;
+                            }
+                            core::result::Result::Err(e) => return core::result::Result::Err(e),
+                        }
                     }
-                };
-                if need_to_update {
-                    self.update(row).await?;
-                } else {
-                    self.insert(row)?;
                 }
-                core::result::Result::Ok(())
             }
         }
     }

@@ -12,6 +12,7 @@ mod nid;
 mod option;
 mod tuple_primary_key;
 mod unsized_;
+mod upsert;
 mod uuid;
 mod vacuum;
 mod with_enum;

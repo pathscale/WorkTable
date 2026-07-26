@@ -448,6 +448,17 @@ impl ExecutionError {
     pub fn is_vacuumed(&self) -> bool {
         matches!(self, Self::Vacuumed)
     }
+
+    /// True when the error means "no row lives at this link (any more)" —
+    /// the row was deleted, ghosted, vacuumed away, or its page is gone.
+    /// Snapshot-building code skips such candidates; every other variant is
+    /// a real storage error and must propagate.
+    pub fn is_row_absent(&self) -> bool {
+        matches!(
+            self,
+            Self::Ghosted | Self::Deleted | Self::Vacuumed | Self::PageNotFound(_)
+        )
+    }
 }
 
 #[cfg(test)]
