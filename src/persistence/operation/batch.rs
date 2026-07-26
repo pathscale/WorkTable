@@ -246,22 +246,24 @@ where
                 && !id.is_next_for(last_ids.primary_id)
                 && last_ids.primary_id != IndexChangeEventId::default()
             {
-                let mut possibly_valid = false;
-                if id.inner().overflowing_sub(last_ids.primary_id.inner()).0 == 2 {
-                    // TODO: for split sometimes this happens
-                    let ev = prepared_evs.primary_evs.first().unwrap();
-                    if let ChangeEvent::SplitNode { .. } = ev {
-                        possibly_valid = true
-                    }
-                    if attempts > 8 {
-                        possibly_valid = true
-                    }
+                // Change events are positional (InsertAt/RemoveAt carry node
+                // indices), so a stream with a missing id must never be applied:
+                // the disk index would apply later events against node state the
+                // missing event was supposed to produce. Always defer. A gap is
+                // transient (the op carrying the missing event has not been
+                // batched yet) unless an event was discarded after its id was
+                // assigned — only non-CDC index mutations do that — so a gap
+                // that persists is a bug upstream of the analyzer; report it
+                // loudly instead of force-applying and corrupting the file.
+                if attempts > 8 {
+                    tracing::error!(
+                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?}                          (attempt {attempts}); an event id was likely consumed without its event being queued",
+                        last_ids.primary_id,
+                        id,
+                    );
                 }
-
-                if !possibly_valid {
-                    self.ops.extend(ops_to_remove);
-                    return Ok(None);
-                }
+                self.ops.extend(ops_to_remove);
+                return Ok(None);
             }
             let secondary_first = prepared_evs.secondary_evs.first_evs();
             for (index, id) in secondary_first {
@@ -272,19 +274,16 @@ where
                     && !id.is_next_for(*last)
                     && *last != IndexChangeEventId::default()
                 {
-                    let mut possibly_valid = false;
-                    if id.inner().overflowing_sub(last.inner()).0 == 2 {
-                        // TODO: for split sometimes this happens
-                        possibly_valid = prepared_evs.secondary_evs.is_first_ev_is_split(index);
-                        if attempts > 8 {
-                            possibly_valid = true
-                        }
+                    // Same rule as the primary index above: never apply a gapped
+                    // stream, defer until the missing event arrives, and report
+                    // a persistent gap as the bug it is.
+                    if attempts > 8 {
+                        tracing::error!(
+                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?},                              next available {id:?} (attempt {attempts}); an event id was likely consumed without                              its event being queued",
+                        );
                     }
-
-                    if !possibly_valid {
-                        self.ops.extend(ops_to_remove);
-                        return Ok(None);
-                    }
+                    self.ops.extend(ops_to_remove);
+                    return Ok(None);
                 }
             }
         }
