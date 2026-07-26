@@ -144,7 +144,7 @@ impl InMemoryGenerator {
                 .updates
                 .values()
                 .map(|op| {
-                    let ident = Ident::new(format!("{}By", &op.name).as_str(), Span::mixed_site());
+                    let ident = Ident::new(format!("{}By", op.name).as_str(), Span::mixed_site());
                     let field_type = self
                         .columns
                         .columns_map
