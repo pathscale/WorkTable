@@ -442,7 +442,7 @@ impl PersistGenerator {
                     std::sync::Arc::clone(&self.0.lock_manager),
                     std::sync::Arc::clone(&self.0.primary_index),
                     std::sync::Arc::clone(&self.0.indexes),
-                ))
+                ).with_persistence(self.1.vacuum_sink()))
             }
         }
     }

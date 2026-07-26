@@ -46,7 +46,7 @@ pub mod prelude {
         AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PrimaryIndex, TableIndex,
         TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
         TableSecondaryIndexInfo, UnsizedNode, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
-        vacuum::WorkTableVacuum,
+        vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

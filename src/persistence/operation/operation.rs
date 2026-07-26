@@ -11,7 +11,7 @@ use crate::persistence::{OperationId, OperationType};
 #[derive(Clone, Debug)]
 pub enum Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     Insert(InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>),
-    Update(UpdateOperation<SecondaryKeys>),
+    Update(UpdateOperation<PrimaryKey, SecondaryKeys>),
     Delete(DeleteOperation<PrimaryKey, SecondaryKeys>),
     Acknowledge(AcknowledgeOperation<PrimaryKey, SecondaryKeys>),
 }
@@ -72,7 +72,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
     pub fn primary_key_events(&self) -> Option<&Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
         match &self {
             Operation::Insert(insert) => Some(&insert.primary_key_events),
-            Operation::Update(_) => None,
+            Operation::Update(update) => Some(&update.primary_key_events),
             Operation::Delete(delete) => Some(&delete.primary_key_events),
             Operation::Acknowledge(ack) => Some(&ack.primary_key_events),
         }
@@ -120,8 +120,9 @@ pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 }
 
 #[derive(Clone, Debug)]
-pub struct UpdateOperation<SecondaryKeys> {
+pub struct UpdateOperation<PrimaryKey, SecondaryKeys> {
     pub id: OperationId,
+    pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
     pub bytes: Vec<u8>,
     pub link: Link,

@@ -18,15 +18,18 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::lock::{Lock, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
+use crate::vacuum::VacuumPersistence;
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
-use crate::{AvailableIndex, PrimaryIndex, TableIndex, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc};
+use crate::{
+    AvailableIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
+};
 use async_trait::async_trait;
 use ordered_float::OrderedFloat;
 use rkyv::api::high::HighDeserializer;
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct EmptyDataVacuum<
     Row,
     PrimaryKey,
@@ -50,6 +53,11 @@ pub struct EmptyDataVacuum<
 
     primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
     secondary_indexes: Arc<SecondaryIndexes>,
+
+    /// Persistence sink for row moves. `None` for in-memory tables; persisted
+    /// tables must set it so index updates go through CDC and reach disk.
+    #[debug(ignore)]
+    persistence: Option<Arc<dyn VacuumPersistence<PrimaryKey, SecondaryEvents>>>,
 
     phantom_data: PhantomData<(SecondaryEvents, AvailableTypes, AvailableIndexes)>,
 }
@@ -108,8 +116,17 @@ where
             lock_manager,
             primary_index,
             secondary_indexes,
+            persistence: None,
             phantom_data: PhantomData,
         }
+    }
+
+    /// Attaches a persistence sink. Index updates for moved rows then use the
+    /// CDC mutation variants and their events are queued as persistence
+    /// operations. Required for persisted tables.
+    pub fn with_persistence(mut self, sink: Arc<dyn VacuumPersistence<PrimaryKey, SecondaryEvents>>) -> Self {
+        self.persistence = Some(sink);
+        self
     }
 
     async fn defragment(&self) -> VacuumStats {
@@ -262,7 +279,7 @@ where
             let new_link = to_page
                 .save_raw_row(&raw_data)
                 .expect("page is not full as checked on links collection");
-            self.update_index_after_move(pk.clone(), from_link.0, new_link);
+            self.update_index_after_move(pk.clone(), from_link.0, new_link, raw_data);
 
             lock.unlock();
             self.lock_manager.remove_with_lock_check(&pk);
@@ -284,16 +301,28 @@ where
         op_lock
     }
 
-    fn update_index_after_move(&self, pk: PrimaryKey, old_link: Link, new_link: Link) {
+    fn update_index_after_move(&self, pk: PrimaryKey, old_link: Link, new_link: Link, raw_data: Vec<u8>) {
         let row = self
             .data_pages
             .select(new_link)
             .expect("should exist as link was moved correctly");
 
-        self.secondary_indexes
-            .reinsert_row(row.clone(), old_link, row, new_link)
-            .expect("should be ok as index were no violated");
-        self.primary_index.insert(pk.clone(), new_link);
+        if let Some(persistence) = &self.persistence {
+            // Persisted table: mutate indexes through the CDC variants and queue
+            // the events with the moved bytes, so the on-disk state follows the
+            // move and the event-id stream stays gapless.
+            let (secondary_keys_events, res) =
+                self.secondary_indexes
+                    .reinsert_row_cdc(row.clone(), old_link, row, new_link);
+            res.expect("should be ok as index were no violated");
+            let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
+            persistence.apply_move(raw_data, new_link, primary_key_events, secondary_keys_events);
+        } else {
+            self.secondary_indexes
+                .reinsert_row(row.clone(), old_link, row, new_link)
+                .expect("should be ok as index were no violated");
+            self.primary_index.insert(pk.clone(), new_link);
+        }
     }
 }
 

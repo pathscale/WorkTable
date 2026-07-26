@@ -270,6 +270,7 @@ impl InMemoryGenerator {
                     #secondary_events_ident
                 > = Operation::Update(UpdateOperation {
                     id: op_id,
+                    primary_key_events: vec![],
                     secondary_keys_events,
                     bytes: updated_bytes,
                     link,
