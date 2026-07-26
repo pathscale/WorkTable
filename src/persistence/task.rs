@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use data_bucket::page::PageId;
@@ -279,7 +279,10 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // consumer (the engine task), so a mutexed deque is uncontended here.
     queue: ParkingMutex<VecDeque<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>>,
     notify: Notify,
-    len: Arc<AtomicU16>,
+    // usize, not u16: the queue is unbounded and a 16-bit counter wraps at
+    // 65_536 queued operations, making the wait triggers see an "empty"
+    // queue that still holds work.
+    len: Arc<AtomicUsize>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
@@ -287,7 +290,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
         Self {
             queue: ParkingMutex::new(VecDeque::new()),
             notify: Notify::new(),
-            len: Arc::new(AtomicU16::new(0)),
+            len: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -297,12 +300,24 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
         self.notify.notify_one();
     }
 
-    pub async fn pop(&self) -> Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    /// Pops the next operation, marking `in_progress` `true` before the queue
+    /// length is decremented. The store must precede `len.fetch_sub` so that a
+    /// waiter that reads `len() == 0` (`Acquire`) is guaranteed to observe
+    /// `in_progress == true` for the popped-but-unprocessed operation;
+    /// otherwise `wait_for_ops` can return while that operation is in flight.
+    pub async fn pop_marking_in_progress(
+        &self,
+        in_progress: &AtomicBool,
+    ) -> Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
         loop {
             // Drain values
-            if let Some(value) = self.queue.lock().pop_front() {
-                self.len.fetch_sub(1, Ordering::Release);
-                return value;
+            {
+                let mut queue = self.queue.lock();
+                if let Some(value) = queue.pop_front() {
+                    in_progress.store(true, Ordering::Release);
+                    self.len.fetch_sub(1, Ordering::Release);
+                    return value;
+                }
             }
 
             // Wait for values to be available
@@ -324,7 +339,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     }
 
     pub fn len(&self) -> usize {
-        self.len.load(Ordering::Acquire) as usize
+        self.len.load(Ordering::Acquire)
     }
 }
 
@@ -354,13 +369,41 @@ where
 
 #[derive(Debug)]
 pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
-    #[allow(dead_code)]
     engine_task_handle: tokio::task::AbortHandle,
     queue: Arc<Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     analyzer_inner_wt: Arc<QueueInnerWorkTable>,
     analyzer_in_progress: Arc<AtomicBool>,
     progress_notify: Arc<Notify>,
     phantom_data: PhantomData<AvailableIndexes>,
+}
+
+impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
+    for PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
+{
+    /// Aborts the engine task so it cannot outlive the table it persists.
+    /// Without this the detached task keeps running on the runtime after the
+    /// table is dropped, and a re-opened table can read the same files while
+    /// the old engine is still writing them.
+    ///
+    /// The abort only happens when the engine is provably idle (queue and
+    /// analyzer empty, no operation in flight) — that is the normal state
+    /// after `wait_for_ops`, and an idle task is parked at the queue pop, an
+    /// await point where cancellation is clean. Aborting a *busy* engine
+    /// would cancel persistence futures that are not cancellation-safe (a
+    /// data page could be left half-written while its index events are
+    /// abandoned), so a busy engine is left running and reported instead:
+    /// callers must drain with `wait_for_ops` before dropping. A proper
+    /// `close()` lifecycle (drain, join, surface terminal errors) is the
+    /// long-term replacement for this heuristic.
+    fn drop(&mut self) {
+        if self.check_wait_triggers() {
+            self.engine_task_handle.abort();
+        } else {
+            tracing::error!(
+                "PersistenceTask dropped with work in flight; the engine task keeps running detached.                  Call wait_for_ops() before dropping to guarantee a clean shutdown."
+            );
+        }
+    }
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
@@ -404,11 +447,12 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 let op = if let Some(next_op) = engine_queue.immediate_pop() {
                     Some(next_op)
                 } else if analyzer.len() == 0 {
-                    engine_progress_notify.notify_waiters();
                     task_analyzer_in_progress.store(false, Ordering::Release);
-                    let res = Some(engine_queue.pop().await);
-                    task_analyzer_in_progress.store(true, Ordering::Release);
-                    res
+                    engine_progress_notify.notify_waiters();
+                    // The pop sets the flag back to `true` atomically with the
+                    // dequeue, so waiters never observe an empty queue with an
+                    // idle analyzer while an operation is in flight.
+                    Some(engine_queue.pop_marking_in_progress(&task_analyzer_in_progress).await)
                 } else {
                     None
                 };
