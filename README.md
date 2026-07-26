@@ -6,6 +6,10 @@ Embedded table storage for Rust. Declare a table with the `worktable!` macro and
 typed struct with a primary key, secondary indexes and generated queries. Data is held in
 memory as paged, zero-copy records; persistence to local disk or S3 is opt-in.
 
+If you have used .NET's `DataTable`, this will feel familiar: a typed in-memory table
+with a primary key and indexes. The differences are that the type is generated for you
+from a macro, and that persisting it is one feature flag away.
+
 ## Versions
 
 The 0.9 line is in beta. `cargo add worktable` installs the latest **stable** (0.8.x),
@@ -19,12 +23,14 @@ cargo add worktable@0.9.0-beta0.2.3
 
 | | |
 |---|---|
+| **Extreme low latency** | Queries can return at nanosecond scale. |
+| **Embedded optimized** | Very low overhead, built for resource-sensitive environments. |
 | **Typed tables from a macro** | `worktable!` generates the table, row and primary-key types. No hand-written boilerplate per table. |
 | **Primary and secondary indexes** | Autoincrement or supplied primary keys; unique and non-unique secondary indexes, each adding a `select_by_<column>` method. |
 | **Generated queries** | `select`, `insert`, `upsert`, `update`, `delete` and a `select_all` query builder on every table, plus the custom update/delete queries you declare. |
 | **Paged in-memory storage** | Records live in `DataPages` with a free list for reuse. `rkyv` gives zero-copy access to archived rows. |
 | **Concurrency** | Lock-free concurrent indexes with change-data-capture, plus a row-level `LockMap` for ordered access. |
-| **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature syncs that to S3. Both opt-in — a purely in-memory table pays for neither. |
+| **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature syncs that to S3. Both opt-in, so a purely in-memory table pays for neither. |
 | **Schema migration** | `worktable_version!` and `migration_engine!` version a table's schema and generate migrations between versions. |
 | **Memory accounting** | `MemStat` reports actual memory held. |
 
@@ -35,7 +41,7 @@ exported from the crate root; the prelude carries `DiskPersistenceEngine`,
 `ReadOnlyPersistenceEngine`, the space and table-of-contents types, and the operation-log
 types (`InsertOperation`, `UpdateOperation`, `DeleteOperation`, `AcknowledgeOperation`).
 
-S3 support layers *on top of* the disk engine rather than replacing it —
+S3 support layers *on top of* the disk engine rather than replacing it.
 `S3SyncDiskPersistenceEngine` wraps a `DiskPersistenceEngine` and syncs it.
 
 ```toml
@@ -46,13 +52,13 @@ worktable = { version = "0.8", features = ["s3-support"] }   # S3 sync, optional
 ## Relationship to `data_bucket`
 
 WorkTable is built on [`data_bucket`](https://crates.io/crates/data_bucket), which
-provides the page and link primitives its data layout uses — `PageId`, `Link`,
-`INNER_PAGE_SIZE`, `SizeMeasurable`. That is a foundation rather than a swappable
-backend: those types appear throughout the in-memory paging, the indexes, the memory
+provides the page and link primitives its data layout uses: `PageId`, `Link`,
+`INNER_PAGE_SIZE` and `SizeMeasurable`. That is a foundation rather than a swappable
+backend, and those types appear throughout the in-memory paging, the indexes, the memory
 accounting and the on-disk format alike.
 
 WorkTable re-exports it (`pub use data_bucket;`) and pins an exact version. **Take it
-through that re-export rather than depending on it separately** — a second copy in your
+through that re-export rather than depending on it separately.** A second copy in your
 graph gives you two incompatible sets of the same types, and the resulting error names two
 different `data_bucket` paths while looking like something else entirely.
 
@@ -62,8 +68,8 @@ different `data_bucket` paths while looking like something else entirely.
   not a query engine.
 - **You need multi-process access.** Storage is embedded in your process.
 - **You need ACID transactions spanning tables.** Operations are per-table.
-- **You want a proven general-purpose embedded store.** `redb`, `sled` and `fjall` are
-  more mature with far more users.
+- **You want a proven general-purpose embedded store.** There may be better options.
+  Check your exact requirements first.
 
 Reach for WorkTable when you want *typed, indexed, macro-generated* tables in-process,
 with persistence as an option rather than an assumption.
