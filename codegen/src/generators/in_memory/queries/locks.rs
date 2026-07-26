@@ -58,8 +58,16 @@ impl InMemoryGenerator {
 
                 let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
-                let columns = &updates.get(name).as_ref().expect("exists").columns;
-                let lock_fn = Self::gen_rows_lock_fn(columns, lock_ident);
+                let op = updates.get(name).expect("exists");
+                // The lock set covers the updated columns AND the predicate
+                // (`by`) column: multi-row updates re-validate the predicate
+                // under this lock, which is only sound if no concurrent
+                // operation can rewrite that column while it is held.
+                let mut columns = op.columns.clone();
+                if !columns.contains(&op.by) {
+                    columns.push(op.by.clone());
+                }
+                let lock_fn = Self::gen_rows_lock_fn(&columns, lock_ident);
 
                 quote! {
                     #lock_fn

@@ -1,7 +1,7 @@
 use proc_macro2::Literal;
 use std::collections::HashMap;
 
-use crate::common::model::Operation;
+use crate::common::model::{Index, Operation};
 use crate::common::name_generator::{WorktableNameGenerator, is_float};
 use crate::generators::in_memory::InMemoryGenerator;
 use convert_case::{Case, Casing};
@@ -169,7 +169,7 @@ impl InMemoryGenerator {
                         self.gen_non_unique_update(
                             snake_case_name,
                             name,
-                            index_name,
+                            index,
                             idents,
                             indexes_columns.as_ref(),
                             unsized_columns,
@@ -489,11 +489,13 @@ impl InMemoryGenerator {
         &self,
         snake_case_name: String,
         name: &Ident,
-        index: &Ident,
+        index: &Index,
         idents: &[Ident],
         idx_idents: Option<&Vec<Ident>>,
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
+        let by_field = &index.field;
+        let index = &index.name;
         let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
@@ -573,19 +575,55 @@ impl InMemoryGenerator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
-                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
+                // Snapshot the matching rows' primary keys once; the same set
+                // is locked and then processed. Locking one index scan and
+                // processing a fresh second scan would let rows that joined the
+                // range in between be processed without a held lock. The keys
+                // are sorted so concurrent multi-row operations acquire row
+                // locks in one global order (a non-unique index iterates equal
+                // keys in random-discriminator order, which would otherwise
+                // also make the partially-updated subset on a mid-way failure
+                // nondeterministic).
+                let mut pks: Vec<_> = Vec::new();
+                for link in self.0.indexes.#index.get(#by).map(|(_, l)| l.0) {
+                    match self.0.data.select_non_ghosted(link) {
+                        core::result::Result::Ok(r) => pks.push(r.get_primary_key()),
+                        // The row vanished between the index read and the
+                        // resolve; it is simply not part of the snapshot.
+                        core::result::Result::Err(e) if e.is_row_absent() => {}
+                        // Anything else (corrupt page, invalid link, ...) is a
+                        // real storage error, not an empty snapshot slot.
+                        core::result::Result::Err(e) => {
+                            return core::result::Result::Err(WorkTableError::PagesError(e));
+                        }
+                    }
+                }
+                pks.sort_unstable();
+                pks.dedup();
 
                 let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
-                for link in links.iter() {
-                    let pk = self.0.data.select_non_ghosted(*link)?.get_primary_key().clone();
+                for pk in pks.iter() {
+                    let pk = pk.clone();
                     let op_lock = { #custom_lock };
-                    guards.insert(pk.clone(), LockGuard::new(op_lock, self.0.lock_manager.clone(), pk.clone()));
+                    guards.insert(pk.clone(), LockGuard::new(op_lock, self.0.lock_manager.clone(), pk));
                 }
 
-                let links: Vec<_> = self.0.indexes.#index.get(#by).map(|(_, l)| l.0).collect();
                 let op_id = OperationId::Multi(uuid::Uuid::now_v7());
-                for link in links.into_iter() {
-                    let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
+                for pk in pks.into_iter() {
+                    // Re-resolve and re-validate under the held lock. The
+                    // query's lock set includes the predicate column, so the
+                    // value read here cannot be rewritten concurrently while
+                    // the lock is held. Rows deleted or updated out of the
+                    // matched range before their lock was acquired are
+                    // skipped; rows that joined the range after the snapshot
+                    // are not touched.
+                    let link: Link = match self.0.primary_index.pk_map.get(&pk) {
+                        Some(v) => v.get().value.into(),
+                        None => continue,
+                    };
+                    if self.0.data.select_non_ghosted(link)?.#by_field != by {
+                        continue;
+                    }
                     let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
                         .map_err(|_| WorkTableError::SerializeError)?;
 
