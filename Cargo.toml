@@ -8,7 +8,11 @@ edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
 repository = "https://github.com/pathscale/WorkTable"
-description = "WorkTable is in-memory storage"
+description = "Embedded table storage for Rust: declare typed tables with a macro and get primary and secondary indexes, generated queries, and optional on-disk or S3-backed persistence."
+homepage = "https://github.com/pathscale/WorkTable"
+documentation = "https://docs.rs/worktable"
+keywords = ["database", "embedded", "in-memory", "index", "storage"]
+categories = ["database-implementations", "data-structures", "caching"]
 
 [features]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
