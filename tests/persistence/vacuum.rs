@@ -52,10 +52,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             let table = VacuumPersistWorkTable::load(engine).await.unwrap();
 
             // row is ~40 bytes so ~409 rows per page; use multiple pages so
-            // defragment has non-current pages to move rows from. Drain the
-            // persistence queue every 100 rows: unthrottled bulk loads hit a
-            // pre-existing index-space batching bug ("page should be available
-            // in table of contents") that is unrelated to vacuum.
+            // defragment has non-current pages to move rows from.
             for i in 0..1000i64 {
                 let row = VacuumPersistRow {
                     id: table.get_next_pk().into(),
@@ -66,11 +63,6 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                 let id = row.id;
                 table.insert(row.clone()).unwrap();
                 rows.insert(id, row);
-                if i % 100 == 99 {
-                    timeout(Duration::from_secs(30), table.wait_for_ops())
-                        .await
-                        .expect("persistence should keep up with throttled inserts");
-                }
             }
 
             let mut ids: Vec<_> = rows.keys().cloned().collect();

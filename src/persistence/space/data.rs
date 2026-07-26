@@ -131,8 +131,16 @@ where
             .cloned()
             .collect::<Vec<_>>();
 
-        if let Some(max) = ids_to_create.last() {
-            self.last_page_id = *max;
+        // `page_ids` iterates a HashMap, so `ids_to_create` is unordered:
+        // taking `.last()` here picked an arbitrary created page, and a batch
+        // creating several pages could leave `last_page_id` below a page that
+        // now exists. The next batch touching that page would see it as "new"
+        // and re-create it zero-filled, wiping the rows persisted before.
+        if let Some(max) = ids_to_create.iter().max() {
+            // High-water mark: every id in `ids_to_create` is > last_page_id by
+            // construction, but state the monotonic invariant directly so a
+            // future refactor of the filter above cannot regress it.
+            self.last_page_id = self.last_page_id.max(*max);
         }
         let created_pages = ids_to_create
             .into_iter()

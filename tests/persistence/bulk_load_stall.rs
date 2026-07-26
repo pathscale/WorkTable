@@ -24,20 +24,27 @@ worktable!(
     },
 );
 
-/// Reproduction for a pre-existing index-space batching bug: an unthrottled
-/// bulk insert+delete panics the persistence engine task with "page should be
-/// available in table of contents" (src/persistence/space/index/mod.rs /
-/// unsized_.rs, process_change_event_batch), after which wait_for_ops hangs
-/// forever; the timeout below turns that hang into a failure.
+/// Regression test for an index-space batching bug: an unthrottled bulk
+/// insert+delete used to panic the persistence engine task with "page should
+/// be available in table of contents" (process_change_event_batch), after
+/// which wait_for_ops hung forever; the timeout below turns that hang into a
+/// failure.
 ///
-/// The failure is timing/batch-boundary dependent and hits roughly 4 out of 5
-/// runs, so it is ignored in the normal suite. Run it with:
-/// `cargo test --test mod persistence::bulk_load_stall -- --ignored`.
-/// No vacuum is involved; tests/persistence/vacuum.rs throttles its bulk
-/// phases specifically to stay clear of this bug. Once fixed, un-ignore this
-/// test and drop that throttling.
+/// Page-grouped batch collection puts the delete events (ids far ahead of the
+/// batched inserts) into the same batch as the first data page's inserts, so
+/// the prepared event stream has an interior id gap. `validate_events` used to
+/// scan only 30 events back from the end; the 50 contiguous delete events hid
+/// the gap, the batch was applied with the hole, and the on-disk index lost
+/// track of node max transitions carried by the missing events. The scan is
+/// now unbounded, so the tail after the gap is deferred until the missing
+/// events arrive.
+///
+/// The same unthrottled load also used to hit a second bug: a lagging batch
+/// creating several data pages at once picked `last_page_id` from unordered
+/// HashMap keys in `save_batch_data`, so a later batch could re-create an
+/// existing page zero-filled and this test's reload phase read back zeroed
+/// rows. Both fixes are needed for this test to be stable.
 #[test]
-#[ignore = "exposes a known index-space TOC bug; fails ~4/5 runs until it is fixed"]
 fn test_bulk_insert_delete_persistence() {
     let config = DiskConfig::new_with_table_name(
         "tests/data/bulk_load_stall/persisted",
