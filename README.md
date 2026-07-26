@@ -10,13 +10,10 @@ If you have used .NET's `DataTable`, this will feel familiar: a typed in-memory 
 with a primary key and indexes. The differences are that the type is generated for you
 from a macro, and that persisting it is one feature flag away.
 
-## Versions
-
-The 0.9 line is in beta. `cargo add worktable` installs the latest **stable** (0.8.x),
-because Cargo does not resolve pre-releases by default. To use 0.9, ask for it explicitly:
+## Install
 
 ```sh
-cargo add worktable@0.9.0-beta0.2.3
+cargo add worktable
 ```
 
 ## What you get
@@ -46,7 +43,7 @@ S3 support layers *on top of* the disk engine rather than replacing it.
 
 ```toml
 [dependencies]
-worktable = { version = "0.8", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "0.9", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 ## Relationship to `data_bucket`
