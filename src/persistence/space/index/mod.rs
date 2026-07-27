@@ -27,6 +27,7 @@ use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize, rancor};
 use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 
 use crate::persistence::SpaceIndexOps;
 use crate::persistence::space::{BatchChangeEvent, open_or_create_file};
@@ -373,7 +374,13 @@ where
                 max_value: node_id,
                 split_index,
             } => self.process_split_node(node_id, split_index).await,
-        }
+        }?;
+        // The partial page writes above can end with a buffered `write_all`
+        // that `tokio::fs::File` completes on a background blocking task.
+        // Flush before reporting the event processed so the bytes are visible
+        // to any other handle that opens this file afterwards.
+        self.index_file.flush().await?;
+        Ok(())
     }
 
     async fn process_change_event_batch(&mut self, events: BatchChangeEvent<T>) -> eyre::Result<()> {
@@ -490,6 +497,9 @@ where
 
         self.table_of_contents.persist(&mut self.index_file).await?;
         persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
+        // The batch's last page write is a buffered `write_all`; flush so the
+        // batch is visible to other handles once it reports done.
+        self.index_file.flush().await?;
         Ok(())
     }
 }

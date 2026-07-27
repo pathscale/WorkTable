@@ -115,7 +115,12 @@ where
         }
         self.current_data_length += link.length;
         self.update_data_length().await?;
-        update_at::<{ PAGE_SIZE }>(&mut self.data_file, link, bytes).await
+        update_at::<{ PAGE_SIZE }>(&mut self.data_file, link, bytes).await?;
+        // `update_at` ends with a buffered `write_all` that `tokio::fs::File`
+        // completes on a background blocking task. Flush before reporting the
+        // save done so the bytes are visible to any other handle.
+        self.data_file.flush().await?;
+        Ok(())
     }
 
     async fn save_batch_data(&mut self, batch_data: BatchData) -> eyre::Result<()> {
@@ -171,6 +176,9 @@ where
             .collect::<Result<Vec<_>, _>>()?;
 
         persist_pages_batch(updated_pages, &mut self.data_file).await?;
+        // The batch's last page write is a buffered `write_all`; flush so the
+        // batch is visible to other handles once it reports done.
+        self.data_file.flush().await?;
 
         Ok(())
     }
