@@ -356,24 +356,43 @@ impl Generator {
                     .get(i)
                     .expect("should be available as constructed from same values");
 
-                if is_unsized(&ty.to_string()) {
-                    let node = if is_unique {
-                        quote! {
-                            let node = page
-                                .inner
-                                .get_node()
-                                .into_iter()
-                                .map(|p| IndexPair {
-                                    key: p.key,
-                                    value: p.value.into(),
-                                })
-                                .collect();
-                            let node = UnsizedNode::from_inner(node, #const_name);
-                            #i.attach_node(node);
-                        }
-                    } else {
-                        quote! {
-                            let mut inner: Vec<_> = page
+                // Index pages carry entries in event-arrival order, not sorted
+                // order: only bootstrap-written pages happen to be sorted with
+                // the node maximum last, while pages that were incrementally
+                // updated through CDC events are arbitrary. Reconstruction
+                // therefore must sort every page and derive the node maximum
+                // from the sorted entries; assuming "last entry == node id"
+                // registers a wrong maximum in the in-memory node index and
+                // makes every entry above it unreachable.
+                let sort_page_entries = quote! {
+                    inner.sort_by(|a, b| a.key.cmp(&b.key).then_with(|| a.value.cmp(&b.value)));
+                };
+                // For non-unique indexes one key's duplicates can straddle
+                // nodes, and the B-tree invariant (every entry in a node
+                // compares <= that node's registered maximum) only survives
+                // reconstruction if a later node's segment of the same key
+                // compares greater than the previous node's maximum. So nodes
+                // are attached in ascending order of their true maximum and
+                // discriminators keep growing across node boundaries within
+                // one key. Discriminator 0 is reserved for the range infimum
+                // and u64::MAX for the supremum, so numbering starts at 1 and
+                // is capped below the supremum.
+                let multi_reconstruct = |attach: TokenStream| {
+                    quote! {
+                        let mut nodes: Vec<(IndexPair<#ty, OffsetEqLink>, Vec<IndexPair<#ty, OffsetEqLink>>)> = Vec::new();
+                        for page in persisted.#i.1 {
+                            // The persisted node id is the node maximum the
+                            // on-disk table of contents knows this node by.
+                            // The reconstructed node must end with exactly
+                            // this entry: CDC events emitted after the reload
+                            // address nodes by their maximum, and a node whose
+                            // maximum drifted from the TOC key can no longer
+                            // be resolved by the space index.
+                            let node_id = IndexPair {
+                                key: page.inner.node_id.key.clone(),
+                                value: OffsetEqLink(page.inner.node_id.link),
+                            };
+                            let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
                                 .inner
                                 .get_node()
                                 .into_iter()
@@ -382,92 +401,96 @@ impl Generator {
                                     value: OffsetEqLink(p.value),
                                 })
                                 .collect();
-
-                            let node_id = inner.pop();
-
-                            let mut sorted: Vec<_> = inner.into_iter()
-                                .map(|p| IndexMultiPair {
+                            inner.sort_by(|a, b| {
+                                a.key.cmp(&b.key).then_with(|| {
+                                    let a_is_id = a.key == node_id.key && a.value == node_id.value;
+                                    let b_is_id = b.key == node_id.key && b.value == node_id.value;
+                                    a_is_id.cmp(&b_is_id).then_with(|| a.value.cmp(&b.value))
+                                })
+                            });
+                            if !inner.is_empty() {
+                                nodes.push((node_id, inner));
+                            }
+                        }
+                        nodes.sort_by(|(a, _), (b, _)| a.key.cmp(&b.key).then_with(|| a.value.cmp(&b.value)));
+                        let mut prev_key = None;
+                        let mut next_discriminator = 1u64;
+                        for (_, inner) in nodes {
+                            let mut sorted = Vec::with_capacity(inner.len());
+                            for p in inner {
+                                if prev_key.as_ref() != Some(&p.key) {
+                                    prev_key = Some(p.key.clone());
+                                    next_discriminator = 1;
+                                }
+                                sorted.push(IndexMultiPair {
                                     key: p.key,
                                     value: p.value,
-                                    discriminator: 0,
-                                })
-                                .collect();
-                            sorted.sort();
-
-                            let mut current_discriminator = 1u64;
-                            for entry in sorted.iter_mut() {
-                                entry.discriminator = current_discriminator.min(u64::MAX - 1);
-                                current_discriminator += 1;
+                                    discriminator: next_discriminator.min(u64::MAX - 1),
+                                });
+                                next_discriminator = next_discriminator.saturating_add(1);
                             }
-                            if let Some(node_id) = node_id {
-                                sorted.push(IndexMultiPair { key: node_id.key, value: node_id.value, discriminator: u64::MAX - 1 });
-                            }
-
-                            let node = UnsizedNode::from_inner(sorted, #const_name);
-                            #i.attach_multi_node(node);
-                        }
-                    };
-                    quote! {
-                        let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
-                        for page in persisted.#i.1 {
-                            #node
+                            #attach
                         }
                     }
-                } else {
-                    let node = if is_unique {
+                };
+
+                if is_unsized(&ty.to_string()) {
+                    if is_unique {
                         quote! {
-                            let node = page
-                                .inner
-                                .get_node()
-                                .into_iter()
-                                .map(|p| IndexPair {
-                                    key: p.key,
-                                    value: p.value.into(),
-                                })
-                                .collect();
-                            #i.attach_node(node);
+                            let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
+                            for page in persisted.#i.1 {
+                                let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
+                                    .inner
+                                    .get_node()
+                                    .into_iter()
+                                    .map(|p| IndexPair {
+                                        key: p.key,
+                                        value: p.value.into(),
+                                    })
+                                    .collect();
+                                #sort_page_entries
+                                let node = UnsizedNode::from_inner(inner, #const_name);
+                                #i.attach_node(node);
+                            }
                         }
                     } else {
+                        let attach = quote! {
+                            let node = UnsizedNode::from_inner(sorted, #const_name);
+                            #i.attach_multi_node(node);
+                        };
+                        let body = multi_reconstruct(attach);
                         quote! {
-                            let mut inner: Vec<_> = page
-                                .inner
-                                .get_node()
-                                .into_iter()
-                                .map(|p| IndexPair {
-                                    key: p.key,
-                                    value: OffsetEqLink(p.value),
-                                })
-                                .collect();
-
-                            let node_id = inner.pop();
-
-                            let mut sorted: Vec<_> = inner.into_iter()
-                                .map(|p| IndexMultiPair {
-                                    key: p.key,
-                                    value: p.value,
-                                    discriminator: 0,
-                                })
-                                .collect();
-                            sorted.sort();
-
-                            let mut current_discriminator = 1u64;
-                            for entry in sorted.iter_mut() {
-                                entry.discriminator = current_discriminator.min(u64::MAX - 1);
-                                current_discriminator += 1;
-                            }
-                            if let Some(node_id) = node_id {
-                                sorted.push(IndexMultiPair { key: node_id.key, value: node_id.value, discriminator: u64::MAX - 1 });
-                            }
-
-                            #i.attach_multi_node(sorted);
+                            let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
+                            #body
                         }
-                    };
+                    }
+                } else if is_unique {
                     quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);
                         for page in persisted.#i.1 {
-                            #node
+                            let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
+                                .inner
+                                .get_node()
+                                .into_iter()
+                                .map(|p| IndexPair {
+                                    key: p.key,
+                                    value: p.value.into(),
+                                })
+                                .collect();
+                            #sort_page_entries
+                            #i.attach_node(inner);
                         }
+                    }
+                } else {
+                    let attach = quote! {
+                        #i.attach_multi_node(sorted);
+                    };
+                    let body = multi_reconstruct(attach);
+                    quote! {
+                        let size = get_index_page_size_from_data_length::<#ty>(#const_name);
+                        let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);
+                        #body
                     }
                 }
             })

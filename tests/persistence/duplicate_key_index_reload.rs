@@ -20,17 +20,22 @@ worktable!(
     },
 );
 
-/// Reproduction for lossy persistence of duplicate-key secondary indexes.
+/// Regression test for lossy reconstruction of duplicate-key secondary
+/// indexes.
 ///
-/// A plain bulk insert of 10_000 rows spread over 97 distinct `score` values
-/// (~103 duplicates per key) is fully visible through `select_by_score` while
-/// the table is in memory, but after wait_for_ops + reopen a chunk of the
-/// entries (~12% as of 0.9.0) is no longer reachable through the index, even
-/// though `select_all` still returns every row. The loss is baked into the
-/// index file at write time: re-reading the same files gives the same wrong
-/// counts. Unique-valued secondary indexes survive the same round trip intact.
+/// Index pages store entries in event-arrival order, but `from_persisted`
+/// used to treat the last entry of every page as the node's maximum and
+/// re-append it with discriminator `u64::MAX - 1`. For pages that were
+/// incrementally updated through CDC events (any bulk load), that "maximum"
+/// was an arbitrary entry, so the reconstructed in-memory node index
+/// registered wrong node maxima and every entry sorting above one became
+/// unreachable through `select_by_*` — around 12% of the entries in this
+/// workload, although `select_all` still returned every row. Reconstruction
+/// now sorts each page, orders nodes by their true maximum, and assigns
+/// discriminators that keep growing across node boundaries within one key,
+/// which restores the B-tree ordering invariant even when one key's
+/// duplicates straddle nodes.
 #[test]
-#[ignore = "exposes lossy persistence of duplicate-key secondary indexes (~12% of entries unreachable after reload)"]
 fn test_duplicate_key_secondary_index_survives_reload() {
     const ROWS: u64 = 10_000;
     const KEYS: u64 = 97;
@@ -86,16 +91,16 @@ fn test_duplicate_key_secondary_index_survives_reload() {
             // Row data survives the round trip...
             assert_eq!(table.select_all().execute().unwrap().len() as u64, ROWS);
 
-            // ...and every row must stay reachable through the secondary index.
-            let mut reachable = 0u64;
+            // ...and every row stays reachable through the secondary index,
+            // with per-key counts intact.
             for s in 0..KEYS {
-                reachable += table.select_by_score(s).execute().unwrap().len() as u64;
+                let expected = ROWS / KEYS + u64::from(s < ROWS % KEYS);
+                assert_eq!(
+                    table.select_by_score(s).execute().unwrap().len() as u64,
+                    expected,
+                    "secondary index lost entries for key {s} across persist+reload"
+                );
             }
-            assert_eq!(
-                reachable, ROWS,
-                "secondary index lost {} of {ROWS} entries across persist+reload",
-                ROWS - reachable
-            );
         }
     })
 }
