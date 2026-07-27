@@ -14,7 +14,7 @@ use tokio::fs::{File, OpenOptions};
 pub use data::SpaceData;
 pub use index::{
     IndexTableOfContents, SpaceIndex, SpaceIndexUnsized, map_index_pages_to_toc_and_general,
-    map_unsized_index_pages_to_toc_and_general,
+    map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
 };
 
 pub type BatchData = HashMap<PageId, Vec<(Link, Vec<u8>)>>;

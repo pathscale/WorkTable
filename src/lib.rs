@@ -36,7 +36,7 @@ pub mod prelude {
         InsertOperation, Operation, OperationId, PersistedWorkTable, PersistenceConfig, PersistenceEngine,
         PersistenceTask, ReadOnlyPersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps,
         SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, map_index_pages_to_toc_and_general,
-        map_unsized_index_pages_to_toc_and_general, validate_events,
+        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};

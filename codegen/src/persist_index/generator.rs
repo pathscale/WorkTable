@@ -350,23 +350,25 @@ impl Generator {
                     .get(i)
                     .expect("should be available as constructed from same values");
 
-                // KEY FORMAT ASSUMPTION driving all of the reconstruction
-                // below: index pages store entries in event-arrival order,
-                // NOT sorted order. Only bootstrap-written pages happen to be
-                // sorted with the node maximum last; pages that were
-                // incrementally updated through CDC events are arbitrary.
-                // Reconstruction therefore must sort every page itself —
-                // assuming "last entry == node id" registers a wrong maximum
-                // in the in-memory node index and makes every entry above it
-                // unreachable.
+                // KEY FORMAT FACT driving the reconstruction below: index
+                // pages store their cells in event-arrival order, but the
+                // slot table preserves the tree-logical order the in-memory
+                // node had when persisted, and `get_node()` resolves through
+                // it. That logical order is authoritative and must be kept
+                // verbatim: CDC events are positional (`InsertAt`/`RemoveAt`
+                // carry an index into the node) and the on-disk page applies
+                // them through the same slot order, so re-sorting entries at
+                // reconstruction desyncs every later positional event and the
+                // node-id successor tracking that keeps the table of contents
+                // addressable.
                 //
-                // `unique_reconstruct` handles unique indexes: sorting each
-                // page is all they need, since a page is exactly one node and
-                // unique keys make the sorted last entry the true maximum.
+                // `unique_reconstruct` handles unique indexes: each page is
+                // exactly one node, `get_node()` already yields it in order
+                // with the true maximum last, so it attaches directly.
                 let unique_reconstruct = |attach: TokenStream| {
                     quote! {
                         for page in persisted.#i.1 {
-                            let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
+                            let inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
                                 .inner
                                 .get_node()
                                 .into_iter()
@@ -375,60 +377,31 @@ impl Generator {
                                     value: p.value.into(),
                                 })
                                 .collect();
-                            inner.sort_by(|a, b| a.key.cmp(&b.key).then_with(|| a.value.cmp(&b.value)));
                             #attach
                         }
                     }
                 };
-                // `multi_reconstruct` handles non-unique indexes, where one
-                // key's duplicates can straddle nodes. In-memory order for
-                // duplicates comes from per-entry discriminators that were
-                // never persisted, so reconstruction re-derives them — and it
-                // must do so consistently across the whole index, not per
-                // node: the node index (a B-tree) requires every entry in a
-                // node to compare <= that node's registered maximum, so a
-                // later node's segment of one key has to compare greater than
-                // an earlier node's segment of the same key. Processing nodes
-                // in ascending node-id order while letting discriminators
-                // keep growing across node boundaries within one key gives
-                // every duplicate a globally consistent position; numbering
-                // per node would make straddling segments overlap and leave
-                // entries unreachable.
-                //
-                // Two more constraints:
-                // - Each node must end with exactly the entry the on-disk
-                //   table of contents knows the node by (its persisted
-                //   node_id): CDC events emitted after the reload address
-                //   nodes by their maximum, and a node whose maximum drifted
-                //   from the TOC key can no longer be resolved by the space
-                //   index. The page sort pins that entry last within its key.
-                // - Discriminators 0 and u64::MAX are reserved (range infimum
-                //   and supremum used by lookups), which is why numbering
-                //   starts at 1 and is capped at u64::MAX - 1. The cap and
-                //   the saturating_add can only matter for a key with more
-                //   than u64::MAX - 2 duplicates — unreachable in practice
-                //   (the table could not hold the rows) — so they are purely
-                //   defensive.
-                //
-                // Pages are sorted and consumed in place, one node at a time,
-                // so peak memory stays at the parsed pages plus a single
-                // node — no intermediate copy of the whole index.
+                // Non-unique indexes additionally need their duplicate
+                // ordering re-derived (MultiPair discriminators are not
+                // persisted), which has to be globally consistent across
+                // nodes. They delegate to the runtime helper
+                // `reconstruct_multi_index_nodes` (see its doc comment for
+                // the ordering and discriminator invariants — notably why
+                // same-max-key nodes must be ordered by their first entry
+                // key, not by node-id link). The macro only maps pages into
+                // (node_id, entries) form and attaches the returned nodes,
+                // so the algorithm stays unit-testable with synthetic pages.
+                let index_name_literal = Literal::string(i.to_string().as_str());
                 let multi_reconstruct = |attach: TokenStream| {
                     quote! {
-                        let mut pages = persisted.#i.1;
-                        pages.sort_by(|a, b| {
-                            let a_link: OffsetEqLink = OffsetEqLink(a.inner.node_id.link);
-                            let b_link: OffsetEqLink = OffsetEqLink(b.inner.node_id.link);
-                            a.inner.node_id.key.cmp(&b.inner.node_id.key).then_with(|| a_link.cmp(&b_link))
-                        });
-                        let mut prev_key = None;
-                        let mut next_discriminator = 1u64;
-                        for page in pages {
+                        let mut raw_nodes: Vec<(IndexPair<#ty, OffsetEqLink>, Vec<IndexPair<#ty, OffsetEqLink>>)> =
+                            Vec::with_capacity(persisted.#i.1.len());
+                        for page in persisted.#i.1 {
                             let node_id = IndexPair {
                                 key: page.inner.node_id.key.clone(),
                                 value: OffsetEqLink(page.inner.node_id.link),
                             };
-                            let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
+                            let entries = page
                                 .inner
                                 .get_node()
                                 .into_iter()
@@ -437,29 +410,9 @@ impl Generator {
                                     value: OffsetEqLink(p.value),
                                 })
                                 .collect();
-                            inner.sort_by(|a, b| {
-                                a.key.cmp(&b.key).then_with(|| {
-                                    let a_is_id = a.key == node_id.key && a.value == node_id.value;
-                                    let b_is_id = b.key == node_id.key && b.value == node_id.value;
-                                    a_is_id.cmp(&b_is_id).then_with(|| a.value.cmp(&b.value))
-                                })
-                            });
-                            if inner.is_empty() {
-                                continue;
-                            }
-                            let mut sorted = Vec::with_capacity(inner.len());
-                            for p in inner {
-                                if prev_key.as_ref() != Some(&p.key) {
-                                    prev_key = Some(p.key.clone());
-                                    next_discriminator = 1;
-                                }
-                                sorted.push(IndexMultiPair {
-                                    key: p.key,
-                                    value: p.value,
-                                    discriminator: next_discriminator.min(u64::MAX - 1),
-                                });
-                                next_discriminator = next_discriminator.saturating_add(1);
-                            }
+                            raw_nodes.push((node_id, entries));
+                        }
+                        for sorted in reconstruct_multi_index_nodes(#index_name_literal, raw_nodes) {
                             #attach
                         }
                     }

@@ -55,6 +55,7 @@ worktable_codegen = { path = "codegen", version = "=0.9.1" }
 chrono = "0.4.43"
 criterion = { version = "0.5", features = ["async_tokio"] }
 rand = "0.9.1"
+tracing-subscriber = "0.3.23"
 
 [[bench]]
 name = "worktable_benchmarks"

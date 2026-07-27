@@ -12,6 +12,7 @@ pub use readonly_engine::ReadOnlyPersistenceEngine;
 pub use space::{
     IndexTableOfContents, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
     SpaceSecondaryIndexOps, map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
+    reconstruct_multi_index_nodes,
 };
 pub use task::PersistenceTask;
 

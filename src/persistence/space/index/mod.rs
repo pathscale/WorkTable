@@ -1,3 +1,4 @@
+mod reconstruct;
 mod table_of_contents;
 mod unsized_;
 mod util;
@@ -33,6 +34,7 @@ use crate::persistence::SpaceIndexOps;
 use crate::persistence::space::{BatchChangeEvent, open_or_create_file};
 use crate::prelude::WT_INDEX_EXTENSION;
 
+pub use reconstruct::reconstruct_multi_index_nodes;
 pub use table_of_contents::IndexTableOfContents;
 pub use unsized_::SpaceIndexUnsized;
 pub use util::{map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general};
@@ -393,7 +395,7 @@ where
                     let page_index = self
                         .table_of_contents
                         .get(page_id)
-                        .expect("page should be available in table of contents");
+                        .unwrap_or_else(|| panic!("page {page_id:?} should be available in table of contents"));
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
