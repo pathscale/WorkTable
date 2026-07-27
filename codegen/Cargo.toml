@@ -1,9 +1,10 @@
 [package]
-name = "worktable_codegen"
+name = "worktable_macros"
 version = "0.9.0"
 edition = "2024"
 license = "MIT"
-description = "WorkTable codegeneration crate"
+description = "Proc-macro companion crate for worktable: the worktable! macro and its derives. Formerly published as worktable_codegen."
+repository = "https://github.com/pathscale/WorkTable"
 
 [features]
 s3-support = []
