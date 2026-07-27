@@ -337,18 +337,12 @@ impl Generator {
             .fields
             .iter()
             .map(|f| {
-                let i = f
-                    .ident
-                    .as_ref()
-                    .expect("index fields should always be named fields");
+                let i = f.ident.as_ref().expect("index fields should always be named fields");
                 let index_type = f.ty.to_token_stream().to_string();
                 let is_unique = !index_type.contains("IndexMultiMap");
                 let mut split = index_type.split("<");
                 let t = Ident::new(
-                    split
-                        .next()
-                        .expect("index type should always have generics")
-                        .trim(),
+                    split.next().expect("index type should always have generics").trim(),
                     Span::mixed_site(),
                 );
                 let ty = self
@@ -356,38 +350,80 @@ impl Generator {
                     .get(i)
                     .expect("should be available as constructed from same values");
 
-                // Index pages carry entries in event-arrival order, not sorted
-                // order: only bootstrap-written pages happen to be sorted with
-                // the node maximum last, while pages that were incrementally
-                // updated through CDC events are arbitrary. Reconstruction
-                // therefore must sort every page and derive the node maximum
-                // from the sorted entries; assuming "last entry == node id"
-                // registers a wrong maximum in the in-memory node index and
-                // makes every entry above it unreachable.
-                let sort_page_entries = quote! {
-                    inner.sort_by(|a, b| a.key.cmp(&b.key).then_with(|| a.value.cmp(&b.value)));
+                // KEY FORMAT ASSUMPTION driving all of the reconstruction
+                // below: index pages store entries in event-arrival order,
+                // NOT sorted order. Only bootstrap-written pages happen to be
+                // sorted with the node maximum last; pages that were
+                // incrementally updated through CDC events are arbitrary.
+                // Reconstruction therefore must sort every page itself —
+                // assuming "last entry == node id" registers a wrong maximum
+                // in the in-memory node index and makes every entry above it
+                // unreachable.
+                //
+                // `unique_reconstruct` handles unique indexes: sorting each
+                // page is all they need, since a page is exactly one node and
+                // unique keys make the sorted last entry the true maximum.
+                let unique_reconstruct = |attach: TokenStream| {
+                    quote! {
+                        for page in persisted.#i.1 {
+                            let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
+                                .inner
+                                .get_node()
+                                .into_iter()
+                                .map(|p| IndexPair {
+                                    key: p.key,
+                                    value: p.value.into(),
+                                })
+                                .collect();
+                            inner.sort_by(|a, b| a.key.cmp(&b.key).then_with(|| a.value.cmp(&b.value)));
+                            #attach
+                        }
+                    }
                 };
-                // For non-unique indexes one key's duplicates can straddle
-                // nodes, and the B-tree invariant (every entry in a node
-                // compares <= that node's registered maximum) only survives
-                // reconstruction if a later node's segment of the same key
-                // compares greater than the previous node's maximum. So nodes
-                // are attached in ascending order of their true maximum and
-                // discriminators keep growing across node boundaries within
-                // one key. Discriminator 0 is reserved for the range infimum
-                // and u64::MAX for the supremum, so numbering starts at 1 and
-                // is capped below the supremum.
+                // `multi_reconstruct` handles non-unique indexes, where one
+                // key's duplicates can straddle nodes. In-memory order for
+                // duplicates comes from per-entry discriminators that were
+                // never persisted, so reconstruction re-derives them — and it
+                // must do so consistently across the whole index, not per
+                // node: the node index (a B-tree) requires every entry in a
+                // node to compare <= that node's registered maximum, so a
+                // later node's segment of one key has to compare greater than
+                // an earlier node's segment of the same key. Processing nodes
+                // in ascending node-id order while letting discriminators
+                // keep growing across node boundaries within one key gives
+                // every duplicate a globally consistent position; numbering
+                // per node would make straddling segments overlap and leave
+                // entries unreachable.
+                //
+                // Two more constraints:
+                // - Each node must end with exactly the entry the on-disk
+                //   table of contents knows the node by (its persisted
+                //   node_id): CDC events emitted after the reload address
+                //   nodes by their maximum, and a node whose maximum drifted
+                //   from the TOC key can no longer be resolved by the space
+                //   index. The page sort pins that entry last within its key.
+                // - Discriminators 0 and u64::MAX are reserved (range infimum
+                //   and supremum used by lookups), which is why numbering
+                //   starts at 1 and is capped at u64::MAX - 1. The cap and
+                //   the saturating_add can only matter for a key with more
+                //   than u64::MAX - 2 duplicates — unreachable in practice
+                //   (the table could not hold the rows) — so they are purely
+                //   defensive.
+                //
+                // Pages are sorted and consumed in place, one node at a time,
+                // so peak memory stays at the parsed pages plus a single
+                // node — no intermediate copy of the whole index.
                 let multi_reconstruct = |attach: TokenStream| {
                     quote! {
-                        let mut nodes: Vec<(IndexPair<#ty, OffsetEqLink>, Vec<IndexPair<#ty, OffsetEqLink>>)> = Vec::new();
-                        for page in persisted.#i.1 {
-                            // The persisted node id is the node maximum the
-                            // on-disk table of contents knows this node by.
-                            // The reconstructed node must end with exactly
-                            // this entry: CDC events emitted after the reload
-                            // address nodes by their maximum, and a node whose
-                            // maximum drifted from the TOC key can no longer
-                            // be resolved by the space index.
+                        let mut pages = persisted.#i.1;
+                        pages.sort_by(|a, b| {
+                            let a_link: OffsetEqLink = OffsetEqLink(a.inner.node_id.link);
+                            let b_link: OffsetEqLink = OffsetEqLink(b.inner.node_id.link);
+                            a.inner.node_id.key.cmp(&b.inner.node_id.key).then_with(|| a_link.cmp(&b_link))
+                        });
+                        let mut prev_key = None;
+                        let mut next_discriminator = 1u64;
+                        for page in pages {
                             let node_id = IndexPair {
                                 key: page.inner.node_id.key.clone(),
                                 value: OffsetEqLink(page.inner.node_id.link),
@@ -408,14 +444,9 @@ impl Generator {
                                     a_is_id.cmp(&b_is_id).then_with(|| a.value.cmp(&b.value))
                                 })
                             });
-                            if !inner.is_empty() {
-                                nodes.push((node_id, inner));
+                            if inner.is_empty() {
+                                continue;
                             }
-                        }
-                        nodes.sort_by(|(a, _), (b, _)| a.key.cmp(&b.key).then_with(|| a.value.cmp(&b.value)));
-                        let mut prev_key = None;
-                        let mut next_discriminator = 1u64;
-                        for (_, inner) in nodes {
                             let mut sorted = Vec::with_capacity(inner.len());
                             for p in inner {
                                 if prev_key.as_ref() != Some(&p.key) {
@@ -436,57 +467,37 @@ impl Generator {
 
                 if is_unsized(&ty.to_string()) {
                     if is_unique {
+                        let body = unique_reconstruct(quote! {
+                            let node = UnsizedNode::from_inner(inner, #const_name);
+                            #i.attach_node(node);
+                        });
                         quote! {
                             let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
-                            for page in persisted.#i.1 {
-                                let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
-                                    .inner
-                                    .get_node()
-                                    .into_iter()
-                                    .map(|p| IndexPair {
-                                        key: p.key,
-                                        value: p.value.into(),
-                                    })
-                                    .collect();
-                                #sort_page_entries
-                                let node = UnsizedNode::from_inner(inner, #const_name);
-                                #i.attach_node(node);
-                            }
+                            #body
                         }
                     } else {
-                        let attach = quote! {
+                        let body = multi_reconstruct(quote! {
                             let node = UnsizedNode::from_inner(sorted, #const_name);
                             #i.attach_multi_node(node);
-                        };
-                        let body = multi_reconstruct(attach);
+                        });
                         quote! {
                             let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
                             #body
                         }
                     }
                 } else if is_unique {
+                    let body = unique_reconstruct(quote! {
+                        #i.attach_node(inner);
+                    });
                     quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);
-                        for page in persisted.#i.1 {
-                            let mut inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
-                                .inner
-                                .get_node()
-                                .into_iter()
-                                .map(|p| IndexPair {
-                                    key: p.key,
-                                    value: p.value.into(),
-                                })
-                                .collect();
-                            #sort_page_entries
-                            #i.attach_node(inner);
-                        }
+                        #body
                     }
                 } else {
-                    let attach = quote! {
+                    let body = multi_reconstruct(quote! {
                         #i.attach_multi_node(sorted);
-                    };
-                    let body = multi_reconstruct(attach);
+                    });
                     quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);

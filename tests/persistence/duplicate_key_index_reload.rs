@@ -104,3 +104,75 @@ fn test_duplicate_key_secondary_index_survives_reload() {
         }
     })
 }
+
+/// Companion stress case: a single key carrying every row. Every index node
+/// holds the same key, so every node boundary is a straddle and same-key node
+/// maxima must still resolve against the table of contents — the worst case
+/// for the discriminator and node-ordering logic in `from_persisted`.
+#[test]
+fn test_single_key_all_duplicates_survives_reload() {
+    const ROWS: u64 = 10_000;
+
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/duplicate_key_index_reload/single_key",
+        DuplicateKeyReloadWorkTable::name_snake_case(),
+        DuplicateKeyReloadWorkTable::version(),
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/duplicate_key_index_reload/single_key".to_string()).await;
+
+        {
+            let engine = DuplicateKeyReloadPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = DuplicateKeyReloadWorkTable::load(engine).await.unwrap();
+
+            for i in 0..ROWS {
+                table
+                    .insert(DuplicateKeyReloadRow {
+                        id: i,
+                        score: 42,
+                        label: format!("row-{i}"),
+                    })
+                    .unwrap();
+            }
+            assert_eq!(table.select_by_score(42).execute().unwrap().len() as u64, ROWS);
+
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .expect("persistence stalled on bulk insert");
+        }
+        {
+            let engine = DuplicateKeyReloadPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = DuplicateKeyReloadWorkTable::load(engine).await.unwrap();
+
+            assert_eq!(table.select_all().execute().unwrap().len() as u64, ROWS);
+            assert_eq!(
+                table.select_by_score(42).execute().unwrap().len() as u64,
+                ROWS,
+                "single-key secondary index lost entries across persist+reload"
+            );
+
+            // The reloaded table must also stay writable: post-reload CDC
+            // events address nodes by their maximum, which this workload makes
+            // ambiguous per key on purpose.
+            table
+                .insert(DuplicateKeyReloadRow {
+                    id: ROWS,
+                    score: 42,
+                    label: "post-reload".to_string(),
+                })
+                .unwrap();
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .expect("persistence stalled on post-reload insert");
+            assert_eq!(table.select_by_score(42).execute().unwrap().len() as u64, ROWS + 1);
+        }
+    })
+}
