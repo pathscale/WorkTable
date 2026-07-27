@@ -3,7 +3,7 @@ members = ["codegen", "examples", "performance_measurement", "performance_measur
 
 [package]
 name = "worktable"
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -49,10 +49,7 @@ tracing = "0.1"
 url = { version = "2", optional = true }
 uuid = { version = "1.10.0", features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
-# Renamed dependency: the package on crates.io is `worktable_macros`
-# (worktable_codegen's ownership is unavailable), but the lib target and
-# every `use worktable_codegen::...` keep the original name.
-worktable_codegen = { package = "worktable_macros", path = "codegen", version = "=0.9.0" }
+worktable_codegen = { path = "codegen", version = "=0.9.1" }
 
 [dev-dependencies]
 chrono = "0.4.43"
