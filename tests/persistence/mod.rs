@@ -4,6 +4,7 @@ use worktable::worktable;
 
 mod bulk_load_stall;
 mod concurrent;
+mod duplicate_key_index_reload;
 mod failure;
 mod index_page;
 mod read;
