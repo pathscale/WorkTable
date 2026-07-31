@@ -75,10 +75,14 @@ impl ReadOnlyGenerator {
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
 
+        // `read_only` and `pk_unsized` are independent: the first selects the read-only
+        // shape of the table (no persistence engine or task, sync `into_worktable`), the
+        // second selects the unsized primary index. A read-only table with an unsized key
+        // needs both, so `read_only` is unconditional here.
         let derive = if pk_types_unsized {
             quote! {
                 #[derive(Debug, PersistTable)]
-                #[table(pk_unsized)]
+                #[table(read_only, pk_unsized)]
             }
         } else {
             quote! {

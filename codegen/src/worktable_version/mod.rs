@@ -140,6 +140,25 @@ mod tests {
     }
 
     #[test]
+    fn test_unsized_primary_key_stays_read_only() {
+        let input = quote! {
+            name: ThingV1,
+            columns: {
+                id: String primary_key,
+                name: String,
+            },
+        };
+
+        let res = expand(input).unwrap();
+        let output = res.to_string();
+
+        assert!(
+            output.contains("table (read_only , pk_unsized)"),
+            "an unsized primary key must keep read_only, not replace it with pk_unsized"
+        );
+    }
+
+    #[test]
     fn test_rejects_version_after_columns() {
         let input = quote! {
             name: UserV1,
