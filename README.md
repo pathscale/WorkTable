@@ -28,7 +28,7 @@ cargo add worktable
 | **Paged in-memory storage** | Records live in `DataPages` with a free list for reuse. `rkyv` gives zero-copy access to archived rows. |
 | **Concurrency** | Lock-free concurrent indexes with change-data-capture, plus a row-level `LockMap` for ordered access. |
 | **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature syncs that to S3. Both opt-in, so a purely in-memory table pays for neither. |
-| **Schema migration** | `worktable_version!` and `migration_engine!` version a table's schema and generate migrations between versions. |
+| **Schema migration** | `worktable_version!` and `migration_engine!` version a table's schema and generate migrations between versions. See [docs/migration.md](docs/migration.md). |
 | **Memory accounting** | `MemStat` reports actual memory held. |
 
 ## Persistence
