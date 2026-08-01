@@ -138,7 +138,10 @@ where
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>
             + Send
             + Sync,
-        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>
+            + Ord
+            + Eq
+            + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
     {
         for page in &mut self.pages {
             persist_page(page, file).await?;
@@ -153,7 +156,10 @@ where
             + Clone
             + SizeMeasurable
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rancor::Error>>,
-        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq,
+        <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>
+            + Ord
+            + Eq
+            + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
     {
         let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1).await;
         if let Ok(page) = first_page {

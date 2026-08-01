@@ -63,3 +63,8 @@ harness = false
 
 
 
+
+# Until data_bucket 0.4.1 (validated page reads, pathscale/DataBucket#66) is
+# published: the fix this branch depends on, straight from its PR branch.
+[patch.crates-io]
+data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "fix/validated-page-reads" }

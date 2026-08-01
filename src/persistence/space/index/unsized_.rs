@@ -53,7 +53,11 @@ where
         + Send
         + Sync
         + 'static,
-    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq + Debug,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>
+        + Ord
+        + Eq
+        + Debug
+        + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
     pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId, version: u32) -> eyre::Result<Self> {
         let space_index = SpaceIndex::<T, DATA_LENGTH>::new(index_file_path, space_id, version).await?;
@@ -269,7 +273,11 @@ where
         + Send
         + Sync
         + 'static,
-    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>> + Ord + Eq + Debug,
+    <T as Archive>::Archived: Deserialize<T, Strategy<Pool, rancor::Error>>
+        + Ord
+        + Eq
+        + Debug
+        + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
         let path = format!("{}/primary{}", table_path.as_ref(), WT_INDEX_EXTENSION);
