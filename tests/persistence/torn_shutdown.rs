@@ -215,3 +215,62 @@ fn test_store_survives_torn_shutdowns() {
             .expect("persistence stalled appending to the survivor store");
     });
 }
+
+/// The clean-shutdown sibling: many short load-append-drain-close sessions,
+/// no kill anywhere, then one full scan. The production table that died had
+/// lived exactly this life — dozens of small sessions, each ended with a
+/// drained quit — so if this fails, the corruption needs no crash at all:
+/// the load-append path drifts on its own, one generation at a time.
+#[test]
+fn test_many_clean_sessions_stay_readable() {
+    const DIR: &str = "tests/data/torn_shutdown/clean_sessions";
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists(DIR.to_string()).await;
+        let open = || async {
+            let config = DiskConfig::new_with_table_name(
+                DIR,
+                TornShutdownWorkTable::name_snake_case(),
+                TornShutdownWorkTable::version(),
+            );
+            let engine = TornShutdownPersistenceEngine::new(config).await.unwrap();
+            TornShutdownWorkTable::load(engine).await.unwrap()
+        };
+
+        // Forty generations of a handful of appends each: the shape of a
+        // long-lived store that is opened, written a little, and closed.
+        let mut next_id = 0u64;
+        for session in 0..40u64 {
+            let table = open().await;
+            for _ in 0..8 {
+                table
+                    .insert(row(next_id))
+                    .unwrap_or_else(|error| panic!("session {session}: insert {next_id} refused: {error:?}"));
+                next_id += 1;
+            }
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .unwrap_or_else(|_| panic!("session {session}: drain stalled"));
+        }
+
+        let table = open().await;
+        let got: BTreeSet<String> = table
+            .select_all()
+            .execute()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        let expected: BTreeSet<String> = (0..next_id).map(key).collect();
+        assert_eq!(
+            got, expected,
+            "rows lost, duplicated, or invented across clean load-append-close generations"
+        );
+    })
+}
