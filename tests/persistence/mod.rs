@@ -7,10 +7,12 @@ mod concurrent;
 mod duplicate_key_index_reload;
 mod failure;
 mod index_page;
+mod loaded_index_growth;
 mod read;
 mod space_index;
 mod sync;
 mod toc;
+mod torn_shutdown;
 mod vacuum;
 
 #[cfg(feature = "s3-support")]
