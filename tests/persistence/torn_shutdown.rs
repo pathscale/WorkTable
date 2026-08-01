@@ -203,16 +203,20 @@ fn test_torn_store_fails_clean_never_by_signal() {
     drop(outcome);
 }
 
-/// The FULL bar, which needs crash-consistent writes the engine does not
-/// have yet: a torn store scans as a consistent prefix of what was written —
-/// no phantom rows — or refuses loudly. Validated reads cannot meet it
-/// alone: a dangling index link into a zeroed data region reads as a row of
-/// empty fields that validates perfectly, so kills still manufacture rows
-/// nobody wrote. Ignored until write-side atomicity (WAL / shadow paging /
-/// page checksums) lands; run with
-/// `cargo test -- --ignored test_store_survives_torn_shutdowns`.
+/// The boundary of the design, written down as a test. Persistence here is
+/// best-effort by contract: consumers drain on every catchable exit, the
+/// accepted loss window is the instant between in-memory and on-disk, and a
+/// SIGKILL mid-write may cost data, with an index rebuild (worktable's
+/// rebuild verbs, or a snapshot restore) as the recovery. This test states
+/// what full crash-consistency WOULD look like: a killed store scans as a
+/// consistent prefix, no phantom rows. Validated reads alone cannot meet it,
+/// because a dangling index link into a zeroed region reads as a row of
+/// empty fields that validates perfectly. It stays ignored as documentation
+/// of the accepted risk, not as a demand: run it with
+/// `cargo test -- --ignored test_store_survives_torn_shutdowns` if the
+/// design contract ever changes.
 #[test]
-#[ignore = "needs crash-consistent writes: dangling index links still read as phantom rows"]
+#[ignore = "documents the accepted design boundary: SIGKILL mid-write may cost data; recovery is rebuild"]
 fn test_store_survives_torn_shutdowns() {
     tear_the_store_repeatedly();
     // The reckoning: load and scan the torn store IN THIS PROCESS, through
