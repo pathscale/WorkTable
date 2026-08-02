@@ -110,9 +110,13 @@ impl InMemoryGenerator {
                     range.start_bound().map(|v| #primary_key_type::from(v.clone())),
                     range.end_bound().map(|v| #primary_key_type::from(v.clone())),
                 );
+                let read_guard = self.0.data.read_guard();
                 let rows = self.0.primary_index.pk_map
                     .range(converted_range)
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
+                    .filter_map(move |(_, link)| {
+                        let _read_guard = &read_guard;
+                        self.0.data.select_non_ghosted(link.0).ok()
+                    });
 
                 #pk_sorted_by
             }
@@ -262,6 +266,7 @@ impl InMemoryGenerator {
 
     fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
         quote! {
+            let _read_guard = self.0.data.read_guard();
             let first = self.0.primary_index.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
             let Some((mut k, link)) = first else {
                 return Ok(())

@@ -54,6 +54,38 @@ fn unique_float_point_read_revalidates_the_returned_row() {
     assert_eq!(table.select_by_value(second.value), Some(second));
 }
 
+#[cfg(feature = "versioned-row-publication")]
+#[test]
+fn float_range_read_revalidates_each_resolved_row() {
+    let table = TestFloatWorkTable::default();
+    let inside = TestFloatRow {
+        id: table.get_next_pk().into(),
+        test: 1,
+        another: 10.0,
+        exchange: "inside".to_string(),
+    };
+    let outside = TestFloatRow {
+        id: table.get_next_pk().into(),
+        test: 2,
+        another: 100.0,
+        exchange: "outside".to_string(),
+    };
+    table.insert(inside.clone()).unwrap();
+    table.insert(outside.clone()).unwrap();
+
+    let outside_link = table
+        .0
+        .primary_index
+        .pk_map
+        .get(&TestFloatPrimaryKey(outside.id))
+        .map(|entry| entry.get().value.0)
+        .unwrap();
+    TableIndex::insert(&table.0.indexes.another_idx, OrderedFloat(15.0), outside_link);
+
+    let rows = table.select_by_another_range(0.0..20.0).execute().unwrap();
+    assert_eq!(rows, vec![inside]);
+}
+
 #[test]
 fn select_all_range_float_test() {
     let table = TestFloatWorkTable::default();

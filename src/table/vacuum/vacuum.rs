@@ -207,13 +207,11 @@ where
     }
 
     fn free_page(&self, page_id: PageId) {
-        let p = self.data_pages.get_page(page_id).expect("should exist as called");
-        p.reset()
+        self.data_pages.reset_page(page_id).expect("should exist as called")
     }
 
     async fn move_data_from(&self, from: PageId, to: PageId) -> (bool, bool) {
         let to_page = self.data_pages.get_page(to).expect("should exist as link exists");
-        let from_page = self.data_pages.get_page(from).expect("should exist as link exists");
         let to_free_space = to_page.free_space();
 
         let page_start = OffsetEqLink::<_>(Link {
@@ -268,18 +266,13 @@ where
                 self.lock_manager.remove_with_lock_check(&pk);
                 continue;
             }
-            let raw_data = from_page
-                .get_raw_row(from_link.0)
-                .expect("link is not bigger than free offset");
-            unsafe {
+            let (raw_data, new_link) = unsafe {
                 self.data_pages
-                    .with_mut_ref(from_link.0, |r| r.set_in_vacuum_process())
-                    .expect("link should be valid")
-            }
-            let new_link = to_page
-                .save_raw_row(&raw_data)
-                .expect("page is not full as checked on links collection");
+                    .move_row_for_vacuum(from_link.0, to)
+                    .expect("links and destination capacity were checked")
+            };
             self.update_index_after_move(pk.clone(), from_link.0, new_link, raw_data);
+            self.data_pages.retire_published_link(from_link.0);
 
             lock.unlock();
             self.lock_manager.remove_with_lock_check(&pk);

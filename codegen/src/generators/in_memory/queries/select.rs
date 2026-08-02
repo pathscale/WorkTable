@@ -29,9 +29,13 @@ impl InMemoryGenerator {
                                                            #column_range_type,
                                                            #row_fields_ident>
             {
+                let read_guard = self.0.data.read_guard();
                 let iter = self.0.primary_index.pk_map
                     .iter()
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
+                    .filter_map(move |(_, link)| {
+                        let _read_guard = &read_guard;
+                        self.0.data.select_non_ghosted(link.0).ok()
+                    });
 
                 SelectQueryBuilder::new(iter)
             }

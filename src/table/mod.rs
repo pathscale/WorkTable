@@ -23,7 +23,7 @@ use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
-use rkyv::{Archive, Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Portable, Serialize};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -152,11 +152,30 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link: Option<Link> = self.primary_index.pk_map.get(&pk).map(|v| v.get().value.into());
-        if let Some(link) = link {
-            self.data.select_non_ghosted(link).ok()
-        } else {
-            None
+        let _read_guard = self.data.read_guard();
+        #[cfg(feature = "versioned-row-publication")]
+        {
+            loop {
+                let link: Link = self.primary_index.pk_map.get(&pk).map(|v| v.get().value.into())?;
+                if let Ok(row) = self.data.select_non_ghosted(link) {
+                    return Some(row);
+                }
+
+                let current_link: Option<Link> = self.primary_index.pk_map.get(&pk).map(|v| v.get().value.into());
+                if current_link == Some(link) {
+                    return None;
+                }
+            }
+        }
+
+        #[cfg(not(feature = "versioned-row-publication"))]
+        {
+            let link: Option<Link> = self.primary_index.pk_map.get(&pk).map(|v| v.get().value.into());
+            if let Some(link) = link {
+                self.data.select_non_ghosted(link).ok()
+            } else {
+                None
+            }
         }
     }
 
@@ -168,7 +187,9 @@ where
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: AvailableIndex,
@@ -184,9 +205,9 @@ where
         if let Err(e) = self.indexes.save_row(row.clone(), link) {
             return match e {
                 IndexError::AlreadyExists { at, inserted_already } => {
-                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
                     self.primary_index.remove(&pk, link);
                     self.indexes.delete_from_indexes(row, link, inserted_already)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
@@ -216,7 +237,9 @@ where
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
         PrimaryKey: Clone,
         SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
@@ -334,7 +357,9 @@ where
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
         PrimaryKey: Clone,
         AvailableTypes: 'static,
         AvailableIndexes: Debug + AvailableIndex,
@@ -391,7 +416,9 @@ where
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
         PrimaryKey: Clone,
         SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>

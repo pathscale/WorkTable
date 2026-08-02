@@ -46,6 +46,30 @@ S3 support layers *on top of* the disk engine rather than replacing it.
 worktable = { version = "0.9", features = ["s3-support"] }   # S3 sync, optional
 ```
 
+## Concurrent read/write publication
+
+The default build preserves the existing lowest-latency page path and requires
+applications to exclude reads that overlap page-byte mutation. Applications
+that need generated reads to overlap updates, inserts, deletes, and vacuum can
+opt into immutable row-version publication:
+
+```toml
+[dependencies]
+worktable = { version = "0.9", features = ["versioned-row-publication"] }
+```
+
+In this mode, generated reads acquire an immutable owned row version instead
+of borrowing the mutable archived page image. Writers replace a per-row version
+only after a complete page mutation, insert visibility is an atomic lifecycle
+transition after every index is installed, and deleted or relocated links are
+not reused until readers that could have captured them have drained. Page bytes
+remain the persistence image and are internally serialized; range queries are
+still non-snapshot reads. The mode intentionally trades memory, an atomic
+read-side grace-period counter, and publication bookkeeping for this stronger
+concurrent-read contract. See
+[`docs/versioned-row-publication.md`](docs/versioned-row-publication.md) for the
+protocol and its scope.
+
 ## Relationship to `data_bucket`
 
 WorkTable is built on [`data_bucket`](https://crates.io/crates/data_bucket), which
@@ -395,5 +419,4 @@ enum WorkTableError
 ## Examples 
 
 Check out - [Examples](./examples)
-
 
