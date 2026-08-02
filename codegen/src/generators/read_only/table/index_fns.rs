@@ -63,7 +63,9 @@ impl ReadOnlyGenerator {
         let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_by_{i}").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
-        let by = if is_float(type_.to_string().as_str()) {
+        let row_field_ident = &idx.field;
+        let is_float = is_float(type_.to_string().as_str());
+        let by = if is_float {
             quote! {
                 &OrderedFloat(by)
             }
@@ -72,11 +74,21 @@ impl ReadOnlyGenerator {
                 &by
             }
         };
+        let predicate_matches = if is_float {
+            quote! {
+                OrderedFloat(row.#row_field_ident).eq(&OrderedFloat(by))
+            }
+        } else {
+            quote! {
+                row.#row_field_ident.eq(&by)
+            }
+        };
 
         Ok(quote! {
             pub fn #fn_name(&self, by: #type_) -> Option<#row_ident> {
                 let link: Link = self.0.indexes.#field_ident.get(#by).map(|kv| kv.get().value.into())?;
-                self.0.data.select_non_ghosted(link).ok()
+                let row = self.0.data.select_non_ghosted(link).ok()?;
+                #predicate_matches.then_some(row)
             }
         })
     }

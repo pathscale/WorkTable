@@ -16,6 +16,44 @@ worktable! (
     }
 );
 
+worktable! (
+    name: TestUniqueFloat,
+    columns: {
+        id: u64 primary_key autoincrement,
+        value: f64,
+    },
+    indexes: {
+        value_idx: value unique,
+    }
+);
+
+#[test]
+fn unique_float_point_read_revalidates_the_returned_row() {
+    let table = TestUniqueFloatWorkTable::default();
+    let first = TestUniqueFloatRow {
+        id: table.get_next_pk().into(),
+        value: 1.5,
+    };
+    let second = TestUniqueFloatRow {
+        id: table.get_next_pk().into(),
+        value: 2.5,
+    };
+    table.insert(first.clone()).unwrap();
+    table.insert(second.clone()).unwrap();
+
+    let second_link = table
+        .0
+        .primary_index
+        .pk_map
+        .get(&TestUniqueFloatPrimaryKey(second.id))
+        .map(|entry| entry.get().value.0)
+        .unwrap();
+    TableIndex::insert(&table.0.indexes.value_idx, OrderedFloat(first.value), second_link);
+
+    assert!(table.select_by_value(first.value).is_none());
+    assert_eq!(table.select_by_value(second.value), Some(second));
+}
+
 #[test]
 fn select_all_range_float_test() {
     let table = TestFloatWorkTable::default();
