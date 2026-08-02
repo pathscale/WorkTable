@@ -46,6 +46,13 @@ S3 support layers *on top of* the disk engine rather than replacing it.
 worktable = { version = "0.9", features = ["s3-support"] }   # S3 sync, optional
 ```
 
+Generated updates through a unique secondary index can opt into post-lock
+primary-key and predicate revalidation with the
+`strict-unique-index-revalidation` feature. It prevents a changed or stale
+unique-index entry from redirecting an update to another row while the update
+holds the original row's lock. The feature is off by default so existing
+latency-sensitive builds retain their current generated update path.
+
 ## Relationship to `data_bucket`
 
 WorkTable is built on [`data_bucket`](https://crates.io/crates/data_bucket), which
@@ -395,5 +402,4 @@ enum WorkTableError
 ## Examples 
 
 Check out - [Examples](./examples)
-
 

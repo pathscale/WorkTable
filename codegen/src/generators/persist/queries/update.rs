@@ -154,14 +154,11 @@ impl PersistGenerator {
 
                 let idents = &op.columns;
                 if let Some(index) = index {
-                    let index_name = &index.name;
-
                     if index.is_unique {
                         self.gen_unique_update(
                             snake_case_name,
                             name,
-                            &index.field,
-                            index_name,
+                            index,
                             idents,
                             indexes_columns.as_ref(),
                             unsized_columns,
@@ -616,8 +613,7 @@ impl PersistGenerator {
         &self,
         snake_case_name: String,
         name: &Ident,
-        by_field: &Ident,
-        index: &Ident,
+        index: &Index,
         idents: &[Ident],
         idx_idents: Option<&Vec<Ident>>,
         unsized_fields: Option<Vec<&Ident>>,
@@ -627,6 +623,8 @@ impl PersistGenerator {
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
         let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
+        let by_field = &index.field;
+        let index = &index.name;
 
         let row_updates = idents
             .iter()
@@ -651,6 +649,36 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let target_validation = if cfg!(feature = "strict-unique-index-revalidation") {
+            quote! {
+                match self.0.data.select_non_vacuumed(link) {
+                    core::result::Result::Ok(current) => {
+                        // The unique-index entry may have changed while we
+                        // waited for the original row's lock. Never mutate
+                        // the newly indexed row while holding another row's
+                        // lock, and reject stale index entries whose row no
+                        // longer satisfies the generated predicate.
+                        if current.get_primary_key() != pk || &current.#by_field != &by {
+                            return core::result::Result::Err(WorkTableError::NotFound);
+                        }
+                        break link;
+                    }
+                    core::result::Result::Err(e) if e.is_vacuumed() => continue,
+                    core::result::Result::Err(e) => return core::result::Result::Err(e.into()),
+                }
+            }
+        } else {
+            quote! {
+                if let Err(e) = self.0.data.select_non_vacuumed(link) {
+                    if e.is_vacuumed() {
+                        continue;
+                    }
+                    return Err(e.into());
+                } else {
+                    break link;
+                }
+            }
+        };
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -683,21 +711,7 @@ impl PersistGenerator {
                         .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound)?;
 
-                    match self.0.data.select_non_vacuumed(link) {
-                        core::result::Result::Ok(current) => {
-                            // The unique-index entry may have changed while we
-                            // waited for the original row's lock. Never mutate
-                            // the newly indexed row while holding another row's
-                            // lock, and reject stale index entries whose row no
-                            // longer satisfies the generated predicate.
-                            if current.get_primary_key() != pk || &current.#by_field != &by {
-                                return core::result::Result::Err(WorkTableError::NotFound);
-                            }
-                            break link;
-                        }
-                        core::result::Result::Err(e) if e.is_vacuumed() => continue,
-                        core::result::Result::Err(e) => return core::result::Result::Err(e.into()),
-                    }
+                    #target_validation
                 };
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());

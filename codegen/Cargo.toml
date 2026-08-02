@@ -8,6 +8,7 @@ repository = "https://github.com/pathscale/WorkTable"
 
 [features]
 s3-support = []
+strict-unique-index-revalidation = []
 
 [lib]
 name = "worktable_codegen"

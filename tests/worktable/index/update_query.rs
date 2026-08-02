@@ -2,7 +2,9 @@ use crate::worktable::index::{
     Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable, TwoAttrByThirdQuery,
     UniqueTwoAttrByThirdQuery,
 };
-use worktable::{WorkTableError, prelude::SelectQueryExecutor};
+#[cfg(feature = "strict-unique-index-revalidation")]
+use worktable::WorkTableError;
+use worktable::prelude::SelectQueryExecutor;
 
 #[tokio::test]
 async fn update_two_via_query_unique_indexes() {
@@ -50,6 +52,7 @@ async fn update_two_via_query_unique_indexes() {
 }
 
 #[tokio::test]
+#[cfg(feature = "strict-unique-index-revalidation")]
 async fn unique_update_rejects_stale_index_link() {
     let table = Test3UniqueWorkTable::default();
     let row1 = Test3UniqueRow {

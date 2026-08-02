@@ -17,6 +17,7 @@ categories = ["database-implementations", "data-structures", "caching"]
 [features]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
 s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
+strict-unique-index-revalidation = ["worktable_codegen/strict-unique-index-revalidation"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
