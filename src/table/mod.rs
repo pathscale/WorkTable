@@ -176,7 +176,11 @@ where
         LockType: 'static,
     {
         let pk = row.get_primary_key().clone();
-        let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
+        let inserted = self
+            .data
+            .insert_with_reservation(row.clone())
+            .map_err(WorkTableError::PagesError)?;
+        let link = inserted.link();
         if self.primary_index.insert_checked(pk.clone(), link).is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
             return Err(WorkTableError::PrimaryAlreadyExists);
@@ -198,6 +202,7 @@ where
                 .with_mut_ref(link, |r| r.unghost())
                 .map_err(WorkTableError::PagesError)?
         }
+        drop(inserted);
 
         Ok(pk)
     }
@@ -227,10 +232,11 @@ where
     {
         let pk = row.get_primary_key().clone();
 
-        let (link, _) = match self.data.insert_cdc(row.clone()) {
+        let (inserted, _) = match self.data.insert_cdc_with_reservation(row.clone()) {
             Ok(result) => result,
             Err(e) => return (None, Err(WorkTableError::PagesError(e))),
         };
+        let link = inserted.link();
 
         let primary_key_events = self.primary_index.insert_checked_cdc(pk.clone(), link);
         let Some(primary_key_events) = primary_key_events else {
@@ -304,6 +310,7 @@ where
                 return (Some(ack_op), Err(WorkTableError::PagesError(e)));
             }
         };
+        drop(inserted);
 
         let op = Operation::Insert(InsertOperation {
             id: OperationId::Single(Uuid::now_v7()),
@@ -351,7 +358,11 @@ where
             .get(&pk)
             .map(|v| v.get().value.into())
             .ok_or(WorkTableError::NotFound)?;
-        let new_link = self.data.insert(row_new.clone()).map_err(WorkTableError::PagesError)?;
+        let inserted = self
+            .data
+            .insert_with_reservation(row_new.clone())
+            .map_err(WorkTableError::PagesError)?;
+        let new_link = inserted.link();
         unsafe {
             self.data
                 .with_mut_ref(new_link, |r| r.unghost())
@@ -373,6 +384,7 @@ where
             };
         }
         self.data.delete(old_link).map_err(WorkTableError::PagesError)?;
+        drop(inserted);
         Ok(pk)
     }
 
@@ -411,10 +423,11 @@ where
         };
 
         // Insert new data - if this fails, no events to acknowledge
-        let (new_link, _) = match self.data.insert_cdc(row_new.clone()) {
+        let (inserted, _) = match self.data.insert_cdc_with_reservation(row_new.clone()) {
             Ok(result) => result,
             Err(e) => return (None, Err(WorkTableError::PagesError(e))),
         };
+        let new_link = inserted.link();
 
         // Unghost the new data - if this fails, we have no events yet to acknowledge
         unsafe {
@@ -497,6 +510,7 @@ where
                 return (Some(ack_op), Err(WorkTableError::PagesError(e)));
             }
         };
+        drop(inserted);
 
         let op = Operation::Insert(InsertOperation {
             id: OperationId::Single(Uuid::now_v7()),

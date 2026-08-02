@@ -90,6 +90,28 @@ fn delete(c: &mut Criterion) {
     });
 }
 
+fn delete_insert_reuse(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let table = Arc::new(SimpleWorkTable::default());
+    let initial = SimpleRow {
+        id: table.get_next_pk().into(),
+        value: fastrand::u64(..),
+    };
+    let initial_pk = table.insert(initial).unwrap();
+    rt.block_on(table.delete(initial_pk)).unwrap();
+
+    c.bench_function("simple_delete_insert_reuse", |b| {
+        b.to_async(&rt).iter(|| async {
+            let row = SimpleRow {
+                id: table.get_next_pk().into(),
+                value: fastrand::u64(..),
+            };
+            let pk = table.insert(black_box(row)).unwrap();
+            black_box(table.delete(pk).await)
+        })
+    });
+}
+
 fn upsert_insert(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let table = Arc::new(SimpleWorkTable::default());
@@ -195,6 +217,7 @@ criterion_group! {
         select_by_pk,
         update,
         delete,
+        delete_insert_reuse,
         upsert_insert,
         upsert_update,
         batch_insert,

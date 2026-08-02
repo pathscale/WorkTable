@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::ops::Deref;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -85,6 +86,38 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 
     pub(crate) op_lock: FairMutex<()>,
     vacuum_lock: tokio::sync::Mutex<()>,
+    reuse_epoch: AtomicU64,
+    active_reusers: [AtomicUsize; 2],
+    reuse_quiescent: tokio::sync::Notify,
+}
+
+/// A free link reserved by an insert operation.
+///
+/// Dropping this lease announces that the link is no longer in flight. Vacuum
+/// advances the reuse epoch and waits for all leases from the preceding epoch
+/// before it starts moving or resetting pages.
+#[derive(Debug)]
+#[must_use = "the reservation must live until the free-link write finishes"]
+pub(crate) struct EmptyLinkReservation<'a, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
+    registry: &'a EmptyLinkRegistry<DATA_LENGTH>,
+    link: Link,
+    epoch: usize,
+}
+
+impl<const DATA_LENGTH: usize> Deref for EmptyLinkReservation<'_, DATA_LENGTH> {
+    type Target = Link;
+
+    fn deref(&self) -> &Self::Target {
+        &self.link
+    }
+}
+
+impl<const DATA_LENGTH: usize> Drop for EmptyLinkReservation<'_, DATA_LENGTH> {
+    fn drop(&mut self) {
+        if self.registry.active_reusers[self.epoch].fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.registry.reuse_quiescent.notify_one();
+        }
+    }
 }
 
 impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
@@ -96,6 +129,9 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
             sum_links_len: Default::default(),
             op_lock: Default::default(),
             vacuum_lock: Default::default(),
+            reuse_epoch: AtomicU64::new(0),
+            active_reusers: [AtomicUsize::new(0), AtomicUsize::new(0)],
+            reuse_quiescent: tokio::sync::Notify::new(),
         }
     }
 }
@@ -164,20 +200,36 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.insert_link(index_ord_link);
     }
 
+    /// Removes and returns the largest free link.
     pub fn pop_max(&self) -> Option<Link> {
-        if self.vacuum_lock.try_lock().is_err() {
-            return None;
-        }
+        self.reserve_max().map(|reservation| *reservation)
+    }
+
+    /// Reserves the largest free link for internal page reuse.
+    ///
+    /// The returned lease must remain alive until the caller has published the
+    /// row written into the link. Vacuum admission is closed while the lease is
+    /// registered, so a concurrent epoch advance cannot miss it.
+    pub(crate) fn reserve_max(&self) -> Option<EmptyLinkReservation<'_, DATA_LENGTH>> {
+        let _vacuum_admission = self.vacuum_lock.try_lock().ok()?;
 
         let _g = self.op_lock.lock();
 
         let mut iter = self.length_ord_links.iter().rev();
         let (_, max_length_link) = iter.next()?;
+        let max_length_link = *max_length_link;
         drop(iter);
 
-        self.remove_link(*max_length_link);
+        self.remove_link(max_length_link);
 
-        Some(*max_length_link)
+        let epoch = self.reuse_epoch.load(Ordering::Acquire) as usize & 1;
+        self.active_reusers[epoch].fetch_add(1, Ordering::AcqRel);
+
+        Some(EmptyLinkReservation {
+            registry: self,
+            link: max_length_link,
+            epoch,
+        })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Link> + '_ {
@@ -188,8 +240,17 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.sum_links_len.load(Ordering::Acquire)
     }
 
+    /// Closes free-link reuse admission, advances the epoch, and waits for all
+    /// reservations admitted in the previous epoch to finish.
     pub async fn lock_vacuum(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.vacuum_lock.lock().await
+        let guard = self.vacuum_lock.lock().await;
+        let previous_epoch = self.reuse_epoch.fetch_add(1, Ordering::AcqRel) as usize & 1;
+
+        while self.active_reusers[previous_epoch].load(Ordering::Acquire) != 0 {
+            self.reuse_quiescent.notified().await;
+        }
+
+        guard
     }
 }
 
@@ -422,7 +483,7 @@ mod tests {
     fn test_empty_registry() {
         let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
 
-        assert_eq!(registry.pop_max(), None);
+        assert!(registry.pop_max().is_none());
         assert_eq!(registry.iter().count(), 0);
     }
 
@@ -488,5 +549,31 @@ mod tests {
             "pop_max should return link after vacuum lock is released"
         );
         assert_eq!(popped_after_unlock.unwrap().length, 100);
+    }
+
+    #[tokio::test]
+    async fn test_lock_vacuum_waits_for_previous_epoch_reuser() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+        registry.push(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let reservation = registry.reserve_max().unwrap();
+        let vacuum = registry.lock_vacuum();
+        tokio::pin!(vacuum);
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut vacuum)
+                .await
+                .is_err(),
+            "vacuum passed the grace period while a prior-epoch link was in flight"
+        );
+
+        drop(reservation);
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(1), vacuum)
+            .await
+            .expect("vacuum should resume when the prior epoch becomes quiescent");
     }
 }

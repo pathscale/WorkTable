@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -133,11 +133,8 @@ where
         let now = Instant::now();
 
         let registry = self.data_pages.empty_links_registry();
-        let mut per_page_info = registry.get_per_page_info();
         let _registry_lock = registry.lock_vacuum().await;
-
-        // to avoid some rewrites of ops that used link from empty links registry
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut per_page_info = registry.get_per_page_info();
 
         per_page_info.sort_by_key(|l| OrderedFloat(l.filled_empty_ratio));
         let initial_bytes_freed: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();

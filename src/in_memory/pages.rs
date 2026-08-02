@@ -17,7 +17,7 @@ use std::{
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
-use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
+use crate::in_memory::empty_link_registry::{EmptyLinkRegistry, EmptyLinkReservation};
 use crate::prelude::ArchivedRowWrapper;
 use crate::{
     in_memory::{
@@ -29,6 +29,17 @@ use crate::{
 
 fn page_id_mapper(page_id: usize) -> usize {
     page_id - 1usize
+}
+
+pub(crate) struct InsertedRow<'a, const DATA_LENGTH: usize> {
+    link: Link,
+    _reuse_reservation: Option<EmptyLinkReservation<'a, DATA_LENGTH>>,
+}
+
+impl<const DATA_LENGTH: usize> InsertedRow<'_, DATA_LENGTH> {
+    pub(crate) fn link(&self) -> Link {
+        self.link
+    }
 }
 
 #[derive(Debug)]
@@ -101,9 +112,19 @@ where
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
+        Ok(self.insert_with_reservation(row)?.link())
+    }
+
+    pub(crate) fn insert_with_reservation(&self, row: Row) -> Result<InsertedRow<'_, DATA_LENGTH>, ExecutionError>
+    where
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+    {
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
-        if let Some(link) = self.empty_links.pop_max() {
+        if let Some(reservation) = self.empty_links.reserve_max() {
+            let link = *reservation;
             let pages = self.pages.read();
             let current_page: usize = page_id_mapper(link.page_id.into());
             let page = &pages[current_page];
@@ -113,7 +134,10 @@ where
                     if let Some(l) = left_link {
                         self.empty_links.push(l);
                     }
-                    return Ok(link);
+                    return Ok(InsertedRow {
+                        link,
+                        _reuse_reservation: Some(reservation),
+                    });
                 }
                 Err(e) => match e {
                     DataExecutionError::InvalidLink => {
@@ -138,7 +162,10 @@ where
             match link {
                 Ok(link) => {
                     self.row_count.fetch_add(1, Ordering::Relaxed);
-                    return Ok(link);
+                    return Ok(InsertedRow {
+                        link,
+                        _reuse_reservation: None,
+                    });
                 }
                 Err(e) => match e {
                     DataExecutionError::PageIsFull { .. } => {
@@ -170,12 +197,27 @@ where
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
-        let link = self.insert(row.clone())?;
+        let (inserted, bytes) = self.insert_cdc_with_reservation(row)?;
+        Ok((inserted.link(), bytes))
+    }
+
+    pub(crate) fn insert_cdc_with_reservation(
+        &self,
+        row: Row,
+    ) -> Result<(InsertedRow<'_, DATA_LENGTH>, Vec<u8>), ExecutionError>
+    where
+        Row: Archive
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>
+            + Clone,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+    {
+        let inserted = self.insert_with_reservation(row.clone())?;
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         let bytes = rkyv::to_bytes(&general_row)
             .expect("should be ok as insert not failed")
             .into_vec();
-        Ok((link, bytes))
+        Ok((inserted, bytes))
     }
 
     fn add_next_page(&self, tried_page: usize) {
@@ -726,6 +768,30 @@ mod tests {
 
         assert_eq!(link, link_new);
         assert_eq!(pages.select(link).unwrap(), TestRow { a: 10, b: 20 })
+    }
+
+    #[tokio::test]
+    async fn reused_link_reservation_lives_through_caller_publication() {
+        let pages = DataPages::<TestRow>::new();
+        let old_link = pages.insert(TestRow { a: 10, b: 20 }).unwrap();
+        pages.delete(old_link).unwrap();
+
+        let inserted = pages.insert_with_reservation(TestRow { a: 30, b: 40 }).unwrap();
+        assert_eq!(inserted.link(), old_link);
+
+        let vacuum = pages.empty_links.lock_vacuum();
+        tokio::pin!(vacuum);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut vacuum)
+                .await
+                .is_err(),
+            "vacuum passed the grace period before the caller published the reused link"
+        );
+
+        drop(inserted);
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(1), vacuum)
+            .await
+            .expect("vacuum should resume after publication releases the reused link");
     }
 
     //#[test]
