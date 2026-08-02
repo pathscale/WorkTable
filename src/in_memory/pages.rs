@@ -12,7 +12,11 @@ use rkyv::{
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
 };
+#[cfg(feature = "versioned-row-publication")]
+use std::collections::HashMap;
 use std::collections::VecDeque;
+#[cfg(feature = "versioned-row-publication")]
+use std::hash::{BuildHasherDefault, Hasher};
 use std::marker::PhantomData;
 use std::{
     fmt::Debug,
@@ -20,8 +24,6 @@ use std::{
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
-#[cfg(feature = "versioned-row-publication")]
-use crate::IndexMap;
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 #[cfg(feature = "versioned-row-publication")]
 use crate::in_memory::publication::{DELETED, GHOSTED, PublishedRow, VACUUMED};
@@ -39,6 +41,36 @@ use crate::{
 fn page_id_mapper(page_id: usize) -> usize {
     page_id - 1usize
 }
+
+/// `OffsetEqLink` already reduces publication keys to a trusted internal u64
+/// storage offset. Avoid hashing that offset again on every versioned read.
+#[cfg(feature = "versioned-row-publication")]
+#[derive(Default)]
+struct PublicationHasher(u64);
+
+#[cfg(feature = "versioned-row-publication")]
+impl Hasher for PublicationHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = 0xcbf29ce484222325u64;
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        self.0 = hash;
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+}
+
+#[cfg(feature = "versioned-row-publication")]
+type PublicationMap<Row, const DATA_LENGTH: usize> =
+    HashMap<OffsetEqLink<DATA_LENGTH>, Arc<PublishedRow<Row>>, BuildHasherDefault<PublicationHasher>>;
 
 pub struct ReadGuard<'a> {
     #[cfg(feature = "versioned-row-publication")]
@@ -61,7 +93,7 @@ where
     /// Immutable application-visible row versions. Published readers never
     /// borrow the mutable archived page image.
     #[cfg(feature = "versioned-row-publication")]
-    published_rows: IndexMap<OffsetEqLink<DATA_LENGTH>, Arc<PublishedRow<Row>>>,
+    published_rows: RwLock<PublicationMap<Row, DATA_LENGTH>>,
 
     /// Protects the mutable page image used by writers, vacuum, and
     /// persistence. Application reads use `published_rows` after hydration.
@@ -133,12 +165,12 @@ where
         let row = wrapped.get_inner();
         let key = OffsetEqLink(link);
 
-        if let Some(entry) = self.published_rows.get(&key) {
-            let slot = entry.get().value.clone();
-            drop(entry);
+        let mut published_rows = self.published_rows.write();
+        if let Some(slot) = published_rows.get(&key).cloned() {
+            drop(published_rows);
             slot.replace(row, flags);
         } else {
-            self.published_rows.insert(key, Arc::new(PublishedRow::new(row, flags)));
+            published_rows.insert(key, Arc::new(PublishedRow::new(row, flags)));
         }
     }
 
@@ -150,9 +182,7 @@ where
 
     #[cfg(feature = "versioned-row-publication")]
     fn published_slot(&self, link: Link) -> Option<Arc<PublishedRow<Row>>> {
-        self.published_rows
-            .get(&OffsetEqLink(link))
-            .map(|entry| entry.get().value.clone())
+        self.published_rows.read().get(&OffsetEqLink(link)).cloned()
     }
 
     #[cfg(feature = "versioned-row-publication")]
@@ -177,8 +207,8 @@ where
         let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
         let flags = Self::publication_flags(&wrapped);
         let slot = Arc::new(PublishedRow::new(wrapped.get_inner(), flags));
-        self.published_rows.insert(OffsetEqLink(link), slot.clone());
-        Ok(slot)
+        let mut published_rows = self.published_rows.write();
+        Ok(published_rows.entry(OffsetEqLink(link)).or_insert(slot).clone())
     }
 
     pub fn read_guard(&self) -> ReadGuard<'_> {
@@ -205,13 +235,15 @@ where
             return;
         }
 
+        let mut published_rows = self.published_rows.write();
         for link in retired_links.drain(..) {
-            self.published_rows.remove(&OffsetEqLink(link));
+            published_rows.remove(&OffsetEqLink(link));
             self.empty_links.push(link);
         }
         for link in retired_publications.drain(..) {
-            self.published_rows.remove(&link);
+            published_rows.remove(&link);
         }
+        drop(published_rows);
         if !retired_pages.is_empty() {
             let mut empty_pages = self.empty_pages.write();
             empty_pages.extend(retired_pages.drain(..));
@@ -221,7 +253,7 @@ where
     pub fn new() -> Self {
         Self {
             #[cfg(feature = "versioned-row-publication")]
-            published_rows: IndexMap::default(),
+            published_rows: RwLock::new(PublicationMap::default()),
             #[cfg(feature = "versioned-row-publication")]
             page_access: RwLock::new(()),
             #[cfg(feature = "versioned-row-publication")]
@@ -250,7 +282,7 @@ where
             let last_page_id = vec.len();
             Self {
                 #[cfg(feature = "versioned-row-publication")]
-                published_rows: IndexMap::default(),
+                published_rows: RwLock::new(PublicationMap::default()),
                 #[cfg(feature = "versioned-row-publication")]
                 page_access: RwLock::new(()),
                 #[cfg(feature = "versioned-row-publication")]
