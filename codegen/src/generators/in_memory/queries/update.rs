@@ -160,6 +160,7 @@ impl InMemoryGenerator {
                         self.gen_unique_update(
                             snake_case_name,
                             name,
+                            &index.field,
                             index_name,
                             idents,
                             indexes_columns.as_ref(),
@@ -658,6 +659,7 @@ impl InMemoryGenerator {
         &self,
         snake_case_name: String,
         name: &Ident,
+        by_field: &Ident,
         index: &Ident,
         idents: &[Ident],
         idx_idents: Option<&Vec<Ident>>,
@@ -724,13 +726,20 @@ impl InMemoryGenerator {
                         .map(|v| v.get().value.into())
                         .ok_or(WorkTableError::NotFound)?;
 
-                    if let Err(e) = self.0.data.select_non_vacuumed(link) {
-                        if e.is_vacuumed() {
-                            continue;
+                    match self.0.data.select_non_vacuumed(link) {
+                        core::result::Result::Ok(current) => {
+                            // The unique-index entry may have changed while we
+                            // waited for the original row's lock. Never mutate
+                            // the newly indexed row while holding another row's
+                            // lock, and reject stale index entries whose row no
+                            // longer satisfies the generated predicate.
+                            if current.get_primary_key() != pk || &current.#by_field != &by {
+                                return core::result::Result::Err(WorkTableError::NotFound);
+                            }
+                            break link;
                         }
-                        return Err(e.into());
-                    } else  {
-                        break link;
+                        core::result::Result::Err(e) if e.is_vacuumed() => continue,
+                        core::result::Result::Err(e) => return core::result::Result::Err(e.into()),
                     }
                 };
 

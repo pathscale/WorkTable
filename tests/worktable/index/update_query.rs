@@ -2,7 +2,7 @@ use crate::worktable::index::{
     Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable, TwoAttrByThirdQuery,
     UniqueTwoAttrByThirdQuery,
 };
-use worktable::prelude::SelectQueryExecutor;
+use worktable::{WorkTableError, prelude::SelectQueryExecutor};
 
 #[tokio::test]
 async fn update_two_via_query_unique_indexes() {
@@ -47,6 +47,46 @@ async fn update_two_via_query_unique_indexes() {
     let updated = test_table.select_by_attr3(attr3_old);
     assert!(updated.is_some());
     assert_eq!(updated, Some(new_row))
+}
+
+#[tokio::test]
+async fn unique_update_rejects_stale_index_link() {
+    let table = Test3UniqueWorkTable::default();
+    let row1 = Test3UniqueRow {
+        val: 1,
+        attr1: "row-1".to_string(),
+        attr2: 10,
+        attr3: 100,
+        id: 0,
+    };
+    let row2 = Test3UniqueRow {
+        val: 2,
+        attr1: "row-2".to_string(),
+        attr2: 20,
+        attr3: 200,
+        id: 1,
+    };
+    let pk1 = table.insert(row1.clone()).unwrap();
+    let pk2 = table.insert(row2.clone()).unwrap();
+
+    // Model the stale-link state that a concurrent unique-index rewrite can
+    // expose: the requested key resolves to a row that does not own that key.
+    let row2_link = table.0.primary_index.pk_map.get(&pk2).unwrap().get().value;
+    table.0.indexes.idx3.insert(row1.attr3, (*row2_link).into());
+
+    let result = table
+        .update_unique_two_attr_by_third(
+            UniqueTwoAttrByThirdQuery {
+                attr1: "must-not-apply".to_string(),
+                attr2: 30,
+            },
+            row1.attr3,
+        )
+        .await;
+
+    assert!(matches!(result, Err(WorkTableError::NotFound)));
+    assert_eq!(table.select(pk1), Some(row1));
+    assert_eq!(table.select(pk2), Some(row2));
 }
 
 #[tokio::test]
