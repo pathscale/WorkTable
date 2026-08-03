@@ -85,7 +85,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                     v => return Err(eyre::eyre!("Unsupported version: {}", v)),
                 };
 
-                target.wait_for_ops().await;
+                target.wait_for_ops().await?;
 
                 Ok(MigrationReport { source_version: version })
             }

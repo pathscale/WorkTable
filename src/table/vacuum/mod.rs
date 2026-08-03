@@ -4,6 +4,7 @@ use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 
+use crate::persistence::PersistenceResult;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
 
 mod fragmentation_info;
@@ -36,7 +37,7 @@ pub trait VacuumPersistence<PrimaryKey, SecondaryEvents>: Send + Sync {
         new_link: Link,
         primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
         secondary_keys_events: SecondaryEvents,
-    );
+    ) -> PersistenceResult;
 }
 
 /// Trait for unifying different [`WorkTable`] related [`EmptyDataVacuum`]'s.

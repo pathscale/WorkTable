@@ -540,4 +540,6 @@ pub enum WorkTableError {
     SecondaryIndexError,
     PrimaryUpdateTry,
     PagesError(in_memory::PagesExecutionError),
+    #[display("{}", _0)]
+    PersistenceError(#[error(not(source))] std::sync::Arc<crate::persistence::PersistenceError>),
 }

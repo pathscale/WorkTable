@@ -69,7 +69,7 @@ fn test_version_reads_persisted_data_with_string_primary_key() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
 
         {

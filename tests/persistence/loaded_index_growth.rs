@@ -97,7 +97,8 @@ fn test_primary_index_grows_on_a_loaded_table() {
             }
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled building the initial store");
+                .expect("persistence stalled building the initial store")
+                .expect("persistence engine failed");
         }
 
         let idx_when_loaded = primary_idx_size(dir);
@@ -115,7 +116,8 @@ fn test_primary_index_grows_on_a_loaded_table() {
             }
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled appending to the loaded store");
+                .expect("persistence stalled appending to the loaded store")
+                .expect("persistence engine failed");
         }
 
         let idx_after_appends = primary_idx_size(dir);
@@ -165,7 +167,8 @@ fn test_primary_index_grows_on_a_loaded_table() {
             table.insert(row(ROWS_BEFORE_RELOAD + ROWS_AFTER_RELOAD)).unwrap();
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled on the post-reload insert");
+                .expect("persistence stalled on the post-reload insert")
+                .expect("persistence engine failed");
         }
     })
 }

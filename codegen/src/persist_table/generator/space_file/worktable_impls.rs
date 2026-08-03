@@ -10,12 +10,14 @@ impl Generator {
         let space_info_fn = self.gen_worktable_space_info_fn();
         let persisted_pk_fn = self.gen_worktable_persisted_primary_key_fn();
         let wait_for_ops_fn = self.gen_worktable_wait_for_ops_fn();
+        let close_fn = self.gen_worktable_close_fn();
 
         quote! {
             impl #ident {
                 #space_info_fn
                 #persisted_pk_fn
                 #wait_for_ops_fn
+                #close_fn
             }
         }
     }
@@ -23,12 +25,30 @@ impl Generator {
     fn gen_worktable_wait_for_ops_fn(&self) -> TokenStream {
         if self.attributes.read_only {
             quote! {
-                pub async fn wait_for_ops(&self) {}
+                pub async fn wait_for_ops(&self) -> PersistenceResult {
+                    Ok(())
+                }
             }
         } else {
             quote! {
-                pub async fn wait_for_ops(&self) {
+                pub async fn wait_for_ops(&self) -> PersistenceResult {
                    self.1.wait_for_ops().await
+                }
+            }
+        }
+    }
+
+    fn gen_worktable_close_fn(&self) -> TokenStream {
+        if self.attributes.read_only {
+            quote! {
+                pub async fn close(self) -> PersistenceResult {
+                    Ok(())
+                }
+            }
+        } else {
+            quote! {
+                pub async fn close(self) -> PersistenceResult {
+                    self.1.close().await
                 }
             }
         }

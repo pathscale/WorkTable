@@ -53,7 +53,7 @@ fn test_s3_engine_compiles() {
                 })
                 .unwrap();
             assert!(!table.select_all().execute().unwrap().is_empty());
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }

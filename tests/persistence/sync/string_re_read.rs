@@ -68,7 +68,7 @@ fn test_key() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -82,7 +82,7 @@ fn test_key() {
                     last: "_________________________last_____________________".to_string(),
                 })
                 .unwrap();
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -132,7 +132,7 @@ fn test_key_delete_scenario() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             (pk0, pk)
         };
         {
@@ -140,7 +140,7 @@ fn test_key_delete_scenario() {
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk.clone()).await.unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -160,14 +160,14 @@ fn test_key_delete_scenario() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk0.clone()).await.unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -228,7 +228,7 @@ fn test_key_delete() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pk
         };
         {
@@ -236,7 +236,7 @@ fn test_key_delete() {
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete(pk.clone()).await.unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -290,7 +290,7 @@ fn test_key_delete_all() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             (pk0, pk1)
         };
         {
@@ -299,7 +299,7 @@ fn test_key_delete_all() {
             table.delete(pk0.clone()).await.unwrap();
             table.delete(pk1.clone()).await.unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -355,7 +355,7 @@ fn test_key_delete_all_and_insert() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             (pk0, pk1)
         };
         {
@@ -364,7 +364,7 @@ fn test_key_delete_all_and_insert() {
             table.delete(pk0.clone()).await.unwrap();
             table.delete(pk1.clone()).await.unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         let pk = {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -381,7 +381,7 @@ fn test_key_delete_all_and_insert() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pk
         };
         {
@@ -437,7 +437,7 @@ fn test_key_delete_by_unique() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pk
         };
         {
@@ -445,7 +445,7 @@ fn test_key_delete_by_unique() {
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete_by_second("second_again".to_string()).await.unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -499,7 +499,7 @@ fn test_key_delete_by_non_unique() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             (pk0, pk1)
         };
         {
@@ -507,7 +507,7 @@ fn test_key_delete_by_non_unique() {
             let table = StringReReadWorkTable::load(engine).await.unwrap();
             table.delete_by_first("first".to_string()).await.unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -565,7 +565,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pk1
         };
 
@@ -584,7 +584,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
                 .await
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         {
@@ -601,7 +601,9 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
 
             assert!(result.is_ok(), "TOC entry is stale after update with same index value");
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             if wait_result.is_err() {
                 panic!("BUG DETECTED: Persistence system is stuck - wait_for_ops() timed out");
             }
@@ -653,7 +655,7 @@ fn test_big_amount_reread() {
                     .unwrap();
             }
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -668,7 +670,7 @@ fn test_big_amount_reread() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -712,7 +714,7 @@ fn test_unique_index_same_value_link_changes() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pk1
         };
 
@@ -748,7 +750,9 @@ fn test_unique_index_same_value_link_changes() {
             );
 
             // Timeout check for stuck persistence
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(
                 wait_result.is_ok(),
                 "BUG: persistence blocked after unique index update"

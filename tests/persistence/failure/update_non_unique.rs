@@ -43,7 +43,7 @@ fn test_update_non_unique_middle_fail() {
                 data: 300,
             };
             table.insert(row3.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id, row3.id)
         };
@@ -83,7 +83,9 @@ fn test_update_non_unique_middle_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -95,7 +97,7 @@ fn test_update_non_unique_middle_fail() {
             assert!(table.select(row1_pk).is_some());
             assert!(table.select(row2_pk).is_some());
             assert!(table.select(row3_pk).is_some());
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -149,7 +151,7 @@ fn test_update_non_unique_last_fail() {
                 data: 300,
             };
             table.insert(row3.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             conflict_row.id
         };
@@ -189,7 +191,9 @@ fn test_update_non_unique_last_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -200,7 +204,7 @@ fn test_update_non_unique_last_fail() {
 
             let conflict = table.select(conflict_pk).unwrap();
             assert_eq!(conflict.unique_value, 99);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }

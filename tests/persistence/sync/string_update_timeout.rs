@@ -75,7 +75,7 @@ fn test_string_update_doesnt_block_persistence() {
                 honey_app_role: 2,
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row
         };
 
@@ -85,7 +85,9 @@ fn test_string_update_doesnt_block_persistence() {
 
             table.update(row.clone()).await.unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
 
             if wait_result.is_err() {
                 panic!(

@@ -57,7 +57,7 @@ fn test_space_insert_sync() {
                 id: table.get_next_pk().0,
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -104,7 +104,7 @@ fn test_space_insert_many_sync() {
                 };
                 pks.push(pk);
             }
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         {
@@ -156,7 +156,7 @@ fn test_space_update_full_sync() {
                 })
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             assert_eq!(
                 table.select(row.id).unwrap().another,
                 "Some string to test updated".to_string()
@@ -213,7 +213,7 @@ fn test_space_update_query_pk_sync() {
                 )
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -261,7 +261,7 @@ fn test_space_update_query_unique_sync() {
                 .update_field_by_another(FieldByAnotherQuery { field: 1.0 }, "Some string before".to_string())
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -311,7 +311,7 @@ fn test_space_update_query_non_unique_sync() {
                 )
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -356,7 +356,7 @@ fn test_space_delete_sync() {
             };
             table.insert(row.clone()).unwrap();
             table.delete(row.id).await.unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -397,7 +397,7 @@ fn test_space_delete_query_sync() {
             };
             table.insert(row.clone()).unwrap();
             table.delete_by_another(row.another).await.unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -441,7 +441,7 @@ fn test_space_delete_query_sync() {
 //                 table.insert(row.clone()).unwrap();
 //             }
 //
-//             table.wait_for_ops().await;
+//             table.wait_for_ops().await.unwrap();
 //         };
 //         {
 //             let table = TestSyncWorkTable::load_from_file(config).await.unwrap();

@@ -258,7 +258,7 @@ async fn upstream_indexset_survives_persist_reload_and_more_writes() {
             })
             .unwrap();
     }
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = PersistedUpstreamPersistenceEngine::new(config.clone()).await.unwrap();
@@ -274,7 +274,7 @@ async fn upstream_indexset_survives_persist_reload_and_more_writes() {
         .unwrap();
     let added_id: u64 = added_pk.clone().into();
     table.delete(10).await.unwrap();
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = PersistedUpstreamPersistenceEngine::new(config).await.unwrap();
@@ -283,7 +283,7 @@ async fn upstream_indexset_survives_persist_reload_and_more_writes() {
     assert!(table.select(10).is_none());
     assert_eq!(table.select(added_pk).unwrap().unique_key, 2_000);
     assert_eq!(table.select_by_unique_key(2_000).unwrap().id, added_id);
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     remove_dir_if_exists(ROOT.to_string()).await;
@@ -329,7 +329,7 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
             congee_key: 300,
         })
         .unwrap();
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = PersistedArcticPersistenceEngine::new(arctic_config.clone())
@@ -341,14 +341,14 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
     assert_eq!(table.select(accepted_id).unwrap().congee_key, 300);
     assert_eq!(table.select_by_congee_key(77).unwrap().congee_key, 77);
     table.delete(77).await.unwrap();
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = PersistedArcticPersistenceEngine::new(arctic_config).await.unwrap();
     let table = PersistedArcticWorkTable::load(engine).await.unwrap();
     assert!(table.select(77).is_none());
     assert!(table.select_by_congee_key(77).is_none());
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let congee_config = DiskConfig::new_with_table_name(
@@ -368,7 +368,7 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
             })
             .unwrap();
     }
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = PersistedCongeePersistenceEngine::new(congee_config.clone())
@@ -378,14 +378,14 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
     assert_eq!(table.count(), 256);
     assert_eq!(table.select_by_arctic_key(199).unwrap().arctic_key, 199);
     table.delete(199).await.unwrap();
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = PersistedCongeePersistenceEngine::new(congee_config).await.unwrap();
     let table = PersistedCongeeWorkTable::load(engine).await.unwrap();
     assert!(table.select(199).is_none());
     assert!(table.select_by_arctic_key(199).is_none());
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     remove_dir_if_exists(ARCTIC_ROOT.to_string()).await;
@@ -437,7 +437,7 @@ async fn native_art_backends_recover_concurrent_same_row_updates() {
     }
 
     let expected = table.select(id).unwrap();
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = PersistedArcticPersistenceEngine::new(config).await.unwrap();
@@ -449,7 +449,7 @@ async fn native_art_backends_recover_concurrent_same_row_updates() {
             assert!(table.select_by_congee_key(key).is_none());
         }
     }
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     remove_dir_if_exists(ROOT.to_string()).await;
@@ -480,7 +480,7 @@ async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() 
             })
             .unwrap();
     }
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let upstream_config = DiskConfig::new_with_table_name(
@@ -501,7 +501,7 @@ async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() 
             unique_key: 2_000,
         })
         .unwrap();
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     let engine = wti::ProviderSwitchPersistenceEngine::new(wti_config).await.unwrap();
@@ -509,7 +509,7 @@ async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() 
     assert_eq!(table.count(), 1_024);
     assert!(table.select(10).is_none());
     assert_eq!(table.select_by_unique_key(2_000).unwrap().unique_key, 2_000);
-    table.wait_for_ops().await;
+    table.wait_for_ops().await.unwrap();
     drop(table);
 
     remove_dir_if_exists(ROOT.to_string()).await;

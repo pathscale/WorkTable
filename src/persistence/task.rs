@@ -9,10 +9,11 @@ use std::time::Duration;
 use data_bucket::page::PageId;
 use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 use worktable_codegen::worktable;
 
-use crate::persistence::PersistenceEngine;
 use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery};
+use crate::persistence::{PersistenceEngine, PersistenceError, PersistenceResult, PersistenceState};
 use crate::prelude::*;
 use crate::util::OptimizedVec;
 use crate::vacuum::VacuumPersistence;
@@ -34,6 +35,70 @@ worktable! (
 );
 
 const MAX_PAGE_AMOUNT: usize = 16;
+
+#[derive(Debug)]
+struct PersistenceLifecycle {
+    state: ParkingMutex<PersistenceState>,
+    notify: Notify,
+}
+
+impl PersistenceLifecycle {
+    fn new() -> Self {
+        Self {
+            state: ParkingMutex::new(PersistenceState::Running),
+            notify: Notify::new(),
+        }
+    }
+
+    fn state(&self) -> PersistenceState {
+        self.state.lock().clone()
+    }
+
+    fn begin_close(&self) -> PersistenceResult {
+        let mut state = self.state.lock();
+        match &*state {
+            PersistenceState::Running => {
+                *state = PersistenceState::Closing;
+                self.notify.notify_waiters();
+                Ok(())
+            }
+            PersistenceState::Closing => Ok(()),
+            PersistenceState::Failed(error) => Err(error.clone()),
+            PersistenceState::Closed => Ok(()),
+        }
+    }
+
+    fn finish_close(&self) {
+        let mut state = self.state.lock();
+        if matches!(*state, PersistenceState::Closing) {
+            *state = PersistenceState::Closed;
+        }
+        self.notify.notify_waiters();
+    }
+
+    fn fail(&self, report: eyre::Report) -> Arc<PersistenceError> {
+        let mut state = self.state.lock();
+        let error = match &*state {
+            PersistenceState::Failed(error) => error.clone(),
+            _ => {
+                let error = Arc::new(PersistenceError::Engine(report));
+                *state = PersistenceState::Failed(error.clone());
+                error
+            }
+        };
+        self.notify.notify_waiters();
+        error
+    }
+
+    fn ensure_running(&self) -> PersistenceResult {
+        match self.state() {
+            PersistenceState::Running => Ok(()),
+            PersistenceState::Closing => Err(Arc::new(PersistenceError::Closing)),
+            PersistenceState::Closed => Err(Arc::new(PersistenceError::Closed)),
+            PersistenceState::Failed(error) => Err(error),
+        }
+    }
+}
 
 pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
@@ -271,6 +336,151 @@ where
     }
 }
 
+#[cfg(test)]
+mod lifecycle_tests {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[derive(Clone, Debug, Default)]
+    struct TestConfig;
+
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    enum TestIndex {}
+
+    #[derive(Clone, Debug, Default)]
+    struct TestEvents;
+
+    impl TableSecondaryIndexEventsOps<TestIndex> for TestEvents {
+        fn extend(&mut self, _another: Self) {}
+
+        fn remove(&mut self, _another: &Self) {}
+
+        fn last_evs(&self) -> HashMap<TestIndex, Option<IndexChangeEventId>> {
+            HashMap::new()
+        }
+
+        fn first_evs(&self) -> HashMap<TestIndex, Option<IndexChangeEventId>> {
+            HashMap::new()
+        }
+
+        fn iter_event_ids(&self) -> impl Iterator<Item = (TestIndex, IndexChangeEventId)> {
+            std::iter::empty()
+        }
+
+        fn sort(&mut self) {}
+
+        fn validate(&mut self) -> Self {
+            Self
+        }
+
+        fn is_empty(&self) -> bool {
+            true
+        }
+
+        fn is_unit() -> bool {
+            true
+        }
+    }
+
+    impl PersistenceConfig for TestConfig {
+        fn table_path(&self) -> &str {
+            ""
+        }
+
+        fn version(&self) -> u32 {
+            0
+        }
+    }
+
+    struct TestEngine {
+        batches: Arc<AtomicUsize>,
+        config: TestConfig,
+        fail: bool,
+    }
+
+    impl PersistenceEngine<(), u64, TestEvents, TestIndex> for TestEngine {
+        type Config = TestConfig;
+
+        async fn new(config: Self::Config) -> eyre::Result<Self> {
+            Ok(Self {
+                batches: Arc::new(AtomicUsize::new(0)),
+                config,
+                fail: false,
+            })
+        }
+
+        async fn apply_operation(&mut self, _op: Operation<(), u64, TestEvents>) -> eyre::Result<()> {
+            Ok(())
+        }
+
+        async fn apply_batch_operation(
+            &mut self,
+            _batch_op: BatchOperation<(), u64, TestEvents, TestIndex>,
+        ) -> eyre::Result<()> {
+            if self.fail {
+                return Err(eyre::eyre!("injected batch failure"));
+            }
+            self.batches.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn config(&self) -> &Self::Config {
+            &self.config
+        }
+    }
+
+    fn insert_operation(id: u128) -> Operation<(), u64, TestEvents> {
+        Operation::Insert(InsertOperation {
+            id: OperationId::Single(uuid::Uuid::from_u128(id)),
+            pk_gen_state: (),
+            primary_key_events: vec![],
+            secondary_keys_events: TestEvents,
+            bytes: vec![id as u8],
+            link: Link {
+                page_id: 1.into(),
+                offset: id as u32,
+                length: 1,
+            },
+        })
+    }
+
+    #[tokio::test]
+    async fn close_drains_and_joins_the_engine() {
+        let batches = Arc::new(AtomicUsize::new(0));
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: batches.clone(),
+            config: TestConfig,
+            fail: false,
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        task.close().await.unwrap();
+
+        assert_eq!(batches.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn engine_failure_is_terminal_and_reused_for_later_callers() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            config: TestConfig,
+            fail: true,
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        let wait_error = task.wait_for_ops().await.unwrap_err();
+        assert!(wait_error.to_string().contains("injected batch failure"));
+
+        let intake_error = task.apply_operation(insert_operation(2)).unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &intake_error));
+
+        let close_error = task.close().await.unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &close_error));
+    }
+}
+
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // Not `lockfree::queue::Queue`: its `Removable::empty` materializes the
@@ -283,21 +493,31 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // 65_536 queued operations, making the wait triggers see an "empty"
     // queue that still holds work.
     len: Arc<AtomicUsize>,
+    lifecycle: Arc<PersistenceLifecycle>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
-    pub fn new() -> Self {
+    fn new(lifecycle: Arc<PersistenceLifecycle>) -> Self {
         Self {
             queue: ParkingMutex::new(VecDeque::new()),
             notify: Notify::new(),
             len: Arc::new(AtomicUsize::new(0)),
+            lifecycle,
         }
     }
 
-    pub fn push(&self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) {
+    pub fn push(&self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
+        let state = self.lifecycle.state.lock();
+        match &*state {
+            PersistenceState::Running => {}
+            PersistenceState::Closing => return Err(Arc::new(PersistenceError::Closing)),
+            PersistenceState::Closed => return Err(Arc::new(PersistenceError::Closed)),
+            PersistenceState::Failed(error) => return Err(error.clone()),
+        }
         self.len.fetch_add(1, Ordering::Release);
         self.queue.lock().push_back(value);
         self.notify.notify_one();
+        Ok(())
     }
 
     /// Pops the next operation, marking `in_progress` `true` before the queue
@@ -308,21 +528,30 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     pub async fn pop_marking_in_progress(
         &self,
         in_progress: &AtomicBool,
-    ) -> Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    ) -> Option<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         loop {
+            let notified = self.notify.notified();
             // Drain values
             {
                 let mut queue = self.queue.lock();
                 if let Some(value) = queue.pop_front() {
                     in_progress.store(true, Ordering::Release);
                     self.len.fetch_sub(1, Ordering::Release);
-                    return value;
+                    return Some(value);
                 }
             }
 
+            if !matches!(self.lifecycle.state(), PersistenceState::Running) {
+                return None;
+            }
+
             // Wait for values to be available
-            self.notify.notified().await;
+            notified.await;
         }
+    }
+
+    fn wake(&self) {
+        self.notify.notify_waiters();
     }
 
     pub fn immediate_pop(&self) -> Option<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
@@ -356,24 +585,24 @@ where
         new_link: Link,
         primary_key_events: Vec<IndexChangeEvent<IndexPair<PrimaryKey, Link>>>,
         secondary_keys_events: SecondaryKeys,
-    ) {
+    ) -> PersistenceResult {
         self.push(Operation::Update(UpdateOperation {
             id: OperationId::Single(uuid::Uuid::now_v7()),
             primary_key_events,
             secondary_keys_events,
             bytes,
             link: new_link,
-        }));
+        }))
     }
 }
 
 #[derive(Debug)]
 pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
-    engine_task_handle: tokio::task::AbortHandle,
+    engine_task_handle: Option<JoinHandle<()>>,
     queue: Arc<Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     analyzer_inner_wt: Arc<QueueInnerWorkTable>,
     analyzer_in_progress: Arc<AtomicBool>,
-    progress_notify: Arc<Notify>,
+    lifecycle: Arc<PersistenceLifecycle>,
     phantom_data: PhantomData<AvailableIndexes>,
 }
 
@@ -396,8 +625,20 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     /// `close()` lifecycle (drain, join, surface terminal errors) is the
     /// long-term replacement for this heuristic.
     fn drop(&mut self) {
+        let Some(handle) = self.engine_task_handle.as_ref() else {
+            return;
+        };
+        if handle.is_finished() {
+            return;
+        }
+        if matches!(
+            self.lifecycle.state(),
+            PersistenceState::Failed(_) | PersistenceState::Closed
+        ) {
+            return;
+        }
         if self.check_wait_triggers() {
-            self.engine_task_handle.abort();
+            handle.abort();
         } else {
             tracing::error!(
                 "PersistenceTask dropped with work in flight; the engine task keeps running detached.                  Call wait_for_ops() before dropping to guarantee a clean shutdown."
@@ -409,8 +650,16 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
-    pub fn apply_operation(&self, op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) {
-        self.queue.push(op);
+    pub fn apply_operation(&self, op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
+        self.queue.push(op)
+    }
+
+    pub fn ensure_running(&self) -> PersistenceResult {
+        self.lifecycle.ensure_running()
+    }
+
+    pub fn state(&self) -> PersistenceState {
+        self.lifecycle.state()
     }
 
     /// Returns a sink that lets vacuum queue persistence operations for row
@@ -432,11 +681,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         PrimaryKey: Clone + Debug + Send + Sync + 'static,
         AvailableIndexes: Copy + Clone + Debug + Hash + Eq + Send + Sync + 'static,
     {
-        let queue = Arc::new(Queue::new());
-        let progress_notify = Arc::new(Notify::new());
+        let lifecycle = Arc::new(PersistenceLifecycle::new());
+        let queue = Arc::new(Queue::new(lifecycle.clone()));
 
         let engine_queue = queue.clone();
-        let engine_progress_notify = progress_notify.clone();
+        let engine_lifecycle = lifecycle.clone();
         let analyzer_inner_wt: Arc<QueueInnerWorkTable> = Default::default();
         let mut analyzer = QueueAnalyzer::new(analyzer_inner_wt.clone());
         let analyzer_in_progress = Arc::new(AtomicBool::new(true));
@@ -448,31 +697,39 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     Some(next_op)
                 } else if analyzer.len() == 0 {
                     task_analyzer_in_progress.store(false, Ordering::Release);
-                    engine_progress_notify.notify_waiters();
+                    engine_lifecycle.notify.notify_waiters();
+                    if matches!(engine_lifecycle.state(), PersistenceState::Closing) {
+                        engine_lifecycle.finish_close();
+                        return;
+                    }
                     // The pop sets the flag back to `true` atomically with the
                     // dequeue, so waiters never observe an empty queue with an
                     // idle analyzer while an operation is in flight.
-                    Some(engine_queue.pop_marking_in_progress(&task_analyzer_in_progress).await)
+                    engine_queue.pop_marking_in_progress(&task_analyzer_in_progress).await
                 } else {
                     None
                 };
                 if let Some(op) = op
                     && let Err(err) = analyzer.push(op.clone())
                 {
-                    tracing::warn!("Error while feeding data to analyzer: {}", err);
+                    engine_lifecycle.fail(err);
+                    return;
                 }
                 let ops_available_iter = engine_queue.pop_iter();
                 if let Err(err) = analyzer.extend_from_iter(ops_available_iter) {
-                    tracing::warn!("Error while feeding data to analyzer: {}", err);
+                    engine_lifecycle.fail(err);
+                    return;
                 }
                 if let Some(op_id) = analyzer.get_first_op_id_available() {
                     let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
                     if let Err(e) = batch_op {
-                        tracing::warn!("Error collecting batch operation: {}", e);
+                        engine_lifecycle.fail(e);
+                        return;
                     } else if let Some(batch_op) = batch_op.unwrap() {
                         let res = engine.apply_batch_operation(batch_op).await;
                         if let Err(e) = res {
-                            tracing::warn!("Persistence engine failed while applying batch op: {}", e);
+                            engine_lifecycle.fail(e);
+                            return;
                         }
                     } else {
                         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -480,13 +737,13 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 }
             }
         };
-        let engine_task_handle = tokio::spawn(task).abort_handle();
+        let engine_task_handle = tokio::spawn(task);
         Self {
             queue,
-            engine_task_handle,
+            engine_task_handle: Some(engine_task_handle),
             analyzer_inner_wt,
             analyzer_in_progress,
-            progress_notify,
+            lifecycle,
             phantom_data: PhantomData,
         }
     }
@@ -504,8 +761,22 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         true
     }
 
-    pub async fn wait_for_ops(&self) {
-        while !self.check_wait_triggers() {
+    pub async fn wait_for_ops(&self) -> PersistenceResult {
+        loop {
+            match self.lifecycle.state() {
+                PersistenceState::Failed(error) => return Err(error),
+                PersistenceState::Closed => return Ok(()),
+                PersistenceState::Running if self.check_wait_triggers() => return Ok(()),
+                PersistenceState::Running | PersistenceState::Closing => {}
+            }
+
+            if self.engine_task_handle.as_ref().is_some_and(JoinHandle::is_finished) {
+                let error = self
+                    .lifecycle
+                    .fail(eyre::eyre!("persistence engine task terminated unexpectedly"));
+                return Err(error);
+            }
+
             let queue_count = self.queue.len();
             let analyzer_count = self.analyzer_inner_wt.count();
             let count = queue_count + analyzer_count;
@@ -516,9 +787,30 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             }
 
             tokio::select! {
-                _ = self.progress_notify.notified() => {},
+                _ = self.lifecycle.notify.notified() => {},
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             }
+        }
+    }
+
+    pub async fn close(mut self) -> PersistenceResult {
+        let begin_result = self.lifecycle.begin_close();
+        self.queue.wake();
+
+        if let Some(handle) = self.engine_task_handle.take()
+            && let Err(error) = handle.await
+        {
+            return Err(self
+                .lifecycle
+                .fail(eyre::eyre!("persistence engine task failed to join: {error}")));
+        }
+
+        match self.lifecycle.state() {
+            PersistenceState::Closed => begin_result,
+            PersistenceState::Failed(error) => Err(error),
+            PersistenceState::Running | PersistenceState::Closing => Err(self
+                .lifecycle
+                .fail(eyre::eyre!("persistence engine task exited without a terminal state"))),
         }
     }
 }

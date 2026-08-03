@@ -129,7 +129,7 @@ where
         self
     }
 
-    async fn defragment(&self) -> VacuumStats {
+    async fn defragment(&self) -> eyre::Result<VacuumStats> {
         let now = Instant::now();
 
         let registry = self.data_pages.empty_links_registry();
@@ -164,7 +164,7 @@ where
                 } else {
                     unreachable!("I hope so")
                 };
-                match self.move_data_from(page_from, page_to).await {
+                match self.move_data_from(page_from, page_to).await? {
                     (true, true) => {
                         // from moved fully and on to no more space
                         free_pages.push_back(page_from);
@@ -198,19 +198,19 @@ where
             self.data_pages.mark_page_full(id)
         }
 
-        VacuumStats {
+        Ok(VacuumStats {
             pages_processed,
             pages_freed,
             bytes_freed: initial_bytes_freed,
             duration_ns: now.elapsed().as_nanos(),
-        }
+        })
     }
 
     fn free_page(&self, page_id: PageId) {
         self.data_pages.reset_page(page_id).expect("should exist as called")
     }
 
-    async fn move_data_from(&self, from: PageId, to: PageId) -> (bool, bool) {
+    async fn move_data_from(&self, from: PageId, to: PageId) -> eyre::Result<(bool, bool)> {
         let to_page = self.data_pages.get_page(to).expect("should exist as link exists");
         let to_free_space = to_page.free_space();
 
@@ -271,14 +271,14 @@ where
                     .move_row_for_vacuum(from_link.0, to)
                     .expect("links and destination capacity were checked")
             };
-            self.update_index_after_move(pk.clone(), from_link.0, new_link, raw_data);
+            self.update_index_after_move(pk.clone(), from_link.0, new_link, raw_data)?;
             self.data_pages.retire_published_link(from_link.0);
 
             lock.unlock();
             self.lock_manager.remove_with_lock_check(&pk);
         }
 
-        (from_page_will_be_moved, to_page_will_be_filled)
+        Ok((from_page_will_be_moved, to_page_will_be_filled))
     }
 
     async fn full_row_lock(&self, pk: &PrimaryKey) -> Arc<Lock> {
@@ -294,7 +294,13 @@ where
         op_lock
     }
 
-    fn update_index_after_move(&self, pk: PrimaryKey, old_link: Link, new_link: Link, raw_data: Vec<u8>) {
+    fn update_index_after_move(
+        &self,
+        pk: PrimaryKey,
+        old_link: Link,
+        new_link: Link,
+        raw_data: Vec<u8>,
+    ) -> eyre::Result<()> {
         let row = self
             .data_pages
             .select(new_link)
@@ -309,13 +315,14 @@ where
                     .reinsert_row_cdc(row.clone(), old_link, row, new_link);
             res.expect("should be ok as index were no violated");
             let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
-            persistence.apply_move(raw_data, new_link, primary_key_events, secondary_keys_events);
+            persistence.apply_move(raw_data, new_link, primary_key_events, secondary_keys_events)?;
         } else {
             self.secondary_indexes
                 .reinsert_row(row.clone(), old_link, row, new_link)
                 .expect("should be ok as index were no violated");
             self.primary_index.insert(pk.clone(), new_link);
         }
+        Ok(())
     }
 }
 
@@ -378,7 +385,7 @@ where
     }
 
     async fn vacuum(&self) -> eyre::Result<VacuumStats> {
-        Ok(self.defragment().await)
+        self.defragment().await
     }
 }
 
@@ -454,7 +461,7 @@ mod tests {
         table.delete(first_two_ids[1]).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids.into_iter().skip(2) {
             let row = table.select(id);
@@ -485,7 +492,7 @@ mod tests {
         table.delete(ids_to_delete[1]).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids
             .into_iter()
@@ -519,7 +526,7 @@ mod tests {
         table.delete(last_two_ids[0]).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids
             .into_iter()
@@ -554,7 +561,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
             let row = table.select(id);
@@ -586,7 +593,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         let row = table.select(remaining_id);
         assert_eq!(row, Some(ids[0].1.clone()));
@@ -612,7 +619,7 @@ mod tests {
         table.delete(ids.last().unwrap().0).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids.into_iter().take(4) {
             let row = table.select(id);
@@ -654,7 +661,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
             let row = table.select(id);
@@ -685,7 +692,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         let mut new_ids = HashMap::new();
         for i in 0..3 {
@@ -735,7 +742,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids.into_iter().filter(|(i, _)| !ids_to_delete.contains(i)) {
             let row = table.select(id);
@@ -767,7 +774,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids.into_iter().filter(|(id, _)| !ids_to_delete.contains(id)) {
             let row = table.select(id);
@@ -796,7 +803,7 @@ mod tests {
         table.delete(ids.last().unwrap().0).await.unwrap();
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         for (id, expected) in ids.into_iter().take(499) {
             let row = table.select(id);
@@ -830,7 +837,7 @@ mod tests {
         }
 
         let vacuum = create_vacuum(&table);
-        vacuum.defragment().await;
+        vacuum.defragment().await.unwrap();
 
         assert!(!table.0.data.get_empty_pages().is_empty());
 

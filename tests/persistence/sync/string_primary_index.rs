@@ -57,7 +57,7 @@ fn test_space_insert_sync() {
                 id: "Some string to test".to_string(),
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -103,7 +103,7 @@ fn test_space_insert_many_sync() {
                 };
                 pks.push(pk);
             }
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         {
@@ -153,7 +153,7 @@ fn test_space_update_full_sync() {
                 })
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -197,7 +197,7 @@ fn test_space_update_query_pk_sync() {
                 .update_another_by_id(AnotherByIdQuery { another: 13 }, row.id.clone())
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -241,7 +241,7 @@ fn test_space_update_query_unique_sync() {
                 .update_field_by_another(FieldByAnotherQuery { field: 1.0 }, 42)
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -285,7 +285,7 @@ fn test_space_update_query_non_unique_sync() {
                 .update_another_by_non_unique(AnotherByNonUniqueQuery { another: 13 }, 10)
                 .await
                 .unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -333,7 +333,7 @@ fn test_space_delete_sync() {
             };
             table.insert(another_row.clone()).unwrap();
             table.delete(another_row.id.clone()).await.unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             another_row.id
         };
         {
@@ -373,7 +373,7 @@ fn test_space_delete_query_sync() {
             };
             table.insert(row.clone()).unwrap();
             table.delete_by_another(row.another).await.unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {

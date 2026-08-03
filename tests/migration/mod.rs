@@ -128,7 +128,7 @@ fn test_migrate_v1_to_current() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         // Verify source data is readable
@@ -211,7 +211,7 @@ fn test_migrate_v2_to_current() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         let ctx = UserMigrationContext {
@@ -280,7 +280,7 @@ fn test_next_pk_and_indexes_after_migration() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         let ctx = UserMigrationContext {
@@ -308,7 +308,7 @@ fn test_next_pk_and_indexes_after_migration() {
             };
 
             table.insert(inserted.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             assert_eq!(table.count(), 3);
             assert_eq!(table.select(inserted.id), Some(inserted.clone()));

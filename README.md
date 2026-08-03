@@ -49,6 +49,22 @@ worktable = { version = "=1.0.0-beta.2", features = ["s3-support"] }   # S3 sync
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic are explicitly memory-only and require `persist: false`. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
 
+### Persistence lifecycle
+
+Persisted tables expose fallible draining and graceful shutdown:
+
+```rust
+table.wait_for_ops().await?; // drain currently queued operations
+table.close().await?;        // stop intake, drain, and join the engine task
+```
+
+An unrecoverable event gap, queue-analysis error, batch-apply error, or engine-task
+failure moves persistence into a terminal failed state. The original error is
+returned to waiters, graceful close, and later mutation attempts; later durable
+operations are not applied after that failure. Dropping a busy table remains a
+last-resort diagnostic path, so applications should call `close()` during orderly
+shutdown.
+
 WorkTablesIndex uses its predictable branch-based node search by default in WorkTable. This avoids a measured regression for sequential numeric-key workloads. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-hybrid-search`, `wti-std-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Prefer one search feature for an unambiguous build. If Cargo feature unification enables several, WorkTablesIndex applies the documented deterministic precedence rather than rejecting the graph.
 
 ## Concurrent read/write publication

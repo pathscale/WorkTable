@@ -55,7 +55,7 @@ fn test_uuid() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -67,7 +67,7 @@ fn test_uuid() {
                     second: Uuid::now_v7(),
                 })
                 .unwrap();
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -108,7 +108,7 @@ fn test_big_amount_reread() {
                     .unwrap();
             }
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         let second_last = Uuid::now_v7();
         {
@@ -122,7 +122,7 @@ fn test_big_amount_reread() {
                     second: second_last,
                 })
                 .unwrap();
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
         {
             let engine = UuidReReadPersistenceEngine::new(config.clone()).await.unwrap();

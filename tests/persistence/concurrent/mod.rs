@@ -105,7 +105,7 @@ fn test_concurrent() {
                 let _ = h.await;
             }
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
         {
             let engine = TestConcurrentPersistenceEngine::new(config.clone()).await.unwrap();

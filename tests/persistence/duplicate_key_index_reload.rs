@@ -216,7 +216,8 @@ fn test_duplicate_key_secondary_index_survives_reload() {
 
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled on bulk insert");
+                .expect("persistence stalled on bulk insert")
+                .expect("persistence engine failed");
         }
 
         assert_straddling_topology(dir).await;
@@ -277,7 +278,8 @@ fn test_duplicate_key_secondary_index_survives_reload() {
 
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled on post-reload mutations");
+                .expect("persistence stalled on post-reload mutations")
+                .expect("persistence engine failed");
         }
         {
             let engine = DuplicateKeyReloadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -328,7 +330,8 @@ fn test_single_key_all_duplicates_survives_reload() {
 
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled on bulk insert");
+                .expect("persistence stalled on bulk insert")
+                .expect("persistence engine failed");
         }
         {
             let engine = DuplicateKeyReloadPersistenceEngine::new(config.clone()).await.unwrap();
@@ -360,7 +363,8 @@ fn test_single_key_all_duplicates_survives_reload() {
                 .unwrap();
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled on post-reload insert");
+                .expect("persistence stalled on post-reload insert")
+                .expect("persistence engine failed");
             assert_eq!(table.select_by_score(42).execute().unwrap().len() as u64, ROWS + 1);
         }
     })
@@ -410,7 +414,8 @@ fn test_duplicate_key_mutations_without_reload() {
         }
         timeout(Duration::from_secs(30), table.wait_for_ops())
             .await
-            .expect("persistence stalled on bulk insert");
+            .expect("persistence stalled on bulk insert")
+            .expect("persistence engine failed");
 
         for j in 0..500u64 {
             let id = 20_000 + j;
@@ -457,6 +462,7 @@ fn test_duplicate_key_mutations_without_reload() {
 
         timeout(Duration::from_secs(30), table.wait_for_ops())
             .await
-            .expect("persistence stalled on mutations without any reload");
+            .expect("persistence stalled on mutations without any reload")
+            .expect("persistence engine failed");
     })
 }

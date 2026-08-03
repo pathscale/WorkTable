@@ -43,7 +43,7 @@ fn test_update_unsized_same_size() {
                 name: "ccc".to_string(),
             };
             table.insert(row3.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id, row3.id)
         };
@@ -86,7 +86,9 @@ fn test_update_unsized_same_size() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -98,7 +100,7 @@ fn test_update_unsized_same_size() {
             assert!(table.select(row1_pk).is_some());
             assert!(table.select(row2_pk).is_some());
             assert!(table.select(row3_pk).is_some());
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -128,7 +130,7 @@ fn test_update_unsized_larger_all_success() {
                 name: "a".to_string(),
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
 
@@ -171,7 +173,9 @@ fn test_update_unsized_larger_all_success() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok());
         }
 
@@ -182,7 +186,7 @@ fn test_update_unsized_larger_all_success() {
 
             let row = table.select(row_pk).unwrap();
             assert_eq!(row.unique_value, 20);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -236,7 +240,7 @@ fn test_update_unsized_larger_middle_fail() {
                 name: "c".to_string(),
             };
             table.insert(row3.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             (conflict.id, row2.id, row3.id)
         };
@@ -280,7 +284,9 @@ fn test_update_unsized_larger_middle_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -299,7 +305,7 @@ fn test_update_unsized_larger_middle_fail() {
 
             let conflict = table.select(conflict_pk).unwrap();
             assert_eq!(conflict.unique_value, 99);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -337,7 +343,7 @@ fn test_update_unsized_larger_last_fail() {
                 name: "b".to_string(),
             };
             table.insert(row2.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id)
         };
@@ -381,7 +387,9 @@ fn test_update_unsized_larger_last_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -399,7 +407,7 @@ fn test_update_unsized_larger_last_fail() {
             let row1 = table.select(row1_pk).unwrap();
             assert_eq!(row1.name, "larger".to_string());
             assert_eq!(row1.unique_value, 99);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }

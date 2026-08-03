@@ -57,7 +57,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 unique_b: 0,
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
 
@@ -113,7 +113,9 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
 
             // Use timeout to detect if persistence is stuck
             // If this hangs, the bug exists - CDC queue is blocked
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
 
             if wait_result.is_err() {
                 panic!(

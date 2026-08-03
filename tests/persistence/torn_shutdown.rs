@@ -122,7 +122,8 @@ fn tear_the_store_repeatedly() {
             }
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled building the base store");
+                .expect("persistence stalled building the base store")
+                .expect("persistence engine failed");
         }
     });
 
@@ -253,7 +254,8 @@ fn test_store_survives_torn_shutdowns() {
             table.insert(row(9_000_000)).unwrap();
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled appending to the survivor store");
+                .expect("persistence stalled appending to the survivor store")
+                .expect("persistence engine failed");
         });
     });
     if let Err(panic) = outcome {
@@ -309,7 +311,8 @@ fn test_many_clean_sessions_stay_readable() {
             }
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .unwrap_or_else(|_| panic!("session {session}: drain stalled"));
+                .unwrap_or_else(|_| panic!("session {session}: drain stalled"))
+                .expect("persistence engine failed");
         }
 
         let table = open().await;

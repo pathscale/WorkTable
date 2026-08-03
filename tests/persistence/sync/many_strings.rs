@@ -51,7 +51,7 @@ fn test_space_update_query_pk_sync() {
                 id: "Some string before 2".to_string(),
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -64,7 +64,7 @@ fn test_space_update_query_pk_sync() {
                 another: 0,
             };
             table.update_field_another_by_id(q, pk.clone()).await.unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
         {
             let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
@@ -109,7 +109,7 @@ fn test_space_update_query_pk_many_times_sync() {
                 id: "Some string before 2".to_string(),
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
         {
@@ -125,7 +125,7 @@ fn test_space_update_query_pk_many_times_sync() {
                 table.update_field_another_by_id(q, pk.clone()).await.unwrap();
             }
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
         {
             let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();

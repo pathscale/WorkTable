@@ -33,7 +33,7 @@ fn test_update_unique_secondary_conflict() {
                 unique_b: 400,
             };
             table.insert(row2.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row1.id
         };
 
@@ -74,7 +74,9 @@ fn test_update_unique_secondary_conflict() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -86,7 +88,7 @@ fn test_update_unique_secondary_conflict() {
             let row1 = table.select(row1_pk).unwrap();
             assert_eq!(row1.unique_a, 100);
             assert_eq!(row1.unique_b, 200);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -115,7 +117,7 @@ fn test_update_pk_based_success() {
                 unique_b: 200,
             };
             table.insert(row1.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row1.id
         };
 
@@ -156,7 +158,9 @@ fn test_update_pk_based_success() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok());
         }
 
@@ -168,7 +172,7 @@ fn test_update_pk_based_success() {
             let row1 = table.select(row1_pk).unwrap();
             assert_eq!(row1.unique_a, 150);
             assert_eq!(row1.unique_b, 250);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
