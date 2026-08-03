@@ -133,8 +133,9 @@ fn test_space_update_query_pk_many_times_sync() {
             if table.select(pk.clone()).is_none() {
                 let direct = table.0.primary_index.pk_map.get_value(&TestSyncPrimaryKey(pk.clone()));
                 let entries = table.0.primary_index.pk_map.iter_values().collect::<Vec<_>>();
+                let data = direct.map(|link| table.0.data.select_non_ghosted(link.into()));
                 panic!(
-                    "final primary lookup missed: direct={direct:?}, entries={entries:?}, row_count={}",
+                    "final primary lookup missed: direct={direct:?}, data={data:?}, entries={entries:?}, row_count={}",
                     table.count()
                 );
             }

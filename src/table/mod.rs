@@ -149,10 +149,10 @@ where
                         std::hint::spin_loop();
                         continue;
                     }
-                    return None;
+                    break None;
                 };
                 if let Ok(row) = self.data.select_non_ghosted(link) {
-                    return Some(row);
+                    break Some(row);
                 }
 
                 let current_link: Option<Link> = self.primary_index.pk_map.get_value(&pk).map(Into::into);
@@ -161,7 +161,7 @@ where
                         std::hint::spin_loop();
                         continue;
                     }
-                    return None;
+                    break None;
                 }
             }
         }

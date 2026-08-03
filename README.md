@@ -70,7 +70,7 @@ separately gated so the default latency-sensitive path is unchanged:
 
 ```toml
 [dependencies]
-worktable = { version = "0.9", features = ["stable-index-read-retry"] }
+worktable = { version = "=1.0.0-beta.1", features = ["stable-index-read-retry"] }
 ```
 
 In this mode, generated reads acquire an immutable owned row version instead
