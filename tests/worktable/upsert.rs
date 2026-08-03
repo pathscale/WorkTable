@@ -30,6 +30,52 @@ async fn upsert_completes_under_extreme_same_key_churn() {
     churn_run(5_000, 2_000).await;
 }
 
+/// A synchronous insert does not participate in the generated async row lock.
+/// Its collision and ghost-publication windows must still return typed errors,
+/// never panic a concurrent locked delete or strand an upsert waiter.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn raw_insert_delete_churn_never_panics_or_stalls() {
+    let table = Arc::new(UpsertChurnWorkTable::default());
+    const KEY: u64 = 7;
+
+    let churn = {
+        let table = table.clone();
+        tokio::spawn(async move {
+            for i in 0..5_000u64 {
+                let _ = table.insert(UpsertChurnRow { id: KEY, val: i });
+                let _ = table.delete(KEY).await;
+            }
+        })
+    };
+
+    let mut upserters = Vec::new();
+    for worker in 0..4u64 {
+        let table = table.clone();
+        upserters.push(tokio::spawn(async move {
+            for i in 0..2_000u64 {
+                table
+                    .upsert(UpsertChurnRow {
+                        id: KEY,
+                        val: worker * 10_000 + i,
+                    })
+                    .await
+                    .expect("upsert must never surface a primary-key conflict");
+            }
+        }));
+    }
+
+    timeout(Duration::from_secs(60), churn)
+        .await
+        .expect("raw insert/delete churn starved")
+        .unwrap();
+    for handle in upserters {
+        timeout(Duration::from_secs(60), handle)
+            .await
+            .expect("upserter starved during raw insert/delete churn")
+            .unwrap();
+    }
+}
+
 async fn churn_run(churn_flips: u64, upserts_per_task: u64) {
     #[allow(non_snake_case)]
     let CHURN_FLIPS = churn_flips;
