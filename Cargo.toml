@@ -23,6 +23,7 @@ wti-predictable-search = ["indexset/custom-binary-search"]
 wti-std-search = ["indexset/std-binary-search"]
 wti-superslice-search = ["indexset/superslice-binary-search"]
 versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
+stable-index-read-retry = ["versioned-row-publication", "worktable_codegen/stable-index-read-retry"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

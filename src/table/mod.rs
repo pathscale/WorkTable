@@ -142,14 +142,25 @@ where
         let _read_guard = self.data.read_guard();
         #[cfg(feature = "versioned-row-publication")]
         {
+            let mut retry_stable_miss = cfg!(feature = "stable-index-read-retry");
             loop {
-                let link: Link = self.primary_index.pk_map.get_value(&pk).map(Into::into)?;
+                let Some(link) = self.primary_index.pk_map.get_value(&pk).map(Into::into) else {
+                    if std::mem::take(&mut retry_stable_miss) {
+                        std::hint::spin_loop();
+                        continue;
+                    }
+                    return None;
+                };
                 if let Ok(row) = self.data.select_non_ghosted(link) {
                     return Some(row);
                 }
 
                 let current_link: Option<Link> = self.primary_index.pk_map.get_value(&pk).map(Into::into);
                 if current_link == Some(link) {
+                    if std::mem::take(&mut retry_stable_miss) {
+                        std::hint::spin_loop();
+                        continue;
+                    }
                     return None;
                 }
             }

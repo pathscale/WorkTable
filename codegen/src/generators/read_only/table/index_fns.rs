@@ -83,12 +83,21 @@ impl ReadOnlyGenerator {
                 row.#row_field_ident.eq(&by)
             }
         };
+        let retry_stable_miss = cfg!(feature = "stable-index-read-retry");
         let select = if cfg!(feature = "versioned-row-publication") {
             quote! {
+                let mut retry_stable_miss = #retry_stable_miss;
                 loop {
-                    let link: Link = self.0.indexes.#field_ident
+                    let Some(link) = self.0.indexes.#field_ident
                         .get_value(#by)
-                        .map(Into::into)?;
+                        .map(Into::into)
+                    else {
+                        if std::mem::take(&mut retry_stable_miss) {
+                            std::hint::spin_loop();
+                            continue;
+                        }
+                        return None;
+                    };
                     if let Ok(row) = self.0.data.select_non_ghosted(link) {
                         if #predicate_matches {
                             return Some(row);
@@ -99,6 +108,10 @@ impl ReadOnlyGenerator {
                         .get_value(#by)
                         .map(Into::into);
                     if current_link == Some(link) {
+                        if std::mem::take(&mut retry_stable_miss) {
+                            std::hint::spin_loop();
+                            continue;
+                        }
                         return None;
                     }
                 }

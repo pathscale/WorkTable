@@ -63,6 +63,16 @@ opt into immutable row-version publication:
 worktable = { version = "=1.0.0-beta.1", features = ["versioned-row-publication"] }
 ```
 
+WorkTablesIndex and IndexSet users who need an acknowledged concurrent insert
+to be immediately visible to a point lookup can additionally enable the
+bounded stable-miss confirmation. It implies versioned row publication and is
+separately gated so the default latency-sensitive path is unchanged:
+
+```toml
+[dependencies]
+worktable = { version = "0.9", features = ["stable-index-read-retry"] }
+```
+
 In this mode, generated reads acquire an immutable owned row version instead
 of borrowing the mutable archived page image. Writers replace a per-row version
 only after a complete page mutation, insert visibility is an atomic lifecycle

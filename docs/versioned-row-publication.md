@@ -34,8 +34,12 @@ The generated API follows these publication rules:
    link, acquire an `Arc` to its complete published version, check lifecycle and
    index predicates, clone the owned row, and release the guard. Unique and
    primary-key point reads retry when the mapping swings to a replacement link
-   while it is being resolved. A reader never accesses mutable archived bytes
-   after a slot has been hydrated.
+   while it is being resolved. With the additional
+   `stable-index-read-retry` feature, they also retry one apparently stable miss
+   once: the B-tree-family providers can transiently report no mapping during a
+   concurrent structural insertion, while the ART providers do not exhibit
+   that behavior. A reader never accesses mutable archived bytes after a slot
+   has been hydrated.
 2. **Insert.** Serialize the complete row and stage a ghosted version. Install
    the primary and secondary indexes. Only after every checked index insert
    succeeds does the lifecycle transition publish the version with release
@@ -72,7 +76,8 @@ For generated table APIs in this mode:
 
 This is not MVCC and does not add multi-operation transactions or snapshot
 range scans. A scan may include or omit a concurrently inserted or updated row.
-Point-read retry may starve under perpetual replacement churn.
+Point-read replacement retry may starve under perpetual replacement churn. The
+feature-gated stable-miss retry is bounded to one additional probe.
 The guarantee also does not cover callers that bypass generated table methods
 and directly invoke low-level `Data` page mutation APIs.
 
@@ -81,6 +86,8 @@ and directly invoke low-level `Data` page mutation APIs.
 The feature is off by default. It adds one owned row copy plus slot/map
 metadata per live physical link, an atomic increment/decrement per generated
 read, a concurrent publication-map lookup, and writer-side page serialization.
+`stable-index-read-retry` does not add an index probe to successful point hits,
+but a true point miss performs one bounded confirmation probe.
 Those costs are inappropriate to impose silently on latency-sensitive users.
 The default path remains unchanged; benchmark results for both modes must be
 reported before this feature is proposed for default enablement.
