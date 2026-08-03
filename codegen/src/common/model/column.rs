@@ -1,8 +1,8 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
 
-use crate::common::model::GeneratorType;
 use crate::common::model::index::Index;
+use crate::common::model::{GeneratorType, IndexBackend};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -18,6 +18,7 @@ pub struct Columns {
     pub field_positions: HashMap<Ident, usize>,
     pub indexes: IndexMap<Ident, Index>,
     pub primary_keys: Vec<Ident>,
+    pub primary_index_backend: IndexBackend,
     pub generator_type: GeneratorType,
 }
 
@@ -28,6 +29,7 @@ pub struct Row {
     pub is_primary_key: bool,
     pub gen_type: GeneratorType,
     pub optional: bool,
+    pub index_backend: Option<IndexBackend>,
 }
 
 impl Columns {
@@ -37,6 +39,7 @@ impl Columns {
         let mut sized = true;
         let mut pk = vec![];
         let mut gen_type = None;
+        let mut primary_index_backend = None;
 
         for (pos, row) in rows.into_iter().enumerate() {
             let type_ = &row.type_;
@@ -59,7 +62,23 @@ impl Columns {
                 } else {
                     gen_type = Some(row.gen_type)
                 }
+                let backend = row.index_backend.unwrap_or_default();
+                if let Some(existing) = primary_index_backend {
+                    if existing != backend {
+                        return Err(syn::Error::new(
+                            row.name.span(),
+                            "all columns in a composite primary key must use the same index backend",
+                        ));
+                    }
+                } else {
+                    primary_index_backend = Some(backend);
+                }
                 pk.push(row.name);
+            } else if row.index_backend.is_some() {
+                return Err(syn::Error::new(
+                    row.name.span(),
+                    "`using` on a column is only valid after `primary_key`; select secondary index backends in `indexes`",
+                ));
             }
         }
 
@@ -72,6 +91,7 @@ impl Columns {
             columns_map,
             indexes: Default::default(),
             primary_keys: pk,
+            primary_index_backend: primary_index_backend.unwrap_or_default(),
             generator_type: gen_type.expect("set"),
             field_positions,
         })

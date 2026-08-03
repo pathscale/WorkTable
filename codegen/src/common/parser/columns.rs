@@ -108,6 +108,8 @@ impl Parser {
             false
         };
 
+        let index_backend = self.try_parse_index_backend()?;
+
         self.try_parse_comma()?;
 
         Ok(Row {
@@ -116,6 +118,7 @@ impl Parser {
             is_primary_key,
             gen_type,
             optional,
+            index_backend,
         })
     }
 }
@@ -309,6 +312,28 @@ mod tests {
             assert_eq!(row.type_.to_string(), "i64");
             assert!(row.optional);
             assert!(!row.is_primary_key)
+        }
+
+        #[test]
+        fn test_primary_backend_parse() {
+            let row_tokens = quote! {id: u64 primary_key autoincrement using congee,};
+
+            let mut parser = Parser::new(row_tokens);
+            let row = parser.parse_row().unwrap();
+
+            assert_eq!(row.index_backend, Some(crate::common::model::IndexBackend::Congee));
+        }
+
+        #[test]
+        fn test_using_rejected_on_plain_column() {
+            let tokens = quote! {columns: {
+                id: u64 primary_key,
+                value: u64 using arctic,
+            }};
+
+            let mut parser = Parser::new(tokens);
+            let error = parser.parse_columns().unwrap_err();
+            assert!(error.to_string().contains("only valid after `primary_key`"));
         }
     }
 }

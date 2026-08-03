@@ -1,10 +1,45 @@
 use crate::common::Parser;
-use crate::common::model::Index;
+use crate::common::model::{Index, IndexBackend};
 use indexmap::IndexMap;
 use proc_macro2::{Delimiter, Ident, TokenTree};
 use syn::spanned::Spanned;
 
 impl Parser {
+    pub fn try_parse_index_backend(&mut self) -> syn::Result<Option<IndexBackend>> {
+        let Some(TokenTree::Ident(using)) = self.input_iter.peek() else {
+            return Ok(None);
+        };
+        if using != "using" {
+            return Ok(None);
+        }
+
+        let using_span = using.span();
+        self.input_iter.next();
+        let backend = self.input_iter.next().ok_or_else(|| {
+            syn::Error::new(
+                using_span,
+                "expected an index backend after `using`: `worktables_index`, `indexset`, `congee`, or `arctic`",
+            )
+        })?;
+        let TokenTree::Ident(backend) = backend else {
+            return Err(syn::Error::new(
+                backend.span(),
+                "expected an index backend identifier after `using`",
+            ));
+        };
+
+        match backend.to_string().as_str() {
+            "worktables_index" => Ok(Some(IndexBackend::WorktablesIndex)),
+            "indexset" => Ok(Some(IndexBackend::Indexset)),
+            "congee" => Ok(Some(IndexBackend::Congee)),
+            "arctic" => Ok(Some(IndexBackend::Arctic)),
+            _ => Err(syn::Error::new(
+                backend.span(),
+                "unknown index backend; expected `worktables_index`, `indexset`, `congee`, or `arctic`",
+            )),
+        }
+    }
+
     pub fn parse_indexes(&mut self) -> syn::Result<IndexMap<Ident, Index>> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
@@ -86,6 +121,8 @@ impl Parser {
             false
         };
 
+        let backend = self.try_parse_index_backend()?.unwrap_or_default();
+
         self.try_parse_comma()?;
 
         Ok((
@@ -94,7 +131,50 @@ impl Parser {
                 name: ident,
                 field: row_name,
                 is_unique,
+                backend,
             },
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+
+    use crate::common::Parser;
+    use crate::common::model::IndexBackend;
+
+    #[test]
+    fn absent_using_defaults_to_worktables_index() {
+        let mut parser = Parser::new(quote! { value_idx: value unique, });
+        let (_, index) = parser.parse_index().unwrap();
+        assert_eq!(index.backend, IndexBackend::WorktablesIndex);
+    }
+
+    #[test]
+    fn parses_all_backends() {
+        for (tokens, expected) in [
+            (
+                quote! { value_idx: value unique using worktables_index, },
+                IndexBackend::WorktablesIndex,
+            ),
+            (
+                quote! { value_idx: value unique using indexset, },
+                IndexBackend::Indexset,
+            ),
+            (quote! { value_idx: value unique using congee, }, IndexBackend::Congee),
+            (quote! { value_idx: value unique using arctic, }, IndexBackend::Arctic),
+        ] {
+            let mut parser = Parser::new(tokens);
+            let (_, index) = parser.parse_index().unwrap();
+            assert_eq!(index.backend, expected);
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_backend() {
+        let mut parser = Parser::new(quote! { value_idx: value unique using unknown, });
+        let error = parser.parse_index().unwrap_err();
+        assert!(error.to_string().contains("unknown index backend"));
     }
 }

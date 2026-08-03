@@ -68,7 +68,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             }
             "persist" => {
                 // Skip persist flag for in_memory - it's always false
-                parser.parse_persist()?;
+                let _ = parser.parse_persist()?;
             }
             _ => return Err(syn::Error::new(ident.span(), "Unexpected identifier")),
         }

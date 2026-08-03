@@ -1,13 +1,14 @@
 use proc_macro2::TokenTree;
 use syn::spanned::Spanned as _;
 
+use crate::common::model::Persistence;
 use crate::common::parser::Parser;
 
 // TODO: Move this to separate attributes section because now it only parses persist.
 impl Parser {
-    pub fn parse_persist(&mut self) -> syn::Result<bool> {
+    pub fn parse_persist(&mut self) -> syn::Result<Persistence> {
         let Some(ident) = self.input_iter.peek().cloned() else {
-            return Ok(false);
+            return Ok(Persistence::Omitted);
         };
         let TokenTree::Ident(ident) = ident else {
             return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
@@ -22,9 +23,11 @@ impl Parser {
                 .ok_or(syn::Error::new(self.input.span(), "Expected token."))?;
             let res = if let TokenTree::Ident(bool) = bool {
                 if bool.to_string().as_str() == "true" {
-                    Ok(true)
+                    Ok(Persistence::Persisted)
+                } else if bool.to_string().as_str() == "false" {
+                    Ok(Persistence::MemoryOnly)
                 } else {
-                    Ok(false)
+                    Err(syn::Error::new(bool.span(), "expected `true` or `false`"))
                 }
             } else {
                 Err(syn::Error::new(bool.span(), "Expected identifier."))
@@ -33,7 +36,7 @@ impl Parser {
 
             res
         } else {
-            Ok(false)
+            Ok(Persistence::Omitted)
         }
     }
 }
@@ -43,6 +46,7 @@ mod tests {
     use quote::quote;
 
     use crate::common::Parser;
+    use crate::common::model::Persistence;
 
     #[test]
     fn test_empty() {
@@ -50,7 +54,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let empty = parser.parse_persist();
         assert!(empty.is_ok());
-        assert!(!empty.unwrap())
+        assert_eq!(empty.unwrap(), Persistence::Omitted)
     }
 
     #[test]
@@ -67,7 +71,22 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let name = parser.parse_persist();
         assert!(name.is_ok());
-        assert!(name.unwrap());
+        assert_eq!(name.unwrap(), Persistence::Persisted);
+    }
+
+    #[test]
+    fn test_explicit_memory_only() {
+        let tokens = quote! {persist: false,};
+        let mut parser = Parser::new(tokens);
+        let persistence = parser.parse_persist().unwrap();
+        assert_eq!(persistence, Persistence::MemoryOnly);
+    }
+
+    #[test]
+    fn test_invalid_boolean() {
+        let tokens = quote! {persist: maybe,};
+        let mut parser = Parser::new(tokens);
+        assert!(parser.parse_persist().is_err());
     }
 
     #[test]
@@ -76,7 +95,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let name = parser.parse_persist();
         assert!(name.is_ok());
-        assert!(!name.unwrap());
+        assert_eq!(name.unwrap(), Persistence::Omitted);
     }
 
     #[test]
@@ -85,6 +104,6 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let name = parser.parse_persist();
         assert!(name.is_ok());
-        assert!(!name.unwrap());
+        assert_eq!(name.unwrap(), Persistence::Omitted);
     }
 }
