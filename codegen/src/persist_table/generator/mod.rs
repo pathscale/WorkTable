@@ -12,6 +12,8 @@ pub struct PersistTableAttributes {
     pub pk_unsized: bool,
     pub read_only: bool,
     pub pk_upstream: bool,
+    pub pk_arctic: bool,
+    pub pk_congee: bool,
 }
 
 pub struct Generator {

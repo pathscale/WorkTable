@@ -30,6 +30,8 @@ impl Parser {
             pk_unsized: false,
             read_only: false,
             pk_upstream: false,
+            pk_arctic: false,
+            pk_congee: false,
         };
 
         for attr in attrs {
@@ -45,6 +47,14 @@ impl Parser {
                     }
                     if meta.path.is_ident("pk_upstream") {
                         res.pk_upstream = true;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("pk_arctic") {
+                        res.pk_arctic = true;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("pk_congee") {
+                        res.pk_congee = true;
                         return Ok(());
                     }
                     Ok(())

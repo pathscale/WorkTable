@@ -15,7 +15,7 @@ pub enum IndexBackend {
 }
 
 impl IndexBackend {
-    pub fn is_memory_only(self) -> bool {
+    pub fn requires_explicit_persistence(self) -> bool {
         matches!(self, Self::Congee | Self::Arctic)
     }
 

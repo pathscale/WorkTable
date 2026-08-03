@@ -20,7 +20,9 @@ use vanilla_indexset::core::pair::Pair as VanillaPair;
 use crate::persistence::OperationType;
 use crate::prelude::OperationId;
 use crate::util::OffsetEqLink;
-use crate::{ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMultiMap, UniqueIndex, UpstreamIndexMap};
+use crate::{
+    ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMultiMap, PersistentArtIndex, UniqueIndex, UpstreamIndexMap,
+};
 use crate::{IndexMap, impl_memstat_zero};
 
 pub trait MemStat {
@@ -126,6 +128,16 @@ where
 
     fn used_size(&self) -> usize {
         self.len() * std::mem::size_of::<(K, V)>()
+    }
+}
+
+impl<I: MemStat> MemStat for PersistentArtIndex<I> {
+    fn heap_size(&self) -> usize {
+        self.inner().heap_size()
+    }
+
+    fn used_size(&self) -> usize {
+        self.inner().used_size()
     }
 }
 

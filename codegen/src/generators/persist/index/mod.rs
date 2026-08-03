@@ -3,7 +3,7 @@ mod info;
 mod usual;
 
 use crate::common::name_generator::{WorktableNameGenerator, is_float, is_unsized};
-use crate::generators::index_backend::unique_index_type;
+use crate::generators::index_backend::persistent_unique_index_type;
 use crate::generators::persist::PersistGenerator;
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
@@ -57,7 +57,7 @@ impl PersistGenerator {
                     } else {
                         None
                     };
-                    let index_type = unique_index_type(idx.backend, &t, &value_type, worktables_node)?;
+                    let index_type = persistent_unique_index_type(idx.backend, &t, &value_type, worktables_node)?;
                     quote! { #i: #index_type }
                 } else {
                     if is_unsized(&t.to_string()) {

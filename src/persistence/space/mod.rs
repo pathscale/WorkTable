@@ -1,3 +1,4 @@
+mod art_index;
 mod data;
 mod index;
 
@@ -11,6 +12,7 @@ use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use tokio::fs::{File, OpenOptions};
 
+pub use art_index::{ArtPersistenceKey, SpaceArcticIndex, SpaceCongeeIndex};
 pub use data::SpaceData;
 pub use index::{
     IndexTableOfContents, SpaceIndex, SpaceIndexUnsized, map_index_pages_to_toc_and_general,

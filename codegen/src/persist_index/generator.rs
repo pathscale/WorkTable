@@ -19,13 +19,20 @@ pub struct Generator {
     pub attributes: PersistIndexAttributes,
 }
 
-struct IndexLayout {
+pub(super) struct IndexLayout {
     type_ident: Ident,
     is_unique: bool,
     uses_upstream: bool,
+    pub(super) art_backend: Option<ArtBackend>,
 }
 
-fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum ArtBackend {
+    Arctic,
+    Congee,
+}
+
+pub(super) fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
     let syn::Type::Path(type_path) = &field.ty else {
         return Err(syn::Error::new_spanned(
             &field.ty,
@@ -39,14 +46,16 @@ fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
         .ok_or_else(|| syn::Error::new_spanned(&field.ty, "index type path cannot be empty"))?
         .ident
         .clone();
-    let (is_unique, uses_upstream) = match type_ident.to_string().as_str() {
-        "IndexMap" | "TreeIndex" => (true, false),
-        "UpstreamIndexMap" => (true, true),
-        "IndexMultiMap" | "TreeMultiIndex" => (false, false),
+    let (is_unique, uses_upstream, art_backend) = match type_ident.to_string().as_str() {
+        "IndexMap" | "TreeIndex" => (true, false, None),
+        "UpstreamIndexMap" => (true, true, None),
+        "IndexMultiMap" | "TreeMultiIndex" => (false, false, None),
+        "PersistentArcticIndex" => (true, false, Some(ArtBackend::Arctic)),
+        "PersistentCongeeIndex" => (true, false, Some(ArtBackend::Congee)),
         _ => {
             return Err(syn::Error::new_spanned(
                 &field.ty,
-                "unsupported persisted index type; use IndexMap, UpstreamIndexMap, or IndexMultiMap directly",
+                "unsupported persisted index type; use a WorkTable-generated index backend directly",
             ));
         }
     };
@@ -54,6 +63,7 @@ fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
         type_ident,
         is_unique,
         uses_upstream,
+        art_backend,
     })
 }
 
@@ -123,24 +133,31 @@ impl Generator {
         let name_ident = name_generator.get_persisted_index_ident();
 
         let fields: Vec<_> = self
-            .field_types
+            .struct_def
+            .fields
             .iter()
-            .map(|(i, t)| {
-                if is_unsized(&t.to_string()) {
+            .map(|field| {
+                let layout = index_layout(field)?;
+                let i = field.ident.as_ref().expect("index fields should be named");
+                let t = self.field_types.get(i).expect("field type was collected");
+                if layout.art_backend.is_some() {
+                    let field_type = &field.ty;
+                    Ok(quote! { #i: #field_type, })
+                } else if is_unsized(&t.to_string()) {
                     let const_size = name_generator.get_page_inner_size_const_ident();
-                    quote! {
+                    Ok(quote! {
                         #i: (Vec<GeneralPage<TableOfContentsPage<(#t, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#t, {#const_size as u32}>>>),
-                    }
+                    })
                 } else {
-                    quote! {
+                    Ok(quote! {
                         #i: (Vec<GeneralPage<TableOfContentsPage<(#t, Link)>>>, Vec<GeneralPage<IndexPage<#t>>>),
-                    }
+                    })
                 }
             })
-            .collect();
+            .collect::<syn::Result<Vec<_>>>()?;
 
         Ok(quote! {
-            #[derive(Debug, Default, Clone)]
+            #[derive(Debug, Default)]
             pub struct #name_ident {
                 #(#fields)*
             }
@@ -170,35 +187,52 @@ impl Generator {
     fn gen_persist_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_work_table_ident();
+        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
 
         let persist_logic = self
             .struct_def
             .fields
             .iter()
-            .map(|f| {
-                f.ident
-                    .as_ref()
-                    .expect("index fields should always be named fields")
-            })
-            .map(|i| {
+            .map(|field| {
+                let layout = index_layout(field)?;
+                let i = field.ident.as_ref().expect("index fields should be named");
+                let ty = self.field_types.get(i).expect("field type was collected");
                 let index_name_literal = Literal::string(i.to_string().as_str());
-                quote! {
-                    {
-                        let mut file = tokio::fs::File::create(format!("{}/{}{}", path, #index_name_literal, #index_extension)).await?;
-                        let mut info = #ident::space_info_default();
-                        info.inner.page_count = self.#i.1.len() as u32 + self.#i.0.len() as u32;
-                        persist_page(&mut info, &mut file).await?;
-                        for mut page in &mut self.#i.0 {
-                            persist_page(&mut page, &mut file).await?;
+                Ok(match layout.art_backend {
+                    Some(ArtBackend::Arctic) => quote! {
+                        SpaceArcticIndex::<#ty, { #inner_const_name as u32 }>::write_checkpoint(
+                            format!("{}/{}{}", path, #index_name_literal, #index_extension),
+                            #version_const_name,
+                            &mut self.#i,
+                        ).await?;
+                    },
+                    Some(ArtBackend::Congee) => quote! {
+                        SpaceCongeeIndex::<#ty, { #inner_const_name as u32 }>::write_checkpoint(
+                            format!("{}/{}{}", path, #index_name_literal, #index_extension),
+                            #version_const_name,
+                            &mut self.#i,
+                        ).await?;
+                    },
+                    None => quote! {
+                        {
+                            let mut file = tokio::fs::File::create(format!("{}/{}{}", path, #index_name_literal, #index_extension)).await?;
+                            let mut info = #ident::space_info_default();
+                            info.inner.page_count = self.#i.1.len() as u32 + self.#i.0.len() as u32;
+                            persist_page(&mut info, &mut file).await?;
+                            for mut page in &mut self.#i.0 {
+                                persist_page(&mut page, &mut file).await?;
+                            }
+                            for mut page in &mut self.#i.1 {
+                                persist_page(&mut page, &mut file).await?;
+                            }
                         }
-                        for mut page in &mut self.#i.1 {
-                            persist_page(&mut page, &mut file).await?;
-                        }
-                    }
-                }
+                    },
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<syn::Result<Vec<_>>>()
+            .expect("generated index layouts were validated");
 
         quote! {
             pub async fn persist(&mut self, path: &str) -> eyre::Result<()>
@@ -214,41 +248,52 @@ impl Generator {
     fn gen_parse_from_file_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let page_const_name = name_generator.get_page_size_const_ident();
+        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
 
         let field_names_literals: Vec<_> = self
             .struct_def
             .fields
             .iter()
-            .map(|f| (
-                Literal::string(
-                    f.ident
-                        .as_ref()
-                        .expect("index fields should always be named fields")
-                        .to_string()
-                        .as_str()
-                ),
-                f.ident
-                    .as_ref()
-                    .expect("index fields should always be named fields")
-            ))
-            .map(|(l, i)| quote! {
-                let #i = {
-                    let mut #i = vec![];
-                    let mut file = tokio::fs::File::open(format!("{}/{}{}", path, #l, #index_extension)).await?;
-                    let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut file, 0).await?;
-                    let file_length = file.metadata().await?.len();
-                    let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
-                    let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
-                    let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
-                    for page_id in toc.iter().map(|(_, page_id)| page_id) {
-                        let index = parse_page::<_, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
-                        #i.push(index);
+            .map(|field| {
+                let layout = index_layout(field)?;
+                let i = field.ident.as_ref().expect("index fields should be named");
+                let ty = self.field_types.get(i).expect("field type was collected");
+                let literal = Literal::string(i.to_string().as_str());
+                Ok(match layout.art_backend {
+                    Some(ArtBackend::Arctic) => quote! {
+                        let #i = SpaceArcticIndex::<#ty, { #inner_const_name as u32 }>::load_index(
+                            format!("{}/{}{}", path, #literal, #index_extension),
+                            #version_const_name,
+                        ).await?;
+                    },
+                    Some(ArtBackend::Congee) => quote! {
+                        let #i = SpaceCongeeIndex::<#ty, { #inner_const_name as u32 }>::load_index(
+                            format!("{}/{}{}", path, #literal, #index_extension),
+                            #version_const_name,
+                        ).await?;
+                    },
+                    None => quote! {
+                        let #i = {
+                            let mut #i = vec![];
+                            let mut file = tokio::fs::File::open(format!("{}/{}{}", path, #literal, #index_extension)).await?;
+                            let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut file, 0).await?;
+                            let file_length = file.metadata().await?.len();
+                            let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
+                            let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
+                            let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
+                            for page_id in toc.iter().map(|(_, page_id)| page_id) {
+                                let index = parse_page::<_, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
+                                #i.push(index);
+                            }
+                            (toc.pages, #i)
+                        };
                     }
-                    (toc.pages, #i)
-                };
+                })
             })
-            .collect();
+            .collect::<syn::Result<Vec<_>>>()
+            .expect("generated index layouts were validated");
 
         let idents = self
             .struct_def
@@ -323,7 +368,15 @@ impl Generator {
                     .field_types
                     .get(i)
                     .expect("should be available as constructed from same values");
-                if is_unsized(&ty.to_string()) {
+                if layout.art_backend.is_some() {
+                    let field_type = &field.ty;
+                    Ok(quote! {
+                        let #i: #field_type = Default::default();
+                        for (key, value) in self.#i.iter_values() {
+                            #i.insert_value(key, value);
+                        }
+                    })
+                } else if is_unsized(&ty.to_string()) {
                     Ok(quote! {
                         let mut pages = vec![];
                         for node in self.#i.iter_nodes() {
@@ -476,7 +529,11 @@ impl Generator {
                     }
                 };
 
-                if is_unsized(&ty.to_string()) {
+                if layout.art_backend.is_some() {
+                    Ok(quote! {
+                        let #i = persisted.#i;
+                    })
+                } else if is_unsized(&ty.to_string()) {
                     if is_unique {
                         let body = unique_reconstruct(quote! {
                             let node = UnsizedNode::from_inner(inner, #const_name);

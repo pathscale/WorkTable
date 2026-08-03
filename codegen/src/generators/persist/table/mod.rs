@@ -6,7 +6,7 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized_vec};
-use crate::generators::index_backend::unique_index_type;
+use crate::generators::index_backend::persistent_unique_index_type;
 use crate::generators::persist::PersistGenerator;
 
 impl PersistGenerator {
@@ -84,25 +84,28 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
-        let pk_upstream = matches!(
-            self.columns.primary_index_backend,
-            crate::common::model::IndexBackend::Indexset
-        );
-
-        let derive = match (pk_types_unsized, pk_upstream) {
-            (true, true) => quote! {
+        let derive = match (pk_types_unsized, self.columns.primary_index_backend) {
+            (true, crate::common::model::IndexBackend::Indexset) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized, pk_upstream)]
             },
-            (true, false) => quote! {
+            (true, _) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized)]
             },
-            (false, true) => quote! {
+            (false, crate::common::model::IndexBackend::Indexset) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_upstream)]
             },
-            (false, false) => quote! {
+            (false, crate::common::model::IndexBackend::Arctic) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(pk_arctic)]
+            },
+            (false, crate::common::model::IndexBackend::Congee) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(pk_congee)]
+            },
+            (false, crate::common::model::IndexBackend::WorktablesIndex) => quote! {
                 #[derive(Debug, PersistTable)]
             },
         };
@@ -116,7 +119,7 @@ impl PersistGenerator {
         } else {
             None
         };
-        let node_type = unique_index_type(
+        let node_type = persistent_unique_index_type(
             self.columns.primary_index_backend,
             &key_type,
             &value_type,

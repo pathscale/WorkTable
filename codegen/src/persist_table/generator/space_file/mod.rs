@@ -32,6 +32,14 @@ impl Generator {
             quote! {
                 pub primary_index: (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>>>),
             }
+        } else if self.attributes.pk_arctic {
+            quote! {
+                pub primary_index: PersistentArcticIndex<#pk_type, OffsetEqLink<#inner_const_name>>,
+            }
+        } else if self.attributes.pk_congee {
+            quote! {
+                pub primary_index: PersistentCongeeIndex<#pk_type, OffsetEqLink<#inner_const_name>>,
+            }
         } else {
             quote! {
                 pub primary_index: (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>),
@@ -53,6 +61,11 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let literal_name = name_generator.get_work_table_literal_name();
         let version_const = name_generator.get_version_const_ident();
+        let primary_page_count = if self.attributes.pk_arctic || self.attributes.pk_congee {
+            quote! { 1 }
+        } else {
+            quote! { self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32 }
+        };
 
         quote! {
             fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
@@ -82,7 +95,7 @@ impl Generator {
                     inner
                 }
                 };
-                info.inner.page_count = self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32;
+                info.inner.page_count = #primary_page_count;
                 Ok(info)
             }
         }
@@ -138,6 +151,15 @@ impl Generator {
                 for entry in pk_map.iter() {
                     let (pk, link) = entry;
                     reverse_pk_map.insert(*link, pk.clone());
+                }
+                let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
+            }
+        } else if self.attributes.pk_arctic || self.attributes.pk_congee {
+            quote! {
+                let pk_map = self.primary_index;
+                let reverse_pk_map = IndexMap::<OffsetEqLink<#const_name>, #pk_type>::new();
+                for (pk, link) in pk_map.iter_values() {
+                    reverse_pk_map.insert(link, pk);
                 }
                 let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
             }
@@ -263,6 +285,7 @@ impl Generator {
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let persisted_index_name = name_generator.get_persisted_index_ident();
+        let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
         let data_extension = Literal::string(WT_DATA_EXTENSION);
 
@@ -276,9 +299,23 @@ impl Generator {
             }
         };
 
-        quote! {
-            pub async fn parse_file(path: &str) -> eyre::Result<Self> {
-                let mut primary_index = {
+        let parse_primary = if self.attributes.pk_arctic {
+            quote! {
+                SpaceArcticIndex::<#pk_type, { #inner_const_name as u32 }>::load_index::<#inner_const_name>(
+                    format!("{}/primary{}", path, #index_extension),
+                    #version_const_name,
+                ).await?
+            }
+        } else if self.attributes.pk_congee {
+            quote! {
+                SpaceCongeeIndex::<#pk_type, { #inner_const_name as u32 }>::load_index::<#inner_const_name>(
+                    format!("{}/primary{}", path, #index_extension),
+                    #version_const_name,
+                ).await?
+            }
+        } else {
+            quote! {
+                {
                     let mut primary_index = vec![];
                     let mut primary_file = tokio::fs::File::open(format!("{}/primary{}", path, #index_extension)).await?;
                     let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut primary_file, 0).await?;
@@ -291,7 +328,13 @@ impl Generator {
                         primary_index.push(index);
                     }
                     (toc.pages, primary_index)
-                };
+                }
+            }
+        };
+
+        quote! {
+            pub async fn parse_file(path: &str) -> eyre::Result<Self> {
+                let primary_index = #parse_primary;
 
                 let indexes = #persisted_index_name::parse_from_file(path).await?;
                 let (data, data_info) = {

@@ -2,7 +2,7 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized};
-use crate::persist_index::generator::Generator;
+use crate::persist_index::generator::{ArtBackend, Generator, index_layout};
 
 impl Generator {
     pub fn gen_space_secondary_index_type(&self) -> TokenStream {
@@ -11,20 +11,30 @@ impl Generator {
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
 
         let fields: Vec<_> = self
-            .field_types
+            .struct_def
+            .fields
             .iter()
-            .map(|(i, t)| {
-                if is_unsized(&t.to_string()) {
-                    quote! {
+            .map(|field| {
+                let layout = index_layout(field)?;
+                let i = field.ident.as_ref().expect("index fields should be named");
+                let t = self.field_types.get(i).expect("field type was collected");
+                Ok(match layout.art_backend {
+                    Some(ArtBackend::Arctic) => quote! {
+                        #i: SpaceArcticIndex<#t, { #inner_const_name as u32}>,
+                    },
+                    Some(ArtBackend::Congee) => quote! {
+                        #i: SpaceCongeeIndex<#t, { #inner_const_name as u32}>,
+                    },
+                    None if is_unsized(&t.to_string()) => quote! {
                         #i: SpaceIndexUnsized<#t, { #inner_const_name as u32}>,
-                    }
-                } else {
-                    quote! {
+                    },
+                    None => quote! {
                         #i: SpaceIndex<#t, { #inner_const_name as u32}>,
-                    }
-                }
+                    },
+                })
             })
-            .collect();
+            .collect::<syn::Result<Vec<_>>>()
+            .expect("generated index layouts were validated");
 
         quote! {
             #[derive(Debug)]
@@ -54,21 +64,31 @@ impl Generator {
 
     fn gen_space_secondary_index_from_table_files_path_fn(&self) -> TokenStream {
         let fields: Vec<_> = self
-            .field_types
+            .struct_def
+            .fields
             .iter()
-            .map(|(i, t)| {
+            .map(|field| {
+                let layout = index_layout(field)?;
+                let i = field.ident.as_ref().expect("index fields should be named");
+                let t = self.field_types.get(i).expect("field type was collected");
                 let literal_name = Literal::string(i.to_string().as_str());
-                if is_unsized(&t.to_string()) {
-                    quote! {
+                Ok(match layout.art_backend {
+                    Some(ArtBackend::Arctic) => quote! {
+                        #i: SpaceArcticIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
+                    },
+                    Some(ArtBackend::Congee) => quote! {
+                        #i: SpaceCongeeIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
+                    },
+                    None if is_unsized(&t.to_string()) => quote! {
                         #i: SpaceIndexUnsized::secondary_from_table_files_path(path, #literal_name, version).await?,
-                    }
-                } else {
-                    quote! {
+                    },
+                    None => quote! {
                         #i: SpaceIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
-                    }
-                }
+                    },
+                })
             })
-            .collect();
+            .collect::<syn::Result<Vec<_>>>()
+            .expect("generated index layouts were validated");
 
         quote! {
             async fn from_table_files_path<S: AsRef<str>>(path: S, version: u32) -> eyre::Result<Self> {

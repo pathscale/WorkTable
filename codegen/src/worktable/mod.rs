@@ -56,7 +56,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 }
 
 fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::Result<()> {
-    let memory_only = if columns.primary_index_backend.is_memory_only() {
+    let explicit_backend = if columns.primary_index_backend.requires_explicit_persistence() {
         Some((
             columns.primary_index_backend,
             columns.primary_keys.first().expect("primary key exists"),
@@ -66,11 +66,11 @@ fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::
         columns
             .indexes
             .values()
-            .find(|index| index.backend.is_memory_only())
+            .find(|index| index.backend.requires_explicit_persistence())
             .map(|index| (index.backend, &index.name, false))
     };
 
-    if let Some((backend, ident, is_primary)) = memory_only {
+    if let Some((backend, ident, is_primary)) = explicit_backend {
         let kind = if is_primary { "primary index" } else { "index" };
         match persistence {
             Persistence::MemoryOnly => {}
@@ -78,20 +78,12 @@ fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::
                 return Err(syn::Error::new(
                     ident.span(),
                     format!(
-                        "{kind} `{ident}` uses `{}`, which requires an explicitly written `persist: false`",
+                        "{kind} `{ident}` uses `{}`, which requires an explicit `persist: true` or `persist: false`",
                         backend.name()
                     ),
                 ));
             }
-            Persistence::Persisted => {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    format!(
-                        "{kind} `{ident}` uses `{}`, but persisted and S3-backed tables require `worktables_index` or `indexset`",
-                        backend.name()
-                    ),
-                ));
-            }
+            Persistence::Persisted => {}
         }
     }
 
@@ -197,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_backend_requires_explicit_false() {
+    fn art_backend_requires_explicit_persistence_choice() {
         let error = expand(quote! {
             name: MissingAcknowledgement,
             columns: {
@@ -206,25 +198,28 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains("explicitly written `persist: false`"));
+        assert!(
+            error
+                .to_string()
+                .contains("explicit `persist: true` or `persist: false`")
+        );
     }
 
     #[test]
-    fn memory_backend_rejects_persistence() {
-        let error = expand(quote! {
+    fn art_backend_accepts_persistence() {
+        let output = expand(quote! {
             name: PersistentArctic,
             persist: true,
             columns: {
-                id: u64 primary_key,
+                id: u64 primary_key using arctic,
                 value: u64,
             },
             indexes: {
-                value_idx: value unique using arctic,
+                value_idx: value unique using congee,
             },
-        })
-        .unwrap_err();
+        });
 
-        assert!(error.to_string().contains("persisted and S3-backed tables"));
+        assert!(output.is_ok());
     }
 
     #[test]

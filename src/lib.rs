@@ -32,11 +32,12 @@ pub mod prelude {
     pub use crate::lock::{LockGuard, LockMap};
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
-        AcknowledgeOperation, DeleteOperation, DiskConfig, DiskPersistenceEngine, IndexTableOfContents,
-        InsertOperation, Operation, OperationId, PersistedWorkTable, PersistenceConfig, PersistenceEngine,
-        PersistenceTask, ReadOnlyPersistenceEngine, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps,
-        SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, map_index_pages_to_toc_and_general,
-        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
+        AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
+        IndexTableOfContents, InsertOperation, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
+        PersistenceEngine, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData,
+        SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation,
+        map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
+        validate_events,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
@@ -44,10 +45,11 @@ pub mod prelude {
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
         ArcticIndex, ArcticKey, AvailableIndex, CongeeIndex, CongeeKey, Difference, IndexError, IndexMap,
-        IndexMultiMap, MultiPairRecreate, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
-        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
-        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
-        vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
+        IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArtIndex, PersistentCongeeIndex,
+        PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
+        TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode, UpstreamIndexMap,
+        UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum, vacuum::VacuumPersistence,
+        vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

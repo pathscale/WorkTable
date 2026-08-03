@@ -72,10 +72,6 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
-        let pk_map = match self.columns.primary_index_backend {
-            crate::common::model::IndexBackend::Indexset => quote! { UpstreamIndexMap },
-            _ => quote! { IndexMap },
-        };
         let index_setup = if pk_types_unsized {
             quote! {
                 inner.primary_index = std::sync::Arc::new(PrimaryIndex {
@@ -84,12 +80,33 @@ impl PersistGenerator {
                 });
             }
         } else {
-            quote! {
-                let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                    pk_map: #pk_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
-                    reverse_pk_map: IndexMap::new(),
-                });
+            match self.columns.primary_index_backend {
+                crate::common::model::IndexBackend::WorktablesIndex => quote! {
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: IndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
+                        reverse_pk_map: IndexMap::new(),
+                    });
+                },
+                crate::common::model::IndexBackend::Indexset => quote! {
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: UpstreamIndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
+                        reverse_pk_map: IndexMap::new(),
+                    });
+                },
+                crate::common::model::IndexBackend::Arctic => quote! {
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: PersistentArcticIndex::<#pk_type, OffsetEqLink<#const_name>>::default(),
+                        reverse_pk_map: IndexMap::new(),
+                    });
+                },
+                crate::common::model::IndexBackend::Congee => quote! {
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
+                        pk_map: PersistentCongeeIndex::<#pk_type, OffsetEqLink<#const_name>>::default(),
+                        reverse_pk_map: IndexMap::new(),
+                    });
+                },
             }
         };
 

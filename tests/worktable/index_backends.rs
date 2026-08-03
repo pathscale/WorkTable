@@ -94,6 +94,30 @@ worktable! {
     },
 }
 
+worktable! {
+    name: PersistedArctic,
+    persist: true,
+    columns: {
+        id: u64 primary_key autoincrement using arctic,
+        congee_key: u64,
+    },
+    indexes: {
+        congee_idx: congee_key unique using congee,
+    },
+}
+
+worktable! {
+    name: PersistedCongee,
+    persist: true,
+    columns: {
+        id: u64 primary_key autoincrement using congee,
+        arctic_key: u64,
+    },
+    indexes: {
+        arctic_idx: arctic_key unique using arctic,
+    },
+}
+
 #[tokio::test]
 async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
     let table = MixedBackendWorkTable::default();
@@ -263,6 +287,109 @@ async fn upstream_indexset_survives_persist_reload_and_more_writes() {
     drop(table);
 
     remove_dir_if_exists(ROOT.to_string()).await;
+}
+
+#[tokio::test]
+async fn native_art_backends_survive_wal_reload_and_further_mutation() {
+    const ARCTIC_ROOT: &str = "tests/data/index_backend_arctic_persistence";
+    const CONGEE_ROOT: &str = "tests/data/index_backend_congee_persistence";
+    remove_dir_if_exists(ARCTIC_ROOT.to_string()).await;
+    remove_dir_if_exists(CONGEE_ROOT.to_string()).await;
+
+    let arctic_config = DiskConfig::new_with_table_name(
+        ARCTIC_ROOT,
+        PersistedArcticWorkTable::name_snake_case(),
+        PersistedArcticWorkTable::version(),
+    );
+    let engine = PersistedArcticPersistenceEngine::new(arctic_config.clone())
+        .await
+        .unwrap();
+    let table = PersistedArcticWorkTable::load(engine).await.unwrap();
+    for congee_key in 0..256 {
+        table
+            .insert(PersistedArcticRow {
+                id: table.get_next_pk().into(),
+                congee_key,
+            })
+            .unwrap();
+    }
+    let rejected_id = table.get_next_pk().0;
+    assert!(
+        table
+            .insert(PersistedArcticRow {
+                id: rejected_id,
+                congee_key: 77,
+            })
+            .is_err()
+    );
+    let accepted_id = table.get_next_pk().0;
+    table
+        .insert(PersistedArcticRow {
+            id: accepted_id,
+            congee_key: 300,
+        })
+        .unwrap();
+    table.wait_for_ops().await;
+    drop(table);
+
+    let engine = PersistedArcticPersistenceEngine::new(arctic_config.clone())
+        .await
+        .unwrap();
+    let table = PersistedArcticWorkTable::load(engine).await.unwrap();
+    assert_eq!(table.count(), 257);
+    assert!(table.select(rejected_id).is_none());
+    assert_eq!(table.select(accepted_id).unwrap().congee_key, 300);
+    assert_eq!(table.select_by_congee_key(77).unwrap().congee_key, 77);
+    table.delete(77).await.unwrap();
+    table.wait_for_ops().await;
+    drop(table);
+
+    let engine = PersistedArcticPersistenceEngine::new(arctic_config).await.unwrap();
+    let table = PersistedArcticWorkTable::load(engine).await.unwrap();
+    assert!(table.select(77).is_none());
+    assert!(table.select_by_congee_key(77).is_none());
+    table.wait_for_ops().await;
+    drop(table);
+
+    let congee_config = DiskConfig::new_with_table_name(
+        CONGEE_ROOT,
+        PersistedCongeeWorkTable::name_snake_case(),
+        PersistedCongeeWorkTable::version(),
+    );
+    let engine = PersistedCongeePersistenceEngine::new(congee_config.clone())
+        .await
+        .unwrap();
+    let table = PersistedCongeeWorkTable::load(engine).await.unwrap();
+    for arctic_key in 0..256 {
+        table
+            .insert(PersistedCongeeRow {
+                id: table.get_next_pk().into(),
+                arctic_key,
+            })
+            .unwrap();
+    }
+    table.wait_for_ops().await;
+    drop(table);
+
+    let engine = PersistedCongeePersistenceEngine::new(congee_config.clone())
+        .await
+        .unwrap();
+    let table = PersistedCongeeWorkTable::load(engine).await.unwrap();
+    assert_eq!(table.count(), 256);
+    assert_eq!(table.select_by_arctic_key(199).unwrap().arctic_key, 199);
+    table.delete(199).await.unwrap();
+    table.wait_for_ops().await;
+    drop(table);
+
+    let engine = PersistedCongeePersistenceEngine::new(congee_config).await.unwrap();
+    let table = PersistedCongeeWorkTable::load(engine).await.unwrap();
+    assert!(table.select(199).is_none());
+    assert!(table.select_by_arctic_key(199).is_none());
+    table.wait_for_ops().await;
+    drop(table);
+
+    remove_dir_if_exists(ARCTIC_ROOT.to_string()).await;
+    remove_dir_if_exists(CONGEE_ROOT.to_string()).await;
 }
 
 #[tokio::test]
