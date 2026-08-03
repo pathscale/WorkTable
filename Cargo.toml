@@ -15,8 +15,13 @@ keywords = ["database", "embedded", "in-memory", "index", "storage"]
 categories = ["database-implementations", "data-structures", "caching"]
 
 [features]
+default = ["wti-predictable-search"]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
 s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
+wti-hybrid-search = ["indexset/wt-slice-binary-search"]
+wti-predictable-search = ["indexset/custom-binary-search"]
+wti-std-search = ["indexset/std-binary-search"]
+wti-superslice-search = ["indexset/superslice-binary-search"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -25,14 +30,14 @@ async-trait = "0.1.89"
 arctic-map = "=0.1.4"
 congee = "=0.4.1"
 convert_case = "0.6.0"
-data_bucket = "=0.5.0"
+data_bucket = "=0.5.1"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
 # data_bucket = { path = "../DataBucket", version = "0.3.14" }
 derive_more = { version = "2.0.1", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6.12"
 fastrand = "2.3.0"
 futures = "0.3.30"
-indexset = { package = "WorkTablesIndex", version = "=0.0.3", features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "=0.0.4", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 vanilla_indexset = { package = "indexset", version = "=0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }

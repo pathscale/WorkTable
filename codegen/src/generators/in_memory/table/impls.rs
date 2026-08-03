@@ -165,7 +165,7 @@ impl InMemoryGenerator {
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 loop {
-                    let need_to_update = self.0.primary_index.pk_map.get_value(&pk).is_some();
+                    let need_to_update = self.0.primary_index.pk_map.contains_key(&pk);
                     if need_to_update {
                         match self.update(row.clone()).await {
                             core::result::Result::Ok(_) => return core::result::Result::Ok(()),

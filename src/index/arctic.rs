@@ -76,9 +76,15 @@ where
     V: Clone + Debug + Send + Sync + 'static,
 {
     #[inline]
-    fn get_value(&self, key: &K) -> Option<V> {
+    fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
         let key = key.to_arctic();
-        self.inner.get(key.borrow()).map(|value| (*value).clone())
+        self.inner.get(key.borrow()).map(|value| read(&value))
+    }
+
+    #[inline]
+    fn contains_key(&self, key: &K) -> bool {
+        let key = key.to_arctic();
+        self.inner.get(key.borrow()).is_some()
     }
 
     #[inline]

@@ -23,7 +23,14 @@ where
     K: Clone + Ord,
     V: Clone,
 {
-    fn get_value(&self, key: &K) -> Option<V>;
+    fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R>;
+
+    #[inline]
+    fn get_value(&self, key: &K) -> Option<V> {
+        self.with_value(key, Clone::clone)
+    }
+
+    fn contains_key(&self, key: &K) -> bool;
     fn insert_value(&self, key: K, value: V) -> Option<V>;
     fn insert_value_checked(&self, key: K, value: V) -> Option<()>;
     fn remove_value(&self, key: &K) -> Option<(K, V)>;
@@ -53,8 +60,13 @@ where
     Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     #[inline]
-    fn get_value(&self, key: &K) -> Option<V> {
-        self.get(key).map(|entry| entry.get().value.clone())
+    fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
+        self.get(key).map(|entry| read(&entry.get().value))
+    }
+
+    #[inline]
+    fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
     }
 
     #[inline]
@@ -111,8 +123,13 @@ where
     Node: VanillaNodeLike<VanillaPair<K, V>> + Send + 'static,
 {
     #[inline]
-    fn get_value(&self, key: &K) -> Option<V> {
-        self.get(key).map(|entry| entry.get().value.clone())
+    fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
+        self.get(key).map(|entry| read(&entry.get().value))
+    }
+
+    #[inline]
+    fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
     }
 
     #[inline]
@@ -183,6 +200,9 @@ mod tests {
         assert_eq!(index.insert_value_checked(2, 20), Some(()));
         assert_eq!(index.insert_value_checked(1, 10), Some(()));
         assert_eq!(index.insert_value_checked(2, 99), None);
+        assert!(index.contains_key(&1));
+        assert!(!index.contains_key(&3));
+        assert_eq!(index.with_value(&2, |value| value + 1), Some(21));
         assert_eq!(index.get_value(&2), Some(20));
         assert_eq!(index.insert_value(2, 22), Some(20));
         assert_eq!(index.iter_values().collect::<Vec<_>>(), vec![(1, 10), (2, 22)]);

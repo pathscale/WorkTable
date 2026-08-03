@@ -90,16 +90,6 @@ where
     }
 
     #[inline]
-    fn clone_pointer(pointer: usize) -> Arc<V> {
-        // SAFETY: the caller holds a Congee epoch guard, so the tree-owned
-        // strong reference cannot be reclaimed while it is cloned.
-        let owned = unsafe { Self::arc_from_pointer(pointer) };
-        let cloned = Arc::clone(&owned);
-        let _ = Arc::into_raw(owned);
-        cloned
-    }
-
-    #[inline]
     fn retire_old(pointer: usize, guard: &congee::epoch::Guard) -> Arc<V> {
         // SAFETY: a successful replacement/removal transfers the tree-owned
         // strong reference to this call.
@@ -121,10 +111,19 @@ where
     V: Clone + Debug + Send + Sync + 'static,
 {
     #[inline]
-    fn get_value(&self, key: &K) -> Option<V> {
+    fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
         let guard = self.inner.pin();
         let pointer = self.inner.get(&key.into_congee(), &guard)?;
-        Some(Self::clone_pointer(pointer).as_ref().clone())
+        // SAFETY: the epoch guard keeps the tree-owned `Arc<V>` alive for the
+        // duration of `read`, and the pointer originated from `Arc::into_raw`.
+        let value = unsafe { &*std::ptr::with_exposed_provenance::<V>(pointer) };
+        Some(read(value))
+    }
+
+    #[inline]
+    fn contains_key(&self, key: &K) -> bool {
+        let guard = self.inner.pin();
+        self.inner.get(&key.into_congee(), &guard).is_some()
     }
 
     #[inline]

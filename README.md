@@ -49,6 +49,8 @@ worktable = { version = "=1.0.0-beta.1", features = ["s3-support"] }   # S3 sync
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic are explicitly memory-only and require `persist: false`. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
 
+WorkTablesIndex uses its predictable branch-based node search by default in WorkTable. This avoids a measured regression for sequential numeric-key workloads. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-hybrid-search`, `wti-std-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Enable exactly one `wti-*-search` feature.
+
 ## Relationship to `data_bucket`
 
 WorkTable is built on [`data_bucket`](https://crates.io/crates/data_bucket), which
