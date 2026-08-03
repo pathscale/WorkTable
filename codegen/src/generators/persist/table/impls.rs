@@ -250,64 +250,52 @@ impl PersistGenerator {
     fn gen_table_upsert_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type = name_generator.get_row_type_ident();
+        let full_row_lock = self.gen_full_lock_for_update();
 
         quote! {
             /// Inserts the row if its primary key is absent, updates it
             /// otherwise.
             ///
-            /// Concurrency: **system-wide lock-free, not wait-free per call.**
-            /// A retry is only taken when a concurrent delete or insert
-            /// flipped this key's existence between the existence check and
-            /// the operation, so some operation on this key completes on
-            /// every iteration -- but under sustained adversarial churn on
-            /// the same key an individual call can retry indefinitely. There
-            /// is deliberately no retry limit: upsert is semantically
-            /// infallible for primary-key conflicts, and a limit would trade
-            /// theoretical starvation for real spurious errors. Each
-            /// conflicting round yields to the scheduler before retrying so
-            /// the interfering task can complete.
+            /// A definitely absent key takes the same optimistic lock-free
+            /// insert path as `insert`. Existing keys and insertion collisions
+            /// acquire one full-row lock across the repeated existence check
+            /// and selected mutation, so upserts, updates, and deletes on the
+            /// same key cannot invalidate that decision.
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
+                if !self.0.primary_index.pk_map.contains_key(&pk) {
+                    match self.insert(row.clone()) {
+                        core::result::Result::Ok(_) => return core::result::Result::Ok(()),
+                        core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) => {}
+                        core::result::Result::Err(e) => return core::result::Result::Err(e),
+                    }
+                }
                 loop {
-                    let need_to_update = self.0.primary_index.pk_map.contains_key(&pk);
-                    if need_to_update {
-                        match self.update(row.clone()).await {
-                            core::result::Result::Ok(_) => return core::result::Result::Ok(()),
-                            // Row was deleted concurrently between the check and the
-                            // update; retry as an insert.
-                            core::result::Result::Err(WorkTableError::NotFound) => {
-                                tokio::task::yield_now().await;
-                                continue;
-                            }
-                            // Row is mid-flight: a concurrent insert publishes
-                            // the primary-key entry before unghosting the row
-                            // data (and insert takes no row lock), and a
-                            // concurrent delete ghosts data it is about to
-                            // unindex. Both are transient; retry.
-                            core::result::Result::Err(WorkTableError::PagesError(e)) if e.is_row_absent() => {
-                                tokio::task::yield_now().await;
-                                continue;
-                            }
-                            core::result::Result::Err(e) => return core::result::Result::Err(e),
-                        }
+                    let op_lock = { #full_row_lock };
+                    let guard = LockGuard::new(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
+
+                    let result = if self.0.primary_index.pk_map.contains_key(&pk) {
+                        self.update_with_guard(row.clone(), guard).await
                     } else {
                         match self.insert(row.clone()) {
-                            core::result::Result::Ok(_) => return core::result::Result::Ok(()),
-                            // Row was inserted concurrently between the check and the
-                            // insert; retry as an update. Secondary-index conflicts are
-                            // real errors and are propagated. Progress is lock-free,
-                            // not wait-free: a retry is only taken when a concurrent
-                            // delete/insert flipped this key's existence between the
-                            // check and the operation, so the system as a whole makes
-                            // progress on every retry, but this call can in principle
-                            // retry unboundedly under sustained same-key churn.
+                            core::result::Result::Ok(_) => core::result::Result::Ok(()),
                             core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) => {
-                                tokio::task::yield_now().await;
-                                continue;
+                                self.update_with_guard(row.clone(), guard).await
                             }
-                            core::result::Result::Err(e) => return core::result::Result::Err(e),
+                            core::result::Result::Err(e) => core::result::Result::Err(e),
                         }
+                    };
+
+                    match result {
+                        core::result::Result::Err(WorkTableError::NotFound) => {}
+                        core::result::Result::Err(WorkTableError::PagesError(e)) if e.is_row_absent() => {}
+                        other => return other,
                     }
+                    tokio::task::yield_now().await;
                 }
             }
         }

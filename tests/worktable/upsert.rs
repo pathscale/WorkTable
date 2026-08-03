@@ -13,30 +13,19 @@ worktable!(
     },
 );
 
-/// Upsert is system-wide lock-free but not wait-free per call: a retry is
-/// taken exactly when a concurrent delete/insert flips the key's existence
-/// between the check and the operation. This test drives sustained
-/// adversarial churn on ONE key while several tasks upsert it and asserts
-/// that every upsert completes without surfacing a spurious conflict error,
-/// under a timeout that turns pathological starvation into a failure
-/// instead of a hang.
-/// Moderate tier: 40/40 stable when run solo, but under full-suite parallel
-/// load the pre-existing #169 stall still fires (~1/30 suite runs), so both
-/// tiers stay ignored until that lands. Run with `-- --ignored` to validate
-/// the upsert retry behavior.
+/// After its optimistic absent-key fast path, upsert holds the generated
+/// full-row lock across its repeated existence check and mutation. This test
+/// drives sustained adversarial churn on one key while several tasks upsert
+/// it, asserting that every operation completes without a spurious conflict
+/// error. The timeout turns a lock-order regression into a failure instead of
+/// a hang.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "exposes the pre-existing #169 lock-free-insert stall under suite load"]
 async fn upsert_completes_under_same_key_churn() {
     churn_run(100, 200).await;
 }
 
-/// Intense variant: reliably exposes pre-existing engine races under extreme
-/// same-key churn that are unrelated to the upsert retry loop (raw `insert`
-/// takes no row lock and publishes the pk entry before unghosting the data;
-/// under saturation a churn round can stall past the timeout). Tracked in the
-/// lock-free-insert issue; un-ignore when that lands.
+/// Intense variant for the same-key upsert/delete linearization protocol.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "exposes pre-existing lock-free-insert races under extreme same-key churn"]
 async fn upsert_completes_under_extreme_same_key_churn() {
     churn_run(5_000, 2_000).await;
 }

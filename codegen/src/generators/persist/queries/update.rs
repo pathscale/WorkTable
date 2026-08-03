@@ -34,6 +34,8 @@ impl PersistGenerator {
     fn gen_full_row_update(&mut self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_ident = name_generator.get_row_type_ident();
+        let lock_ident = name_generator.get_lock_type_ident();
+        let pk_ident = name_generator.get_primary_key_type_ident();
 
         let row_updates = self
             .columns
@@ -83,11 +85,22 @@ impl PersistGenerator {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 let op_lock = { #full_row_lock };
-                let _guard = LockGuard::new(
+                let guard = LockGuard::new(
                     op_lock,
                     self.0.lock_manager.clone(),
                     pk.clone(),
                 );
+
+                self.update_with_guard(row, guard).await
+            }
+
+            #[inline]
+            async fn update_with_guard(
+                &self,
+                row: #row_ident,
+                _guard: LockGuard<#lock_ident, #pk_ident>,
+            ) -> core::result::Result<(), WorkTableError> {
+                let pk = row.get_primary_key();
 
                 let mut link: Link = self.0
                     .primary_index
