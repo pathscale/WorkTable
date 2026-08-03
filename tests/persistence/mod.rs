@@ -13,6 +13,7 @@ mod space_index;
 mod sync;
 mod toc;
 mod torn_shutdown;
+mod tuple_primary_key;
 mod vacuum;
 
 #[cfg(feature = "s3-support")]
