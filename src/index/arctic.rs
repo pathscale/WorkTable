@@ -2,7 +2,7 @@
 
 use std::borrow::Borrow;
 use std::fmt::{self, Debug};
-use std::ops::RangeBounds;
+use std::ops::{Bound, RangeBounds};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use arctic::{ConcurrentMap, Key, Order};
@@ -14,11 +14,35 @@ use super::UniqueIndex;
 /// Keeping this trait local lets generated primary-key newtypes delegate to
 /// their underlying integer without implementing Arctic's low-level key API.
 pub trait ArcticKey: Clone + Debug + Ord + Send + Sync + 'static {
-    type Raw: Key + Clone + Debug + Ord + Send + Sync + 'static;
+    type Raw: ArcticRawKey;
 
     fn to_arctic(&self) -> Self::Raw;
     fn from_arctic(value: Self::Raw) -> Self;
 }
+
+/// Integer operations needed to translate Rust's inclusive/exclusive bounds
+/// into the native range forms accepted by Arctic 0.1.
+#[doc(hidden)]
+pub trait ArcticRawKey: Key + Copy + Debug + Ord + Send + Sync + 'static {
+    fn next(self) -> Option<Self>;
+    fn previous(self) -> Option<Self>;
+}
+
+macro_rules! impl_arctic_raw_key {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl ArcticRawKey for $ty {
+                #[inline]
+                fn next(self) -> Option<Self> { self.checked_add(1) }
+
+                #[inline]
+                fn previous(self) -> Option<Self> { self.checked_sub(1) }
+            }
+        )*
+    };
+}
+
+impl_arctic_raw_key!(u16, u32, u64, u128);
 
 macro_rules! impl_arctic_key {
     ($($ty:ty),* $(,)?) => {
@@ -148,7 +172,42 @@ where
     where
         R: RangeBounds<K> + 'a,
     {
-        self.iter_values().filter(move |(key, _)| range.contains(key))
+        let lower = match range.start_bound() {
+            Bound::Included(key) => Some(key.to_arctic()),
+            Bound::Excluded(key) => key.to_arctic().next(),
+            Bound::Unbounded => None,
+        };
+        let upper = match range.end_bound() {
+            Bound::Included(key) => Some(key.to_arctic()),
+            Bound::Excluded(key) => key.to_arctic().previous(),
+            Bound::Unbounded => None,
+        };
+
+        macro_rules! collect_range {
+            ($native_range:expr) => {{
+                self.inner
+                    .range($native_range)
+                    .entries(Order::Ascend)
+                    .map(|(key, value)| (K::from_arctic(key), value.clone()))
+                    .collect::<Vec<_>>()
+            }};
+        }
+
+        let values = match (lower, upper) {
+            (Some(lower), Some(upper)) if lower <= upper => {
+                collect_range!(lower.borrow()..=upper.borrow())
+            }
+            (Some(_), Some(_)) => Vec::new(),
+            (Some(lower), None) => collect_range!(lower.borrow()..),
+            (None, Some(upper)) => collect_range!(..=upper.borrow()),
+            (None, None) => self
+                .inner
+                .all()
+                .entries(Order::Ascend)
+                .map(|(key, value)| (K::from_arctic(key), value.clone()))
+                .collect(),
+        };
+        values.into_iter()
     }
 
     fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a
@@ -161,6 +220,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Bound;
     use std::sync::{Arc, Barrier};
 
     use super::{ArcticIndex, UniqueIndex};
@@ -175,6 +235,26 @@ mod tests {
         assert_eq!(index.range_values(1..=1).collect::<Vec<_>>(), vec![(1, 12)]);
         assert_eq!(index.remove_value(&1), Some((1, 12)));
         assert!(index.is_empty());
+    }
+
+    #[test]
+    fn native_ranges_preserve_rust_bounds() {
+        let index = ArcticIndex::<u64, u64>::default();
+        for key in 0..10 {
+            assert_eq!(index.insert_value_checked(key, key * 10), Some(()));
+        }
+
+        assert_eq!(
+            index.range_values(3..7).collect::<Vec<_>>(),
+            vec![(3, 30), (4, 40), (5, 50), (6, 60)]
+        );
+        assert_eq!(
+            index
+                .range_values((Bound::Excluded(3), Bound::Included(5)))
+                .collect::<Vec<_>>(),
+            vec![(4, 40), (5, 50)]
+        );
+        assert_eq!(index.range_values(10..).collect::<Vec<_>>(), Vec::new());
     }
 
     #[test]

@@ -154,12 +154,13 @@ Backend dispatch itself is static and should compile away. That does **not** mea
 - Both can emit persistence-compatible structural CDC.
 
 Direct dispatch preserves a strict generated point-read contract with a
-provider-specific implementation. WorkTablesIndex keeps the normal successful
-hit path and sends only an apparent miss through a cold three-node boundary
-confirmation. Vanilla IndexSet does not expose a comparable structural
-validation primitive; `using indexset` therefore remains experimental and is
-excluded from concurrent correctness and published performance claims. This
-WorkTablesIndex visibility guarantee is independent of
+provider-specific implementation. WorkTablesIndex 0.0.4 holds its structural
+mapping stable until the selected node is locked, so both hits and misses are
+definitive; a contended lookup drops the structural guard before waiting and
+then retries the mapping. Vanilla IndexSet does not expose a comparable
+structural validation primitive; `using indexset` therefore remains
+experimental and is excluded from concurrent correctness and published
+performance claims. This WorkTablesIndex visibility guarantee is independent of
 `versioned-row-publication`, which addresses concurrent page bytes, ghost
 publication, and reclamation rather than index routing.
 
@@ -167,16 +168,22 @@ publication, and reclamation rather than index routing.
 
 - Point lookup and mutation call Congee directly.
 - WorkTable links do not fit in Congee's one-word payload. The adapter stores an `Arc` pointer, so inserts allocate and reads clone the `Arc` before copying the link.
-- `iter_values` and `range_values` currently collect a full key/value snapshot and sort it. A narrow range therefore scans and allocates for the whole index.
+- Ordered reads use Congee's native range scan and materialize only the requested key interval into a `Vec`; a full iteration is therefore O(n) with one result allocation, while a narrow range no longer dumps, re-probes, and sorts the whole tree.
 
 ### Arctic
 
 - Point lookup and mutation call Arctic directly.
 - WorkTable links are stored in `Box` values because Arctic's inline value is limited to 64 bits. Inserts allocate; reads copy the link from the box.
-- Ordered scans currently collect all entries into a `Vec` and then filter the requested range.
+- Ordered reads use Arctic's native bounded traversal and materialize the requested interval into a `Vec`.
 - Concurrent scan behavior inherits Arctic's non-linearizable traversal contract.
 
-The ART adapters are consequently candidates for point-heavy, explicitly memory-only paths—not automatic wins for `select_all`, range-heavy access, iteration, or vacuum. Tomorrow's measurements must separate point lookup, write/allocation cost, range width, full iteration, and reclamation rather than reporting one blended throughput number.
+Generated table traversal snapshots its ordered link list once instead of
+restarting a range at every row. The ART adapters are still candidates for
+point-heavy, explicitly memory-only paths—not automatic wins for `select_all`,
+wide ranges, iteration, or vacuum, because ordered results are materialized
+rather than streamed. Measurements must separate point lookup,
+write/allocation cost, range width, full iteration, and reclamation rather than
+reporting one blended throughput number.
 
 ### Memory diagnostics
 

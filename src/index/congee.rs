@@ -1,7 +1,7 @@
 //! Congee adapter for memory-only unique WorkTable indexes.
 
 use std::fmt::{self, Debug};
-use std::ops::RangeBounds;
+use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -103,6 +103,58 @@ where
     fn allocation_failure() -> ! {
         panic!("Congee failed to allocate an index node")
     }
+
+    fn collect_native_range<R>(&self, range: &R) -> Vec<(K, V)>
+    where
+        R: RangeBounds<K>,
+    {
+        let start = match range.start_bound() {
+            Bound::Included(key) => key.into_congee(),
+            Bound::Excluded(key) => match key.into_congee().checked_add(1) {
+                Some(start) => start,
+                None => return Vec::new(),
+            },
+            Bound::Unbounded => 0,
+        };
+        let (end, include_max) = match range.end_bound() {
+            Bound::Included(key) => match key.into_congee().checked_add(1) {
+                Some(end) => (end, false),
+                None => (usize::MAX, true),
+            },
+            Bound::Excluded(key) => (key.into_congee(), false),
+            Bound::Unbounded => (usize::MAX, true),
+        };
+
+        let guard = self.inner.pin();
+        let mut raw_values = if start < end {
+            let mut capacity = self.len().max(1);
+            loop {
+                let mut values = vec![(0, 0); capacity];
+                let scanned = self.inner.range(&start, &end, &mut values, &guard);
+                if scanned < capacity || capacity > usize::MAX / 2 {
+                    values.truncate(scanned);
+                    break values;
+                }
+                capacity *= 2;
+            }
+        } else {
+            Vec::new()
+        };
+
+        if include_max && let Some(pointer) = self.inner.get(&usize::MAX, &guard) {
+            raw_values.push((usize::MAX, pointer));
+        }
+
+        raw_values
+            .into_iter()
+            .map(|(key, pointer)| {
+                // SAFETY: the pinned epoch keeps every returned tree-owned
+                // pointer alive until its value has been cloned.
+                let value = unsafe { &*std::ptr::with_exposed_provenance::<V>(pointer) };
+                (K::from_congee(key), value.clone())
+            })
+            .collect()
+    }
 }
 
 impl<K, V> UniqueIndex<K, V> for CongeeIndex<K, V>
@@ -190,17 +242,7 @@ where
     }
 
     fn iter_values(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {
-        let mut values = self
-            .inner
-            .keys()
-            .into_iter()
-            .filter_map(|key| {
-                let key = K::from_congee(key);
-                self.get_value(&key).map(|value| (key, value))
-            })
-            .collect::<Vec<_>>();
-        values.sort_unstable_by_key(|entry| entry.0);
-        values.into_iter()
+        self.collect_native_range(&(..)).into_iter()
     }
 
     fn iter_links(&self) -> impl DoubleEndedIterator<Item = V> + '_ {
@@ -211,7 +253,7 @@ where
     where
         R: RangeBounds<K> + 'a,
     {
-        self.iter_values().filter(move |(key, _)| range.contains(key))
+        self.collect_native_range(&range).into_iter()
     }
 
     fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a
@@ -224,6 +266,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Bound;
     use std::sync::{Arc, Barrier};
 
     use super::{CongeeIndex, UniqueIndex};
@@ -238,6 +281,26 @@ mod tests {
         assert_eq!(index.range_values(1..=1).collect::<Vec<_>>(), vec![(1, 12)]);
         assert_eq!(index.remove_value(&1), Some((1, 12)));
         assert!(index.is_empty());
+    }
+
+    #[test]
+    fn native_ranges_preserve_rust_bounds() {
+        let index = CongeeIndex::<u64, u64>::default();
+        for key in 0..10 {
+            assert_eq!(index.insert_value_checked(key, key * 10), Some(()));
+        }
+
+        assert_eq!(
+            index.range_values(3..7).collect::<Vec<_>>(),
+            vec![(3, 30), (4, 40), (5, 50), (6, 60)]
+        );
+        assert_eq!(
+            index
+                .range_values((Bound::Excluded(3), Bound::Included(5)))
+                .collect::<Vec<_>>(),
+            vec![(4, 40), (5, 50)]
+        );
+        assert_eq!(index.range_values(10..).collect::<Vec<_>>(), Vec::new());
     }
 
     #[test]

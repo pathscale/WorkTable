@@ -6,6 +6,7 @@ use indexset::cdc::change::ChangeEvent;
 use indexset::core::multipair::MultiPair;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
+use vanilla_indexset::concurrent::map::BTreeMap as VanillaIndexMap;
 use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
@@ -56,18 +57,18 @@ where
     Node: NodeLike<Pair<T, OffsetEqLink<N>>> + Send + 'static,
 {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>) {
-        let (res, evs) = self.insert_cdc(value, OffsetEqLink(link));
+        let (res, evs) = IndexMap::insert_cdc(self, value, OffsetEqLink(link));
         let res_link = res.map(|l| l.0);
         (res_link, convert_change_events(evs))
     }
 
     fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>> {
-        let res = self.checked_insert_cdc(value, OffsetEqLink(link));
+        let res = IndexMap::checked_insert_cdc(self, value, OffsetEqLink(link));
         res.map(|evs| convert_change_events(evs))
     }
 
     fn remove_cdc(&self, value: T, _: Link) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
-        let (res, evs) = self.remove_cdc(&value);
+        let (res, evs) = IndexMap::remove_cdc(self, &value);
         let res_pair = res.map(|(k, v)| (k, v.0));
         (res_pair, convert_change_events(evs))
     }
@@ -79,17 +80,16 @@ where
     Node: VanillaNodeLike<VanillaPair<T, OffsetEqLink<N>>> + Send + 'static,
 {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>) {
-        let (res, events) = self.insert_cdc(value, OffsetEqLink(link));
+        let (res, events) = VanillaIndexMap::insert_cdc(self, value, OffsetEqLink(link));
         (res.map(|value| value.0), convert_upstream_change_events(events))
     }
 
     fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>> {
-        self.checked_insert_cdc(value, OffsetEqLink(link))
-            .map(convert_upstream_change_events)
+        VanillaIndexMap::checked_insert_cdc(self, value, OffsetEqLink(link)).map(convert_upstream_change_events)
     }
 
     fn remove_cdc(&self, value: T, _: Link) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
-        let (res, events) = self.remove_cdc(&value);
+        let (res, events) = VanillaIndexMap::remove_cdc(self, &value);
         (
             res.map(|(key, value)| (key, value.0)),
             convert_upstream_change_events(events),

@@ -12,8 +12,8 @@ pub use generator::WT_INDEX_EXTENSION;
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let input_fn = Parser::parse_struct(input)?;
     let pk_ident = Parser::parse_pk_ident(&input_fn);
-    let pk_upstream = Parser::primary_key_uses_upstream(&input_fn);
     let attributes = Parser::parse_attributes(&input_fn.attrs);
+    let pk_upstream = attributes.pk_upstream;
 
     let generator = Generator {
         struct_def: input_fn,
@@ -98,5 +98,18 @@ mod tests {
             output.contains("async fn into_worktable"),
             "normal into_worktable should be async"
         );
+    }
+
+    #[test]
+    fn pk_upstream_uses_the_upstream_persistence_adapter() {
+        let input = quote! {
+            #[derive(Debug)]
+            #[table(pk_upstream)]
+            pub struct TestWorkTable(WorkTable<TestRow, TestPk, (), 4096>);
+        };
+
+        let output = expand(input).unwrap().to_string();
+        assert!(output.contains("UpstreamIndexMap"));
+        assert!(output.contains("UpstreamIndexPair"));
     }
 }

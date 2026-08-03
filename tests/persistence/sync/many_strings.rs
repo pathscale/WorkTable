@@ -130,15 +130,7 @@ fn test_space_update_query_pk_many_times_sync() {
         {
             let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
-            if table.select(pk.clone()).is_none() {
-                let direct = table.0.primary_index.pk_map.get_value(&TestSyncPrimaryKey(pk.clone()));
-                let entries = table.0.primary_index.pk_map.iter_values().collect::<Vec<_>>();
-                let data = direct.map(|link| table.0.data.select_non_ghosted(link.into()));
-                panic!(
-                    "final primary lookup missed: direct={direct:?}, data={data:?}, entries={entries:?}, row_count={}",
-                    table.count()
-                );
-            }
+            assert!(table.select(pk.clone()).is_some(), "final primary lookup missed");
             assert_eq!(table.select(pk.clone()).unwrap().another, 511);
             assert_eq!(table.select(pk).unwrap().field, "Some field value".to_string());
         }

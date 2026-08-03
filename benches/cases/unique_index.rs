@@ -1,9 +1,28 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use worktable::prelude::SelectQueryExecutor;
+use worktable::prelude::*;
+use worktable::worktable;
 
 use crate::common::*;
+
+worktable! {
+    name: CongeeRangeBenchmark,
+    persist: false,
+    columns: {
+        id: u64 primary_key using congee,
+        value: u64,
+    },
+}
+
+worktable! {
+    name: ArcticRangeBenchmark,
+    persist: false,
+    columns: {
+        id: u64 primary_key using arctic,
+        value: u64,
+    },
+}
 
 fn insert(c: &mut Criterion) {
     let table = UniqueIndexWorkTable::default();
@@ -83,6 +102,32 @@ fn select_by_unique_index_range(c: &mut Criterion) {
             black_box(table.select_by_test_range(test..=test).execute())
         })
     });
+}
+
+fn art_primary_key_ranges(c: &mut Criterion) {
+    const ROWS: u64 = 10_000;
+    let congee = CongeeRangeBenchmarkWorkTable::default();
+    let arctic = ArcticRangeBenchmarkWorkTable::default();
+    for id in 0..ROWS {
+        congee.insert(CongeeRangeBenchmarkRow { id, value: id }).unwrap();
+        arctic.insert(ArcticRangeBenchmarkRow { id, value: id }).unwrap();
+    }
+
+    let mut group = c.benchmark_group("art_primary_key_single_row_range");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("congee", |b| {
+        b.iter(|| {
+            let id = black_box(fastrand::u64(0..ROWS));
+            black_box(congee.select_by_pk_range(id..=id).execute().unwrap())
+        })
+    });
+    group.bench_function("arctic", |b| {
+        b.iter(|| {
+            let id = black_box(fastrand::u64(0..ROWS));
+            black_box(arctic.select_by_pk_range(id..=id).execute().unwrap())
+        })
+    });
+    group.finish();
 }
 
 fn update(c: &mut Criterion) {
@@ -246,6 +291,7 @@ criterion_group! {
         select_by_pk,
         select_by_unique_index,
         select_by_unique_index_range,
+        art_primary_key_ranges,
         update,
         delete,
         upsert_insert,

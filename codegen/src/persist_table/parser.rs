@@ -25,21 +25,11 @@ impl Parser {
         Ident::new(pk_type.trim(), Span::mixed_site())
     }
 
-    pub fn primary_key_uses_upstream(item: &ItemStruct) -> bool {
-        item.fields
-            .iter()
-            .next()
-            .expect("WorkTable wrapper has one field")
-            .ty
-            .to_token_stream()
-            .to_string()
-            .contains("UpstreamIndexMap")
-    }
-
     pub fn parse_attributes(attrs: &Vec<Attribute>) -> PersistTableAttributes {
         let mut res = PersistTableAttributes {
             pk_unsized: false,
             read_only: false,
+            pk_upstream: false,
         };
 
         for attr in attrs {
@@ -51,6 +41,10 @@ impl Parser {
                     }
                     if meta.path.is_ident("read_only") {
                         res.read_only = true;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("pk_upstream") {
+                        res.pk_upstream = true;
                         return Ok(());
                     }
                     Ok(())

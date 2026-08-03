@@ -12,7 +12,7 @@ mod select_executor;
 impl InMemoryGenerator {
     pub fn gen_table_def(&mut self) -> syn::Result<TokenStream> {
         let page_size_consts = self.gen_page_size_consts();
-        let type_ = self.gen_table_type();
+        let type_ = self.gen_table_type()?;
         let default = self.gen_table_default();
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
@@ -46,7 +46,7 @@ impl InMemoryGenerator {
         }
     }
 
-    fn gen_table_type(&self) -> TokenStream {
+    fn gen_table_type(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_work_table_ident();
         let row_type = name_generator.get_row_type_ident();
@@ -89,10 +89,9 @@ impl InMemoryGenerator {
             &key_type,
             &value_type,
             worktables_node,
-        )
-        .unwrap_or_else(|error| error.into_compile_error());
+        )?;
 
-        if self.config.as_ref().and_then(|c| c.page_size).is_some() {
+        Ok(if self.config.as_ref().and_then(|c| c.page_size).is_some() {
             quote! {
                 #derive
                 pub struct #ident(
@@ -126,7 +125,7 @@ impl InMemoryGenerator {
                     >
                 );
             }
-        }
+        })
     }
 
     fn gen_page_size_consts(&self) -> TokenStream {

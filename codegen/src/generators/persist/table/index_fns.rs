@@ -85,7 +85,7 @@ impl PersistGenerator {
         };
         let select = if cfg!(feature = "versioned-row-publication") {
             quote! {
-                loop {
+                for _ in 0..64 {
                     let link: Link = self.0.indexes.#field_ident
                         .lookup_for_select(#by)
                         .map(Into::into)?;
@@ -101,7 +101,9 @@ impl PersistGenerator {
                     if current_link == Some(link) {
                         return None;
                     }
+                    std::hint::spin_loop();
                 }
+                None
             }
         } else {
             quote! {
@@ -149,15 +151,17 @@ impl PersistGenerator {
                                                                      #column_range_type,
                                                                      #row_fields_ident>
             {
-                let read_guard = self.0.data.read_guard();
-                let rows = self.0.indexes.#field_ident
-                    .get(#by)
-                    .into_iter()
-                    .filter_map(move |(_, link)| {
-                        let _read_guard = &read_guard;
-                        self.0.data.select_non_ghosted(link.0).ok()
-                    })
-                    .filter(move |r| &r.#row_field_ident == &by);
+                let rows = std::iter::once_with(move || {
+                    let read_guard = self.0.data.read_guard();
+                    self.0.indexes.#field_ident
+                        .get(#by)
+                        .into_iter()
+                        .filter_map(move |(_, link)| {
+                            let _read_guard = &read_guard;
+                            self.0.data.select_non_ghosted(link.0).ok()
+                        })
+                        .filter(move |r| &r.#row_field_ident == &by)
+                }).flatten();
 
                 SelectQueryBuilder::new(rows)
             }
@@ -252,10 +256,14 @@ impl PersistGenerator {
                 R: #range_bounds + 'a
             {
                 #predicate_setup
-                let read_guard = self.0.data.read_guard();
-                let rows = #index_range
-                    .filter_map(#select_row)
-                    #predicate_filter;
+                // Query construction is not an active read. Pin the grace
+                // period on the first row lookup instead.
+                let rows = std::iter::once_with(move || {
+                    let read_guard = self.0.data.read_guard();
+                    #index_range
+                        .filter_map(#select_row)
+                        #predicate_filter
+                }).flatten();
 
                 SelectQueryBuilder::new_sorted(rows, #row_fields_ident::#column_pascal)
             }

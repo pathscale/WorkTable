@@ -33,6 +33,36 @@ worktable!(
 );
 
 #[cfg(feature = "versioned-row-publication")]
+#[tokio::test]
+async fn idle_select_builder_does_not_pin_retired_links() {
+    let table = UniqueRangeTestWorkTable::default();
+    let first = UniqueRangeTestRow {
+        id: table.get_next_pk().into(),
+        num: 1,
+    };
+    let first_pk = table.insert(first).unwrap();
+    let first_link = table.0.primary_index.pk_map.get_value(&first_pk).unwrap().0;
+
+    // Construct the lazy query but do not consume it. Query configuration is
+    // not an active read and must not delay reclamation or slot reuse.
+    let idle_query = table.select_all();
+    table.delete(first_pk).await.unwrap();
+
+    let second = UniqueRangeTestRow {
+        id: table.get_next_pk().into(),
+        num: 2,
+    };
+    let second_pk = table.insert(second).unwrap();
+    let second_link = table.0.primary_index.pk_map.get_value(&second_pk).unwrap().0;
+
+    assert_eq!(
+        OffsetEqLink::<{ worktable::in_memory::DATA_INNER_LENGTH }>(first_link),
+        OffsetEqLink::<{ worktable::in_memory::DATA_INNER_LENGTH }>(second_link)
+    );
+    drop(idle_query);
+}
+
+#[cfg(feature = "versioned-row-publication")]
 #[test]
 fn range_read_revalidates_each_resolved_row() {
     let table = RangeTestWorkTable::default();

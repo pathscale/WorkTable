@@ -13,7 +13,7 @@ impl ReadOnlyGenerator {
     pub fn gen_table_def(&mut self) -> syn::Result<TokenStream> {
         let page_size_consts = self.gen_page_size_consts();
         let version_const = self.gen_version_const();
-        let type_ = self.gen_table_type();
+        let type_ = self.gen_table_type()?;
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
         let select_query_executor_impl = self.gen_table_select_query_executor_impl();
@@ -51,7 +51,7 @@ impl ReadOnlyGenerator {
         }
     }
 
-    fn gen_table_type(&self) -> TokenStream {
+    fn gen_table_type(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_work_table_ident();
         let row_type = name_generator.get_row_type_ident();
@@ -75,21 +75,32 @@ impl ReadOnlyGenerator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
+        let pk_upstream = matches!(
+            self.columns.primary_index_backend,
+            crate::common::model::IndexBackend::Indexset
+        );
 
         // `read_only` and `pk_unsized` are independent: the first selects the read-only
         // shape of the table (no persistence engine or task, sync `into_worktable`), the
         // second selects the unsized primary index. A read-only table with an unsized key
         // needs both, so `read_only` is unconditional here.
-        let derive = if pk_types_unsized {
-            quote! {
+        let derive = match (pk_types_unsized, pk_upstream) {
+            (true, true) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(read_only, pk_unsized, pk_upstream)]
+            },
+            (true, false) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(read_only, pk_unsized)]
-            }
-        } else {
-            quote! {
+            },
+            (false, true) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(read_only, pk_upstream)]
+            },
+            (false, false) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(read_only)]
-            }
+            },
         };
 
         let key_type = quote! { #primary_key_type };
@@ -106,10 +117,9 @@ impl ReadOnlyGenerator {
             &key_type,
             &value_type,
             worktables_node,
-        )
-        .unwrap_or_else(|error| error.into_compile_error());
+        )?;
 
-        quote! {
+        Ok(quote! {
             #derive
             pub struct #ident(
                 WorkTable<
@@ -124,6 +134,6 @@ impl ReadOnlyGenerator {
                     #node_type
                 >
             );
-        }
+        })
     }
 }

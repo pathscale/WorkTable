@@ -49,7 +49,7 @@ worktable = { version = "=1.0.0-beta.1", features = ["s3-support"] }   # S3 sync
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic are explicitly memory-only and require `persist: false`. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
 
-WorkTablesIndex uses its predictable branch-based node search by default in WorkTable. This avoids a measured regression for sequential numeric-key workloads. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-hybrid-search`, `wti-std-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Enable exactly one `wti-*-search` feature.
+WorkTablesIndex uses its predictable branch-based node search by default in WorkTable. This avoids a measured regression for sequential numeric-key workloads. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-hybrid-search`, `wti-std-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Prefer one search feature for an unambiguous build. If Cargo feature unification enables several, WorkTablesIndex applies the documented deterministic precedence rather than rejecting the graph.
 
 ## Concurrent read/write publication
 
@@ -64,8 +64,9 @@ worktable = { version = "=1.0.0-beta.1", features = ["versioned-row-publication"
 ```
 
 Generated point lookups use a strict backend-specific visibility contract by
-default. WorkTablesIndex keeps its successful-hit fast path and confirms only
-an apparent miss against the selected node and adjacent structural boundaries.
+default. WorkTablesIndex 0.0.4 keeps the structural mapping pinned until its
+selected node is locked, making both hits and misses definitive; contended
+lookups release the structural guard before waiting and retry the mapping.
 Congee and Arctic use their native concurrent point lookups. The explicit
 vanilla `using indexset` backend remains experimental and is excluded from the
 stable concurrent-read contract because upstream IndexSet does not expose an

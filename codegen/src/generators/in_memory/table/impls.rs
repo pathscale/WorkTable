@@ -110,13 +110,17 @@ impl InMemoryGenerator {
                     range.start_bound().map(|v| #primary_key_type::from(v.clone())),
                     range.end_bound().map(|v| #primary_key_type::from(v.clone())),
                 );
-                let read_guard = self.0.data.read_guard();
-                let rows = self.0.primary_index.pk_map
-                    .range_links(converted_range)
-                    .filter_map(move |link| {
-                        let _read_guard = &read_guard;
-                        self.0.data.select_non_ghosted(link.0).ok()
-                    });
+                // Delay the grace-period guard until the returned iterator is
+                // consumed so an idle query builder cannot pin reclamation.
+                let rows = std::iter::once_with(move || {
+                    let read_guard = self.0.data.read_guard();
+                    self.0.primary_index.pk_map
+                        .range_links(converted_range)
+                        .filter_map(move |link| {
+                            let _read_guard = &read_guard;
+                            self.0.data.select_non_ghosted(link.0).ok()
+                        })
+                }).flatten();
 
                 #pk_sorted_by
             }
@@ -255,32 +259,18 @@ impl InMemoryGenerator {
     fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
         quote! {
             let _read_guard = self.0.data.read_guard();
-            let first = self.0.primary_index.pk_map.iter_values().next().map(|(k, v)| (k, v.0));
-            let Some((mut k, link)) = first else {
-                return Ok(())
-            };
-
-            let data = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
-            #func
-
-            let mut ind = false;
-            while !ind {
-                let next = {
-                    let mut iter = self.0.primary_index.pk_map.range_values(k.clone()..);
-                    let next = iter.next().map(|(k, v)| (k.clone(), v.0)).filter(|(key, _)| key != &k);
-                    if next.is_some() {
-                        next
-                    } else {
-                        iter.next().map(|(k, v)| (k.clone(), v.0))
-                    }
-                };
-                if let Some((key, link)) = next {
-                    let data = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
-                   #func
-                    k = key
-                } else {
-                    ind = true;
-                };
+            // Snapshot the ordered links once. Re-starting a range at every
+            // key turns materializing backends into quadratic full scans and
+            // can retain backend node guards across an async callback.
+            let links = self.0.primary_index.pk_map
+                .iter_values()
+                .map(|(_, link)| link.0)
+                .collect::<Vec<_>>();
+            for link in links {
+                let data = self.0.data
+                    .select_non_ghosted(link)
+                    .map_err(WorkTableError::PagesError)?;
+                #func
             }
 
             core::result::Result::Ok(())

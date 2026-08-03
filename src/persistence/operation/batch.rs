@@ -72,7 +72,10 @@ impl From<QueueInnerRow> for BatchInnerRow {
 /// `(page_id, offset)`. Treating the two lengths as different keys leaves
 /// overlapping writes in the same batch, whose eventual application order is
 /// derived from a hash map. The newest operation must be the only write for a
-/// physical slot.
+/// physical slot. WorkTable-generated operation IDs use `Uuid::now_v7`, whose
+/// shared process context guarantees creation-order sorting even within one
+/// millisecond; callers constructing `Operation` values manually must preserve
+/// that ordering contract.
 fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
     ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
 ) -> BatchData {

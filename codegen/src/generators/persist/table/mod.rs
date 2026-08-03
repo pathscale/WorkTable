@@ -13,7 +13,7 @@ impl PersistGenerator {
     pub fn gen_table_def(&mut self) -> syn::Result<TokenStream> {
         let page_size_consts = self.gen_page_size_consts();
         let version_const = self.gen_version_const();
-        let type_ = self.gen_table_type();
+        let type_ = self.gen_table_type()?;
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
         let select_query_executor_impl = self.gen_table_select_query_executor_impl();
@@ -59,7 +59,7 @@ impl PersistGenerator {
         }
     }
 
-    fn gen_table_type(&self) -> TokenStream {
+    fn gen_table_type(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_work_table_ident();
         let row_type = name_generator.get_row_type_ident();
@@ -84,16 +84,27 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
+        let pk_upstream = matches!(
+            self.columns.primary_index_backend,
+            crate::common::model::IndexBackend::Indexset
+        );
 
-        let derive = if pk_types_unsized {
-            quote! {
+        let derive = match (pk_types_unsized, pk_upstream) {
+            (true, true) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(pk_unsized, pk_upstream)]
+            },
+            (true, false) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized)]
-            }
-        } else {
-            quote! {
+            },
+            (false, true) => quote! {
                 #[derive(Debug, PersistTable)]
-            }
+                #[table(pk_upstream)]
+            },
+            (false, false) => quote! {
+                #[derive(Debug, PersistTable)]
+            },
         };
 
         let key_type = quote! { #primary_key_type };
@@ -110,10 +121,9 @@ impl PersistGenerator {
             &key_type,
             &value_type,
             worktables_node,
-        )
-        .unwrap_or_else(|error| error.into_compile_error());
+        )?;
 
-        if self.config.as_ref().and_then(|c| c.page_size).is_some() {
+        Ok(if self.config.as_ref().and_then(|c| c.page_size).is_some() {
             quote! {
                 #derive
                 pub struct #ident(
@@ -149,6 +159,6 @@ impl PersistGenerator {
                     , #persistence_task
                 );
             }
-        }
+        })
     }
 }

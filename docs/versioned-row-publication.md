@@ -25,8 +25,9 @@ With the feature enabled, `DataPages` maintains two representations:
   accesses that can overlap a mutation are serialized by an internal page
   barrier.
 - A concurrent link map holds an immutable application-visible row version.
-  Each slot contains an `Arc<Row>` behind a short per-slot pointer lock and
-  atomic ghost, deleted, and vacuum lifecycle bits.
+  Each slot contains one `Arc<Row>` and its ghost, deleted, and vacuum lifecycle
+  bits in a single version protected by a short per-slot lock. A reader cannot
+  observe a row from one publication together with flags from another.
 
 The generated API follows these publication rules:
 
@@ -35,11 +36,12 @@ The generated API follows these publication rules:
    index predicates, clone the owned row, and release the guard. Unique and
    primary-key point reads retry when the mapping swings to a replacement link
    while it is being resolved. Point lookup itself uses each provider's strict
-   visibility path: WorkTablesIndex confirms an apparent miss against a stable
-   three-node structural window and the ART providers retain their native
-   concurrent point algorithms. Vanilla `using indexset` is experimental and
-   excluded from this concurrent-read guarantee. A reader never accesses
-   mutable archived bytes after a slot has been hydrated.
+   visibility path: WorkTablesIndex 0.0.4 holds its structural mapping stable
+   until the selected node is locked, making hits and misses definitive, while
+   the ART providers retain their native concurrent point algorithms. Vanilla
+   `using indexset` is experimental and excluded from this concurrent-read
+   guarantee. A reader never accesses mutable archived bytes after a slot has
+   been hydrated.
 2. **Insert.** Serialize the complete row and stage a ghosted version. Install
    the primary and secondary indexes. Only after every checked index insert
    succeeds does the lifecycle transition publish the version with release
@@ -55,12 +57,30 @@ The generated API follows these publication rules:
    indexes, and retire the source publication and page. Retired links, slots,
    and pages become reusable only after a read-side grace period.
 6. **Reload.** Persisted tables hydrate immutable slots lazily under the page
-   barrier. Subsequent generated reads use the published version map.
+   barrier. The first read of a row holds the barrier's shared side across
+   deserialization and publication, so it temporarily excludes writers.
+   Latency-sensitive applications can warm the table with a scan before
+   admitting write traffic. Subsequent generated reads use the published
+   version map.
 
 The grace period is quiescent-state reclamation: a feature-only atomic counter
 tracks generated reads, and retirement queues are drained when that counter is
 zero. `Arc` ownership independently keeps a version alive after a reader has
 acquired it.
+
+Creating a lazy `SelectQueryBuilder` does not enter the grace period. The guard
+is acquired when iteration first starts, before the backend can yield its first
+link, and is released when that iterator is consumed or dropped. A partially
+consumed iterator is still an active read: retaining one intentionally delays
+link, publication, and page reuse. Retirement backlogs emit progressively
+spaced warnings after 1,024 entries so an abandoned or unusually long scan is
+observable.
+
+Retirement follows a strict unlink-before-retire rule. Delete and vacuum remove
+or replace every index reference before queueing the old physical link. A
+reader that could still resolve the old reference therefore entered the grace
+period before reclamation observed quiescence; a later reader cannot acquire
+that retired reference.
 
 ## Guarantees and non-guarantees
 
@@ -76,18 +96,22 @@ For generated table APIs in this mode:
 
 This is not MVCC and does not add multi-operation transactions or snapshot
 range scans. A scan may include or omit a concurrently inserted or updated row.
-Point-read replacement retry may starve under perpetual replacement churn.
-The guarantee also does not cover callers that bypass generated table methods
-and directly invoke low-level `Data` page mutation APIs.
+A point read retries a mapping that changes while its row version is resolved,
+but returns `None` after 64 consecutive replacement races rather
+than spinning without a bound. The guarantee also does not cover callers that
+bypass generated table methods and directly invoke low-level `Data` page
+mutation APIs.
 
 ## Cost model and rollout
 
-The feature is off by default. It adds one owned row copy plus slot/map
+The feature is off by default. Cargo features unify across a dependency graph,
+so any dependency enabling it enables it for every WorkTable consumer in that
+build. It adds one owned row copy plus slot/map
 metadata per live physical link, an atomic increment/decrement per generated
-read, a concurrent publication-map lookup, and writer-side page serialization.
+read, a sharded publication-map lookup, and writer-side page serialization.
 The index-visibility algorithm is always active and separate from row
-publication: WorkTablesIndex adds no second probe to successful point hits, but
-an apparent miss enters a cold three-node confirmation path.
+publication: WorkTablesIndex acquires the selected node while its structural
+mapping is pinned on the uncontended path, and may retry after node contention.
 Those costs are inappropriate to impose silently on latency-sensitive users.
 The default path remains unchanged; benchmark results for both modes must be
 reported before this feature is proposed for default enablement.

@@ -142,19 +142,19 @@ where
         let _read_guard = self.data.read_guard();
         #[cfg(feature = "versioned-row-publication")]
         {
-            loop {
-                let Some(link) = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into) else {
-                    break None;
-                };
+            for _ in 0..64 {
+                let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
                 if let Ok(row) = self.data.select_non_ghosted(link) {
-                    break Some(row);
+                    return Some(row);
                 }
 
                 let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
                 if current_link == Some(link) {
-                    break None;
+                    return None;
                 }
+                std::hint::spin_loop();
             }
+            None
         }
 
         #[cfg(not(feature = "versioned-row-publication"))]

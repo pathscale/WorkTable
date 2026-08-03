@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::__private::Span;
 use quote::{ToTokens, quote};
-use syn::ItemStruct;
+use syn::{Field, ItemStruct};
 
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized};
 use crate::persist_table::WT_INDEX_EXTENSION;
@@ -17,6 +17,44 @@ pub struct Generator {
     pub struct_def: ItemStruct,
     pub field_types: HashMap<Ident, TokenStream>,
     pub attributes: PersistIndexAttributes,
+}
+
+struct IndexLayout {
+    type_ident: Ident,
+    is_unique: bool,
+    uses_upstream: bool,
+}
+
+fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
+    let syn::Type::Path(type_path) = &field.ty else {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "index field must be a concrete index type",
+        ));
+    };
+    let type_ident = type_path
+        .path
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new_spanned(&field.ty, "index type path cannot be empty"))?
+        .ident
+        .clone();
+    let (is_unique, uses_upstream) = match type_ident.to_string().as_str() {
+        "IndexMap" | "TreeIndex" => (true, false),
+        "UpstreamIndexMap" => (true, true),
+        "IndexMultiMap" | "TreeMultiIndex" => (false, false),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &field.ty,
+                "unsupported persisted index type; use IndexMap, UpstreamIndexMap, or IndexMultiMap directly",
+            ));
+        }
+    };
+    Ok(IndexLayout {
+        type_ident,
+        is_unique,
+        uses_upstream,
+    })
 }
 
 impl WorktableNameGenerator {
@@ -245,7 +283,7 @@ impl Generator {
                 }
             }
         } else {
-            self.gen_get_persisted_index_fn()
+            self.gen_get_persisted_index_fn()?
         };
         let from_persisted_fn = self.gen_from_persisted_fn()?;
 
@@ -261,7 +299,7 @@ impl Generator {
 
     /// Generates `get_persisted_index` function of `PersistableIndex` trait for persisted index. It maps every
     /// `TreeIndex` into `Vec` of `IndexPage`s using `IndexPage::from_nod` function.
-    fn gen_get_persisted_index_fn(&self) -> TokenStream {
+    fn gen_get_persisted_index_fn(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let const_name = name_generator.get_page_inner_size_const_ident();
 
@@ -276,6 +314,7 @@ impl Generator {
             .fields
             .iter()
             .map(|field| {
+                let layout = index_layout(field)?;
                 let i = field
                     .ident
                     .as_ref()
@@ -284,9 +323,8 @@ impl Generator {
                     .field_types
                     .get(i)
                     .expect("should be available as constructed from same values");
-                let uses_upstream = field.ty.to_token_stream().to_string().contains("UpstreamIndexMap");
                 if is_unsized(&ty.to_string()) {
-                    quote! {
+                    Ok(quote! {
                         let mut pages = vec![];
                         for node in self.#i.iter_nodes() {
                             let page = UnsizedIndexPage::from_node(node.lock_arc().as_ref());
@@ -294,9 +332,9 @@ impl Generator {
                         }
                         let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
-                    }
-                } else if uses_upstream {
-                    quote! {
+                    })
+                } else if layout.uses_upstream {
+                    Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let mut pages = vec![];
                         for node in self.#i.iter_nodes() {
@@ -312,9 +350,9 @@ impl Generator {
                         }
                         let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
-                    }
+                    })
                 } else {
-                    quote! {
+                    Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let mut pages = vec![];
                         for node in self.#i.iter_nodes() {
@@ -323,19 +361,19 @@ impl Generator {
                         }
                         let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
-                    }
+                    })
                 }
             })
-            .collect();
+            .collect::<syn::Result<Vec<_>>>()?;
 
-        quote! {
+        Ok(quote! {
             fn get_persisted_index(&self) -> Self::PersistedIndex {
                 #(#field_names_init)*
                 Self::PersistedIndex {
                     #(#idents,)*
                 }
             }
-        }
+        })
     }
 
     /// Generates `from_persisted` function of `PersistableIndex` trait for persisted index. It maps every page in
@@ -355,15 +393,11 @@ impl Generator {
             .fields
             .iter()
             .map(|f| {
+                let layout = index_layout(f)?;
                 let i = f.ident.as_ref().expect("index fields should always be named fields");
-                let index_type = f.ty.to_token_stream().to_string();
-                let is_unique = !index_type.contains("IndexMultiMap");
-                let uses_upstream = index_type.contains("UpstreamIndexMap");
-                let mut split = index_type.split("<");
-                let t = Ident::new(
-                    split.next().expect("index type should always have generics").trim(),
-                    Span::mixed_site(),
-                );
+                let is_unique = layout.is_unique;
+                let uses_upstream = layout.uses_upstream;
+                let t = layout.type_ident;
                 let ty = self
                     .field_types
                     .get(i)
@@ -448,41 +482,41 @@ impl Generator {
                             let node = UnsizedNode::from_inner(inner, #const_name);
                             #i.attach_node(node);
                         });
-                        quote! {
+                        Ok(quote! {
                             let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
                             #body
-                        }
+                        })
                     } else {
                         let body = multi_reconstruct(quote! {
                             let node = UnsizedNode::from_inner(sorted, #const_name);
                             #i.attach_multi_node(node);
                         });
-                        quote! {
+                        Ok(quote! {
                             let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
                             #body
-                        }
+                        })
                     }
                 } else if is_unique {
                     let body = unique_reconstruct(quote! {
                         #i.attach_node(inner);
                     });
-                    quote! {
+                    Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);
                         #body
-                    }
+                    })
                 } else {
                     let body = multi_reconstruct(quote! {
                         #i.attach_multi_node(sorted);
                     });
-                    quote! {
+                    Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);
                         #body
-                    }
+                    })
                 }
             })
-            .collect::<Vec<_>>();
+            .collect::<syn::Result<Vec<_>>>()?;
 
         Ok(quote! {
             fn from_persisted(persisted: Self::PersistedIndex) -> Self {
@@ -569,5 +603,20 @@ mod tests {
         let attrs = Parser::parse_attributes(&struct_.attrs);
 
         assert!(!attrs.read_only);
+    }
+
+    #[test]
+    fn rejects_aliases_instead_of_guessing_the_persisted_layout() {
+        let input = quote! {
+            #[derive(Debug, Default, Clone)]
+            pub struct TestIndex {
+                test_idx: MyIndexAlias<i64, Link>,
+            }
+        };
+        let struct_ = Parser::parse_struct(input).unwrap();
+        let generator = Generator::with_attributes(struct_, PersistIndexAttributes::default());
+
+        let error = generator.gen_persistable_impl().unwrap_err();
+        assert!(error.to_string().contains("unsupported persisted index type"));
     }
 }

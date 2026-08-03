@@ -43,7 +43,7 @@ pub(crate) fn primary_key_backend_impl(
         IndexBackend::WorktablesIndex | IndexBackend::Indexset => Ok((quote! {}, quote! {})),
         IndexBackend::Congee => {
             let field = single_supported_field(backend, fields, &["u8", "u16", "u32", "u64", "usize"])?;
-            let width_guard = if field.to_string() == "u64" {
+            let width_guard = if primitive_name(field).as_deref() == Some("u64") {
                 quote! {
                     #[cfg(not(target_pointer_width = "64"))]
                     compile_error!("`using congee` with a `u64` primary key requires a 64-bit target");
@@ -105,11 +105,12 @@ fn single_supported_field<'a>(
             format!("`using {}` requires a single-column primary key", backend.name()),
         ));
     };
-    if !supported.contains(&field.to_string().as_str()) {
+    let primitive = primitive_name(field);
+    if !primitive.as_deref().is_some_and(|name| supported.contains(&name)) {
         return Err(syn::Error::new_spanned(
             *field,
             format!(
-                "`using {}` does not support primary-key type `{}`; supported types: {}",
+                "`using {}` requires a directly named primitive primary-key type; found `{}`; supported types: {} (type aliases cannot be resolved by the macro)",
                 backend.name(),
                 field,
                 supported.join(", ")
@@ -117,4 +118,11 @@ fn single_supported_field<'a>(
         ));
     }
     Ok(field)
+}
+
+fn primitive_name(field: &TokenStream) -> Option<String> {
+    let syn::Type::Path(type_path) = syn::parse2::<syn::Type>(field.clone()).ok()? else {
+        return None;
+    };
+    type_path.path.segments.last().map(|segment| segment.ident.to_string())
 }

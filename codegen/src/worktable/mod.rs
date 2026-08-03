@@ -305,6 +305,10 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains("does not support primary-key type `String`"));
+        assert!(
+            error
+                .to_string()
+                .contains("requires a directly named primitive primary-key type; found `String`")
+        );
     }
 }

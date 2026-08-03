@@ -29,13 +29,18 @@ impl ReadOnlyGenerator {
                                                            #column_range_type,
                                                            #row_fields_ident>
             {
-                let read_guard = self.0.data.read_guard();
-                let iter = self.0.primary_index.pk_map
-                    .iter_links()
-                    .filter_map(move |link| {
-                        let _read_guard = &read_guard;
-                        self.0.data.select_non_ghosted(link.0).ok()
-                    });
+                // Acquire the grace-period guard only when iteration starts.
+                // Merely constructing and retaining a query builder must not
+                // stall retired-link reclamation.
+                let iter = std::iter::once_with(move || {
+                    let read_guard = self.0.data.read_guard();
+                    self.0.primary_index.pk_map
+                        .iter_links()
+                        .filter_map(move |link| {
+                            let _read_guard = &read_guard;
+                            self.0.data.select_non_ghosted(link.0).ok()
+                        })
+                }).flatten();
 
                 SelectQueryBuilder::new(iter)
             }

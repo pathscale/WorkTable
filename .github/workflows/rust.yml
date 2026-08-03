@@ -14,9 +14,19 @@ permissions:
 
 jobs:
   build:
-
+    name: Build and test (${{ matrix.name }})
     runs-on: ubicloud-standard-2
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            args: ""
+          - name: versioned-publication
+            args: "--features versioned-row-publication"
+          - name: all-features
+            args: "--all-features"
 
     steps:
     - uses: actions/checkout@v4
@@ -25,15 +35,23 @@ jobs:
         cache-on-failure: "true"
         add-job-id-key: "false"
     - name: Build
-      run: cargo build --workspace --all-targets --all-features --verbose
+      run: cargo build --workspace --all-targets ${{ matrix.args }} --verbose
     - name: Run tests
-      run: cargo test --workspace --all-targets --all-features --verbose
+      run: cargo test --workspace --all-targets ${{ matrix.args }} --verbose
 
 
   clippy_check:
-
+    name: Clippy (${{ matrix.name }})
     runs-on: ubicloud-standard-2
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            args: ""
+          - name: all-features
+            args: "--all-features"
 
     steps:
       - uses: actions/checkout@v4
@@ -42,4 +60,4 @@ jobs:
           cache-on-failure: "true"
           add-job-id-key: "false"
       - name: Clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets ${{ matrix.args }} -- -D warnings
