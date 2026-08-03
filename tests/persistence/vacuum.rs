@@ -74,7 +74,8 @@ fn test_vacuum_on_persisted_table_survives_reload() {
 
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence should catch up before vacuum");
+                .expect("persistence should catch up before vacuum")
+                .expect("persistence engine failed");
 
             let vacuum = table.vacuum();
             let stats = vacuum.vacuum().await.unwrap();
@@ -96,7 +97,8 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                 if i % 50 == 49 {
                     timeout(Duration::from_secs(30), table.wait_for_ops())
                         .await
-                        .expect("persistence stalled after vacuum on persisted table");
+                        .expect("persistence stalled after vacuum on persisted table")
+                        .expect("persistence engine failed");
                 }
             }
 
@@ -105,7 +107,8 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             // consumed, leaving a permanent gap the batch validator defers on.
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
-                .expect("persistence stalled after vacuum on persisted table");
+                .expect("persistence stalled after vacuum on persisted table")
+                .expect("persistence engine failed");
 
             for id in &deleted {
                 rows.remove(id);

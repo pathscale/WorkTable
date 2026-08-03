@@ -95,7 +95,7 @@ impl PersistGenerator {
                 primary_key_events,
                 link,
             });
-            self.1.apply_operation(op);
+            self.1.apply_operation(op)?;
         };
 
         if is_locked {

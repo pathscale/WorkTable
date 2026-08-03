@@ -49,7 +49,7 @@ async fn composite_primary_key_survives_mutations_and_reload() {
         for row in &rows {
             table.insert(row.clone()).unwrap();
         }
-        table.wait_for_ops().await;
+        table.wait_for_ops().await.unwrap();
         for row in &rows {
             assert_eq!(table.select((row.tenant_id, row.record_id)), Some(row.clone()));
         }
@@ -73,10 +73,9 @@ async fn composite_primary_key_survives_mutations_and_reload() {
         };
         table.update(updated.clone()).await.unwrap();
         table.delete((7, 41)).await.unwrap();
-        table.wait_for_ops().await;
-
         assert_eq!(table.select((7, 42)), Some(updated));
         assert!(table.select((7, 41)).is_none());
+        table.close().await.unwrap();
     }
 
     {

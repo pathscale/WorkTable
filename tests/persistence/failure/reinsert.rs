@@ -25,7 +25,7 @@ fn test_reinsert_pk_mismatch() {
                 unique_b: 200,
             };
             table.insert(row.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             row.id
         };
 
@@ -66,7 +66,9 @@ fn test_reinsert_pk_mismatch() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok());
         }
 
@@ -78,7 +80,7 @@ fn test_reinsert_pk_mismatch() {
             let original = table.select(existing_pk).unwrap();
             assert_eq!(original.unique_a, 100);
             assert_eq!(original.unique_b, 200);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -114,7 +116,7 @@ fn test_reinsert_two_indexes_first_fail() {
                 unique_b: 400,
             };
             table.insert(row2.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id, row1.unique_a)
         };
@@ -156,7 +158,9 @@ fn test_reinsert_two_indexes_first_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked after reinsert failure!");
         }
 
@@ -174,7 +178,7 @@ fn test_reinsert_two_indexes_first_fail() {
             assert_eq!(row2.unique_a, 300);
             assert_eq!(row2.unique_b, 400);
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -210,7 +214,7 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_b: 400,
             };
             table.insert(row2.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             row1.unique_b
         };
@@ -254,7 +258,9 @@ fn test_reinsert_two_indexes_second_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -269,7 +275,7 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_b: 600,
             };
             assert!(table.insert(new_row).is_ok(), "BUG: orphaned entry in unique_a_idx!");
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -307,7 +313,7 @@ fn test_reinsert_three_indexes_first_fail() {
                 unique_c: 600,
             };
             table.insert(row2.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             row1.unique_a
         };
@@ -355,7 +361,9 @@ fn test_reinsert_three_indexes_first_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -368,7 +376,7 @@ fn test_reinsert_three_indexes_first_fail() {
             assert_eq!(row2.unique_a, 400);
             assert_eq!(row2.unique_b, 500);
             assert_eq!(row2.unique_c, 600);
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -406,7 +414,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_c: 600,
             };
             table.insert(row2.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             row1.unique_b
         };
@@ -454,7 +462,9 @@ fn test_reinsert_three_indexes_middle_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -470,7 +480,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_c: 1000,
             };
             assert!(table.insert(new_row).is_ok(), "BUG: orphaned entry!");
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }
@@ -508,7 +518,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_c: 600,
             };
             table.insert(row2.clone()).unwrap();
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
 
             row1.unique_c
         };
@@ -556,7 +566,9 @@ fn test_reinsert_three_indexes_last_fail() {
             };
             table.insert(valid_row3).unwrap();
 
-            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops()).await;
+            let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
+                .await
+                .expect("persistence timed out");
             assert!(wait_result.is_ok(), "BUG: persistence blocked!");
         }
 
@@ -572,7 +584,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_c: 900,
             };
             assert!(table.insert(new_row).is_ok(), "BUG: orphaned entries!");
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
     });
 }

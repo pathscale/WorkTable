@@ -35,7 +35,7 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
                 table.insert(row.clone()).unwrap();
                 pks.push(row.id);
             }
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pks
         };
 
@@ -60,7 +60,7 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
                     .await
                     .unwrap();
             }
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         {
@@ -108,7 +108,7 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
                 table.insert(row.clone()).unwrap();
                 pks.push(row.id);
             }
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pks
         };
 
@@ -133,7 +133,7 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
                     .await
                     .unwrap();
             }
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         {
@@ -181,7 +181,7 @@ fn test_failed_delete_by_pk_doesnt_corrupt_persistence() {
                 table.insert(row.clone()).unwrap();
                 pks.push(row.id);
             }
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
             pks
         };
 
@@ -193,7 +193,7 @@ fn test_failed_delete_by_pk_doesnt_corrupt_persistence() {
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), WorkTableError::NotFound));
 
-            table.wait_for_ops().await;
+            table.wait_for_ops().await.unwrap();
         }
 
         {

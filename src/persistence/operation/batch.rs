@@ -296,11 +296,11 @@ where
                 // that persists is a bug upstream of the analyzer; report it
                 // loudly instead of force-applying and corrupting the file.
                 if attempts > 8 {
-                    tracing::error!(
-                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?}                          (attempt {attempts}); an event id was likely consumed without its event being queued",
+                    return Err(eyre::eyre!(
+                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?} (attempt {attempts}); an event id was likely consumed without its event being queued",
                         last_ids.primary_id,
-                        id,
-                    );
+                        id
+                    ));
                 }
                 self.ops.extend(ops_to_remove);
                 return Ok(None);
@@ -318,9 +318,9 @@ where
                     // stream, defer until the missing event arrives, and report
                     // a persistent gap as the bug it is.
                     if attempts > 8 {
-                        tracing::error!(
-                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?},                              next available {id:?} (attempt {attempts}); an event id was likely consumed without                              its event being queued",
-                        );
+                        return Err(eyre::eyre!(
+                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} (attempt {attempts}); an event id was likely consumed without its event being queued"
+                        ));
                     }
                     self.ops.extend(ops_to_remove);
                     return Ok(None);

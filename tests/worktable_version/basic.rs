@@ -66,7 +66,7 @@ fn test_version_reads_persisted_data() {
                 })
                 .unwrap();
 
-            table.wait_for_ops().await
+            table.wait_for_ops().await.unwrap()
         }
 
         {

@@ -212,7 +212,7 @@ impl PersistGenerator {
             } else {
                 unreachable!("")
             };
-            self.1.apply_operation(op);
+            self.1.apply_operation(op)?;
         }
     }
 
@@ -352,7 +352,7 @@ impl PersistGenerator {
                                     primary_key_events: vec![],
                                     secondary_keys_events: merged_events,
                                 });
-                                self.1.apply_operation(ack_op);
+                                self.1.apply_operation(ack_op)?;
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
                             }
