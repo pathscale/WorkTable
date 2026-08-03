@@ -142,25 +142,16 @@ where
         let _read_guard = self.data.read_guard();
         #[cfg(feature = "versioned-row-publication")]
         {
-            let mut retry_stable_miss = cfg!(feature = "stable-index-read-retry");
             loop {
-                let Some(link) = self.primary_index.pk_map.get_value(&pk).map(Into::into) else {
-                    if std::mem::take(&mut retry_stable_miss) {
-                        std::hint::spin_loop();
-                        continue;
-                    }
+                let Some(link) = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into) else {
                     break None;
                 };
                 if let Ok(row) = self.data.select_non_ghosted(link) {
                     break Some(row);
                 }
 
-                let current_link: Option<Link> = self.primary_index.pk_map.get_value(&pk).map(Into::into);
+                let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
                 if current_link == Some(link) {
-                    if std::mem::take(&mut retry_stable_miss) {
-                        std::hint::spin_loop();
-                        continue;
-                    }
                     break None;
                 }
             }
@@ -172,23 +163,9 @@ where
             if let Some(link) = link {
                 self.data.select_non_ghosted(link).ok()
             } else {
-                self.select_after_primary_index_miss(&pk)
+                None
             }
         }
-    }
-
-    #[cfg(not(feature = "versioned-row-publication"))]
-    #[cold]
-    #[inline(never)]
-    fn select_after_primary_index_miss(&self, pk: &PrimaryKey) -> Option<Row>
-    where
-        LockType: 'static,
-        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <<Row as StorableRow>::WrappedRow as Archive>::Archived:
-            Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
-    {
-        let link = self.primary_index.pk_map.confirm_lookup_for_select(pk)?.0;
-        self.data.select_non_ghosted(link).ok()
     }
 
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]

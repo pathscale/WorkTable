@@ -83,21 +83,12 @@ impl InMemoryGenerator {
                 row.#row_field_ident.eq(&by)
             }
         };
-        let retry_stable_miss = cfg!(feature = "stable-index-read-retry");
         let select = if cfg!(feature = "versioned-row-publication") {
             quote! {
-                let mut retry_stable_miss = #retry_stable_miss;
                 loop {
-                    let Some(link) = self.0.indexes.#field_ident
-                        .get_value(#by)
-                        .map(Into::into)
-                    else {
-                        if std::mem::take(&mut retry_stable_miss) {
-                            std::hint::spin_loop();
-                            continue;
-                        }
-                        return None;
-                    };
+                    let link: Link = self.0.indexes.#field_ident
+                        .lookup_for_select(#by)
+                        .map(Into::into)?;
                     if let Ok(row) = self.0.data.select_non_ghosted(link) {
                         if #predicate_matches {
                             return Some(row);
@@ -105,20 +96,18 @@ impl InMemoryGenerator {
                     }
 
                     let current_link: Option<Link> = self.0.indexes.#field_ident
-                        .get_value(#by)
+                        .lookup_for_select(#by)
                         .map(Into::into);
                     if current_link == Some(link) {
-                        if std::mem::take(&mut retry_stable_miss) {
-                            std::hint::spin_loop();
-                            continue;
-                        }
                         return None;
                     }
                 }
             }
         } else {
             quote! {
-                let link: Link = self.0.indexes.#field_ident.get_value(#by).map(Into::into)?;
+                let link: Link = self.0.indexes.#field_ident
+                    .lookup_for_select(#by)
+                    .map(Into::into)?;
                 let row = self.0.data.select_non_ghosted(link).ok()?;
                 #predicate_matches.then_some(row)
             }

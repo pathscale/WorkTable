@@ -9,7 +9,6 @@ repository = "https://github.com/pathscale/WorkTable"
 [features]
 s3-support = []
 versioned-row-publication = []
-stable-index-read-retry = ["versioned-row-publication"]
 
 [lib]
 name = "worktable_codegen"

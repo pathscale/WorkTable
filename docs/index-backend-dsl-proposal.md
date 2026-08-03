@@ -153,13 +153,15 @@ Backend dispatch itself is static and should compile away. That does **not** mea
 - `OffsetEqLink` values are copied out of backend guards; no heap allocation is introduced for a point lookup.
 - Both can emit persistence-compatible structural CDC.
 
-Direct dispatch does not strengthen either provider's concurrent-read
-semantics. During unrelated structural mutations, WorkTablesIndex and vanilla
-IndexSet can transiently return a point miss for a key that is present after
-the writers quiesce. This PR verifies mutation integrity and quiescent reads;
-it does not claim linearizable point reads for those providers. Workloads that
-require stable concurrent visibility need the separate row-publication and
-stable-miss protocol before their results are publishable.
+Direct dispatch preserves a strict generated point-read contract with a
+provider-specific implementation. WorkTablesIndex keeps the normal successful
+hit path and sends only an apparent miss through a cold three-node boundary
+confirmation. Vanilla IndexSet does not expose a comparable structural
+validation primitive; `using indexset` therefore remains experimental and is
+excluded from concurrent correctness and published performance claims. This
+WorkTablesIndex visibility guarantee is independent of
+`versioned-row-publication`, which addresses concurrent page bytes, ghost
+publication, and reclamation rather than index routing.
 
 ### Congee
 
@@ -190,7 +192,7 @@ Use allocator/RSS measurements for comparative memory results; do not treat the 
 
 This implementation uses the published crates directly:
 
-- `WorkTablesIndex 0.0.3` as the default `indexset` dependency alias already used by WorkTable;
+- `WorkTablesIndex 0.0.4` as the default `indexset` dependency alias already used by WorkTable;
 - vanilla `indexset 0.15.0` under the `vanilla_indexset` Cargo name;
 - `congee 0.4.1` through its public `Congee`, `compute_or_insert`, and `new_with_drainer` APIs;
 - `arctic-map 0.1.4` through its public concurrent map API.
@@ -235,7 +237,7 @@ For the paper, the strongest controlled experiment keeps the WorkTable schema, g
 ## Production versus research classification
 
 - **WorkTablesIndex:** production default.
-- **Vanilla IndexSet:** potential production migration backend because it preserves local/S3 persistence through the existing format boundary; still requires downstream stress and performance validation.
+- **Vanilla IndexSet:** experimental provider. It preserves local/S3 persistence through the existing format boundary, but is excluded from concurrent correctness and published performance claims until upstream offers a stable structural-read primitive or the adapter gains a low-cost algorithm.
 - **Congee and Arctic:** research/experimental memory-only backends in this PR. Promotion requires relevant downstream evidence, allocation/reclamation review, and a workload that does not depend on the current allocating scan path.
 
 That boundary is deliberate: `using` exposes optional physical specialization without quietly weakening WorkTable's in-memory/on-disk coordination contract.

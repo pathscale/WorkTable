@@ -30,12 +30,6 @@ where
         self.get_value(key)
     }
 
-    #[cold]
-    #[inline(never)]
-    fn confirm_lookup_for_select(&self, key: &K) -> Option<V> {
-        self.get_value(key)
-    }
-
     #[inline]
     fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
         self.get_value(key).as_ref().map(read)
@@ -72,7 +66,7 @@ where
 {
     #[inline]
     fn get_value(&self, key: &K) -> Option<V> {
-        self.get(key).map(|entry| entry.get().value.clone())
+        IndexMap::lookup_for_select(self, key)
     }
 
     #[inline]
@@ -80,20 +74,14 @@ where
         IndexMap::lookup_for_select(self, key)
     }
 
-    #[cold]
-    #[inline(never)]
-    fn confirm_lookup_for_select(&self, key: &K) -> Option<V> {
-        IndexMap::confirm_lookup_for_select(self, key)
-    }
-
     #[inline]
     fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
-        self.get(key).map(|entry| read(&entry.get().value))
+        IndexMap::lookup_for_select(self, key).as_ref().map(read)
     }
 
     #[inline]
     fn contains_key(&self, key: &K) -> bool {
-        self.get(key).is_some()
+        IndexMap::contains_key(self, key)
     }
 
     #[inline]
@@ -235,7 +223,6 @@ mod tests {
         assert!(index.contains_key(&1));
         assert!(!index.contains_key(&3));
         assert_eq!(index.lookup_for_select(&2), Some(20));
-        assert_eq!(index.confirm_lookup_for_select(&2), Some(20));
         assert_eq!(index.with_value(&2, |value| value + 1), Some(21));
         assert_eq!(index.get_value(&2), Some(20));
         assert_eq!(index.insert_value(2, 22), Some(20));
