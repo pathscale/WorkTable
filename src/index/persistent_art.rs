@@ -55,9 +55,10 @@ impl<I: Default> Default for PersistentArtIndex<I> {
 }
 
 impl<I> PersistentArtIndex<I> {
-    /// Wraps a reconstructed ART. Event ids restart at zero because startup
-    /// recovery checkpoints and clears the preceding WAL before accepting new
-    /// operations.
+    /// Wraps a reconstructed ART. Event ids are session-local and restart at
+    /// zero with the persistence analyzer. The durable WAL is replayed in file
+    /// append order, so records from earlier sessions do not need their event
+    /// ids renumbered.
     pub fn from_inner(inner: I) -> Self {
         Self {
             inner,
