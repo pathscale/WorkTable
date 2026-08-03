@@ -1,5 +1,6 @@
 //! Arctic adapter for memory-only unique WorkTable indexes.
 
+use std::borrow::Borrow;
 use std::fmt::{self, Debug};
 use std::ops::RangeBounds;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,6 +9,35 @@ use arctic::{ConcurrentMap, Key, Order};
 
 use super::UniqueIndex;
 
+/// Lossless conversion between a WorkTable key and a native Arctic key.
+///
+/// Keeping this trait local lets generated primary-key newtypes delegate to
+/// their underlying integer without implementing Arctic's low-level key API.
+pub trait ArcticKey: Clone + Debug + Ord + Send + Sync + 'static {
+    type Raw: Key + Clone + Debug + Ord + Send + Sync + 'static;
+
+    fn to_arctic(&self) -> Self::Raw;
+    fn from_arctic(value: Self::Raw) -> Self;
+}
+
+macro_rules! impl_arctic_key {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl ArcticKey for $ty {
+                type Raw = Self;
+
+                #[inline]
+                fn to_arctic(&self) -> Self::Raw { *self }
+
+                #[inline]
+                fn from_arctic(value: Self::Raw) -> Self { value }
+            }
+        )*
+    };
+}
+
+impl_arctic_key!(u16, u32, u64, u128);
+
 /// Arctic's lock-free adaptive radix tree with WorkTable's unique-index
 /// contract.
 ///
@@ -15,12 +45,12 @@ use super::UniqueIndex;
 /// representation is limited to 64 bits. Point operations remain directly
 /// backed by Arctic; ordered scans are collected into a stable snapshot to
 /// satisfy WorkTable's double-ended query interface.
-pub struct ArcticIndex<K: Key, V> {
-    inner: ConcurrentMap<K, Box<V>>,
+pub struct ArcticIndex<K: ArcticKey, V> {
+    inner: ConcurrentMap<K::Raw, Box<V>>,
     len: AtomicUsize,
 }
 
-impl<K: Key, V> Debug for ArcticIndex<K, V> {
+impl<K: ArcticKey, V> Debug for ArcticIndex<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ArcticIndex")
             .field("len", &self.len.load(Ordering::Relaxed))
@@ -30,7 +60,7 @@ impl<K: Key, V> Debug for ArcticIndex<K, V> {
 
 impl<K, V> Default for ArcticIndex<K, V>
 where
-    K: Key,
+    K: ArcticKey,
 {
     fn default() -> Self {
         Self {
@@ -42,16 +72,18 @@ where
 
 impl<K, V> UniqueIndex<K, V> for ArcticIndex<K, V>
 where
-    K: Key + Clone + Debug + Ord + Send + Sync + 'static,
+    K: ArcticKey,
     V: Clone + Debug + Send + Sync + 'static,
 {
     #[inline]
     fn get_value(&self, key: &K) -> Option<V> {
+        let key = key.to_arctic();
         self.inner.get(key.borrow()).map(|value| (*value).clone())
     }
 
     #[inline]
     fn insert_value(&self, key: K, value: V) -> Option<V> {
+        let key = key.to_arctic();
         let updated = self.inner.upsert(key.as_insert(), Box::new(value));
         let old = updated.old().cloned();
         if old.is_none() {
@@ -62,6 +94,7 @@ where
 
     #[inline]
     fn insert_value_checked(&self, key: K, value: V) -> Option<()> {
+        let key = key.to_arctic();
         match self.inner.insert(key.as_insert(), Box::new(value)) {
             Ok(_) => {
                 self.len.fetch_add(1, Ordering::Relaxed);
@@ -76,7 +109,8 @@ where
 
     #[inline]
     fn remove_value(&self, key: &K) -> Option<(K, V)> {
-        let old = self.inner.remove(key.borrow())?;
+        let raw_key = key.to_arctic();
+        let old = self.inner.remove(raw_key.borrow())?;
         self.len.fetch_sub(1, Ordering::Relaxed);
         Some((key.clone(), (*old).clone()))
     }
@@ -90,9 +124,13 @@ where
         let shard = self.inner.all();
         shard
             .entries(Order::Ascend)
-            .map(|(key, value)| (key, value.clone()))
+            .map(|(key, value)| (K::from_arctic(key), value.clone()))
             .collect::<Vec<_>>()
             .into_iter()
+    }
+
+    fn iter_links(&self) -> impl DoubleEndedIterator<Item = V> + '_ {
+        self.iter_values().map(|(_, value)| value)
     }
 
     fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
@@ -100,6 +138,13 @@ where
         R: RangeBounds<K> + 'a,
     {
         self.iter_values().filter(move |(key, _)| range.contains(key))
+    }
+
+    fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a
+    where
+        R: RangeBounds<K> + 'a,
+    {
+        self.range_values(range).map(|(_, value)| value)
     }
 }
 

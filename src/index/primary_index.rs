@@ -8,11 +8,10 @@ use std::hash::Hash;
 
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;
-use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 
 use crate::util::OffsetEqLink;
-use crate::{IndexMap, TableIndex, TableIndexCdc, convert_change_events};
+use crate::{IndexMap, TableIndex, TableIndexCdc, UniqueIndex};
 
 /// Combined storage for primary and reverse indexes.
 ///
@@ -20,40 +19,37 @@ use crate::{IndexMap, TableIndex, TableIndexCdc, convert_change_events};
 /// - **Forward index**: `PrimaryKey` → [`OffsetEqLink`] (primary lookups)
 /// - **Reverse index**: [`OffsetEqLink`] → `PrimaryKey` (vacuum, position queries)
 #[derive(Debug)]
-pub struct PrimaryIndex<
-    PrimaryKey,
-    const DATA_LENGTH: usize,
-    PkNodeType = Vec<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>>,
-> where
+pub struct PrimaryIndex<PrimaryKey, const DATA_LENGTH: usize, PkMap = IndexMap<PrimaryKey, OffsetEqLink<DATA_LENGTH>>>
+where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
-    pub pk_map: IndexMap<PrimaryKey, OffsetEqLink<DATA_LENGTH>, PkNodeType>,
+    pub pk_map: PkMap,
     pub reverse_pk_map: IndexMap<OffsetEqLink<DATA_LENGTH>, PrimaryKey>,
 }
 
-impl<PrimaryKey, const DATA_LENGTH: usize, PkNodeType> Default for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>
+impl<PrimaryKey, const DATA_LENGTH: usize, PkMap> Default for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>
 where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
     fn default() -> Self {
         Self {
-            pk_map: IndexMap::default(),
+            pk_map: PkMap::default(),
             reverse_pk_map: IndexMap::default(),
         }
     }
 }
 
-impl<PrimaryKey, const DATA_LENGTH: usize, PkNodeType> TableIndex<PrimaryKey>
-    for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>
+impl<PrimaryKey, const DATA_LENGTH: usize, PkMap> TableIndex<PrimaryKey>
+    for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>
 where
-    PrimaryKey: Debug + Eq + Hash + Clone + Send + Ord,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PrimaryKey: Debug + Eq + Hash + Clone + Send + Ord + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
     fn insert(&self, value: PrimaryKey, link: Link) -> Option<Link> {
         let offset_link = OffsetEqLink(link);
-        let old = self.pk_map.insert(value.clone(), offset_link);
+        let old = self.pk_map.insert_value(value.clone(), offset_link);
         if let Some(old_link) = old {
             // Update reverse index
             self.reverse_pk_map.remove(&old_link);
@@ -64,43 +60,41 @@ where
 
     fn insert_checked(&self, value: PrimaryKey, link: Link) -> Option<()> {
         let offset_link = OffsetEqLink(link);
-        self.pk_map.checked_insert(value.clone(), offset_link)?;
+        self.pk_map.insert_value_checked(value.clone(), offset_link)?;
         self.reverse_pk_map.checked_insert(offset_link, value)?;
         Some(())
     }
 
     fn remove(&self, value: &PrimaryKey, _: Link) -> Option<(PrimaryKey, Link)> {
-        let (_, old_link) = self.pk_map.remove(value)?;
+        let (_, old_link) = self.pk_map.remove_value(value)?;
         self.reverse_pk_map.remove(&old_link);
         Some((value.clone(), old_link.0))
     }
 }
 
-impl<PrimaryKey, const DATA_LENGTH: usize, PkNodeType> TableIndexCdc<PrimaryKey>
-    for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>
+impl<PrimaryKey, const DATA_LENGTH: usize, PkMap> TableIndexCdc<PrimaryKey>
+    for PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>
 where
-    PrimaryKey: Debug + Eq + Hash + Clone + Send + Ord,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PrimaryKey: Debug + Eq + Hash + Clone + Send + Ord + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>> + TableIndexCdc<PrimaryKey>,
 {
     fn insert_cdc(&self, value: PrimaryKey, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<PrimaryKey, Link>>>) {
         let offset_link = OffsetEqLink(link);
-        let (res, evs) = self.pk_map.insert_cdc(value.clone(), offset_link);
-        let res_link = res.map(|l| l.0);
-        if let Some(res) = res {
-            self.reverse_pk_map.remove(&res);
+        let (old_link, events) = TableIndexCdc::insert_cdc(&self.pk_map, value.clone(), link);
+        if let Some(old_link) = old_link {
+            self.reverse_pk_map.remove(&OffsetEqLink(old_link));
         }
         self.reverse_pk_map.insert(offset_link, value);
 
-        (res_link, convert_change_events(evs))
+        (old_link, events)
     }
 
     fn insert_checked_cdc(&self, value: PrimaryKey, link: Link) -> Option<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
         let offset_link = OffsetEqLink(link);
-        let res = self.pk_map.checked_insert_cdc(value.clone(), offset_link);
-
-        if let Some(evs) = res {
+        let events = TableIndexCdc::insert_checked_cdc(&self.pk_map, value.clone(), link);
+        if let Some(events) = events {
             self.reverse_pk_map.insert(offset_link, value);
-            Some(convert_change_events(evs))
+            Some(events)
         } else {
             None
         }
@@ -109,16 +103,14 @@ where
     fn remove_cdc(
         &self,
         value: PrimaryKey,
-        _: Link,
+        link: Link,
     ) -> (Option<(PrimaryKey, Link)>, Vec<ChangeEvent<Pair<PrimaryKey, Link>>>) {
-        let (res, evs) = self.pk_map.remove_cdc(&value);
-
-        if let Some((pk, old_link)) = res {
-            let offset_link = OffsetEqLink(old_link.0);
-            self.reverse_pk_map.remove(&offset_link);
-            (Some((pk, old_link.0)), convert_change_events(evs))
+        let (removed, events) = TableIndexCdc::remove_cdc(&self.pk_map, value, link);
+        if let Some((key, old_link)) = removed {
+            self.reverse_pk_map.remove(&OffsetEqLink(old_link));
+            (Some((key, old_link)), events)
         } else {
-            (None, convert_change_events(evs))
+            (None, events)
         }
     }
 }
@@ -130,7 +122,7 @@ mod tests {
 
     const TEST_DATA_LENGTH: usize = 4096;
 
-    type TestPrimaryIndex = PrimaryIndex<u64, { TEST_DATA_LENGTH }, Vec<Pair<u64, OffsetEqLink<TEST_DATA_LENGTH>>>>;
+    type TestPrimaryIndex = PrimaryIndex<u64, { TEST_DATA_LENGTH }>;
 
     #[test]
     fn test_default_creates_empty_indexes() {

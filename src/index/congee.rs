@@ -187,8 +187,12 @@ where
                 self.get_value(&key).map(|value| (key, value))
             })
             .collect::<Vec<_>>();
-        values.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        values.sort_unstable_by_key(|entry| entry.0);
         values.into_iter()
+    }
+
+    fn iter_links(&self) -> impl DoubleEndedIterator<Item = V> + '_ {
+        self.iter_values().map(|(_, value)| value)
     }
 
     fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
@@ -196,6 +200,13 @@ where
         R: RangeBounds<K> + 'a,
     {
         self.iter_values().filter(move |(key, _)| range.contains(key))
+    }
+
+    fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a
+    where
+        R: RangeBounds<K> + 'a,
+    {
+        self.range_values(range).map(|(_, value)| value)
     }
 }
 

@@ -8,18 +8,18 @@ mod table_secondary_index;
 mod unique;
 mod unsized_node;
 
-pub use arctic::ArcticIndex;
+pub use arctic::{ArcticIndex, ArcticKey};
 pub use available_index::AvailableIndex;
 pub use congee::{CongeeIndex, CongeeKey};
 pub use indexset::concurrent::map::BTreeMap as IndexMap;
 pub use indexset::concurrent::multimap::BTreeMultiMap as IndexMultiMap;
 pub use multipair::MultiPairRecreate;
 pub use primary_index::PrimaryIndex;
-pub use table_index::{TableIndex, TableIndexCdc, convert_change_events};
+pub use table_index::{TableIndex, TableIndexCdc, convert_change_events, convert_upstream_change_events};
 pub use table_secondary_index::{
     IndexError, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
 };
-pub use unique::{UniqueIndex, UpstreamIndexMap};
+pub use unique::{UniqueIndex, UpstreamIndexMap, UpstreamIndexPair};
 pub use unsized_node::UnsizedNode;
 
 #[derive(Clone, Debug)]

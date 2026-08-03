@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::common::model::{GeneratorType, PrimaryKey};
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized_vec};
 use crate::generators::in_memory::InMemoryGenerator;
+use crate::generators::index_backend::primary_key_backend_impl;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
@@ -28,7 +29,7 @@ impl InMemoryGenerator {
             })
             .collect::<HashMap<_, _>>();
 
-        let def = self.gen_primary_key_type();
+        let def = self.gen_primary_key_type()?;
         let impl_ = self.gen_table_primary_key_impl()?;
 
         self.pk = Some(PrimaryKey { ident, values });
@@ -41,7 +42,7 @@ impl InMemoryGenerator {
 
     /// Generates table's primary key struct definition. It's newtype for type that was chosen as primary key column in
     /// definition.
-    fn gen_primary_key_type(&self) -> TokenStream {
+    fn gen_primary_key_type(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let ident = name_generator.get_primary_key_type_ident();
 
@@ -64,10 +65,13 @@ impl InMemoryGenerator {
         } else {
             quote! {}
         };
+        let (backend_derive, backend_impl) =
+            primary_key_backend_impl(self.columns.primary_index_backend, &ident, types)?;
 
-        quote! {
+        Ok(quote! {
             #[derive(
                 Clone,
+                #backend_derive
                 rkyv::Archive,
                 Debug,
                 Default,
@@ -86,7 +90,9 @@ impl InMemoryGenerator {
             )]
             #[rkyv(derive(PartialEq, Eq, PartialOrd, Ord, Debug))]
             pub struct #ident(#(#types),*);
-        }
+
+            #backend_impl
+        })
     }
 
     /// Generates `TablePrimaryKey` trait implementation for primary key. It depends on generator type.

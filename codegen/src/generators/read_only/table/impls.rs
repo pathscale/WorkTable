@@ -70,6 +70,10 @@ impl ReadOnlyGenerator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
+        let pk_map = match self.columns.primary_index_backend {
+            crate::common::model::IndexBackend::Indexset => quote! { UpstreamIndexMap },
+            _ => quote! { IndexMap },
+        };
 
         let index_setup = if pk_types_unsized {
             quote! {
@@ -82,7 +86,7 @@ impl ReadOnlyGenerator {
             quote! {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                 inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                    pk_map: IndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
+                    pk_map: #pk_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
                     reverse_pk_map: IndexMap::new(),
                 });
             }
@@ -179,22 +183,22 @@ impl ReadOnlyGenerator {
         };
 
         quote! {
-            pub fn select_by_pk_range<R, Pk>(&self, range: R) -> SelectQueryBuilder<#row_type,
-                                                                     impl DoubleEndedIterator<Item = #row_type> + '_,
+            pub fn select_by_pk_range<'a, R, Pk>(&'a self, range: R) -> SelectQueryBuilder<#row_type,
+                                                                     impl DoubleEndedIterator<Item = #row_type> + 'a,
                                                                      #column_range_type,
                                                                      #row_fields_ident>
             where
                 #primary_key_type: From<Pk>,
-                R: std::ops::RangeBounds<Pk>,
-                Pk: Clone,
+                R: std::ops::RangeBounds<Pk> + 'a,
+                Pk: Clone + 'a,
             {
                 let converted_range = (
                     range.start_bound().map(|v| #primary_key_type::from(v.clone())),
                     range.end_bound().map(|v| #primary_key_type::from(v.clone())),
                 );
                 let rows = self.0.primary_index.pk_map
-                    .range(converted_range)
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
+                    .range_links(converted_range)
+                    .filter_map(|link| self.0.data.select_non_ghosted(link.0).ok());
 
                 #pk_sorted_by
             }
@@ -277,7 +281,7 @@ impl ReadOnlyGenerator {
 
     fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
         quote! {
-            let first = self.0.primary_index.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
+            let first = self.0.primary_index.pk_map.iter_values().next().map(|(k, v)| (k.clone(), v.0));
             let Some((mut k, link)) = first else {
                 return Ok(())
             };
@@ -288,7 +292,7 @@ impl ReadOnlyGenerator {
             let mut ind = false;
             while !ind {
                 let next = {
-                    let mut iter = self.0.primary_index.pk_map.range(k.clone()..);
+                    let mut iter = self.0.primary_index.pk_map.range_values(k.clone()..);
                     let next = iter.next().map(|(k, v)| (k.clone(), v.0)).filter(|(key, _)| key != &k);
                     if next.is_some() {
                         next

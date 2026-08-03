@@ -110,8 +110,8 @@ impl InMemoryGenerator {
                 let link = match self.0
                         .primary_index
                         .pk_map
-                        .get(&pk)
-                        .map(|v| v.get().value.into())
+                        .get_value(&pk)
+                        .map(Into::into)
                         .ok_or(WorkTableError::NotFound) {
                     Ok(l) => l,
                     Err(e) => {
@@ -126,8 +126,8 @@ impl InMemoryGenerator {
                 let link = self.0
                         .primary_index
                         .pk_map
-                        .get(&pk)
-                        .map(|v| v.get().value.into())
+                        .get_value(&pk)
+                        .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
                 let row = self.0.select(pk.clone()).unwrap();
                 #process
@@ -253,7 +253,7 @@ impl InMemoryGenerator {
         };
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
-                let row_to_update = self.0.indexes.#index.get(#by).map(|v| v.get().value.into());
+                let row_to_update = self.0.indexes.#index.get_value(#by).map(Into::into);
                 if let Some(link) = row_to_update {
                     let row = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
                     self.delete(row.get_primary_key()).await?;

@@ -26,15 +26,28 @@ impl InMemoryGenerator {
             let index_name_str = index_field_name.to_string();
 
             if idx.is_unique {
+                let (capacity, node_count) = match idx.backend {
+                    crate::common::model::IndexBackend::WorktablesIndex
+                    | crate::common::model::IndexBackend::Indexset => (
+                        quote! { self.#index_field_name.capacity() },
+                        quote! { self.#index_field_name.node_count() },
+                    ),
+                    crate::common::model::IndexBackend::Congee | crate::common::model::IndexBackend::Arctic => (
+                        // Neither ART exposes allocator capacity or internal
+                        // node counts through its stable public API.
+                        quote! { self.#index_field_name.len() },
+                        quote! { 0 },
+                    ),
+                };
                 quote! {
                     info.push(IndexInfo {
                         name: #index_name_str.to_string(),
                         index_type: IndexKind::Unique,
                         key_count: self.#index_field_name.len(),
-                        capacity: self.#index_field_name.capacity(),
+                        capacity: #capacity,
                         heap_size: self.#index_field_name.heap_size(),
                         used_size: self.#index_field_name.used_size(),
-                        node_count: self.#index_field_name.node_count(),
+                        node_count: #node_count,
                     });
                 }
             } else {

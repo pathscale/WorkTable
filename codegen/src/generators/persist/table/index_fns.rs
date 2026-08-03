@@ -75,7 +75,7 @@ impl PersistGenerator {
 
         Ok(quote! {
             pub fn #fn_name(&self, by: #type_) -> Option<#row_ident> {
-                let link: Link = self.0.indexes.#field_ident.get(#by).map(|kv| kv.get().value.into())?;
+                let link: Link = self.0.indexes.#field_ident.get_value(#by).map(Into::into)?;
                 self.0.data.select_non_ghosted(link).ok()
             }
         })
@@ -146,18 +146,28 @@ impl PersistGenerator {
         } else {
             (quote! { std::ops::RangeBounds<#type_> }, quote! { range })
         };
+        let (index_range, select_row) = if idx.is_unique {
+            (
+                quote! { self.0.indexes.#field_ident.range_links(#range_arg) },
+                quote! { |link| self.0.data.select_non_ghosted(link.0).ok() },
+            )
+        } else {
+            (
+                quote! { self.0.indexes.#field_ident.range(#range_arg) },
+                quote! { |(_, link)| self.0.data.select_non_ghosted(link.0).ok() },
+            )
+        };
 
         Ok(quote! {
-            pub fn #fn_name<R>(&self, range: R) -> SelectQueryBuilder<#row_ident,
-                                                                     impl DoubleEndedIterator<Item = #row_ident> + '_,
+            pub fn #fn_name<'a, R>(&'a self, range: R) -> SelectQueryBuilder<#row_ident,
+                                                                     impl DoubleEndedIterator<Item = #row_ident> + 'a,
                                                                      #column_range_type,
                                                                      #row_fields_ident>
             where
-                R: #range_bounds
+                R: #range_bounds + 'a
             {
-                let rows = self.0.indexes.#field_ident
-                    .range(#range_arg)
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
+                let rows = #index_range
+                    .filter_map(#select_row);
 
                 SelectQueryBuilder::new_sorted(rows, #row_fields_ident::#column_pascal)
             }

@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 
 use crate::common::Parser;
-use crate::common::model::{Columns, Persistence};
+use crate::common::model::{Columns, IndexBackend, Persistence};
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut parser = Parser::new(input);
@@ -98,16 +98,42 @@ fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::
     if let Some(index) = columns
         .indexes
         .values()
-        .find(|index| !index.is_unique && index.backend.is_memory_only())
+        .find(|index| !index.is_unique && index.backend != IndexBackend::WorktablesIndex)
     {
         return Err(syn::Error::new(
             index.name.span(),
             format!(
-                "non-unique index `{}` cannot use `{}`; non-unique indexes currently require `worktables_index` or `indexset`",
+                "non-unique index `{}` cannot use `{}`; non-unique indexes currently require `worktables_index`",
                 index.name,
                 index.backend.name()
             ),
         ));
+    }
+
+    for (column, index) in &columns.indexes {
+        let key_type = columns
+            .columns_map
+            .get(column)
+            .expect("an index always references a validated column")
+            .to_string();
+        let supported = match index.backend {
+            IndexBackend::Congee => Some(&["u8", "u16", "u32", "u64", "usize"][..]),
+            IndexBackend::Arctic => Some(&["u16", "u32", "u64", "u128"][..]),
+            IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
+        };
+        if let Some(supported) = supported
+            && !supported.contains(&key_type.as_str())
+        {
+            return Err(syn::Error::new(
+                index.name.span(),
+                format!(
+                    "index `{}` uses `{}`, which does not support key type `{key_type}`; supported types: {}",
+                    index.name,
+                    index.backend.name(),
+                    supported.join(", ")
+                ),
+            ));
+        }
     }
 
     Ok(())
@@ -230,5 +256,55 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("non-unique indexes currently require"));
+    }
+
+    #[test]
+    fn congee_rejects_non_machine_word_secondary_keys() {
+        let error = expand(quote! {
+            name: StringCongee,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                name: String,
+            },
+            indexes: {
+                name_idx: name unique using congee,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("does not support key type `String`"));
+    }
+
+    #[test]
+    fn arctic_rejects_unsupported_secondary_keys() {
+        let error = expand(quote! {
+            name: ByteArctic,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u8,
+            },
+            indexes: {
+                value_idx: value unique using arctic,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("supported types: u16, u32, u64, u128"));
+    }
+
+    #[test]
+    fn congee_rejects_unsupported_primary_keys() {
+        let error = expand(quote! {
+            name: StringPrimaryCongee,
+            persist: false,
+            columns: {
+                id: String primary_key using congee,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("does not support primary-key type `String`"));
     }
 }

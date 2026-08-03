@@ -18,7 +18,7 @@ use vanilla_indexset::core::pair::Pair as VanillaPair;
 /// Point, mutation, and ordered-scan operations used by generated unique
 /// indexes. Implementations are statically dispatched; this adds no virtual
 /// call to the lookup path.
-pub trait UniqueIndex<K, V>: Debug + Default + Send + Sync
+pub trait UniqueIndex<K, V>: Default
 where
     K: Clone + Ord,
     V: Clone,
@@ -35,16 +35,22 @@ where
 
     fn iter_values(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_;
 
+    fn iter_links(&self) -> impl DoubleEndedIterator<Item = V> + '_;
+
     fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
+    where
+        R: RangeBounds<K> + 'a;
+
+    fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a
     where
         R: RangeBounds<K> + 'a;
 }
 
 impl<K, V, Node> UniqueIndex<K, V> for IndexMap<K, V, Node>
 where
-    K: Debug + Eq + Hash + Clone + Send + Sync + Ord + 'static,
-    V: Debug + Clone + Send + Sync + Ord + 'static,
-    Node: NodeLike<Pair<K, V>> + Debug + Send + Sync + 'static,
+    K: Debug + Eq + Hash + Clone + Send + Ord + 'static,
+    V: Debug + Clone + Send + Ord + 'static,
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     #[inline]
     fn get_value(&self, key: &K) -> Option<V> {
@@ -77,19 +83,32 @@ where
     }
 
     #[inline]
+    fn iter_links(&self) -> impl DoubleEndedIterator<Item = V> + '_ {
+        self.iter().map(|(_, value)| value.clone())
+    }
+
+    #[inline]
     fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
     where
         R: RangeBounds<K> + 'a,
     {
         self.range(range).map(|(key, value)| (key.clone(), value.clone()))
+    }
+
+    #[inline]
+    fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a
+    where
+        R: RangeBounds<K> + 'a,
+    {
+        self.range(range).map(|(_, value)| value.clone())
     }
 }
 
 impl<K, V, Node> UniqueIndex<K, V> for VanillaIndexMap<K, V, Node>
 where
-    K: Debug + Eq + Hash + Clone + Send + Sync + Ord + 'static,
-    V: Debug + Clone + Send + Sync + Ord + 'static,
-    Node: VanillaNodeLike<VanillaPair<K, V>> + Debug + Send + Sync + 'static,
+    K: Debug + Eq + Hash + Clone + Send + Ord + 'static,
+    V: Debug + Clone + Send + Ord + 'static,
+    Node: VanillaNodeLike<VanillaPair<K, V>> + Send + 'static,
 {
     #[inline]
     fn get_value(&self, key: &K) -> Option<V> {
@@ -122,17 +141,31 @@ where
     }
 
     #[inline]
+    fn iter_links(&self) -> impl DoubleEndedIterator<Item = V> + '_ {
+        self.iter().map(|(_, value)| value.clone())
+    }
+
+    #[inline]
     fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
     where
         R: RangeBounds<K> + 'a,
     {
         self.range(range).map(|(key, value)| (key.clone(), value.clone()))
+    }
+
+    #[inline]
+    fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a
+    where
+        R: RangeBounds<K> + 'a,
+    {
+        self.range(range).map(|(_, value)| value.clone())
     }
 }
 
 /// Vanilla upstream IndexSet map, kept distinct from WorkTable's default
 /// WorkTablesIndex alias so both implementations may coexist in one binary.
 pub type UpstreamIndexMap<K, V, Node = Vec<VanillaPair<K, V>>> = VanillaIndexMap<K, V, Node>;
+pub type UpstreamIndexPair<K, V> = VanillaPair<K, V>;
 
 #[cfg(test)]
 mod tests {
@@ -151,7 +184,9 @@ mod tests {
         assert_eq!(index.get_value(&2), Some(20));
         assert_eq!(index.insert_value(2, 22), Some(20));
         assert_eq!(index.iter_values().collect::<Vec<_>>(), vec![(1, 10), (2, 22)]);
+        assert_eq!(index.iter_links().collect::<Vec<_>>(), vec![10, 22]);
         assert_eq!(index.range_values(2..=2).collect::<Vec<_>>(), vec![(2, 22)]);
+        assert_eq!(index.range_links(2..=2).collect::<Vec<_>>(), vec![22]);
         assert_eq!(index.remove_value(&1), Some((1, 10)));
         assert_eq!(index.len(), 1);
     }

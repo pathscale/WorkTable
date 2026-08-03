@@ -13,8 +13,6 @@ use crate::{
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
-use indexset::core::node::NodeLike;
-use indexset::core::pair::Pair;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::api::high::HighDeserializer;
@@ -39,15 +37,15 @@ pub struct WorkTable<
     LockType = (),
     PkGen = <PrimaryKey as TablePrimaryKey>::Generator,
     const DATA_LENGTH: usize = INNER_PAGE_SIZE,
-    PkNodeType = Vec<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>>,
+    PkMap = IndexMap<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 > where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
     pub data: Arc<DataPages<Row, DATA_LENGTH>>,
 
-    pub primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
+    pub primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>>,
 
     pub indexes: Arc<SecondaryIndexes>,
 
@@ -72,7 +70,7 @@ impl<
     LockType,
     PkGen,
     const DATA_LENGTH: usize,
-    PkNodeType,
+    PkMap,
 > Default
     for WorkTable<
         Row,
@@ -83,20 +81,20 @@ impl<
         LockType,
         PkGen,
         DATA_LENGTH,
-        PkNodeType,
+        PkMap,
     >
 where
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
     SecondaryIndexes: Default,
     PkGen: Default,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
     fn default() -> Self {
         Self {
             data: Arc::new(DataPages::new()),
-            primary_index: Arc::new(PrimaryIndex::default()),
+            primary_index: Arc::new(PrimaryIndex::<PrimaryKey, DATA_LENGTH, PkMap>::default()),
             indexes: Arc::new(SecondaryIndexes::default()),
             pk_gen: Default::default(),
             lock_manager: Default::default(),
@@ -116,23 +114,12 @@ impl<
     LockType,
     PkGen,
     const DATA_LENGTH: usize,
-    PkNodeType,
->
-    WorkTable<
-        Row,
-        PrimaryKey,
-        AvailableTypes,
-        AvailableIndexes,
-        SecondaryIndexes,
-        LockType,
-        PkGen,
-        DATA_LENGTH,
-        PkNodeType,
-    >
+    PkMap,
+> WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, PkMap>
 where
     Row: TableRow<PrimaryKey>,
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
@@ -152,7 +139,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link: Option<Link> = self.primary_index.pk_map.get(&pk).map(|v| v.get().value.into());
+        let link: Option<Link> = self.primary_index.pk_map.get_value(&pk).map(Into::into);
         if let Some(link) = link {
             self.data.select_non_ghosted(link).ok()
         } else {
@@ -224,6 +211,7 @@ where
         PkGen: PrimaryKeyGeneratorState,
         <PkGen as PrimaryKeyGeneratorState>::State: Debug,
         AvailableIndexes: Debug + AvailableIndex,
+        PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
     {
         let pk = row.get_primary_key().clone();
 
@@ -348,8 +336,8 @@ where
         let old_link: Link = self
             .primary_index
             .pk_map
-            .get(&pk)
-            .map(|v| v.get().value.into())
+            .get_value(&pk)
+            .map(Into::into)
             .ok_or(WorkTableError::NotFound)?;
         let new_link = self.data.insert(row_new.clone()).map_err(WorkTableError::PagesError)?;
         unsafe {
@@ -398,6 +386,7 @@ where
             + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
         PkGen: PrimaryKeyGeneratorState,
         AvailableIndexes: Debug + AvailableIndex,
+        PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
     {
         let pk = row_new.get_primary_key().clone();
         if pk != row_old.get_primary_key() {
@@ -405,8 +394,8 @@ where
         }
 
         // Get old link - if not found, no events to acknowledge
-        let old_link = match self.primary_index.pk_map.get(&pk) {
-            Some(v) => v.get().value.into(),
+        let old_link = match self.primary_index.pk_map.get_value(&pk) {
+            Some(v) => v.into(),
             None => return (None, Err(WorkTableError::NotFound)),
         };
 

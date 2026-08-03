@@ -59,7 +59,7 @@ impl PersistGenerator {
                     }
                 };
                 quote! {
-                    if self.#index_field_name.insert_checked(#row.clone(), link).is_none() {
+                    if TableIndex::insert_checked(&self.#index_field_name, #row.clone(), link).is_none() {
                         return Err(IndexError::AlreadyExists {
                             at: #available_index_ident::#index_variant,
                             inserted_already: inserted_indexes.clone(),
@@ -125,7 +125,7 @@ impl PersistGenerator {
                         let row = &row_old;
                         let val_old = #row.clone();
                         if val_new != val_old {
-                            if self.#index_field_name.insert_checked(val_new.clone(), link_new).is_none() {
+                            if TableIndex::insert_checked(&self.#index_field_name, val_new.clone(), link_new).is_none() {
                                 return Err(IndexError::AlreadyExists {
                                     at: #available_index_ident::#index_variant,
                                     inserted_already: inserted_indexes.clone(),

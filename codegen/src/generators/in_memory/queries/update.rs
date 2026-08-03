@@ -92,8 +92,8 @@ impl InMemoryGenerator {
                 let mut link: Link = self.0
                     .primary_index
                     .pk_map
-                    .get(&pk)
-                    .map(|v| v.get().value.into())
+                    .get_value(&pk)
+                    .map(Into::into)
                     .ok_or(WorkTableError::NotFound)?;
 
                 let row_old = self.0.data.select_non_ghosted(link)?;
@@ -461,8 +461,8 @@ impl InMemoryGenerator {
                 let mut link: Link = self.0
                         .primary_index
                         .pk_map
-                        .get(&pk)
-                        .map(|v| v.get().value.into())
+                        .get_value(&pk)
+                        .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
 
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
@@ -618,8 +618,8 @@ impl InMemoryGenerator {
                     // matched range before their lock was acquired are
                     // skipped; rows that joined the range after the snapshot
                     // are not touched.
-                    let link: Link = match self.0.primary_index.pk_map.get(&pk) {
-                        Some(v) => v.get().value.into(),
+                    let link: Link = match self.0.primary_index.pk_map.get_value(&pk) {
+                        Some(v) => v.into(),
                         None => continue,
                     };
                     if self.0.data.select_non_ghosted(link)?.#by_field != by {
@@ -705,8 +705,8 @@ impl InMemoryGenerator {
 
                 let mut link: Link = self.0.indexes
                     .#index
-                    .get(#by)
-                    .map(|v| v.get().value.into())
+                    .get_value(#by)
+                    .map(Into::into)
                     .ok_or(WorkTableError::NotFound)?;
 
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
@@ -720,8 +720,8 @@ impl InMemoryGenerator {
 
                 let link = loop {
                     let link = self.0.indexes.#index
-                        .get(#by)
-                        .map(|v| v.get().value.into())
+                        .get_value(#by)
+                        .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
 
                     if let Err(e) = self.0.data.select_non_vacuumed(link) {

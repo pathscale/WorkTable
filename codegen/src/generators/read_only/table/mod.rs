@@ -6,6 +6,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized_vec};
+use crate::generators::index_backend::unique_index_type;
 use crate::generators::read_only::ReadOnlyGenerator;
 
 impl ReadOnlyGenerator {
@@ -91,15 +92,22 @@ impl ReadOnlyGenerator {
             }
         };
 
-        let node_type = if pk_types_unsized {
-            quote! {
+        let key_type = quote! { #primary_key_type };
+        let value_type = quote! { OffsetEqLink<#inner_const_name> };
+        let worktables_node = if pk_types_unsized {
+            Some(quote! {
                 UnsizedNode<IndexPair<#primary_key_type, OffsetEqLink<#inner_const_name>>>
-            }
+            })
         } else {
-            quote! {
-                Vec<IndexPair<#primary_key_type, OffsetEqLink<#inner_const_name>>>
-            }
+            None
         };
+        let node_type = unique_index_type(
+            self.columns.primary_index_backend,
+            &key_type,
+            &value_type,
+            worktables_node,
+        )
+        .unwrap_or_else(|error| error.into_compile_error());
 
         quote! {
             #derive

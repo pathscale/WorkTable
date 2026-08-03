@@ -1,12 +1,10 @@
-use indexset::core::node::NodeLike;
-use indexset::core::pair::Pair;
 use prettytable::{Table, format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR, row};
 use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::in_memory::{RowWrapper, StorableRow};
 use crate::mem_stat::MemStat;
 use crate::util::OffsetEqLink;
-use crate::{TableSecondaryIndexInfo, WorkTable};
+use crate::{TableSecondaryIndexInfo, UniqueIndex, WorkTable};
 
 #[derive(Debug)]
 pub struct SystemInfo {
@@ -54,13 +52,13 @@ impl<
     LockType,
     PkGen,
     const DATA_LENGTH: usize,
-    NodeType,
-> WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, NodeType>
+    PkMap,
+> WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, PkMap>
 where
     PrimaryKey: Debug + Clone + Ord + Send + 'static + std::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
-    NodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     SecondaryIndexes: MemStat + TableSecondaryIndexInfo,
 {
     pub fn system_info(&self) -> SystemInfo {

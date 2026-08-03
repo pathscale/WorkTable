@@ -114,8 +114,8 @@ impl InMemoryGenerator {
                 let link = self
                     .0
                     .primary_index.pk_map
-                    .get(&pk)
-                    .map(|v| v.get().value.into())
+                    .get_value(&pk)
+                    .map(Into::into)
                     .ok_or(WorkTableError::NotFound)?;
                 unsafe {
                     self.0

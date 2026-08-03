@@ -97,22 +97,22 @@ impl InMemoryGenerator {
         };
 
         quote! {
-            pub fn select_by_pk_range<R, Pk>(&self, range: R) -> SelectQueryBuilder<#row_type,
-                                                                     impl DoubleEndedIterator<Item = #row_type> + '_,
+            pub fn select_by_pk_range<'a, R, Pk>(&'a self, range: R) -> SelectQueryBuilder<#row_type,
+                                                                     impl DoubleEndedIterator<Item = #row_type> + 'a,
                                                                      #column_range_type,
                                                                      #row_fields_ident>
             where
                 #primary_key_type: From<Pk>,
-                R: std::ops::RangeBounds<Pk>,
-                Pk: Clone,
+                R: std::ops::RangeBounds<Pk> + 'a,
+                Pk: Clone + 'a,
             {
                 let converted_range = (
                     range.start_bound().map(|v| #primary_key_type::from(v.clone())),
                     range.end_bound().map(|v| #primary_key_type::from(v.clone())),
                 );
                 let rows = self.0.primary_index.pk_map
-                    .range(converted_range)
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok());
+                    .range_links(converted_range)
+                    .filter_map(|link| self.0.data.select_non_ghosted(link.0).ok());
 
                 #pk_sorted_by
             }
@@ -165,7 +165,7 @@ impl InMemoryGenerator {
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 loop {
-                    let need_to_update = self.0.primary_index.pk_map.get(&pk).is_some();
+                    let need_to_update = self.0.primary_index.pk_map.get_value(&pk).is_some();
                     if need_to_update {
                         match self.update(row.clone()).await {
                             core::result::Result::Ok(_) => return core::result::Result::Ok(()),
@@ -262,7 +262,7 @@ impl InMemoryGenerator {
 
     fn gen_table_iter_inner(&self, func: TokenStream) -> TokenStream {
         quote! {
-            let first = self.0.primary_index.pk_map.iter().next().map(|(k, v)| (k.clone(), v.0));
+            let first = self.0.primary_index.pk_map.iter_values().next().map(|(k, v)| (k.clone(), v.0));
             let Some((mut k, link)) = first else {
                 return Ok(())
             };
@@ -273,7 +273,7 @@ impl InMemoryGenerator {
             let mut ind = false;
             while !ind {
                 let next = {
-                    let mut iter = self.0.primary_index.pk_map.range(k.clone()..);
+                    let mut iter = self.0.primary_index.pk_map.range_values(k.clone()..);
                     let next = iter.next().map(|(k, v)| (k.clone(), v.0)).filter(|(key, _)| key != &k);
                     if next.is_some() {
                         next

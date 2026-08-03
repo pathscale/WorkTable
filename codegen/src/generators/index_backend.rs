@@ -1,0 +1,120 @@
+use proc_macro2::{Ident, TokenStream};
+use quote::quote;
+
+use crate::common::model::IndexBackend;
+
+/// Generates the concrete unique-map type selected by the DSL while keeping
+/// WorkTablesIndex's custom node type available for persisted/unsized indexes.
+pub(crate) fn unique_index_type(
+    backend: IndexBackend,
+    key: &TokenStream,
+    value: &TokenStream,
+    worktables_node: Option<TokenStream>,
+) -> syn::Result<TokenStream> {
+    match backend {
+        IndexBackend::WorktablesIndex => Ok(match worktables_node {
+            Some(node) => quote! { IndexMap<#key, #value, #node> },
+            None => quote! { IndexMap<#key, #value> },
+        }),
+        IndexBackend::Indexset => {
+            if worktables_node.is_some() {
+                Err(syn::Error::new_spanned(
+                    key,
+                    "`using indexset` does not yet support variable-sized keys; use `worktables_index` for this index",
+                ))
+            } else {
+                Ok(quote! { UpstreamIndexMap<#key, #value> })
+            }
+        }
+        IndexBackend::Congee => Ok(quote! { CongeeIndex<#key, #value> }),
+        IndexBackend::Arctic => Ok(quote! { ArcticIndex<#key, #value> }),
+    }
+}
+
+/// Generates the small codec needed when an ART is used for WorkTable's
+/// generated primary-key newtype. ART backends intentionally accept only the
+/// lossless, native integer shapes supported by their public APIs.
+pub(crate) fn primary_key_backend_impl(
+    backend: IndexBackend,
+    primary_key: &Ident,
+    fields: &[&TokenStream],
+) -> syn::Result<(TokenStream, TokenStream)> {
+    match backend {
+        IndexBackend::WorktablesIndex | IndexBackend::Indexset => Ok((quote! {}, quote! {})),
+        IndexBackend::Congee => {
+            let field = single_supported_field(backend, fields, &["u8", "u16", "u32", "u64", "usize"])?;
+            let width_guard = if field.to_string() == "u64" {
+                quote! {
+                    #[cfg(not(target_pointer_width = "64"))]
+                    compile_error!("`using congee` with a `u64` primary key requires a 64-bit target");
+                }
+            } else {
+                quote! {}
+            };
+
+            Ok((
+                quote! { Copy, },
+                quote! {
+                    #width_guard
+                    impl CongeeKey for #primary_key {
+                        #[inline]
+                        fn into_congee(self) -> usize {
+                            self.0 as usize
+                        }
+
+                        #[inline]
+                        fn from_congee(value: usize) -> Self {
+                            Self(value as #field)
+                        }
+                    }
+                },
+            ))
+        }
+        IndexBackend::Arctic => {
+            let field = single_supported_field(backend, fields, &["u16", "u32", "u64", "u128"])?;
+            Ok((
+                quote! { Copy, },
+                quote! {
+                    impl ArcticKey for #primary_key {
+                        type Raw = #field;
+
+                        #[inline]
+                        fn to_arctic(&self) -> Self::Raw {
+                            self.0
+                        }
+
+                        #[inline]
+                        fn from_arctic(value: Self::Raw) -> Self {
+                            Self(value)
+                        }
+                    }
+                },
+            ))
+        }
+    }
+}
+
+fn single_supported_field<'a>(
+    backend: IndexBackend,
+    fields: &'a [&TokenStream],
+    supported: &[&str],
+) -> syn::Result<&'a TokenStream> {
+    let [field] = fields else {
+        return Err(syn::Error::new_spanned(
+            fields.first().copied().cloned().unwrap_or_default(),
+            format!("`using {}` requires a single-column primary key", backend.name()),
+        ));
+    };
+    if !supported.contains(&field.to_string().as_str()) {
+        return Err(syn::Error::new_spanned(
+            *field,
+            format!(
+                "`using {}` does not support primary-key type `{}`; supported types: {}",
+                backend.name(),
+                field,
+                supported.join(", ")
+            ),
+        ));
+    }
+    Ok(field)
+}

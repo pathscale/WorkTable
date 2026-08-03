@@ -14,11 +14,13 @@ use ordered_float::OrderedFloat;
 use psc_nanoid::PackedNanoid;
 use psc_nanoid::packed::AlphabetPackExt;
 use uuid::Uuid;
+use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
+use vanilla_indexset::core::pair::Pair as VanillaPair;
 
-use crate::IndexMultiMap;
 use crate::persistence::OperationType;
 use crate::prelude::OperationId;
 use crate::util::OffsetEqLink;
+use crate::{ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMultiMap, UniqueIndex, UpstreamIndexMap};
 use crate::{IndexMap, impl_memstat_zero};
 
 pub trait MemStat {
@@ -75,6 +77,55 @@ where
         let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
 
         base + used
+    }
+}
+
+impl<K, V, Node> MemStat for UpstreamIndexMap<K, V, Node>
+where
+    K: Debug + Ord + Clone + 'static + MemStat + Send,
+    V: Debug + Clone + 'static + MemStat + Send,
+    Node: VanillaNodeLike<VanillaPair<K, V>> + Send + 'static,
+{
+    fn heap_size(&self) -> usize {
+        let slot_size = std::mem::size_of::<VanillaPair<K, V>>();
+        let base_heap = self.capacity() * slot_size;
+        let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
+        base_heap + kv_heap
+    }
+
+    fn used_size(&self) -> usize {
+        let pair_size = std::mem::size_of::<VanillaPair<K, V>>();
+        let base = self.len() * pair_size;
+        let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
+        base + used
+    }
+}
+
+impl<K, V> MemStat for CongeeIndex<K, V>
+where
+    K: CongeeKey,
+    V: Clone + Debug + Send + Sync + 'static,
+{
+    fn heap_size(&self) -> usize {
+        self.len() * std::mem::size_of::<(K, V)>()
+    }
+
+    fn used_size(&self) -> usize {
+        self.len() * std::mem::size_of::<(K, V)>()
+    }
+}
+
+impl<K, V> MemStat for ArcticIndex<K, V>
+where
+    K: ArcticKey,
+    V: Clone + Debug + Send + Sync + 'static,
+{
+    fn heap_size(&self) -> usize {
+        self.len() * std::mem::size_of::<(K, V)>()
+    }
+
+    fn used_size(&self) -> usize {
+        self.len() * std::mem::size_of::<(K, V)>()
     }
 }
 

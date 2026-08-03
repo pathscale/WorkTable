@@ -4,6 +4,7 @@ mod usual;
 
 use crate::common::name_generator::{WorktableNameGenerator, is_float, is_unsized};
 use crate::generators::in_memory::InMemoryGenerator;
+use crate::generators::index_backend::unique_index_type;
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -58,13 +59,14 @@ impl InMemoryGenerator {
 
                 #[allow(clippy::collapsible_else_if)]
                 let res = if idx.is_unique {
-                    if is_unsized(&t.to_string()) {
-                        quote! {
-                            #i: IndexMap<#t, OffsetEqLink, UnsizedNode<IndexPair<#t, OffsetEqLink>>>
-                        }
+                    let value_type = quote! { OffsetEqLink };
+                    let worktables_node = if is_unsized(&t.to_string()) {
+                        Some(quote! { UnsizedNode<IndexPair<#t, OffsetEqLink>> })
                     } else {
-                        quote! {#i: IndexMap<#t, OffsetEqLink>}
-                    }
+                        None
+                    };
+                    let index_type = unique_index_type(idx.backend, &t, &value_type, worktables_node)?;
+                    quote! { #i: #index_type }
                 } else {
                     if is_unsized(&t.to_string()) {
                         quote! {#i: IndexMultiMap<#t, OffsetEqLink, UnsizedNode<IndexMultiPair<#t, OffsetEqLink>>>}
@@ -126,12 +128,27 @@ impl InMemoryGenerator {
 
                 #[allow(clippy::collapsible_else_if)]
                 let res = if idx.is_unique {
-                    if is_unsized(&t.to_string()) {
-                        quote! {
-                            #i: IndexMap::with_maximum_node_size(#const_name),
+                    match idx.backend {
+                        crate::common::model::IndexBackend::WorktablesIndex => {
+                            if is_unsized(&t.to_string()) {
+                                quote! { #i: IndexMap::with_maximum_node_size(#const_name), }
+                            } else {
+                                quote! {
+                                    #i: IndexMap::with_maximum_node_size(
+                                        get_index_page_size_from_data_length::<#t>(#const_name)
+                                    ),
+                                }
+                            }
                         }
-                    } else {
-                        quote! {#i: IndexMap::with_maximum_node_size(get_index_page_size_from_data_length::<#t>(#const_name)),}
+                        crate::common::model::IndexBackend::Indexset => quote! {
+                            #i: UpstreamIndexMap::with_maximum_node_size(
+                                get_index_page_size_from_data_length::<#t>(#const_name)
+                            ),
+                        },
+                        crate::common::model::IndexBackend::Congee
+                        | crate::common::model::IndexBackend::Arctic => {
+                            quote! { #i: Default::default(), }
+                        }
                     }
                 } else {
                     if is_unsized(&t.to_string()) {

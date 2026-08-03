@@ -6,8 +6,6 @@ use std::time::{Duration, Instant};
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
-use indexset::core::node::NodeLike;
-use indexset::core::pair::Pair;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
 use rkyv::ser::allocator::ArenaHandle;
@@ -24,6 +22,7 @@ use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
+    UniqueIndex,
 };
 use async_trait::async_trait;
 use ordered_float::OrderedFloat;
@@ -33,7 +32,7 @@ use rkyv::api::high::HighDeserializer;
 pub struct EmptyDataVacuum<
     Row,
     PrimaryKey,
-    PkNodeType,
+    PkMap,
     SecondaryIndexes,
     AvailableTypes,
     AvailableIndexes,
@@ -43,7 +42,7 @@ pub struct EmptyDataVacuum<
 > where
     PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
     Row: StorableRow + Send + Clone + 'static + Debug,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
     table_name: &'static str,
 
@@ -51,7 +50,7 @@ pub struct EmptyDataVacuum<
 
     lock_manager: Arc<LockMap<LockType, PrimaryKey>>,
 
-    primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
+    primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>>,
     secondary_indexes: Arc<SecondaryIndexes>,
 
     /// Persistence sink for row moves. `None` for in-memory tables; persisted
@@ -65,7 +64,7 @@ pub struct EmptyDataVacuum<
 impl<
     Row,
     PrimaryKey,
-    PkNodeType,
+    PkMap,
     SecondaryIndexes,
     AvailableTypes,
     AvailableIndexes,
@@ -76,7 +75,7 @@ impl<
     EmptyDataVacuum<
         Row,
         PrimaryKey,
-        PkNodeType,
+        PkMap,
         SecondaryIndexes,
         AvailableTypes,
         AvailableIndexes,
@@ -87,7 +86,7 @@ impl<
 where
     Row: TableRow<PrimaryKey> + StorableRow + Send + Clone + 'static,
     PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
         + Clone
@@ -101,13 +100,14 @@ where
         + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
     AvailableIndexes: Debug + AvailableIndex,
     LockType: RowLock,
+    PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
 {
     /// Creates a new [`EmptyDataVacuum`] from the given [`WorkTable`] components.
     pub fn new(
         table_name: &'static str,
         data_pages: Arc<DataPages<Row, DATA_LENGTH>>,
         lock_manager: Arc<LockMap<LockType, PrimaryKey>>,
-        primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkNodeType>>,
+        primary_index: Arc<PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>>,
         secondary_indexes: Arc<SecondaryIndexes>,
     ) -> Self {
         Self {
@@ -330,7 +330,7 @@ where
 impl<
     Row,
     PrimaryKey,
-    PkNodeType,
+    PkMap,
     SecondaryIndexes,
     AvailableTypes,
     AvailableIndexes,
@@ -341,7 +341,7 @@ impl<
     for EmptyDataVacuum<
         Row,
         PrimaryKey,
-        PkNodeType,
+        PkMap,
         SecondaryIndexes,
         AvailableTypes,
         AvailableIndexes,
@@ -352,7 +352,7 @@ impl<
 where
     Row: TableRow<PrimaryKey> + StorableRow + Send + Sync + Clone + 'static,
     PrimaryKey: Debug + Clone + Ord + Send + Sync + TablePrimaryKey + std::hash::Hash,
-    PkNodeType: NodeLike<Pair<PrimaryKey, OffsetEqLink<DATA_LENGTH>>> + Send + Sync + 'static,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>> + Send + Sync + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
         + Clone
@@ -373,6 +373,7 @@ where
     AvailableTypes: Send + Sync + 'static,
     AvailableIndexes: Send + Sync + 'static,
     LockType: RowLock + Send + Sync,
+    PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
 {
     fn table_name(&self) -> &str {
         self.table_name
@@ -393,7 +394,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use indexset::core::pair::Pair;
     use worktable_codegen::{MemStat, worktable};
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
@@ -422,7 +422,7 @@ mod tests {
     ) -> EmptyDataVacuum<
         TestRow,
         TestPrimaryKey,
-        Vec<Pair<TestPrimaryKey, OffsetEqLink<TEST_INNER_SIZE>>>,
+        IndexMap<TestPrimaryKey, OffsetEqLink<TEST_INNER_SIZE>>,
         TestIndex,
         TestAvaiableTypes,
         TestAvailableIndexes,
