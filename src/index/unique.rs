@@ -23,11 +23,22 @@ where
     K: Clone + Ord,
     V: Clone,
 {
-    fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R>;
+    fn get_value(&self, key: &K) -> Option<V>;
 
     #[inline]
-    fn get_value(&self, key: &K) -> Option<V> {
-        self.with_value(key, Clone::clone)
+    fn lookup_for_select(&self, key: &K) -> Option<V> {
+        self.get_value(key)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn confirm_lookup_for_select(&self, key: &K) -> Option<V> {
+        self.get_value(key)
+    }
+
+    #[inline]
+    fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
+        self.get_value(key).as_ref().map(read)
     }
 
     fn contains_key(&self, key: &K) -> bool;
@@ -59,6 +70,22 @@ where
     V: Debug + Clone + Send + Ord + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
+    #[inline]
+    fn get_value(&self, key: &K) -> Option<V> {
+        self.get(key).map(|entry| entry.get().value.clone())
+    }
+
+    #[inline]
+    fn lookup_for_select(&self, key: &K) -> Option<V> {
+        IndexMap::lookup_for_select(self, key)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn confirm_lookup_for_select(&self, key: &K) -> Option<V> {
+        IndexMap::confirm_lookup_for_select(self, key)
+    }
+
     #[inline]
     fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
         self.get(key).map(|entry| read(&entry.get().value))
@@ -122,6 +149,11 @@ where
     V: Debug + Clone + Send + Ord + 'static,
     Node: VanillaNodeLike<VanillaPair<K, V>> + Send + 'static,
 {
+    #[inline]
+    fn get_value(&self, key: &K) -> Option<V> {
+        self.get(key).map(|entry| entry.get().value.clone())
+    }
+
     #[inline]
     fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
         self.get(key).map(|entry| read(&entry.get().value))
@@ -202,6 +234,8 @@ mod tests {
         assert_eq!(index.insert_value_checked(2, 99), None);
         assert!(index.contains_key(&1));
         assert!(!index.contains_key(&3));
+        assert_eq!(index.lookup_for_select(&2), Some(20));
+        assert_eq!(index.confirm_lookup_for_select(&2), Some(20));
         assert_eq!(index.with_value(&2, |value| value + 1), Some(21));
         assert_eq!(index.get_value(&2), Some(20));
         assert_eq!(index.insert_value(2, 22), Some(20));
@@ -234,7 +268,14 @@ mod tests {
 
         assert_eq!(index.len(), 8_000);
         for key in 0..8_000_u64 {
-            assert_eq!(index.get_value(&key), Some(key + 1));
+            let value = index.get_value(&key);
+            if value != Some(key + 1) {
+                let iterated = index.iter_values().find(|(candidate, _)| *candidate == key);
+                panic!(
+                    "backend={}, key={key}, point={value:?}, iterated={iterated:?}",
+                    std::any::type_name::<I>(),
+                );
+            }
         }
 
         let mut threads = Vec::new();

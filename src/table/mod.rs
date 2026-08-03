@@ -139,12 +139,25 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let link = self.primary_index.pk_map.with_value(&pk, |value| value.0);
+        let link = self.primary_index.pk_map.lookup_for_select(&pk).map(|value| value.0);
         if let Some(link) = link {
             self.data.select_non_ghosted(link).ok()
         } else {
-            None
+            self.select_after_primary_index_miss(&pk)
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn select_after_primary_index_miss(&self, pk: &PrimaryKey) -> Option<Row>
+    where
+        LockType: 'static,
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived:
+            Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        let link = self.primary_index.pk_map.confirm_lookup_for_select(pk)?.0;
+        self.data.select_non_ghosted(link).ok()
     }
 
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]

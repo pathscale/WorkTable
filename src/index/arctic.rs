@@ -76,6 +76,11 @@ where
     V: Clone + Debug + Send + Sync + 'static,
 {
     #[inline]
+    fn get_value(&self, key: &K) -> Option<V> {
+        self.with_value(key, Clone::clone)
+    }
+
+    #[inline]
     fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
         let key = key.to_arctic();
         self.inner.get(key.borrow()).map(|value| read(&value))
