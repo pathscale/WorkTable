@@ -63,8 +63,14 @@ fn mix_publication_offset(mut value: u64) -> u64 {
 /// SIMD control bits remain distributed for aligned, monotonically allocated
 /// row positions.
 #[cfg(feature = "versioned-row-publication")]
-#[derive(Default)]
 struct PublicationHasher(u64);
+
+#[cfg(feature = "versioned-row-publication")]
+impl Default for PublicationHasher {
+    fn default() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+}
 
 #[cfg(feature = "versioned-row-publication")]
 impl Hasher for PublicationHasher {
@@ -73,16 +79,16 @@ impl Hasher for PublicationHasher {
     }
 
     fn write(&mut self, bytes: &[u8]) {
-        let mut hash = 0xcbf29ce484222325u64;
+        let mut hash = self.0;
         for byte in bytes {
             hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x100000001b3);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
-        self.0 = hash;
+        self.0 = mix_publication_offset(hash);
     }
 
     fn write_u64(&mut self, value: u64) {
-        self.0 = mix_publication_offset(value);
+        self.0 = mix_publication_offset(self.0 ^ value);
     }
 }
 

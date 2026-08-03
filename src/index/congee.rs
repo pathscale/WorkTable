@@ -9,6 +9,8 @@ use congee::{Congee, DefaultAllocator};
 
 use super::UniqueIndex;
 
+const INITIAL_RANGE_CAPACITY: usize = 64;
+
 /// Lossless conversion between a WorkTable key and Congee's machine-word key.
 ///
 /// Congee 0.4 stores keys as one `usize`, so this backend intentionally accepts
@@ -127,7 +129,10 @@ where
 
         let guard = self.inner.pin();
         let mut raw_values = if start < end {
-            let mut capacity = self.len().max(1);
+            // Most generated ranges are narrow. Starting from the full index
+            // length makes a point range allocate in proportion to the whole
+            // table before Congee examines its bounds.
+            let mut capacity = INITIAL_RANGE_CAPACITY;
             loop {
                 let mut values = vec![(0, 0); capacity];
                 let scanned = self.inner.range(&start, &end, &mut values, &guard);

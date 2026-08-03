@@ -27,14 +27,14 @@ where
     Node: NodeLike<MultiPair<T, OffsetEqLink<N>>> + Send + 'static,
 {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>) {
-        let (res, evs) = self.insert_cdc(value, OffsetEqLink(link));
+        let (res, evs) = IndexMultiMap::insert_cdc(self, value, OffsetEqLink(link));
         let pair_evs = evs.into_iter().map(Into::into).collect();
         let res_link = res.map(|l| l.0);
         (res_link, convert_change_events(pair_evs))
     }
 
     fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>> {
-        let (res, evs) = self.insert_cdc(value, OffsetEqLink(link));
+        let (res, evs) = IndexMultiMap::insert_cdc(self, value, OffsetEqLink(link));
         let pair_evs = evs.into_iter().map(Into::into).collect();
         if res.is_some() {
             None
@@ -44,7 +44,7 @@ where
     }
 
     fn remove_cdc(&self, value: T, link: Link) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
-        let (res, evs) = self.remove_cdc(&value, &OffsetEqLink(link));
+        let (res, evs) = IndexMultiMap::remove_cdc(self, &value, &OffsetEqLink(link));
         let pair_evs = evs.into_iter().map(Into::into).collect();
         let res_pair = res.map(|(k, v)| (k, v.into()));
         (res_pair, convert_change_events(pair_evs))
