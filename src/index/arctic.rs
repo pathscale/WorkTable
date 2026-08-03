@@ -94,6 +94,32 @@ where
     }
 }
 
+impl<K, V> ArcticIndex<K, V>
+where
+    K: ArcticKey,
+    K::Raw: arctic::topology::Key,
+    V: Clone + Debug + Send + Sync + 'static,
+{
+    pub(crate) fn export_topology<T>(
+        &mut self,
+        mut encode: impl FnMut(&V) -> T,
+    ) -> Result<arctic::topology::Topology<T>, arctic::topology::Error> {
+        self.inner.export_topology(|value| encode(value))
+    }
+
+    pub(crate) fn from_topology<T>(
+        topology: arctic::topology::Topology<T>,
+        mut decode: impl FnMut(T) -> V,
+    ) -> Result<Self, arctic::topology::Error> {
+        let inner = ConcurrentMap::from_topology(topology, |value| Box::new(decode(value)))?;
+        let len = inner.all().entries(Order::Ascend).count();
+        Ok(Self {
+            inner,
+            len: AtomicUsize::new(len),
+        })
+    }
+}
+
 impl<K, V> UniqueIndex<K, V> for ArcticIndex<K, V>
 where
     K: ArcticKey,

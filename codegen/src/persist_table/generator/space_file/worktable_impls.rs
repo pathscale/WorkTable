@@ -74,7 +74,11 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
-        if self.attributes.pk_unsized {
+        if self.attributes.pk_arctic || self.attributes.pk_congee {
+            // ART durability is maintained incrementally by its native
+            // checkpoint/WAL file rather than materialized as DataBucket pages.
+            quote! {}
+        } else if self.attributes.pk_unsized {
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
                     let mut pages = vec![];

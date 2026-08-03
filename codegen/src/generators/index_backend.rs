@@ -31,6 +31,21 @@ pub(crate) fn unique_index_type(
     }
 }
 
+/// Generates the persisted-table variant. ART backends receive a write-side
+/// sequencing wrapper; memory-only tables keep the zero-overhead native type.
+pub(crate) fn persistent_unique_index_type(
+    backend: IndexBackend,
+    key: &TokenStream,
+    value: &TokenStream,
+    worktables_node: Option<TokenStream>,
+) -> syn::Result<TokenStream> {
+    match backend {
+        IndexBackend::Congee => Ok(quote! { PersistentCongeeIndex<#key, #value> }),
+        IndexBackend::Arctic => Ok(quote! { PersistentArcticIndex<#key, #value> }),
+        _ => unique_index_type(backend, key, value, worktables_node),
+    }
+}
+
 /// Generates the small codec needed when an ART is used for WorkTable's
 /// generated primary-key newtype. ART backends intentionally accept only the
 /// lossless, native integer shapes supported by their public APIs.
@@ -67,6 +82,18 @@ pub(crate) fn primary_key_backend_impl(
                             Self(value as #field)
                         }
                     }
+
+                    impl ArtPersistenceKey for #primary_key {
+                        const WIDTH: u8 = <#field as ArtPersistenceKey>::WIDTH;
+
+                        fn encode_art_key(&self, output: &mut Vec<u8>) {
+                            self.0.encode_art_key(output)
+                        }
+
+                        fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+                            Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
+                        }
+                    }
                 },
             ))
         }
@@ -86,6 +113,18 @@ pub(crate) fn primary_key_backend_impl(
                         #[inline]
                         fn from_arctic(value: Self::Raw) -> Self {
                             Self(value)
+                        }
+                    }
+
+                    impl ArtPersistenceKey for #primary_key {
+                        const WIDTH: u8 = <#field as ArtPersistenceKey>::WIDTH;
+
+                        fn encode_art_key(&self, output: &mut Vec<u8>) {
+                            self.0.encode_art_key(output)
+                        }
+
+                        fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+                            Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
                         }
                     }
                 },

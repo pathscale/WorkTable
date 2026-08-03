@@ -9,7 +9,10 @@ use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
 use crate::util::OffsetEqLink;
-use crate::{ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, UniqueIndex, UpstreamIndexMap};
+use crate::{
+    ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, PersistentArcticIndex,
+    PersistentCongeeIndex, UniqueIndex, UpstreamIndexMap,
+};
 
 mod cdc;
 pub mod util;
@@ -131,5 +134,11 @@ where
 
 impl_unique_table_index!(CongeeIndex<T, OffsetEqLink>, [CongeeKey + Eq + Hash]);
 impl_unique_table_index!(ArcticIndex<T, OffsetEqLink>, [
+    ArcticKey + Eq + Hash
+]);
+impl_unique_table_index!(PersistentCongeeIndex<T, OffsetEqLink>, [
+    CongeeKey + Eq + Hash
+]);
+impl_unique_table_index!(PersistentArcticIndex<T, OffsetEqLink>, [
     ArcticKey + Eq + Hash
 ]);

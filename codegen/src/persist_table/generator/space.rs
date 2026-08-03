@@ -40,6 +40,14 @@ impl Generator {
             quote! {
                 SpaceIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
             }
+        } else if self.attributes.pk_arctic {
+            quote! {
+                SpaceArcticIndex<#primary_key_type, { #inner_const_name as u32 }>,
+            }
+        } else if self.attributes.pk_congee {
+            quote! {
+                SpaceCongeeIndex<#primary_key_type, { #inner_const_name as u32 }>,
+            }
         } else {
             quote! {
                 SpaceIndex<#primary_key_type, { #inner_const_name as u32 }>,

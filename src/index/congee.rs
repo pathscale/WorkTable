@@ -5,7 +5,7 @@ use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use congee::{Congee, DefaultAllocator};
+use congee::{CongeeRaw, DefaultAllocator};
 
 use super::UniqueIndex;
 
@@ -46,7 +46,7 @@ impl_congee_key!(u64);
 /// machine word while a WorkTable `Link` is wider. The adapter follows the
 /// reclamation pattern used by Congee's own `CongeeArc` implementation.
 pub struct CongeeIndex<K, V> {
-    inner: Congee<usize, usize>,
+    inner: CongeeRaw<usize, usize>,
     len: AtomicUsize,
     marker: std::marker::PhantomData<(K, V)>,
 }
@@ -71,7 +71,7 @@ where
             drop(unsafe { Self::arc_from_pointer(pointer) });
         };
         Self {
-            inner: Congee::new_with_drainer(DefaultAllocator {}, drainer),
+            inner: CongeeRaw::new_with_drainer(DefaultAllocator {}, drainer),
             len: AtomicUsize::new(0),
             marker: std::marker::PhantomData,
         }
@@ -159,6 +159,40 @@ where
                 (K::from_congee(key), value.clone())
             })
             .collect()
+    }
+
+    pub(crate) fn export_topology<T>(
+        &mut self,
+        mut encode: impl FnMut(&V) -> T,
+    ) -> Result<congee::topology::Topology<T>, congee::topology::Error> {
+        self.inner.export_topology(|pointer| {
+            // SAFETY: every raw payload is a live tree-owned `Arc<V>` pointer,
+            // and the exclusive borrow prevents removal while it is cloned.
+            unsafe { encode(&*std::ptr::with_exposed_provenance::<V>(pointer)) }
+        })
+    }
+
+    pub(crate) fn from_topology<T>(
+        topology: congee::topology::Topology<T>,
+        mut decode: impl FnMut(T) -> V,
+    ) -> Result<Self, congee::topology::Error> {
+        let drainer = |_key: usize, pointer: usize| {
+            // SAFETY: decoded payloads below transfer exactly one `Arc` strong
+            // reference to the reconstructed tree.
+            drop(unsafe { Self::arc_from_pointer(pointer) });
+        };
+        let inner = CongeeRaw::from_topology_with_drainer(
+            topology,
+            DefaultAllocator {},
+            |value| Arc::into_raw(Arc::new(decode(value))).expose_provenance(),
+            drainer,
+        )?;
+        let len = inner.keys().len();
+        Ok(Self {
+            inner,
+            len: AtomicUsize::new(len),
+            marker: std::marker::PhantomData,
+        })
     }
 }
 
