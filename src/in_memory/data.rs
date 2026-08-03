@@ -48,10 +48,7 @@ impl<const N: usize> DerefMut for AlignedBytes<N> {
 
 #[derive(Archive, Deserialize, Debug, Serialize)]
 pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
-    /// [`Id`] of the [`General`] page of this [`Data`].
-    ///
-    /// [`Id]: PageId
-    /// [`General`]: page::General
+    /// [`PageId`] of the general page represented by this [`Data`] block.
     #[rkyv(with = Skip)]
     pub id: PageId,
 

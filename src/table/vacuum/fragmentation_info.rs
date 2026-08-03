@@ -68,7 +68,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.page_links_map.get(&page_id).map(|(_, link)| *link).collect()
     }
 
-    /// Calculates [`PageFragmentationInfo`] information for all pages with
+    /// Calculates `PageFragmentationInfo` information for all pages with
     /// empty [`Link`]s.
     pub fn get_per_page_info(&self) -> Vec<PageFragmentationInfo> {
         let mut page_empty_data: HashMap<PageId, (u32, Vec<Link>)> = HashMap::new();

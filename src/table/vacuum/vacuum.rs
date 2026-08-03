@@ -102,7 +102,7 @@ where
     LockType: RowLock,
     PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
 {
-    /// Creates a new [`EmptyDataVacuum`] from the given [`WorkTable`] components.
+    /// Creates a new [`EmptyDataVacuum`] from the given `WorkTable` components.
     pub fn new(
         table_name: &'static str,
         data_pages: Arc<DataPages<Row, DATA_LENGTH>>,

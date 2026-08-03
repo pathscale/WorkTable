@@ -108,7 +108,7 @@ impl Lock {
 
     /// A lock born in the released state (`is_locked() == false`, waiting on
     /// it returns immediately). Used for placeholder state, e.g. a fresh
-    /// [`FullRowLock`](crate::lock::FullRowLock) that no operation holds yet.
+    /// [`FullRowLock`] that no operation holds yet.
     /// "Released" refers to the acquisition flag, distinguishing it from
     /// [`Lock::new`], which starts held by the creating operation.
     pub fn new_released(id: u16) -> Self {
