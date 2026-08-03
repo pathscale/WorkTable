@@ -24,6 +24,7 @@ cargo add worktable
 | **Embedded optimized** | Very low overhead, built for resource-sensitive environments. |
 | **Typed tables from a macro** | `worktable!` generates the table, row and primary-key types. No hand-written boilerplate per table. |
 | **Primary and secondary indexes** | Autoincrement or supplied primary keys; unique and non-unique secondary indexes, each adding a `select_by_<column>` method. |
+| **Per-index physical selection** | An optional `using` clause can statically select WorkTablesIndex, vanilla IndexSet, Congee, or Arctic where their capabilities fit. See [the backend guide](docs/index-backend-dsl-proposal.md). |
 | **Generated queries** | `select`, `insert`, `upsert`, `update`, `delete` and a `select_all` query builder on every table, plus the custom update/delete queries you declare. |
 | **Paged in-memory storage** | Records live in `DataPages` with a free list for reuse. `rkyv` gives zero-copy access to archived rows. |
 | **Concurrency** | Lock-free concurrent indexes with change-data-capture, plus a row-level `LockMap` for ordered access. |
@@ -45,6 +46,8 @@ S3 support layers *on top of* the disk engine rather than replacing it.
 [dependencies]
 worktable = { version = "0.9", features = ["s3-support"] }   # S3 sync, optional
 ```
+
+Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic are explicitly memory-only and require `persist: false`. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
 
 ## Relationship to `data_bucket`
 
@@ -395,5 +398,4 @@ enum WorkTableError
 ## Examples 
 
 Check out - [Examples](./examples)
-
 
