@@ -35,9 +35,9 @@ where
 
     fn iter_values(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_;
 
-    fn range_values<R>(&self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + '_
+    fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
     where
-        R: RangeBounds<K>;
+        R: RangeBounds<K> + 'a;
 }
 
 impl<K, V, Node> UniqueIndex<K, V> for IndexMap<K, V, Node>
@@ -77,9 +77,9 @@ where
     }
 
     #[inline]
-    fn range_values<R>(&self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + '_
+    fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
     where
-        R: RangeBounds<K>,
+        R: RangeBounds<K> + 'a,
     {
         self.range(range).map(|(key, value)| (key.clone(), value.clone()))
     }
@@ -122,9 +122,9 @@ where
     }
 
     #[inline]
-    fn range_values<R>(&self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + '_
+    fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
     where
-        R: RangeBounds<K>,
+        R: RangeBounds<K> + 'a,
     {
         self.range(range).map(|(key, value)| (key.clone(), value.clone()))
     }

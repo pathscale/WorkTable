@@ -43,10 +43,10 @@ pub mod prelude {
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
-        AvailableIndex, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PrimaryIndex, TableIndex,
-        TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
-        TableSecondaryIndexInfo, UniqueIndex, UnsizedNode, UpstreamIndexMap, WorkTable, WorkTableError,
-        vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
+        AvailableIndex, CongeeIndex, CongeeKey, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
+        PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
+        TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode, UpstreamIndexMap, WorkTable,
+        WorkTableError, vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

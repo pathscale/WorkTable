@@ -1,4 +1,5 @@
 mod available_index;
+mod congee;
 mod multipair;
 mod primary_index;
 mod table_index;
@@ -7,6 +8,7 @@ mod unique;
 mod unsized_node;
 
 pub use available_index::AvailableIndex;
+pub use congee::{CongeeIndex, CongeeKey};
 pub use indexset::concurrent::map::BTreeMap as IndexMap;
 pub use indexset::concurrent::multimap::BTreeMultiMap as IndexMultiMap;
 pub use multipair::MultiPairRecreate;
