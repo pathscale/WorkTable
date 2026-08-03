@@ -168,10 +168,15 @@ async fn vacuum_parallel_with_upserts() {
     let delete_table = table.clone();
     let ids_to_delete: Arc<Vec<_>> = Arc::new(rows.iter().step_by(2).map(|p| p.0).collect());
     let row_state = Arc::new(Mutex::new(rows.iter().cloned().collect::<HashMap<_, _>>()));
+    let row_locks = Arc::new((0..3000).map(|_| tokio::sync::Mutex::new(())).collect::<Vec<_>>());
     let task_ids = ids_to_delete.clone();
     let task_row_state = Arc::clone(&row_state);
+    let task_row_locks = Arc::clone(&row_locks);
     let delete_task = tokio::spawn(async move {
         for id in task_ids.iter() {
+            // Keep the table mutation and oracle transition ordered for this
+            // key. Operations on different keys and vacuum remain concurrent.
+            let _row_guard = task_row_locks[*id as usize].lock().await;
             delete_table.delete(*id).await.unwrap();
             {
                 let mut g = task_row_state.lock();
@@ -189,6 +194,7 @@ async fn vacuum_parallel_with_upserts() {
             data: format!("test_data_{}", i),
         };
         let id = row.id;
+        let _row_guard = row_locks[id as usize].lock().await;
         table.upsert(row.clone()).await.unwrap();
         {
             let mut g = row_state.lock();
