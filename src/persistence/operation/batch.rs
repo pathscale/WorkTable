@@ -66,6 +66,43 @@ impl From<QueueInnerRow> for BatchInnerRow {
     }
 }
 
+/// Coalesces durable row writes by physical storage slot.
+///
+/// `Link::length` can change when an unsized row is reinserted into a reused
+/// `(page_id, offset)`. Treating the two lengths as different keys leaves
+/// overlapping writes in the same batch, whose eventual application order is
+/// derived from a hash map. The newest operation must be the only write for a
+/// physical slot.
+fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
+    ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
+) -> BatchData {
+    let mut latest: HashMap<(PageId, u32), (OperationId, Link, Vec<u8>)> = HashMap::new();
+    for op in ops {
+        let Some(bytes) = op.bytes() else {
+            continue;
+        };
+        let link = op.link();
+        let operation_id = op.operation_id();
+        let key = (link.page_id, link.offset);
+        match latest.entry(key) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if operation_id > entry.get().0 {
+                    entry.insert((operation_id, link, bytes.to_vec()));
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((operation_id, link, bytes.to_vec()));
+            }
+        }
+    }
+
+    let mut data = HashMap::new();
+    for (_, (_, link, bytes)) in latest {
+        data.entry(link.page_id).or_insert_with(Vec::new).push((link, bytes));
+    }
+    data
+}
+
 #[derive(Debug)]
 pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes> {
     ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>,
@@ -372,31 +409,47 @@ where
     }
 
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {
-        let mut data = HashMap::new();
-        for link in self.info_wt.iter_links() {
-            let last_op = self
-                .info_wt
-                .select_by_link(link)
-                .order_on(BatchInnerRowFields::OperationId, Order::Desc)
-                .limit(1)
-                .execute()?;
-            let op_row = last_op
-                .into_iter()
-                .next()
-                .expect("if link is in info_wt at least one row exists");
-            let pos = op_row.pos;
-            let op = self
-                .ops
-                .get(pos)
-                .expect("pos should be correct as was set while batch build");
-            if let Some(data_bytes) = op.bytes() {
-                let link = op.link();
-                data.entry(link.page_id)
-                    .and_modify(|v: &mut Vec<_>| v.push((link, data_bytes.to_vec())))
-                    .or_insert(vec![(link, data_bytes.to_vec())]);
-            }
-        }
+        Ok(latest_data_writes(&self.ops))
+    }
+}
 
-        Ok(data)
+#[cfg(test)]
+mod tests {
+    use data_bucket::Link;
+    use uuid::Uuid;
+
+    use super::latest_data_writes;
+    use crate::persistence::operation::{InsertOperation, Operation, OperationId};
+
+    fn insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
+        Operation::Insert(InsertOperation {
+            id: OperationId::Single(Uuid::from_u128(id)),
+            primary_key_events: vec![],
+            secondary_keys_events: (),
+            pk_gen_state: (),
+            bytes,
+            link,
+        })
+    }
+
+    #[test]
+    fn variable_length_link_reuse_keeps_only_the_newest_physical_write() {
+        let old_link = Link {
+            page_id: 1.into(),
+            offset: 128,
+            length: 4,
+        };
+        let new_link = Link {
+            page_id: 1.into(),
+            offset: 128,
+            length: 6,
+        };
+
+        // Deliberately reverse vector order: operation ids, not incidental
+        // collection order, define which bytes are newest.
+        let batch = latest_data_writes(&[insert(2, new_link, vec![2; 6]), insert(1, old_link, vec![1; 4])]);
+        let writes = batch.get(&1.into()).unwrap();
+
+        assert_eq!(writes, &vec![(new_link, vec![2; 6])]);
     }
 }
