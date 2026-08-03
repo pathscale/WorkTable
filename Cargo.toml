@@ -22,6 +22,7 @@ s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktabl
 
 [dependencies]
 async-trait = "0.1.89"
+arctic-map = "=0.1.4"
 congee = "=0.4.1"
 convert_case = "0.6.0"
 data_bucket = "=0.4.1"
