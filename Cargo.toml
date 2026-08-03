@@ -28,8 +28,8 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 
 [dependencies]
 async-trait = "0.1.89"
-arctic = { package = "arctic-wt", git = "https://github.com/pathscale/arctic-wt", rev = "e13fc7df3c040f14ae66c1cb56b1bd0a3f6da3fc" }
-congee = { package = "congee-wt", git = "https://github.com/pathscale/congee-wt", rev = "005bfb1968e781800176f2d7e465e6a1af630e1a" }
+arctic = { package = "arctic-wt", version = "0.1.4" }
+congee = { package = "congee-wt", version = "0.4.1" }
 convert_case = "0.6.0"
 crc32fast = "1.5.0"
 data_bucket = "=0.5.1"
