@@ -177,6 +177,7 @@ where
         }
     }
 
+    #[cfg(not(feature = "versioned-row-publication"))]
     #[cold]
     #[inline(never)]
     fn select_after_primary_index_miss(&self, pk: &PrimaryKey) -> Option<Row>
