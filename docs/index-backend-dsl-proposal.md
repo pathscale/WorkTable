@@ -153,6 +153,14 @@ Backend dispatch itself is static and should compile away. That does **not** mea
 - `OffsetEqLink` values are copied out of backend guards; no heap allocation is introduced for a point lookup.
 - Both can emit persistence-compatible structural CDC.
 
+Direct dispatch does not strengthen either provider's concurrent-read
+semantics. During unrelated structural mutations, WorkTablesIndex and vanilla
+IndexSet can transiently return a point miss for a key that is present after
+the writers quiesce. This PR verifies mutation integrity and quiescent reads;
+it does not claim linearizable point reads for those providers. Workloads that
+require stable concurrent visibility need the separate row-publication and
+stable-miss protocol before their results are publishable.
+
 ### Congee
 
 - Point lookup and mutation call Congee directly.
@@ -182,7 +190,7 @@ Use allocator/RSS measurements for comparative memory results; do not treat the 
 
 This implementation uses the published crates directly:
 
-- `WorkTablesIndex 0.0.1` as the default `indexset` dependency alias already used by WorkTable;
+- `WorkTablesIndex 0.0.3` as the default `indexset` dependency alias already used by WorkTable;
 - vanilla `indexset 0.15.0` under the `vanilla_indexset` Cargo name;
 - `congee 0.4.1` through its public `Congee`, `compute_or_insert`, and `new_with_drainer` APIs;
 - `arctic-map 0.1.4` through its public concurrent map API.
@@ -195,8 +203,9 @@ The implementation includes:
 
 - parser/default tests for all four names;
 - compile-time rejection of persisted ARTs, implicit memory-only ARTs, alternative non-unique indexes, and unsupported key shapes;
-- shared unique-index contract tests for WorkTablesIndex and vanilla IndexSet;
+- shared unique-index contract and concurrent mutation-integrity tests for all four providers;
 - adapter contract and concurrent checked-insert tests for Congee and Arctic;
+- immediate disjoint insert/read/remove tests for Congee and Arctic;
 - a generated table using all four providers simultaneously;
 - generated primary-key CRUD tests for vanilla IndexSet, Congee, and Arctic;
 - vanilla IndexSet persist/reload/post-reload mutation coverage;

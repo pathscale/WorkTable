@@ -169,8 +169,10 @@ pub type UpstreamIndexPair<K, V> = VanillaPair<K, V>;
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{UniqueIndex, UpstreamIndexMap};
-    use crate::IndexMap;
+    use crate::{ArcticIndex, CongeeIndex, IndexMap};
 
     fn assert_unique_index_contract<I>()
     where
@@ -191,6 +193,69 @@ mod tests {
         assert_eq!(index.len(), 1);
     }
 
+    fn assert_disjoint_concurrent_insert_then_remove<I>()
+    where
+        I: UniqueIndex<u64, u64> + Send + Sync + 'static,
+    {
+        let index = Arc::new(I::default());
+        let mut threads = Vec::new();
+        for worker in 0..8_u64 {
+            let index = Arc::clone(&index);
+            threads.push(std::thread::spawn(move || {
+                for sequence in 0..1_000_u64 {
+                    let key = worker * 1_000 + sequence;
+                    assert_eq!(index.insert_value_checked(key, key + 1), Some(()));
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        assert_eq!(index.len(), 8_000);
+        for key in 0..8_000_u64 {
+            assert_eq!(index.get_value(&key), Some(key + 1));
+        }
+
+        let mut threads = Vec::new();
+        for worker in 0..8_u64 {
+            let index = Arc::clone(&index);
+            threads.push(std::thread::spawn(move || {
+                for sequence in 0..1_000_u64 {
+                    let key = worker * 1_000 + sequence;
+                    assert_eq!(index.remove_value(&key), Some((key, key + 1)));
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert!(index.is_empty());
+    }
+
+    fn assert_immediate_disjoint_crud<I>()
+    where
+        I: UniqueIndex<u64, u64> + Send + Sync + 'static,
+    {
+        let index = Arc::new(I::default());
+        let mut threads = Vec::new();
+        for worker in 0..8_u64 {
+            let index = Arc::clone(&index);
+            threads.push(std::thread::spawn(move || {
+                for sequence in 0..1_000_u64 {
+                    let key = worker * 1_000 + sequence;
+                    assert_eq!(index.insert_value_checked(key, key + 1), Some(()));
+                    assert_eq!(index.get_value(&key), Some(key + 1));
+                    assert_eq!(index.remove_value(&key), Some((key, key + 1)));
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert!(index.is_empty());
+    }
+
     #[test]
     fn worktables_index_implements_contract() {
         assert_unique_index_contract::<IndexMap<u64, u64>>();
@@ -199,5 +264,19 @@ mod tests {
     #[test]
     fn upstream_indexset_implements_contract() {
         assert_unique_index_contract::<UpstreamIndexMap<u64, u64>>();
+    }
+
+    #[test]
+    fn all_backends_preserve_disjoint_concurrent_mutations() {
+        assert_disjoint_concurrent_insert_then_remove::<IndexMap<u64, u64>>();
+        assert_disjoint_concurrent_insert_then_remove::<UpstreamIndexMap<u64, u64>>();
+        assert_disjoint_concurrent_insert_then_remove::<CongeeIndex<u64, u64>>();
+        assert_disjoint_concurrent_insert_then_remove::<ArcticIndex<u64, u64>>();
+    }
+
+    #[test]
+    fn art_backends_make_disjoint_mutations_immediately_visible() {
+        assert_immediate_disjoint_crud::<CongeeIndex<u64, u64>>();
+        assert_immediate_disjoint_crud::<ArcticIndex<u64, u64>>();
     }
 }

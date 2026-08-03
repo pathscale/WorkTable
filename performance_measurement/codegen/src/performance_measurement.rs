@@ -80,14 +80,13 @@ pub fn parse_name(iter: &mut token_stream::IntoIter, attr: &TokenStream) -> syn:
 
 #[cfg(test)]
 mod tests {
-    use proc_macro2::TokenStream;
     use quote::quote;
 
     use super::parse_attr;
 
     #[test]
     fn test_attr_parse() {
-        let tokens = TokenStream::from(quote! {prefix_name = "Test"});
+        let tokens = quote! {prefix_name = "Test"};
         let attr = parse_attr(tokens).unwrap();
 
         assert_eq!(attr.name, "Test".to_string())

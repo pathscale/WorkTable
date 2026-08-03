@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   build:
 
@@ -16,15 +19,15 @@ jobs:
     timeout-minutes: 15
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: "true"
         add-job-id-key: "false"
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --all-targets --all-features --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --workspace --all-targets --all-features --verbose
 
 
   clippy_check:
@@ -33,17 +36,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
           add-job-id-key: "false"
-      - uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            components: clippy
-            override: true
-      - uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-targets --all-features -- -D warnings
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings

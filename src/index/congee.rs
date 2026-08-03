@@ -66,7 +66,7 @@ where
         let drainer = |_key: usize, pointer: usize| {
             // SAFETY: every payload inserted below originates from
             // `Arc::into_raw` with exactly one tree-owned strong reference.
-            drop(unsafe { Arc::from_raw(pointer as *const V) });
+            drop(unsafe { Self::arc_from_pointer(pointer) });
         };
         Self {
             inner: Congee::new_with_drainer(DefaultAllocator {}, drainer),
@@ -82,10 +82,18 @@ where
     V: Clone + Debug + Send + Sync + 'static,
 {
     #[inline]
+    unsafe fn arc_from_pointer(pointer: usize) -> Arc<V> {
+        // SAFETY: callers guarantee that `pointer` was produced by
+        // `Arc::into_raw(...).expose_provenance()` for the same `V` and still
+        // owns one strong reference.
+        unsafe { Arc::from_raw(std::ptr::with_exposed_provenance(pointer)) }
+    }
+
+    #[inline]
     fn clone_pointer(pointer: usize) -> Arc<V> {
         // SAFETY: the caller holds a Congee epoch guard, so the tree-owned
         // strong reference cannot be reclaimed while it is cloned.
-        let owned = unsafe { Arc::from_raw(pointer as *const V) };
+        let owned = unsafe { Self::arc_from_pointer(pointer) };
         let cloned = Arc::clone(&owned);
         let _ = Arc::into_raw(owned);
         cloned
@@ -95,7 +103,7 @@ where
     fn retire_old(pointer: usize, guard: &congee::epoch::Guard) -> Arc<V> {
         // SAFETY: a successful replacement/removal transfers the tree-owned
         // strong reference to this call.
-        let owned = unsafe { Arc::from_raw(pointer as *const V) };
+        let owned = unsafe { Self::arc_from_pointer(pointer) };
         let delayed = Arc::clone(&owned);
         guard.defer(move || drop(delayed));
         owned
@@ -122,7 +130,7 @@ where
     #[inline]
     fn insert_value(&self, key: K, value: V) -> Option<V> {
         let guard = self.inner.pin();
-        let pointer = Arc::into_raw(Arc::new(value)) as usize;
+        let pointer = Arc::into_raw(Arc::new(value)).expose_provenance();
         match self.inner.insert(key.into_congee(), pointer, &guard) {
             Ok(Some(old)) => Some(Self::retire_old(old, &guard).as_ref().clone()),
             Ok(None) => {
@@ -131,7 +139,7 @@ where
             }
             Err(_) => {
                 // SAFETY: insertion failed, so ownership never transferred.
-                drop(unsafe { Arc::from_raw(pointer as *const V) });
+                drop(unsafe { Self::arc_from_pointer(pointer) });
                 Self::allocation_failure()
             }
         }
@@ -140,7 +148,7 @@ where
     #[inline]
     fn insert_value_checked(&self, key: K, value: V) -> Option<()> {
         let guard = self.inner.pin();
-        let pointer = Arc::into_raw(Arc::new(value)) as usize;
+        let pointer = Arc::into_raw(Arc::new(value)).expose_provenance();
         let result = self
             .inner
             .compute_or_insert(key.into_congee(), |old| old.unwrap_or(pointer), &guard);
@@ -149,7 +157,7 @@ where
             Ok(Some(_)) => {
                 // The closure returned the existing pointer, so the new value
                 // was never installed.
-                drop(unsafe { Arc::from_raw(pointer as *const V) });
+                drop(unsafe { Self::arc_from_pointer(pointer) });
                 None
             }
             Ok(None) => {
@@ -158,7 +166,7 @@ where
             }
             Err(_) => {
                 // SAFETY: insertion failed, so ownership never transferred.
-                drop(unsafe { Arc::from_raw(pointer as *const V) });
+                drop(unsafe { Self::arc_from_pointer(pointer) });
                 Self::allocation_failure()
             }
         }

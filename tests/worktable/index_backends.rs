@@ -74,6 +74,15 @@ worktable! {
 }
 
 worktable! {
+    name: CongeePrimary,
+    persist: false,
+    columns: {
+        id: u64 primary_key autoincrement using congee,
+        value: u64,
+    },
+}
+
+worktable! {
     name: PersistedUpstream,
     persist: true,
     columns: {
@@ -85,8 +94,8 @@ worktable! {
     },
 }
 
-#[test]
-fn all_unique_backends_coexist_in_one_table() {
+#[tokio::test]
+async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
     let table = MixedBackendWorkTable::default();
     let row = MixedBackendRow {
         id: table.get_next_pk().into(),
@@ -97,30 +106,111 @@ fn all_unique_backends_coexist_in_one_table() {
     };
 
     let pk = table.insert(row.clone()).unwrap();
+    let second = MixedBackendRow {
+        id: table.get_next_pk().into(),
+        wti_key: 31,
+        upstream_key: 32,
+        congee_key: 33,
+        arctic_key: 34,
+    };
+    table.insert(second.clone()).unwrap();
+
     assert_eq!(table.select(pk), Some(row.clone()));
     assert_eq!(table.select_by_wti_key(11), Some(row.clone()));
     assert_eq!(table.select_by_upstream_key(12), Some(row.clone()));
     assert_eq!(table.select_by_congee_key(13), Some(row.clone()));
-    assert_eq!(table.select_by_arctic_key(14), Some(row));
+    assert_eq!(table.select_by_arctic_key(14), Some(row.clone()));
+
+    for (attempt, duplicate_backend) in ["wti", "indexset", "congee", "arctic"].into_iter().enumerate() {
+        let base = 100 + attempt as u64 * 10;
+        let candidate = MixedBackendRow {
+            id: table.get_next_pk().into(),
+            wti_key: if duplicate_backend == "wti" { 11 } else { base + 1 },
+            upstream_key: if duplicate_backend == "indexset" { 12 } else { base + 2 },
+            congee_key: if duplicate_backend == "congee" { 13 } else { base + 3 },
+            arctic_key: if duplicate_backend == "arctic" { 14 } else { base + 4 },
+        };
+        assert!(table.insert(candidate.clone()).is_err());
+        assert!(table.select(candidate.id).is_none());
+        if candidate.wti_key != 11 {
+            assert!(table.select_by_wti_key(candidate.wti_key).is_none());
+        }
+        if candidate.upstream_key != 12 {
+            assert!(table.select_by_upstream_key(candidate.upstream_key).is_none());
+        }
+        if candidate.congee_key != 13 {
+            assert!(table.select_by_congee_key(candidate.congee_key).is_none());
+        }
+        if candidate.arctic_key != 14 {
+            assert!(table.select_by_arctic_key(candidate.arctic_key).is_none());
+        }
+    }
+    assert_eq!(table.count(), 2);
+
+    let updated = MixedBackendRow {
+        id: row.id,
+        wti_key: 21,
+        upstream_key: 22,
+        congee_key: 23,
+        arctic_key: 24,
+    };
+    table.update(updated.clone()).await.unwrap();
+    assert_eq!(table.select(pk), Some(updated.clone()));
+    assert!(table.select_by_wti_key(11).is_none());
+    assert!(table.select_by_upstream_key(12).is_none());
+    assert!(table.select_by_congee_key(13).is_none());
+    assert!(table.select_by_arctic_key(14).is_none());
+    assert_eq!(table.select_by_wti_key(21), Some(updated.clone()));
+    assert_eq!(table.select_by_upstream_key(22), Some(updated.clone()));
+    assert_eq!(table.select_by_congee_key(23), Some(updated.clone()));
+    assert_eq!(table.select_by_arctic_key(24), Some(updated.clone()));
+
+    for rows in [
+        table.select_by_wti_key_range(20..=31).execute().unwrap(),
+        table.select_by_upstream_key_range(20..=32).execute().unwrap(),
+        table.select_by_congee_key_range(20..=33).execute().unwrap(),
+        table.select_by_arctic_key_range(20..=34).execute().unwrap(),
+    ] {
+        assert_eq!(rows.len(), 2);
+    }
+
+    table.delete(row.id).await.unwrap();
+    assert!(table.select(pk).is_none());
+    assert!(table.select_by_wti_key(21).is_none());
+    assert!(table.select_by_upstream_key(22).is_none());
+    assert!(table.select_by_congee_key(23).is_none());
+    assert!(table.select_by_arctic_key(24).is_none());
+    assert_eq!(table.count(), 1);
 }
 
-#[test]
-fn alternative_primary_backends_support_point_crud() {
-    let upstream = UpstreamPrimaryWorkTable::default();
-    let upstream_row = UpstreamPrimaryRow {
-        id: upstream.get_next_pk().into(),
-        value: 1,
-    };
-    let upstream_pk = upstream.insert(upstream_row.clone()).unwrap();
-    assert_eq!(upstream.select(upstream_pk), Some(upstream_row));
+#[tokio::test]
+async fn alternative_primary_backends_support_point_crud() {
+    macro_rules! assert_point_crud {
+        ($table:ty, $row:ident) => {{
+            let table = <$table>::default();
+            let original = $row {
+                id: table.get_next_pk().into(),
+                value: 1,
+            };
+            let pk = table.insert(original.clone()).unwrap();
+            assert_eq!(table.select(pk.clone()), Some(original.clone()));
 
-    let arctic = ArcticPrimaryWorkTable::default();
-    let arctic_row = ArcticPrimaryRow {
-        id: arctic.get_next_pk().into(),
-        value: 2,
-    };
-    let arctic_pk = arctic.insert(arctic_row.clone()).unwrap();
-    assert_eq!(arctic.select(arctic_pk), Some(arctic_row));
+            let updated = $row {
+                id: original.id,
+                value: 2,
+            };
+            table.update(updated.clone()).await.unwrap();
+            assert_eq!(table.select(pk.clone()), Some(updated));
+
+            table.delete(original.id).await.unwrap();
+            assert!(table.select(pk).is_none());
+            assert_eq!(table.count(), 0);
+        }};
+    }
+
+    assert_point_crud!(UpstreamPrimaryWorkTable, UpstreamPrimaryRow);
+    assert_point_crud!(CongeePrimaryWorkTable, CongeePrimaryRow);
+    assert_point_crud!(ArcticPrimaryWorkTable, ArcticPrimaryRow);
 }
 
 #[tokio::test]
@@ -169,6 +259,7 @@ async fn upstream_indexset_survives_persist_reload_and_more_writes() {
     assert!(table.select(10).is_none());
     assert_eq!(table.select(added_pk).unwrap().unique_key, 2_000);
     assert_eq!(table.select_by_unique_key(2_000).unwrap().id, added_id);
+    table.wait_for_ops().await;
     drop(table);
 
     remove_dir_if_exists(ROOT.to_string()).await;
@@ -228,6 +319,7 @@ async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() 
     assert_eq!(table.count(), 1_024);
     assert!(table.select(10).is_none());
     assert_eq!(table.select_by_unique_key(2_000).unwrap().unique_key, 2_000);
+    table.wait_for_ops().await;
     drop(table);
 
     remove_dir_if_exists(ROOT.to_string()).await;

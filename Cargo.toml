@@ -3,7 +3,7 @@ members = ["codegen", "examples", "performance_measurement", "performance_measur
 
 [package]
 name = "worktable"
-version = "0.9.4"
+version = "1.0.0-beta.1"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -25,14 +25,14 @@ async-trait = "0.1.89"
 arctic-map = "=0.1.4"
 congee = "=0.4.1"
 convert_case = "0.6.0"
-data_bucket = "=0.4.1"
+data_bucket = "=0.5.0"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
 # data_bucket = { path = "../DataBucket", version = "0.3.14" }
 derive_more = { version = "2.0.1", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6.12"
 fastrand = "2.3.0"
 futures = "0.3.30"
-indexset = { package = "WorkTablesIndex", version = "=0.0.1", features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "=0.0.3", features = ["concurrent", "cdc", "multimap"] }
 vanilla_indexset = { package = "indexset", version = "=0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }
@@ -43,7 +43,7 @@ performance_measurement = { path = "performance_measurement", version = "0.1.0",
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "0.1.0", optional = true }
 prettytable-rs = "^0.10"
 psc-nanoid = { version = "3.1.1", features = ["rkyv", "packed"] }
-rkyv = { version = "0.8.9", features = ["uuid-1"] }
+rkyv = { version = "0.8.17", features = ["uuid-1"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
 rusty-s3 = { package = "rusty-s3-temp", version = "0.9.0", optional = true }
 smart-default = "0.7.1"
@@ -52,7 +52,7 @@ tracing = "0.1"
 url = { version = "2", optional = true }
 uuid = { version = "1.10.0", features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
-worktable_codegen = { path = "codegen", version = "=0.9.4" }
+worktable_codegen = { path = "codegen", version = "=1.0.0-beta.1" }
 
 [dev-dependencies]
 chrono = "0.4.43"

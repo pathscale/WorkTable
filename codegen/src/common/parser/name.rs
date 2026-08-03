@@ -148,6 +148,7 @@ mod tests {
 
         let mut parser = Parser::new(tokens);
         let name = parser.parse_name().unwrap();
+        assert_eq!(name, "TestName");
         let version = parser.parse_version().unwrap();
         assert_eq!(version, Some(5));
 

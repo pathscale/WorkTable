@@ -173,11 +173,12 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 
         let mut iter = self.length_ord_links.iter().rev();
         let (_, max_length_link) = iter.next()?;
+        let max_length_link = *max_length_link;
         drop(iter);
 
-        self.remove_link(*max_length_link);
+        self.remove_link(max_length_link);
 
-        Some(*max_length_link)
+        Some(max_length_link)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Link> + '_ {
@@ -386,6 +387,23 @@ mod tests {
 
         assert_eq!(registry.pop_max().unwrap().length, 300); // two links were united
         assert_eq!(registry.pop_max().unwrap().length, 50);
+    }
+
+    #[test]
+    fn test_pop_max_preserves_link_across_repeated_removal() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        for page_id in 1..=10_000_u32 {
+            let link = Link {
+                page_id: page_id.into(),
+                offset: page_id,
+                length: page_id % 1_024 + 1,
+            };
+            registry.push(link);
+            assert_eq!(registry.pop_max(), Some(link));
+        }
+
+        assert!(registry.pop_max().is_none());
     }
 
     #[test]
