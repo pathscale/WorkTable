@@ -31,6 +31,7 @@ eyre = "0.6.12"
 fastrand = "2.3.0"
 futures = "0.3.30"
 indexset = { package = "WorkTablesIndex", version = "=0.0.1", features = ["concurrent", "cdc", "multimap"] }
+vanilla_indexset = { package = "indexset", version = "=0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }
 log = "0.4.29"

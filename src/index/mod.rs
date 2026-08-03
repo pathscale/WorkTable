@@ -3,6 +3,7 @@ mod multipair;
 mod primary_index;
 mod table_index;
 mod table_secondary_index;
+mod unique;
 mod unsized_node;
 
 pub use available_index::AvailableIndex;
@@ -14,6 +15,7 @@ pub use table_index::{TableIndex, TableIndexCdc, convert_change_events};
 pub use table_secondary_index::{
     IndexError, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
 };
+pub use unique::{UniqueIndex, UpstreamIndexMap};
 pub use unsized_node::UnsizedNode;
 
 #[derive(Clone, Debug)]
