@@ -393,6 +393,69 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
 }
 
 #[tokio::test]
+async fn native_art_backends_recover_concurrent_same_row_updates() {
+    use std::sync::Arc;
+
+    use tokio::sync::Barrier;
+
+    const ROOT: &str = "tests/data/index_backend_art_concurrent_persistence";
+    const WORKERS: u64 = 8;
+    const UPDATES_PER_WORKER: u64 = 100;
+    remove_dir_if_exists(ROOT.to_string()).await;
+
+    let config = DiskConfig::new_with_table_name(
+        ROOT,
+        PersistedArcticWorkTable::name_snake_case(),
+        PersistedArcticWorkTable::version(),
+    );
+    let engine = PersistedArcticPersistenceEngine::new(config.clone()).await.unwrap();
+    let table = Arc::new(PersistedArcticWorkTable::load(engine).await.unwrap());
+    let id = table.get_next_pk().0;
+    table.insert(PersistedArcticRow { id, congee_key: 1 }).unwrap();
+
+    let barrier = Arc::new(Barrier::new(WORKERS as usize + 1));
+    let mut workers = Vec::new();
+    for worker in 0..WORKERS {
+        let table = Arc::clone(&table);
+        let barrier = Arc::clone(&barrier);
+        workers.push(tokio::spawn(async move {
+            barrier.wait().await;
+            for update in 0..UPDATES_PER_WORKER {
+                table
+                    .update(PersistedArcticRow {
+                        id,
+                        congee_key: 10_000 + worker * UPDATES_PER_WORKER + update,
+                    })
+                    .await
+                    .unwrap();
+            }
+        }));
+    }
+    barrier.wait().await;
+    for worker in workers {
+        worker.await.unwrap();
+    }
+
+    let expected = table.select(id).unwrap();
+    table.wait_for_ops().await;
+    drop(table);
+
+    let engine = PersistedArcticPersistenceEngine::new(config).await.unwrap();
+    let table = PersistedArcticWorkTable::load(engine).await.unwrap();
+    assert_eq!(table.select(id), Some(expected.clone()));
+    assert_eq!(table.select_by_congee_key(expected.congee_key), Some(expected.clone()));
+    for key in 10_000..10_000 + WORKERS * UPDATES_PER_WORKER {
+        if key != expected.congee_key {
+            assert!(table.select_by_congee_key(key).is_none());
+        }
+    }
+    table.wait_for_ops().await;
+    drop(table);
+
+    remove_dir_if_exists(ROOT.to_string()).await;
+}
+
+#[tokio::test]
 async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() {
     use provider_switch_upstream as upstream;
     use provider_switch_wti as wti;
