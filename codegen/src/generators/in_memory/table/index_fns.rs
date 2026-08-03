@@ -63,7 +63,9 @@ impl InMemoryGenerator {
         let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_by_{i}").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
-        let by = if is_float(type_.to_string().as_str()) {
+        let row_field_ident = &idx.field;
+        let is_float = is_float(type_.to_string().as_str());
+        let by = if is_float {
             quote! {
                 &OrderedFloat(by)
             }
@@ -72,11 +74,47 @@ impl InMemoryGenerator {
                 &by
             }
         };
+        let predicate_matches = if is_float {
+            quote! {
+                OrderedFloat(row.#row_field_ident).eq(&OrderedFloat(by))
+            }
+        } else {
+            quote! {
+                row.#row_field_ident.eq(&by)
+            }
+        };
+        let select = if cfg!(feature = "versioned-row-publication") {
+            quote! {
+                loop {
+                    let link: Link = self.0.indexes.#field_ident
+                        .get_value(#by)
+                        .map(Into::into)?;
+                    if let Ok(row) = self.0.data.select_non_ghosted(link) {
+                        if #predicate_matches {
+                            return Some(row);
+                        }
+                    }
+
+                    let current_link: Option<Link> = self.0.indexes.#field_ident
+                        .get_value(#by)
+                        .map(Into::into);
+                    if current_link == Some(link) {
+                        return None;
+                    }
+                }
+            }
+        } else {
+            quote! {
+                let link: Link = self.0.indexes.#field_ident.get_value(#by).map(Into::into)?;
+                let row = self.0.data.select_non_ghosted(link).ok()?;
+                #predicate_matches.then_some(row)
+            }
+        };
 
         Ok(quote! {
             pub fn #fn_name(&self, by: #type_) -> Option<#row_ident> {
-                let link: Link = self.0.indexes.#field_ident.get_value(#by).map(Into::into)?;
-                self.0.data.select_non_ghosted(link).ok()
+                let _read_guard = self.0.data.read_guard();
+                #select
             }
         })
     }
@@ -109,10 +147,14 @@ impl InMemoryGenerator {
                                                                      #column_range_type,
                                                                      #row_fields_ident>
             {
+                let read_guard = self.0.data.read_guard();
                 let rows = self.0.indexes.#field_ident
                     .get(#by)
                     .into_iter()
-                    .filter_map(|(_, link)| self.0.data.select_non_ghosted(link.0).ok())
+                    .filter_map(move |(_, link)| {
+                        let _read_guard = &read_guard;
+                        self.0.data.select_non_ghosted(link.0).ok()
+                    })
                     .filter(move |r| &r.#row_field_ident == &by);
 
                 SelectQueryBuilder::new(rows)
@@ -131,17 +173,33 @@ impl InMemoryGenerator {
         let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
         let fn_name = Ident::new(format!("select_by_{i}_range").as_str(), Span::mixed_site());
         let field_ident = &idx.name;
+        let row_field_ident = &idx.field;
         let column_pascal = Ident::new(&i.to_string().to_case(Case::Pascal), Span::mixed_site());
 
+        let revalidate = cfg!(feature = "versioned-row-publication");
         let (range_bounds, range_arg) = if is_float(type_.to_string().as_str()) {
             (
                 quote! { std::ops::RangeBounds<#type_> },
-                quote! {
+                if revalidate {
+                    quote! {
+                        (
+                            predicate_range.0.as_ref().map(|v| OrderedFloat(*v)),
+                            predicate_range.1.as_ref().map(|v| OrderedFloat(*v)),
+                        )
+                    }
+                } else {
+                    quote! {
                     (
                         range.start_bound().map(|v| OrderedFloat(*v)),
                         range.end_bound().map(|v| OrderedFloat(*v)),
                     )
+                    }
                 },
+            )
+        } else if revalidate {
+            (
+                quote! { std::ops::RangeBounds<#type_> },
+                quote! { predicate_range.clone() },
             )
         } else {
             (quote! { std::ops::RangeBounds<#type_> }, quote! { range })
@@ -149,14 +207,39 @@ impl InMemoryGenerator {
         let (index_range, select_row) = if idx.is_unique {
             (
                 quote! { self.0.indexes.#field_ident.range_links(#range_arg) },
-                quote! { |link| self.0.data.select_non_ghosted(link.0).ok() },
+                quote! {
+                    move |link| {
+                        let _read_guard = &read_guard;
+                        self.0.data.select_non_ghosted(link.0).ok()
+                    }
+                },
             )
         } else {
             (
                 quote! { self.0.indexes.#field_ident.range(#range_arg) },
-                quote! { |(_, link)| self.0.data.select_non_ghosted(link.0).ok() },
+                quote! {
+                    move |(_, link)| {
+                        let _read_guard = &read_guard;
+                        self.0.data.select_non_ghosted(link.0).ok()
+                    }
+                },
             )
         };
+        let predicate_setup = revalidate.then(|| {
+            quote! {
+                let predicate_range = (
+                    range.start_bound().cloned(),
+                    range.end_bound().cloned(),
+                );
+            }
+        });
+        let predicate_filter = revalidate.then(|| {
+            quote! {
+                .filter(move |row| {
+                    std::ops::RangeBounds::contains(&predicate_range, &row.#row_field_ident)
+                })
+            }
+        });
 
         Ok(quote! {
             pub fn #fn_name<'a, R>(&'a self, range: R) -> SelectQueryBuilder<#row_ident,
@@ -166,8 +249,11 @@ impl InMemoryGenerator {
             where
                 R: #range_bounds + 'a
             {
+                #predicate_setup
+                let read_guard = self.0.data.read_guard();
                 let rows = #index_range
-                    .filter_map(#select_row);
+                    .filter_map(#select_row)
+                    #predicate_filter;
 
                 SelectQueryBuilder::new_sorted(rows, #row_fields_ident::#column_pascal)
             }

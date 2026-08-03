@@ -16,6 +16,76 @@ worktable! (
     }
 );
 
+worktable! (
+    name: TestUniqueFloat,
+    columns: {
+        id: u64 primary_key autoincrement,
+        value: f64,
+    },
+    indexes: {
+        value_idx: value unique,
+    }
+);
+
+#[test]
+fn unique_float_point_read_revalidates_the_returned_row() {
+    let table = TestUniqueFloatWorkTable::default();
+    let first = TestUniqueFloatRow {
+        id: table.get_next_pk().into(),
+        value: 1.5,
+    };
+    let second = TestUniqueFloatRow {
+        id: table.get_next_pk().into(),
+        value: 2.5,
+    };
+    table.insert(first.clone()).unwrap();
+    table.insert(second.clone()).unwrap();
+
+    let second_link = table
+        .0
+        .primary_index
+        .pk_map
+        .get(&TestUniqueFloatPrimaryKey(second.id))
+        .map(|entry| entry.get().value.0)
+        .unwrap();
+    TableIndex::insert(&table.0.indexes.value_idx, OrderedFloat(first.value), second_link);
+
+    assert!(table.select_by_value(first.value).is_none());
+    assert_eq!(table.select_by_value(second.value), Some(second));
+}
+
+#[cfg(feature = "versioned-row-publication")]
+#[test]
+fn float_range_read_revalidates_each_resolved_row() {
+    let table = TestFloatWorkTable::default();
+    let inside = TestFloatRow {
+        id: table.get_next_pk().into(),
+        test: 1,
+        another: 10.0,
+        exchange: "inside".to_string(),
+    };
+    let outside = TestFloatRow {
+        id: table.get_next_pk().into(),
+        test: 2,
+        another: 100.0,
+        exchange: "outside".to_string(),
+    };
+    table.insert(inside.clone()).unwrap();
+    table.insert(outside.clone()).unwrap();
+
+    let outside_link = table
+        .0
+        .primary_index
+        .pk_map
+        .get(&TestFloatPrimaryKey(outside.id))
+        .map(|entry| entry.get().value.0)
+        .unwrap();
+    TableIndex::insert(&table.0.indexes.another_idx, OrderedFloat(15.0), outside_link);
+
+    let rows = table.select_by_another_range(0.0..20.0).execute().unwrap();
+    assert_eq!(rows, vec![inside]);
+}
+
 #[test]
 fn select_all_range_float_test() {
     let table = TestFloatWorkTable::default();

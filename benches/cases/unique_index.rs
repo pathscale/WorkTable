@@ -1,6 +1,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use worktable::prelude::SelectQueryExecutor;
 
 use crate::common::*;
 
@@ -60,6 +61,26 @@ fn select_by_unique_index(c: &mut Criterion) {
         b.iter(|| {
             let test = fastrand::i64(1..=1000);
             black_box(table.select_by_test(test))
+        })
+    });
+}
+
+fn select_by_unique_index_range(c: &mut Criterion) {
+    let table = UniqueIndexWorkTable::default();
+
+    for i in 1..=1000i64 {
+        let row = UniqueIndexRow {
+            id: table.get_next_pk().into(),
+            test: i,
+            another: i as u64,
+        };
+        table.insert(row).unwrap();
+    }
+
+    c.bench_function("unique_index_select_by_test_range", |b| {
+        b.iter(|| {
+            let test = fastrand::i64(1..=1000);
+            black_box(table.select_by_test_range(test..=test).execute())
         })
     });
 }
@@ -224,6 +245,7 @@ criterion_group! {
         insert,
         select_by_pk,
         select_by_unique_index,
+        select_by_unique_index_range,
         update,
         delete,
         upsert_insert,

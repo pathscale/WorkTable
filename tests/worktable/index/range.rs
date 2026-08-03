@@ -32,6 +32,39 @@ worktable!(
     }
 );
 
+#[cfg(feature = "versioned-row-publication")]
+#[test]
+fn range_read_revalidates_each_resolved_row() {
+    let table = RangeTestWorkTable::default();
+    let inside = RangeTestRow {
+        id: table.get_next_pk().into(),
+        value: 10,
+        name: "inside".to_string(),
+    };
+    let outside = RangeTestRow {
+        id: table.get_next_pk().into(),
+        value: 100,
+        name: "outside".to_string(),
+    };
+    table.insert(inside.clone()).unwrap();
+    table.insert(outside.clone()).unwrap();
+
+    let outside_link = table
+        .0
+        .primary_index
+        .pk_map
+        .get(&RangeTestPrimaryKey(outside.id))
+        .map(|entry| entry.get().value.0)
+        .unwrap();
+
+    // Model the transient state where an index entry still falls inside the
+    // requested range but its completed row version has already moved out.
+    TableIndex::insert(&table.0.indexes.val_idx, 15, outside_link);
+
+    let rows = table.select_by_value_range(0..20).execute().unwrap();
+    assert_eq!(rows, vec![inside]);
+}
+
 #[test]
 fn test_range_select_basic() {
     let table = RangeTestWorkTable::default();

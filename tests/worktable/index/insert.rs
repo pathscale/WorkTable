@@ -38,6 +38,44 @@ async fn insert() {
     assert!(table.select(2).is_none())
 }
 
+#[test]
+fn unique_point_read_revalidates_the_returned_row() {
+    let table = TestWorkTable::default();
+    let first = TestRow {
+        id: table.get_next_pk().into(),
+        val: 13,
+        attr1: "first".to_string(),
+        attr2: -128,
+        attr3: 1,
+        attr4: "first-unique".to_string(),
+    };
+    let second = TestRow {
+        id: table.get_next_pk().into(),
+        val: 14,
+        attr1: "second".to_string(),
+        attr2: 128,
+        attr3: 2,
+        attr4: "second-unique".to_string(),
+    };
+    table.insert(first.clone()).unwrap();
+    table.insert(second.clone()).unwrap();
+
+    let second_link = table
+        .0
+        .primary_index
+        .pk_map
+        .get(&TestPrimaryKey(second.id))
+        .map(|entry| entry.get().value.0)
+        .unwrap();
+
+    // Model the transient state where a unique-index entry still names a row
+    // whose indexed field has already changed.
+    TableIndex::insert(&table.0.indexes.attr2_idx, first.attr2, second_link);
+
+    assert!(table.select_by_attr2(first.attr2).is_none());
+    assert_eq!(table.select_by_attr2(second.attr2), Some(second));
+}
+
 #[tokio::test]
 async fn insert_when_pk_exists() {
     let table = TestWorkTable::default();
