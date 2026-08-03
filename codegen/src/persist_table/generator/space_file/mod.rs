@@ -142,15 +142,25 @@ impl Generator {
                 let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
             }
         } else {
+            let map_type = if self.pk_upstream {
+                quote! { UpstreamIndexMap }
+            } else {
+                quote! { IndexMap }
+            };
+            let pair_type = if self.pk_upstream {
+                quote! { UpstreamIndexPair }
+            } else {
+                quote! { IndexPair }
+            };
             quote! {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                let pk_map = IndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size);
+                let pk_map = #map_type::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size);
                 for page in self.primary_index.1 {
                     let node = page
                         .inner
                         .get_node()
                         .into_iter()
-                        .map(|p| IndexPair {
+                        .map(|p| #pair_type {
                             key: p.key,
                             value: p.value.into(),
                         })
@@ -159,9 +169,8 @@ impl Generator {
                 }
                 // Reconstruct reverse_pk_map by iterating over pk_map
                 let mut reverse_pk_map = IndexMap::<OffsetEqLink<#const_name>, #pk_type>::new();
-                for entry in pk_map.iter() {
-                    let (pk, link) = entry;
-                    reverse_pk_map.insert(*link, pk.clone());
+                for (pk, link) in pk_map.iter_values() {
+                    reverse_pk_map.insert(link, pk);
                 }
                 let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
             }

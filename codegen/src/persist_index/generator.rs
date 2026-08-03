@@ -275,16 +275,16 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| {
-                f.ident
+            .map(|field| {
+                let i = field
+                    .ident
                     .as_ref()
-                    .expect("index fields should always be named fields")
-            })
-            .map(|i| {
+                    .expect("index fields should always be named fields");
                 let ty = self
                     .field_types
                     .get(i)
                     .expect("should be available as constructed from same values");
+                let uses_upstream = field.ty.to_token_stream().to_string().contains("UpstreamIndexMap");
                 if is_unsized(&ty.to_string()) {
                     quote! {
                         let mut pages = vec![];
@@ -293,6 +293,24 @@ impl Generator {
                             pages.push(page);
                         }
                         let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let #i = (toc.pages, pages);
+                    }
+                } else if uses_upstream {
+                    quote! {
+                        let size = get_index_page_size_from_data_length::<#ty>(#const_name);
+                        let mut pages = vec![];
+                        for node in self.#i.iter_nodes() {
+                            let node: Vec<IndexPair<#ty, OffsetEqLink>> = node
+                                .lock_arc()
+                                .iter()
+                                .map(|pair| IndexPair {
+                                    key: pair.key.clone(),
+                                    value: pair.value,
+                                })
+                                .collect();
+                            pages.push(IndexPage::from_node(&node, size));
+                        }
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     }
                 } else {
@@ -340,6 +358,7 @@ impl Generator {
                 let i = f.ident.as_ref().expect("index fields should always be named fields");
                 let index_type = f.ty.to_token_stream().to_string();
                 let is_unique = !index_type.contains("IndexMultiMap");
+                let uses_upstream = index_type.contains("UpstreamIndexMap");
                 let mut split = index_type.split("<");
                 let t = Ident::new(
                     split.next().expect("index type should always have generics").trim(),
@@ -366,13 +385,18 @@ impl Generator {
                 // exactly one node, `get_node()` already yields it in order
                 // with the true maximum last, so it attaches directly.
                 let unique_reconstruct = |attach: TokenStream| {
+                    let pair_type = if uses_upstream {
+                        quote! { UpstreamIndexPair }
+                    } else {
+                        quote! { IndexPair }
+                    };
                     quote! {
                         for page in persisted.#i.1 {
-                            let inner: Vec<IndexPair<#ty, OffsetEqLink>> = page
+                            let inner: Vec<#pair_type<#ty, OffsetEqLink>> = page
                                 .inner
                                 .get_node()
                                 .into_iter()
-                                .map(|p| IndexPair {
+                                .map(|p| #pair_type {
                                     key: p.key,
                                     value: p.value.into(),
                                 })

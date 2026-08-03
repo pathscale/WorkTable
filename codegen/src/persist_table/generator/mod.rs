@@ -16,6 +16,7 @@ pub struct PersistTableAttributes {
 pub struct Generator {
     pub struct_def: ItemStruct,
     pub pk_ident: Ident,
+    pub pk_upstream: bool,
     pub attributes: PersistTableAttributes,
 }
 

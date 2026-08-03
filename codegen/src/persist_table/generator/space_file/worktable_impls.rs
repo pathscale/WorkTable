@@ -87,14 +87,32 @@ impl Generator {
                 }
             }
         } else {
+            let collect_pages = if self.pk_upstream {
+                quote! {
+                    for node in self.0.primary_index.pk_map.iter_nodes() {
+                        let node: Vec<IndexPair<#pk_type, OffsetEqLink<#const_name>>> = node
+                            .lock_arc()
+                            .iter()
+                            .map(|pair| IndexPair {
+                                key: pair.key.clone(),
+                                value: pair.value,
+                            })
+                            .collect();
+                        pages.push(IndexPage::from_node(&node, size));
+                    }
+                }
+            } else {
+                quote! {
+                    for node in self.0.primary_index.pk_map.iter_nodes() {
+                        pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                    }
+                }
+            };
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                     let mut pages = vec![];
-                    for node in self.0.primary_index.pk_map.iter_nodes() {
-                        let page = IndexPage::from_node(node.lock_arc().as_ref(), size);
-                        pages.push(page);
-                    }
+                    #collect_pages
                     let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
