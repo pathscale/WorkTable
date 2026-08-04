@@ -64,7 +64,7 @@ walkdir = { version = "2", optional = true }
 worktable_codegen = { path = "codegen", version = "=1.0.0-beta.2" }
 
 [patch.crates-io]
-WorkTablesIndex = { git = "https://github.com/pathscale/WorkTablesIndex.git", rev = "6f408010553600ed5eeb8913608b1d779dbff258" }
+WorkTablesIndex = { git = "https://github.com/pathscale/WorkTablesIndex.git", rev = "39290824289cdcb4da7f76b25a729102842813b5" }
 
 [dev-dependencies]
 chrono = "0.4.43"
