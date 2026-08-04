@@ -11,8 +11,7 @@ use rkyv::{
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
 };
-use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::marker::PhantomData;
 use std::sync::atomic::AtomicUsize;
@@ -275,10 +274,16 @@ where
             return;
         }
 
+        // A whole-page retirement subsumes every free link within that page.
+        // Publishing both would let one allocator reset/reuse the page while
+        // another writes through an overlapping link from the same page.
+        let whole_pages: HashSet<_> = retired_pages.iter().copied().collect();
         for link in retired_links.drain(..) {
             let key = OffsetEqLink(link);
             self.published_rows[publication_shard(&key)].write().remove(&key);
-            self.empty_links.push(link);
+            if !whole_pages.contains(&link.page_id) {
+                self.empty_links.push(link);
+            }
         }
         for key in retired_publications.drain(..) {
             self.published_rows[publication_shard(&key)].write().remove(&key);
@@ -1075,6 +1080,36 @@ mod tests {
         assert_eq!(reused_page.id, old_link.page_id);
         assert_eq!(reused_page.free_offset.load(Ordering::Acquire), 0);
         assert!(pages.published_slot(old_link).is_none());
+    }
+
+    #[test]
+    fn whole_page_reclamation_does_not_publish_overlapping_empty_links() {
+        let pages = DataPages::<TestRow>::from_data(vec![
+            Arc::new(Data::new(1.into())),
+            Arc::new(Data::new(2.into())),
+            Arc::new(Data::new(3.into())),
+        ]);
+        pages.current_page_id.store(2, Ordering::Release);
+        let old_link = pages.insert(TestRow { a: 1, b: 1 }).unwrap();
+        unsafe {
+            pages.with_mut_ref(old_link, |row| row.unghost()).unwrap();
+        }
+        pages.current_page_id.store(3, Ordering::Release);
+
+        let read_guard = pages.read_guard();
+        pages.delete(old_link).unwrap();
+        pages.mark_page_empty(old_link.page_id);
+        drop(read_guard);
+        pages.reclaim_retired();
+
+        assert!(pages.get_empty_pages().contains(&old_link.page_id));
+        assert!(
+            pages
+                .get_empty_links()
+                .iter()
+                .all(|link| link.page_id != old_link.page_id),
+            "whole-page and inner-link allocators must not receive overlapping storage"
+        );
     }
 
     #[test]
