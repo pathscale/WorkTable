@@ -111,7 +111,11 @@ impl PersistGenerator {
                         return Err(e);
                     }
                 };
-                let row = self.0.select(pk.clone()).unwrap();
+                // A lock-free insert publishes index reachability before it
+                // clears the staged row's ghost bit. Treat that window as an
+                // absent row: this delete linearizes before the insert's
+                // publication instead of panicking on the hidden version.
+                let row = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                 #process
             }
         } else {
@@ -122,7 +126,7 @@ impl PersistGenerator {
                         .get_value(&pk)
                         .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
-                let row = self.0.select(pk.clone()).unwrap();
+                let row = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                 #process
             }
         }

@@ -164,16 +164,20 @@ definitive; a contended lookup drops the structural guard before waiting and
 then retries the mapping. Vanilla IndexSet does not expose a comparable
 structural validation primitive; `using indexset` therefore remains
 experimental and is excluded from concurrent correctness and published
-performance claims. This WorkTablesIndex visibility guarantee is independent of
-`versioned-row-publication`, which addresses concurrent page bytes, ghost
-publication, and reclamation rather than index routing.
+performance claims. This WorkTablesIndex visibility guarantee composes with
+the mandatory immutable row-publication protocol, which addresses concurrent
+page bytes, ghost publication, and reclamation rather than index routing.
 
 ### Congee
 
 - Point lookup and mutation call Congee directly.
 - WorkTable links do not fit in Congee's one-word payload. The adapter stores an `Arc` pointer, so inserts allocate and reads clone the `Arc` before copying the link.
 - Ordered reads use Congee's native range scan and materialize only the requested key interval into a `Vec`; a full iteration is therefore O(n) with one result allocation, while a narrow range no longer dumps, re-probes, and sorts the whole tree.
-- With `persist: true`, mutations additionally take a key-striped sequencing lock before producing one logical WAL event. Memory-only Congee does not pay that cost.
+- Memory-only Congee point reads remain native and concurrent. Mutations use a
+  WorkTable adapter mutex because congee-wt 0.4.1 can otherwise lose disjoint
+  structural insert/remove updates. With `persist: true`, the persistence layer
+  additionally takes a key-striped sequencing lock before producing one logical
+  WAL event.
 
 ### Arctic
 

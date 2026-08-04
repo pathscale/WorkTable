@@ -1,6 +1,5 @@
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
-#[cfg(feature = "versioned-row-publication")]
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 #[cfg(feature = "perf_measurements")]
@@ -12,13 +11,10 @@ use rkyv::{
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
 };
-#[cfg(feature = "versioned-row-publication")]
 use std::collections::HashMap;
 use std::collections::VecDeque;
-#[cfg(feature = "versioned-row-publication")]
 use std::hash::{BuildHasherDefault, Hasher};
 use std::marker::PhantomData;
-#[cfg(feature = "versioned-row-publication")]
 use std::sync::atomic::AtomicUsize;
 use std::{
     fmt::Debug,
@@ -27,10 +23,8 @@ use std::{
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
-#[cfg(feature = "versioned-row-publication")]
 use crate::in_memory::publication::{DELETED, GHOSTED, PublishedRow, VACUUMED};
 use crate::prelude::ArchivedRowWrapper;
-#[cfg(feature = "versioned-row-publication")]
 use crate::util::OffsetEqLink;
 use crate::{
     in_memory::{
@@ -44,12 +38,9 @@ fn page_id_mapper(page_id: usize) -> usize {
     page_id - 1usize
 }
 
-#[cfg(feature = "versioned-row-publication")]
 const PUBLICATION_SHARD_COUNT: usize = 64;
-#[cfg(feature = "versioned-row-publication")]
 const RETIREMENT_BACKLOG_WARN_AT: usize = 1_024;
 
-#[cfg(feature = "versioned-row-publication")]
 fn mix_publication_offset(mut value: u64) -> u64 {
     value ^= value >> 30;
     value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -62,17 +53,14 @@ fn mix_publication_offset(mut value: u64) -> u64 {
 /// storage offset. Avalanche that offset so both hash-table bucket bits and
 /// SIMD control bits remain distributed for aligned, monotonically allocated
 /// row positions.
-#[cfg(feature = "versioned-row-publication")]
 struct PublicationHasher(u64);
 
-#[cfg(feature = "versioned-row-publication")]
 impl Default for PublicationHasher {
     fn default() -> Self {
         Self(0xcbf2_9ce4_8422_2325)
     }
 }
 
-#[cfg(feature = "versioned-row-publication")]
 impl Hasher for PublicationHasher {
     fn finish(&self) -> u64 {
         self.0
@@ -92,20 +80,16 @@ impl Hasher for PublicationHasher {
     }
 }
 
-#[cfg(feature = "versioned-row-publication")]
 type PublicationMap<Row, const DATA_LENGTH: usize> =
     HashMap<OffsetEqLink<DATA_LENGTH>, Arc<PublishedRow<Row>>, BuildHasherDefault<PublicationHasher>>;
 
-#[cfg(feature = "versioned-row-publication")]
 type PublicationShards<Row, const DATA_LENGTH: usize> =
     [RwLock<PublicationMap<Row, DATA_LENGTH>>; PUBLICATION_SHARD_COUNT];
 
-#[cfg(feature = "versioned-row-publication")]
 fn publication_shard<const DATA_LENGTH: usize>(key: &OffsetEqLink<DATA_LENGTH>) -> usize {
     mix_publication_offset(key.absolute_index()) as usize & (PUBLICATION_SHARD_COUNT - 1)
 }
 
-#[cfg(feature = "versioned-row-publication")]
 fn queue_retirement<T>(queue: &Mutex<Vec<T>>, pending_retirements: &AtomicUsize, queue_name: &'static str, value: T) {
     let mut queue = queue.lock();
     queue.push(value);
@@ -121,19 +105,17 @@ fn queue_retirement<T>(queue: &Mutex<Vec<T>>, pending_retirements: &AtomicUsize,
 }
 
 pub struct ReadGuard<'a> {
-    #[cfg(feature = "versioned-row-publication")]
     active_readers: &'a AtomicU64,
     marker: PhantomData<&'a ()>,
 }
 
 impl Drop for ReadGuard<'_> {
     fn drop(&mut self) {
-        #[cfg(feature = "versioned-row-publication")]
         self.active_readers.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
-/// Page storage and, when enabled, immutable row publication.
+/// Page storage with immutable row publication.
 ///
 /// # Versioned-publication synchronization
 ///
@@ -155,31 +137,24 @@ where
 {
     /// Immutable application-visible row versions. Published readers never
     /// borrow the mutable archived page image.
-    #[cfg(feature = "versioned-row-publication")]
     published_rows: PublicationShards<Row, DATA_LENGTH>,
 
     /// Protects the mutable page image used by writers, vacuum, and
     /// persistence. Application reads use `published_rows` after hydration.
-    #[cfg(feature = "versioned-row-publication")]
     page_access: RwLock<()>,
 
     /// Read-side grace period protecting the interval from index lookup until
     /// an immutable row version has been acquired.
-    #[cfg(feature = "versioned-row-publication")]
     active_readers: AtomicU64,
 
-    #[cfg(feature = "versioned-row-publication")]
     retired_links: Mutex<Vec<Link>>,
 
-    #[cfg(feature = "versioned-row-publication")]
     retired_pages: Mutex<Vec<PageId>>,
 
-    #[cfg(feature = "versioned-row-publication")]
     retired_publications: Mutex<Vec<OffsetEqLink<DATA_LENGTH>>>,
 
     /// Avoids taking all retirement-queue mutexes on mutations when there is
     /// no reclamation work pending.
-    #[cfg(feature = "versioned-row-publication")]
     pending_retirements: AtomicUsize,
 
     /// Pages vector. Currently, not lock free.
@@ -212,7 +187,6 @@ where
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
-    #[cfg(feature = "versioned-row-publication")]
     fn publication_flags(row: &<Row as StorableRow>::WrappedRow) -> u8 {
         let mut flags = 0;
         if row.is_ghosted() {
@@ -227,7 +201,6 @@ where
         flags
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     fn publish_wrapped_row(&self, link: Link, wrapped: <Row as StorableRow>::WrappedRow) {
         let flags = Self::publication_flags(&wrapped);
         let row = wrapped.get_inner();
@@ -242,19 +215,16 @@ where
         }
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     fn stage_published_row(&self, link: Link, row: Row) {
         let wrapped = <Row as StorableRow>::WrappedRow::from_inner(row);
         self.publish_wrapped_row(link, wrapped);
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     fn published_slot(&self, link: Link) -> Option<Arc<PublishedRow<Row>>> {
         let key = OffsetEqLink(link);
         self.published_rows[publication_shard(&key)].read().get(&key).cloned()
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     fn published_slot_or_hydrate(&self, link: Link) -> Result<Arc<PublishedRow<Row>>, ExecutionError>
     where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
@@ -282,17 +252,14 @@ where
     }
 
     pub fn read_guard(&self) -> ReadGuard<'_> {
-        #[cfg(feature = "versioned-row-publication")]
         self.active_readers.fetch_add(1, Ordering::SeqCst);
 
         ReadGuard {
-            #[cfg(feature = "versioned-row-publication")]
             active_readers: &self.active_readers,
             marker: PhantomData,
         }
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     fn reclaim_retired(&self) {
         if self.pending_retirements.load(Ordering::Acquire) == 0 {
             return;
@@ -325,19 +292,12 @@ where
 
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "versioned-row-publication")]
             published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
-            #[cfg(feature = "versioned-row-publication")]
             page_access: RwLock::new(()),
-            #[cfg(feature = "versioned-row-publication")]
             active_readers: AtomicU64::new(0),
-            #[cfg(feature = "versioned-row-publication")]
             retired_links: Mutex::new(Vec::new()),
-            #[cfg(feature = "versioned-row-publication")]
             retired_pages: Mutex::new(Vec::new()),
-            #[cfg(feature = "versioned-row-publication")]
             retired_publications: Mutex::new(Vec::new()),
-            #[cfg(feature = "versioned-row-publication")]
             pending_retirements: AtomicUsize::new(0),
             // We are starting ID's from `1` because `0`'s page in file is info page.
             pages: RwLock::new(vec![Arc::new(Data::new(1.into()))]),
@@ -356,19 +316,12 @@ where
         } else {
             let last_page_id = vec.len();
             Self {
-                #[cfg(feature = "versioned-row-publication")]
                 published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
-                #[cfg(feature = "versioned-row-publication")]
                 page_access: RwLock::new(()),
-                #[cfg(feature = "versioned-row-publication")]
                 active_readers: AtomicU64::new(0),
-                #[cfg(feature = "versioned-row-publication")]
                 retired_links: Mutex::new(Vec::new()),
-                #[cfg(feature = "versioned-row-publication")]
                 retired_pages: Mutex::new(Vec::new()),
-                #[cfg(feature = "versioned-row-publication")]
                 retired_publications: Mutex::new(Vec::new()),
-                #[cfg(feature = "versioned-row-publication")]
                 pending_retirements: AtomicUsize::new(0),
                 pages: RwLock::new(vec),
                 empty_links: EmptyLinkRegistry::default(),
@@ -388,16 +341,11 @@ where
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
-        #[cfg(feature = "versioned-row-publication")]
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
-        #[cfg(not(feature = "versioned-row-publication"))]
-        let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
 
-        #[cfg(feature = "versioned-row-publication")]
         self.reclaim_retired();
 
         if let Some(link) = self.empty_links.pop_max() {
-            #[cfg(feature = "versioned-row-publication")]
             let _page_access = self.page_access.write();
             let pages = self.pages.read();
             let current_page: usize = page_id_mapper(link.page_id.into());
@@ -408,7 +356,6 @@ where
                     if let Some(l) = left_link {
                         self.empty_links.push(l);
                     }
-                    #[cfg(feature = "versioned-row-publication")]
                     self.stage_published_row(link, row);
                     return Ok(link);
                 }
@@ -426,7 +373,6 @@ where
 
         loop {
             let (link, tried_page) = {
-                #[cfg(feature = "versioned-row-publication")]
                 let _page_access = self.page_access.write();
                 let pages = self.pages.read();
                 let current_page = page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
@@ -436,7 +382,6 @@ where
             };
             match link {
                 Ok(link) => {
-                    #[cfg(feature = "versioned-row-publication")]
                     self.stage_published_row(link, row);
                     self.row_count.fetch_add(1, Ordering::Relaxed);
                     return Ok(link);
@@ -492,7 +437,6 @@ where
     /// Allocates a new page or reuses a free page from `empty_pages`.
     /// Does **NOT** set the page as `current`.
     pub fn allocate_new_or_pop_free(&self) -> Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>> {
-        #[cfg(feature = "versioned-row-publication")]
         self.reclaim_retired();
 
         let page_id = {
@@ -501,7 +445,6 @@ where
         };
 
         if let Some(page_id) = page_id {
-            #[cfg(feature = "versioned-row-publication")]
             let _page_access = self.page_access.write();
             let pages = self.pages.read();
             let index = page_id_mapper(page_id.into());
@@ -529,21 +472,8 @@ where
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let link = link.into();
-        #[cfg(feature = "versioned-row-publication")]
-        {
-            let slot = self.published_slot_or_hydrate(link)?;
-            Ok(slot.snapshot().as_ref().clone())
-        }
-
-        #[cfg(not(feature = "versioned-row-publication"))]
-        {
-            let pages = self.pages.read();
-            let page = pages
-                .get(page_id_mapper(link.page_id.into()))
-                .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-            let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
-            Ok(gen_row.get_inner())
-        }
+        let slot = self.published_slot_or_hydrate(link)?;
+        Ok(slot.snapshot().as_ref().clone())
     }
 
     pub fn select_non_ghosted(&self, link: Link) -> Result<Row, ExecutionError>
@@ -554,31 +484,15 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        #[cfg(feature = "versioned-row-publication")]
-        {
-            let slot = self.published_slot_or_hydrate(link)?;
-            let (row, flags) = slot.load();
-            if flags & GHOSTED != 0 {
-                return Err(ExecutionError::Ghosted);
-            }
-            if flags & DELETED != 0 {
-                return Err(ExecutionError::Deleted);
-            }
-            Ok(row.as_ref().clone())
+        let slot = self.published_slot_or_hydrate(link)?;
+        let (row, flags) = slot.load();
+        if flags & GHOSTED != 0 {
+            return Err(ExecutionError::Ghosted);
         }
-
-        #[cfg(not(feature = "versioned-row-publication"))]
-        {
-            let pages = self.pages.read();
-            let page = pages
-                .get(page_id_mapper(link.page_id.into()))
-                .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-            let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
-            if gen_row.is_ghosted() {
-                return Err(ExecutionError::Ghosted);
-            }
-            Ok(gen_row.get_inner())
+        if flags & DELETED != 0 {
+            return Err(ExecutionError::Deleted);
         }
+        Ok(row.as_ref().clone())
     }
 
     pub fn select_non_vacuumed(&self, link: Link) -> Result<Row, ExecutionError>
@@ -589,37 +503,18 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        #[cfg(feature = "versioned-row-publication")]
-        {
-            let slot = self.published_slot_or_hydrate(link)?;
-            let (row, flags) = slot.load();
-            if flags & GHOSTED != 0 {
-                return Err(ExecutionError::Ghosted);
-            }
-            if flags & VACUUMED != 0 {
-                return Err(ExecutionError::Vacuumed);
-            }
-            if flags & DELETED != 0 {
-                return Err(ExecutionError::Deleted);
-            }
-            Ok(row.as_ref().clone())
+        let slot = self.published_slot_or_hydrate(link)?;
+        let (row, flags) = slot.load();
+        if flags & GHOSTED != 0 {
+            return Err(ExecutionError::Ghosted);
         }
-
-        #[cfg(not(feature = "versioned-row-publication"))]
-        {
-            let pages = self.pages.read();
-            let page = pages
-                .get(page_id_mapper(link.page_id.into()))
-                .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-            let gen_row = page.get_row(link).map_err(ExecutionError::DataPageError)?;
-            if gen_row.is_ghosted() {
-                return Err(ExecutionError::Ghosted);
-            }
-            if gen_row.is_vacuumed() {
-                return Err(ExecutionError::Vacuumed);
-            }
-            Ok(gen_row.get_inner())
+        if flags & VACUUMED != 0 {
+            return Err(ExecutionError::Vacuumed);
         }
+        if flags & DELETED != 0 {
+            return Err(ExecutionError::Deleted);
+        }
+        Ok(row.as_ref().clone())
     }
 
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataPages"))]
@@ -628,7 +523,6 @@ where
         Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        #[cfg(feature = "versioned-row-publication")]
         let _page_access = self.page_access.read();
         let pages = self.pages.read();
         let page = pages
@@ -649,7 +543,6 @@ where
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        #[cfg(feature = "versioned-row-publication")]
         let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let page = pages
@@ -664,7 +557,6 @@ where
             op(gen_row)
         };
 
-        #[cfg(feature = "versioned-row-publication")]
         {
             let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
             self.publish_wrapped_row(link, wrapped);
@@ -685,21 +577,16 @@ where
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
-        #[cfg(feature = "versioned-row-publication")]
         let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        #[cfg(feature = "versioned-row-publication")]
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
-        #[cfg(not(feature = "versioned-row-publication"))]
-        let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         let result = unsafe {
             page.save_row_by_link(&gen_row, link)
                 .map_err(ExecutionError::DataPageError)
         }?;
-        #[cfg(feature = "versioned-row-publication")]
         self.stage_published_row(link, row);
         Ok(result)
     }
@@ -715,19 +602,12 @@ where
     {
         unsafe { self.with_mut_ref(link, |r| r.delete())? }
 
-        #[cfg(feature = "versioned-row-publication")]
-        {
-            queue_retirement(&self.retired_links, &self.pending_retirements, "links", link);
-            self.reclaim_retired();
-        }
-
-        #[cfg(not(feature = "versioned-row-publication"))]
-        self.empty_links.push(link);
+        queue_retirement(&self.retired_links, &self.pending_retirements, "links", link);
+        self.reclaim_retired();
         Ok(())
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
-        #[cfg(feature = "versioned-row-publication")]
         let _page_access = self.page_access.read();
         let pages = self.pages.read();
         let page = pages
@@ -738,17 +618,8 @@ where
 
     pub fn mark_page_empty(&self, page_id: PageId) {
         if u32::from(page_id) != self.current_page_id.load(Ordering::Acquire) {
-            #[cfg(feature = "versioned-row-publication")]
-            {
-                queue_retirement(&self.retired_pages, &self.pending_retirements, "pages", page_id);
-                self.reclaim_retired();
-            }
-
-            #[cfg(not(feature = "versioned-row-publication"))]
-            {
-                let mut g = self.empty_pages.write();
-                g.push_back(page_id);
-            }
+            queue_retirement(&self.retired_pages, &self.pending_retirements, "pages", page_id);
+            self.reclaim_retired();
         }
     }
 
@@ -794,7 +665,6 @@ where
     }
 
     pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
-        #[cfg(feature = "versioned-row-publication")]
         let _page_access = self.page_access.read();
         let pages = self.pages.read();
         pages
@@ -804,7 +674,6 @@ where
     }
 
     pub(crate) fn reset_page(&self, page_id: PageId) -> Result<(), ExecutionError> {
-        #[cfg(feature = "versioned-row-publication")]
         let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let page = pages
@@ -837,7 +706,6 @@ where
             + Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        #[cfg(feature = "versioned-row-publication")]
         let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let from_page = pages
@@ -859,7 +727,6 @@ where
         archived.set_in_vacuum_process();
         let new_link = to_page.save_raw_row(&raw_data).map_err(ExecutionError::DataPageError)?;
 
-        #[cfg(feature = "versioned-row-publication")]
         {
             let old_wrapped = from_page.get_row(from_link).map_err(ExecutionError::DataPageError)?;
             self.publish_wrapped_row(from_link, old_wrapped);
@@ -871,19 +738,13 @@ where
     }
 
     pub(crate) fn retire_published_link(&self, link: Link) {
-        #[cfg(feature = "versioned-row-publication")]
-        {
-            queue_retirement(
-                &self.retired_publications,
-                &self.pending_retirements,
-                "publications",
-                OffsetEqLink(link),
-            );
-            self.reclaim_retired();
-        }
-
-        #[cfg(not(feature = "versioned-row-publication"))]
-        let _ = link;
+        queue_retirement(
+            &self.retired_publications,
+            &self.pending_retirements,
+            "publications",
+            OffsetEqLink(link),
+        );
+        self.reclaim_retired();
     }
 
     pub fn get_page_count(&self) -> usize {
@@ -950,10 +811,8 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    #[cfg(feature = "versioned-row-publication")]
     use std::sync::mpsc;
     use std::thread;
-    #[cfg(feature = "versioned-row-publication")]
     use std::time::Duration;
     use std::time::Instant;
 
@@ -1091,7 +950,6 @@ mod tests {
         assert_eq!(res.err(), Some(PagesExecutionError::Ghosted))
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     #[test]
     fn versioned_insert_stays_hidden_until_unghost() {
         let pages = DataPages::<TestRow>::new();
@@ -1105,7 +963,6 @@ mod tests {
         assert_eq!(pages.select_non_ghosted(link), Ok(row));
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     #[test]
     fn versioned_reader_observes_old_row_while_page_update_is_incomplete() {
         let pages = Arc::new(DataPages::<TestRow>::new());
@@ -1147,7 +1004,6 @@ mod tests {
         assert_eq!(pages.select_non_ghosted(link), Ok(TestRow { a: 1, b: 1 }));
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     #[test]
     fn retired_version_survives_link_reuse_for_in_flight_reader() {
         let pages = DataPages::<TestRow>::new();
@@ -1170,7 +1026,6 @@ mod tests {
         assert_eq!(pages.select_non_ghosted(reused_link), Ok(TestRow { a: 2, b: 2 }));
     }
 
-    #[cfg(feature = "versioned-row-publication")]
     #[test]
     fn read_grace_period_prevents_link_aba() {
         let pages = DataPages::<TestRow>::new();

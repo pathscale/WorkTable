@@ -2,17 +2,9 @@ use std::fmt::Debug;
 
 use rkyv::Archive;
 
-#[cfg(feature = "versioned-row-publication")]
 pub trait PublicationSafe: Send + Sync + 'static {}
 
-#[cfg(feature = "versioned-row-publication")]
 impl<T: Send + Sync + 'static> PublicationSafe for T {}
-
-#[cfg(not(feature = "versioned-row-publication"))]
-pub trait PublicationSafe {}
-
-#[cfg(not(feature = "versioned-row-publication"))]
-impl<T> PublicationSafe for T {}
 
 /// Common trait for the `Row`s that can be stored on the [`Data`] page.
 ///

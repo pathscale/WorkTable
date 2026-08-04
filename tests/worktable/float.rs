@@ -54,7 +54,6 @@ fn unique_float_point_read_revalidates_the_returned_row() {
     assert_eq!(table.select_by_value(second.value), Some(second));
 }
 
-#[cfg(feature = "versioned-row-publication")]
 #[test]
 fn float_range_read_revalidates_each_resolved_row() {
     let table = TestFloatWorkTable::default();

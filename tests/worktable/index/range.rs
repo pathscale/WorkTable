@@ -32,7 +32,6 @@ worktable!(
     }
 );
 
-#[cfg(feature = "versioned-row-publication")]
 #[tokio::test]
 async fn idle_select_builder_does_not_pin_retired_links() {
     let table = UniqueRangeTestWorkTable::default();
@@ -62,7 +61,6 @@ async fn idle_select_builder_does_not_pin_retired_links() {
     drop(idle_query);
 }
 
-#[cfg(feature = "versioned-row-publication")]
 #[test]
 fn range_read_revalidates_each_resolved_row() {
     let table = RangeTestWorkTable::default();

@@ -76,6 +76,33 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
     }
 }
 
+/// Pins the exact publication schedule that used to let delete unwrap a
+/// ghosted row: data and primary-index reachability exist, but insert has not
+/// yet cleared the lifecycle bit. Delete must linearize before publication and
+/// leave the staged insert intact.
+#[tokio::test]
+async fn delete_during_insert_publication_window_returns_not_found() {
+    let table = UpsertChurnWorkTable::default();
+    const KEY: u64 = 7;
+    let row = UpsertChurnRow { id: KEY, val: 11 };
+
+    let link = table.0.data.insert(row.clone()).unwrap();
+    assert!(
+        table
+            .0
+            .primary_index
+            .insert_checked(UpsertChurnPrimaryKey::from(KEY), link)
+            .is_some()
+    );
+
+    assert!(matches!(table.delete(KEY).await, Err(WorkTableError::NotFound)));
+
+    unsafe {
+        table.0.data.with_mut_ref(link, |staged| staged.unghost()).unwrap();
+    }
+    assert_eq!(table.select(KEY), Some(row));
+}
+
 async fn churn_run(churn_flips: u64, upserts_per_task: u64) {
     #[allow(non_snake_case)]
     let CHURN_FLIPS = churn_flips;

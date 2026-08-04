@@ -140,32 +140,19 @@ where
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let _read_guard = self.data.read_guard();
-        #[cfg(feature = "versioned-row-publication")]
-        {
-            for _ in 0..64 {
-                let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
-                if let Ok(row) = self.data.select_non_ghosted(link) {
-                    return Some(row);
-                }
-
-                let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
-                if current_link == Some(link) {
-                    return None;
-                }
-                std::hint::spin_loop();
+        for _ in 0..64 {
+            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
+            if let Ok(row) = self.data.select_non_ghosted(link) {
+                return Some(row);
             }
-            None
-        }
 
-        #[cfg(not(feature = "versioned-row-publication"))]
-        {
-            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(|value| value.0);
-            if let Some(link) = link {
-                self.data.select_non_ghosted(link).ok()
-            } else {
-                None
+            let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
+            if current_link == Some(link) {
+                return None;
             }
+            std::hint::spin_loop();
         }
+        None
     }
 
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]

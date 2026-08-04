@@ -69,15 +69,11 @@ WorkTablesIndex uses its predictable branch-based node search by default in Work
 
 ## Concurrent read/write publication
 
-The default build preserves the existing lowest-latency page path and requires
-applications to exclude reads that overlap page-byte mutation. Applications
-that need generated reads to overlap updates, inserts, deletes, and vacuum can
-opt into immutable row-version publication:
-
-```toml
-[dependencies]
-worktable = { version = "=1.0.0-beta.2", features = ["versioned-row-publication"] }
-```
+Generated reads always use immutable row-version publication. This is also true
+for `default-features = false` builds: disabling a Cargo feature must not expose
+a safe API that can race deserialization against page-byte mutation. The former
+`versioned-row-publication` feature name remains accepted as a compatibility
+no-op for existing manifests.
 
 Generated point lookups use a strict backend-specific visibility contract by
 default. WorkTablesIndex 0.0.4 keeps the structural mapping pinned until its
@@ -87,15 +83,15 @@ Congee and Arctic use their native concurrent point lookups. The explicit
 vanilla `using indexset` backend remains experimental and is excluded from the
 stable concurrent-read contract because upstream IndexSet does not expose an
 equivalent validation primitive. This index-visibility contract is independent
-of the optional row publication mode above.
+of row publication.
 
-In this mode, generated reads acquire an immutable owned row version instead
+Generated reads acquire an immutable owned row version instead
 of borrowing the mutable archived page image. Writers replace a per-row version
 only after a complete page mutation, insert visibility is an atomic lifecycle
 transition after every index is installed, and deleted or relocated links are
 not reused until readers that could have captured them have drained. Page bytes
 remain the persistence image and are internally serialized; range queries are
-still non-snapshot reads. The mode intentionally trades memory, an atomic
+still non-snapshot reads. The protocol intentionally trades memory, an atomic
 read-side grace-period counter, and publication bookkeeping for this stronger
 concurrent-read contract. See
 [`docs/versioned-row-publication.md`](docs/versioned-row-publication.md) for the
