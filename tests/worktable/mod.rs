@@ -10,6 +10,7 @@ mod in_place;
 mod index;
 mod index_backends;
 mod lock_order;
+mod mutation_gate_deadlock;
 mod nid;
 mod option;
 mod tuple_primary_key;
