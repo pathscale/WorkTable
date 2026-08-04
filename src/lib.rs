@@ -31,7 +31,7 @@ pub mod prelude {
     pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};
     pub use crate::lock::FullRowLock;
     pub use crate::lock::{Lock, RowLock};
-    pub use crate::lock::{LockGuard, LockMap};
+    pub use crate::lock::{LockAcquirer, LockGuard, LockMap};
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
         AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
