@@ -34,14 +34,14 @@ arctic = { package = "arctic-wt", version = "0.1.4" }
 congee = { package = "congee-wt", version = "0.4.1" }
 convert_case = "0.6.0"
 crc32fast = "1.5.0"
-data_bucket = "=0.5.1"
+data_bucket = "=0.5.2"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
 # data_bucket = { path = "../DataBucket", version = "0.3.14" }
 derive_more = { version = "2.0.1", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6.12"
 fastrand = "2.3.0"
 futures = "0.3.30"
-indexset = { package = "WorkTablesIndex", version = "=0.0.4", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "=0.0.5", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 vanilla_indexset = { package = "indexset", version = "=0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }
@@ -62,9 +62,6 @@ url = { version = "2", optional = true }
 uuid = { version = "1.24.0", features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
 worktable_codegen = { path = "codegen", version = "=1.0.0-beta.2" }
-
-[patch.crates-io]
-WorkTablesIndex = { git = "https://github.com/pathscale/WorkTablesIndex.git", rev = "39290824289cdcb4da7f76b25a729102842813b5" }
 
 [dev-dependencies]
 chrono = "0.4.43"
