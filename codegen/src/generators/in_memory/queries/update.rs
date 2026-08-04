@@ -291,9 +291,23 @@ impl InMemoryGenerator {
                         .get_value(&pk)
                         .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
-                    unsafe {
-                        self.0.data.update_in_place::<{ #const_name }>(row_new, current_link)
-                            .map_err(WorkTableError::PagesError)?;
+                    // Try the same-slot in-place write. Equal field sizes do not
+                    // guarantee an equal TOTAL serialized length (alignment), and
+                    // a concurrent reinsert may have moved the row, so a mismatch
+                    // is expected sometimes — fall back to a full reinsert rather
+                    // than fail. Correctness-first: reinsert always works.
+                    let in_place_ok = unsafe {
+                        self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), current_link).is_ok()
+                    };
+                    if in_place_ok {
+                        self.0.update_state.remove(&pk);
+                        return core::result::Result::Ok(());
+                    }
+
+                    let row_old_for_reinsert = self.0.select(pk.clone()).expect("should not be deleted by other thread");
+                    if let Err(e) = self.reinsert(row_old_for_reinsert, row_new).await {
+                        self.0.update_state.remove(&pk);
+                        return Err(e);
                     }
                     self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
