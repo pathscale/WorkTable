@@ -1,17 +1,44 @@
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
 use crate::lock::RowLock;
 
+const MUTATION_STRIPE_COUNT: usize = 64;
+
+#[derive(Debug, Default)]
+struct MutationStripe {
+    next_ticket: AtomicU64,
+    serving: AtomicU64,
+}
+
+/// Synchronous, task-safe gate for one primary-key mutation stripe.
+///
+/// Generated async row locks and synchronous inserts share these gates so a
+/// synchronous API entry point cannot interleave its multi-structure
+/// publication with an update or delete of the same key.
+#[derive(Debug)]
+pub struct MutationGuard {
+    stripes: Arc<[MutationStripe; MUTATION_STRIPE_COUNT]>,
+    stripe: usize,
+}
+
+impl Drop for MutationGuard {
+    fn drop(&mut self) {
+        self.stripes[self.stripe].serving.fetch_add(1, Ordering::Release);
+    }
+}
+
 #[derive(Debug)]
 pub struct LockMap<LockType, PrimaryKey> {
     map: RwLock<HashMap<PrimaryKey, Arc<tokio::sync::RwLock<LockType>>>>,
     next_id: AtomicU16,
+    mutation_stripes: Arc<[MutationStripe; MUTATION_STRIPE_COUNT]>,
 }
 
 impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey> {
@@ -19,6 +46,7 @@ impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey> {
         Self {
             map: RwLock::new(HashMap::new()),
             next_id: AtomicU16::default(),
+            mutation_stripes: Arc::new(std::array::from_fn(|_| MutationStripe::default())),
         }
     }
 }
@@ -103,5 +131,33 @@ where
 
     pub fn next_id(&self) -> u16 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Serializes the synchronous mutation phase for this key.
+    ///
+    /// The holder must not perform a suspending `.await`. Generated locked
+    /// operations acquire this only after their async predecessor wait has
+    /// completed, and the synchronous `insert` path never awaits.
+    pub fn mutation_guard(&self, key: &PrimaryKey) -> MutationGuard {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let stripe = (hasher.finish() as usize) % MUTATION_STRIPE_COUNT;
+        let gate = &self.mutation_stripes[stripe];
+        let ticket = gate.next_ticket.fetch_add(1, Ordering::Relaxed);
+        let mut spins = 0u32;
+
+        while gate.serving.load(Ordering::Acquire) != ticket {
+            if spins < 16 {
+                spins += 1;
+                std::hint::spin_loop();
+            } else {
+                std::thread::yield_now();
+            }
+        }
+
+        MutationGuard {
+            stripes: self.mutation_stripes.clone(),
+            stripe,
+        }
     }
 }

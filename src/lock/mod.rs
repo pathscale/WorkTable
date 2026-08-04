@@ -14,7 +14,7 @@ use std::task::{Context, Poll};
 use futures::task::AtomicWaker;
 use parking_lot::Mutex;
 
-pub use map::LockMap;
+pub use map::{LockMap, MutationGuard};
 pub use row_lock::{FullRowLock, RowLock};
 
 /// Maximum number of spin iterations before falling back to async waiting.
@@ -32,6 +32,10 @@ pub struct LockGuard<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
     lock: Arc<Lock>,
     lock_map: Arc<LockMap<LockType, PrimaryKey>>,
     primary_key: PrimaryKey,
+    /// Present for single-row operations. Multi-row queries acquire one
+    /// mutation stripe only while processing each row, after all row locks are
+    /// held, so stripe collisions cannot invert their primary-key lock order.
+    _mutation_guard: Option<MutationGuard>,
     /// Marker to make this type ![`Sync`] (but still [`Send`])
     _not_sync: PhantomData<Cell<()>>,
 }
@@ -48,6 +52,24 @@ where
             lock,
             lock_map,
             primary_key,
+            _mutation_guard: None,
+            _not_sync: PhantomData,
+        }
+    }
+
+    /// Creates a row guard that also serializes the mutation phase with the
+    /// synchronous insert path for the same primary key.
+    pub fn new_with_mutation(
+        lock: Arc<Lock>,
+        lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+        primary_key: PrimaryKey,
+    ) -> Self {
+        let mutation_guard = lock_map.mutation_guard(&primary_key);
+        Self {
+            lock,
+            lock_map,
+            primary_key,
+            _mutation_guard: Some(mutation_guard),
             _not_sync: PhantomData,
         }
     }
@@ -124,7 +146,7 @@ impl Lock {
     }
 
     pub fn unlock(&self) {
-        self.locked.store(false, Ordering::Relaxed);
+        self.locked.store(false, Ordering::Release);
         let guard = self.wakers.lock();
         for w in guard.iter() {
             w.wake()
@@ -136,7 +158,7 @@ impl Lock {
     }
 
     pub fn is_locked(&self) -> bool {
-        self.locked.load(Ordering::Relaxed)
+        self.locked.load(Ordering::Acquire)
     }
 
     pub fn wait(&self) -> LockWait {

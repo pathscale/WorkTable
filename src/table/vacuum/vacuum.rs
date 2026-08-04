@@ -262,6 +262,7 @@ where
 
         for (from_link, pk) in links {
             let lock = self.full_row_lock(&pk).await;
+            let _mutation_guard = self.lock_manager.mutation_guard(&pk);
             if self
                 .data_pages
                 .with_ref(from_link.0, |r| r.is_deleted())

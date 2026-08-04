@@ -279,11 +279,11 @@ impl PersistGenerator {
             /// Inserts the row if its primary key is absent, updates it
             /// otherwise.
             ///
-            /// A definitely absent key takes the same optimistic lock-free
-            /// insert path as `insert`. Existing keys and insertion collisions
-            /// acquire one full-row lock across the repeated existence check
-            /// and selected mutation, so upserts, updates, and deletes on the
-            /// same key cannot invalidate that decision.
+            /// A definitely absent key takes the same optimistic synchronous
+            /// insert path as `insert`. Insert and generated locked mutations
+            /// share a per-key mutation gate; existing keys and insertion
+            /// collisions also acquire the full-row lock across the repeated
+            /// existence check and selected mutation.
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 if !self.0.primary_index.pk_map.contains_key(&pk) {
@@ -293,17 +293,14 @@ impl PersistGenerator {
                         core::result::Result::Err(e) => return core::result::Result::Err(e),
                     }
                 }
-                // Retries only fire when a racing unlocked insert/delete moved
-                // the row out from under a locked decision (NotFound /
-                // row-absent). A raw insert/delete pair does not join this row
-                // lock, so a hot `yield_now` spin can livelock the upsert
-                // against sustained same-key churn. Escalate the backoff so the
-                // racing mutation's publication settles and the upsert makes
-                // forward progress.
+                // Retries only fire when an existence flip invalidated the
+                // optimistic decision (NotFound / row-absent). The FIFO
+                // per-key mutation gate guarantees forward progress; retain a
+                // bounded scheduler backoff for repeated decision races.
                 let mut backoff_spins: u32 = 0;
                 loop {
                     let op_lock = { #full_row_lock };
-                    let guard = LockGuard::new(
+                    let guard = LockGuard::new_with_mutation(
                         op_lock,
                         self.0.lock_manager.clone(),
                         pk.clone(),
@@ -312,11 +309,15 @@ impl PersistGenerator {
                     let result = if self.0.primary_index.pk_map.contains_key(&pk) {
                         self.update_with_guard(row.clone(), guard).await
                     } else {
+                        // `insert` acquires the same per-key mutation gate as
+                        // `guard`; release the row operation before entering
+                        // the synchronous insertion protocol, then retry the
+                        // locked decision if another writer won the race.
+                        drop(guard);
                         match self.insert(row.clone()) {
                             core::result::Result::Ok(_) => core::result::Result::Ok(()),
-                            core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) => {
-                                self.update_with_guard(row.clone(), guard).await
-                            }
+                            core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) =>
+                                core::result::Result::Err(WorkTableError::NotFound),
                             core::result::Result::Err(e) => core::result::Result::Err(e),
                         }
                     };
