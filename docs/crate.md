@@ -81,6 +81,15 @@ secondary-index types. Existing legacy stores whose metadata is completely
 empty remain readable but cannot be schema-validated, and loading them does not
 rewrite the file. A non-empty schema mismatch is rejected before row loading.
 
+`PersistedWorkTable::load()` is always the strict production path: it validates
+primary/data integrity and agreement with every secondary index before returning a
+table. An offline recovery program may explicitly use
+`load_with(engine, LoadMode::Recovery)` on a private scratch copy to read
+individually validated rows through a surviving index and copy them into a new table.
+Recovery mode is not an in-place repair, must not serve traffic, and the rebuilt
+destination must pass a normal strict load before publication. See the repository's
+`docs/persistence-durability.md` for the complete procedure.
+
 Persisted vacuum compacts the live in-memory layout and keeps persisted indexes
 consistent with moved rows. It does not truncate `.wt.data`. Generated
 persisted tables expose `persisted_data_file_size_bytes()` so operators can

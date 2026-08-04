@@ -9,6 +9,7 @@ mod failure;
 mod index_page;
 mod loaded_index_growth;
 mod read;
+mod recovery_load;
 mod schema;
 mod space_index;
 mod sync;

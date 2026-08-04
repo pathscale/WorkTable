@@ -40,8 +40,10 @@ cargo add worktable@1.0.0-beta.4
 > not mean the change is on stable storage. `wait_for_ops()` and `close()` flush the
 > persistence pipeline, but the current disk format has no transaction journal and
 > does not `fsync` every batch. Process or power loss can therefore lose acknowledged
-> changes. A torn store is refused with `PersistenceLoadError` rather than opened as
-> plausible-but-invented rows. See the [durability and recovery contract](docs/persistence-durability.md).
+> changes. Normal loads refuse a torn store with `PersistenceLoadError` rather than
+> opening plausible-but-invented rows. A deliberately explicit recovery mode can read
+> individually validated rows from a private scratch copy through a surviving index;
+> see the [durability and recovery contract](docs/persistence-durability.md).
 
 Persistence is implemented, not planned. `PersistedWorkTable` and `PersistenceConfig` are
 exported from the crate root; the prelude carries `DiskPersistenceEngine`,
@@ -96,7 +98,10 @@ need an external snapshot/rebuild strategy. A graceful persistence error is
 terminal and surfaced consistently, but abrupt termination can currently leave
 a partial multi-file batch. Loading audits archived rows plus primary and
 secondary index consistency before exposing the table; torn state is refused as
-`PersistenceLoadError` and must be restored or rebuilt as documented above.
+`PersistenceLoadError`. Offline recovery tools may opt into `LoadMode::Recovery` to
+copy individually validated rows through a surviving index into a clean table, which
+must then pass a normal strict load before publication. This mode is not an in-place
+repair and must never serve live traffic.
 
 Generated persisted tables store row-schema, primary-key, and secondary-index
 metadata in `SpaceInfo`. Existing legacy files whose schema metadata is
