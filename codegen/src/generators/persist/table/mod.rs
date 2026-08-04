@@ -89,6 +89,14 @@ impl PersistGenerator {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized, pk_upstream)]
             },
+            (true, crate::common::model::IndexBackend::WorktablesIndex)
+                if cfg!(feature = "logical-index-persistence") =>
+            {
+                quote! {
+                    #[derive(Debug, PersistTable)]
+                    #[table(pk_unsized, pk_wti_logical)]
+                }
+            }
             (true, _) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized)]
@@ -105,6 +113,14 @@ impl PersistGenerator {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_congee)]
             },
+            (false, crate::common::model::IndexBackend::WorktablesIndex)
+                if cfg!(feature = "logical-index-persistence") =>
+            {
+                quote! {
+                    #[derive(Debug, PersistTable)]
+                    #[table(pk_wti_logical)]
+                }
+            }
             (false, crate::common::model::IndexBackend::WorktablesIndex) => quote! {
                 #[derive(Debug, PersistTable)]
             },

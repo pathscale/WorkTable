@@ -1,6 +1,6 @@
 # WTI dirty-generation persistence
 
-**Status:** immediate follow-up design; not implemented.
+**Status:** first stage implemented behind `logical-index-persistence`; dirty-generation checkpoints remain follow-up work.
 
 **Scope:** reduce caller-thread persistence overhead for WorkTablesIndex (WTI) without changing point-read behavior or weakening recovery.
 
@@ -18,6 +18,22 @@ A focused local ARM probe measured:
 
 These are two interleaved ten-trial microprobe runs, not publication results. They exclude row work and disk I/O. They establish that caller-side CDC is large enough to optimize.
 
+The first implementation was then measured with another ten-trial interleaved
+ARM probe over 2,000,000 existing-key mutations and 8,000,000 point reads per
+trial:
+
+| Path | Median | Delta |
+|---|---:|---:|
+| Structural CDC update | 80.916 ns/op | baseline |
+| Logical foreground update | 71.440 ns/op | 11.71% faster |
+| Raw WTI point read | 105.096 ns/op | baseline |
+| Wrapped WTI point read | 103.068 ns/op | 1.93% faster (noise; no observed regression) |
+
+These repeat-run results were tight across the ten trials, but they remain local
+engineering probes rather than paper numbers. Generated-table select
+measurements were noisy enough to require a dedicated quiet-window run before
+drawing a sub-percent conclusion. The feature therefore remains opt-in.
+
 WorkTable already uses lifecycle flags (`GHOSTED`, `DELETED`, and `VACUUMED`) and optional immutable row versions to prevent readers from observing partially published rows. Those are visibility states, not persistence dirty states, but the staged-publication pattern is relevant.
 
 ## Why one dirty bit is insufficient
@@ -32,7 +48,44 @@ A Boolean has a lost-update race:
 
 The persistence marker must carry a generation or an explicit redirty state. Clearing is conditional: the flusher may mark a node clean only if no writer advanced its generation after the snapshot began.
 
-## Proposed architecture
+## Implemented first stage: background structural translation
+
+The first implementation deliberately avoids a new WTI disk format. With the
+`logical-index-persistence` Cargo feature enabled:
+
+1. each persisted primary or unique-secondary WTI is wrapped by `PersistentWtiIndex`;
+2. point reads delegate directly to WTI, with no runtime feature branch or new
+   read-side lock;
+3. each successful foreground mutation emits one logical Set/Remove event;
+4. the existing persistence worker owns a private shadow WTI reconstructed from
+   the current `.wt.idx` pages;
+5. that shadow translates logical events into native structural CDC; and
+6. the existing `SpaceIndex`/`SpaceIndexUnsized` writer applies those events to
+   the unchanged DataBucket page format.
+
+This is an intentionally smaller step than the checkpoint/WAL design below. It
+moves the measured structural-CDC work off the caller thread while retaining
+format compatibility in both directions: a store written with the feature can
+be reopened without it, and a pre-feature store can be opened with it. The
+existing WorkTable persistence queue remains the recovery authority, including
+its documented best-effort crash-durability boundary; this stage does not add a
+new durable logical WAL.
+
+The DSL contract is unchanged:
+
+- omitting `using` selects WorkTablesIndex;
+- `using congee` selects `congee-wt`;
+- `using arctic` selects `arctic-wt`.
+
+Congee and Arctic already use their native topology checkpoint plus logical WAL
+implementations. Their `export_topology`/`from_topology` APIs are sufficient, so
+this first stage requires no source change in either fork.
+
+Non-unique WTI secondary indexes continue to emit structural multimap CDC in
+this stage. Their logical record must identify both key and row link, and should
+be added only with the same rollback, duplicate-ordering, and reload coverage.
+
+## Longer-term architecture
 
 Separate crash authority from physical checkpoint maintenance:
 
@@ -155,11 +208,11 @@ It should not:
 
 ## Implementation stages
 
-1. **Measure and instrument.** Keep the direct-versus-structural-CDC probe, add allocations/op and p50/p99, and measure full generated WTI table operations.
-2. **Define recovery authority.** Make index rebuild from authoritative data pages an explicit, tested fallback and version the new WTI format.
-3. **Add feature-gated logical WTI redo.** Preserve the existing structural-CDC path as default until validation is complete.
-4. **Add whole-index background checkpointing.** Use atomic replacement and a checkpoint generation; prove redo truncation ordering with crash injection.
-5. **Evaluate the result.** Continue only if the caller-thread savings survive end-to-end WorkTable benchmarks.
+1. **Background structural translation (implemented, feature-gated).** Preserve the existing disk format and move structural CDC onto a worker-owned shadow WTI.
+2. **Measure and instrument.** Keep the direct-versus-structural-CDC probe, add allocations/op and p50/p99, and measure full generated WTI table operations.
+3. **Evaluate the result.** Continue only if the caller-thread savings survive end-to-end WorkTable benchmarks.
+4. **Define stronger recovery authority.** Make index rebuild from authoritative data pages an explicit, tested fallback and version any new WTI format.
+5. **Add durable logical WTI redo and whole-index checkpoints.** Use atomic replacement and a checkpoint generation; prove redo truncation ordering with crash injection.
 6. **Optionally add incremental dirty nodes.** Introduce the generation state machine, pinning, structural groups, and generation manifest.
 7. **Validate local disk and S3.** Test interrupted append, checkpoint, rename, upload, download, and writes after recovery.
 

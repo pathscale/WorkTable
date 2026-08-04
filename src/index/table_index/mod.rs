@@ -11,7 +11,7 @@ use vanilla_indexset::core::pair::Pair as VanillaPair;
 use crate::util::OffsetEqLink;
 use crate::{
     ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, PersistentArcticIndex,
-    PersistentCongeeIndex, UniqueIndex, UpstreamIndexMap,
+    PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
 };
 
 mod cdc;
@@ -118,6 +118,24 @@ impl<T, Node> TableIndex<T> for UpstreamIndexMap<T, OffsetEqLink, Node>
 where
     T: Debug + Eq + Hash + Clone + Send + Ord,
     Node: VanillaNodeLike<VanillaPair<T, OffsetEqLink>> + Send + 'static,
+{
+    fn insert(&self, value: T, link: Link) -> Option<Link> {
+        unique_insert(self, value, link)
+    }
+
+    fn insert_checked(&self, value: T, link: Link) -> Option<()> {
+        unique_insert_checked(self, value, link)
+    }
+
+    fn remove(&self, value: &T, _: Link) -> Option<(T, Link)> {
+        unique_remove(self, value)
+    }
+}
+
+impl<T, Node> TableIndex<T> for PersistentWtiIndex<T, OffsetEqLink, Node>
+where
+    T: Debug + Eq + Hash + Clone + Send + Ord + 'static,
+    Node: NodeLike<Pair<T, OffsetEqLink>> + Send + 'static,
 {
     fn insert(&self, value: T, link: Link) -> Option<Link> {
         unique_insert(self, value, link)

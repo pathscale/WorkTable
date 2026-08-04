@@ -1,6 +1,7 @@
 mod art_index;
 mod data;
 mod index;
+mod logical_index;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -18,6 +19,7 @@ pub use index::{
     IndexTableOfContents, SpaceIndex, SpaceIndexUnsized, map_index_pages_to_toc_and_general,
     map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
 };
+pub use logical_index::{SpaceLogicalIndex, SpaceLogicalIndexUnsized};
 
 pub type BatchData = HashMap<PageId, Vec<(Link, Vec<u8>)>>;
 

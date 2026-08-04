@@ -24,6 +24,7 @@ pub(super) struct IndexLayout {
     is_unique: bool,
     uses_upstream: bool,
     pub(super) art_backend: Option<ArtBackend>,
+    pub(super) logical_wti: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -46,12 +47,13 @@ pub(super) fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
         .ok_or_else(|| syn::Error::new_spanned(&field.ty, "index type path cannot be empty"))?
         .ident
         .clone();
-    let (is_unique, uses_upstream, art_backend) = match type_ident.to_string().as_str() {
-        "IndexMap" | "TreeIndex" => (true, false, None),
-        "UpstreamIndexMap" => (true, true, None),
-        "IndexMultiMap" | "TreeMultiIndex" => (false, false, None),
-        "PersistentArcticIndex" => (true, false, Some(ArtBackend::Arctic)),
-        "PersistentCongeeIndex" => (true, false, Some(ArtBackend::Congee)),
+    let (is_unique, uses_upstream, art_backend, logical_wti) = match type_ident.to_string().as_str() {
+        "IndexMap" | "TreeIndex" => (true, false, None, false),
+        "PersistentWtiIndex" => (true, false, None, true),
+        "UpstreamIndexMap" => (true, true, None, false),
+        "IndexMultiMap" | "TreeMultiIndex" => (false, false, None, false),
+        "PersistentArcticIndex" => (true, false, Some(ArtBackend::Arctic), false),
+        "PersistentCongeeIndex" => (true, false, Some(ArtBackend::Congee), false),
         _ => {
             return Err(syn::Error::new_spanned(
                 &field.ty,
@@ -64,6 +66,7 @@ pub(super) fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
         is_unique,
         uses_upstream,
         art_backend,
+        logical_wti,
     })
 }
 

@@ -40,6 +40,10 @@ pub(crate) fn persistent_unique_index_type(
     worktables_node: Option<TokenStream>,
 ) -> syn::Result<TokenStream> {
     match backend {
+        IndexBackend::WorktablesIndex if cfg!(feature = "logical-index-persistence") => Ok(match worktables_node {
+            Some(node) => quote! { PersistentWtiIndex<#key, #value, #node> },
+            None => quote! { PersistentWtiIndex<#key, #value> },
+        }),
         IndexBackend::Congee => Ok(quote! { PersistentCongeeIndex<#key, #value> }),
         IndexBackend::Arctic => Ok(quote! { PersistentArcticIndex<#key, #value> }),
         _ => unique_index_type(backend, key, value, worktables_node),

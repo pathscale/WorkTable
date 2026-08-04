@@ -14,8 +14,8 @@ pub use operation::{
 pub use readonly_engine::ReadOnlyPersistenceEngine;
 pub use space::{
     ArtPersistenceKey, IndexTableOfContents, SpaceArcticIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex,
-    SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, map_index_pages_to_toc_and_general,
-    map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
+    SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps,
+    map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
 };
 pub use task::PersistenceTask;
 

@@ -38,9 +38,9 @@ pub mod prelude {
         IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
         PersistenceEngine, PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState,
         PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
-        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, load_persisted_state,
-        map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
-        validate_events,
+        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized,
+        SpaceSecondaryIndexOps, UpdateOperation, load_persisted_state, map_index_pages_to_toc_and_general,
+        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
@@ -49,10 +49,10 @@ pub mod prelude {
     pub use crate::{
         ArcticIndex, ArcticKey, AvailableIndex, CongeeIndex, CongeeKey, Difference, IndexError, IndexMap,
         IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArtIndex, PersistentCongeeIndex,
-        PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-        TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode, UpstreamIndexMap,
-        UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum, vacuum::VacuumPersistence,
-        vacuum::WorkTableVacuum,
+        PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
+        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
+        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
+        vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

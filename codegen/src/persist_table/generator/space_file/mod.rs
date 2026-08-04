@@ -143,8 +143,13 @@ impl Generator {
 
         let primary_index_init = if self.attributes.pk_unsized {
             let pk_ident = &self.pk_ident;
+            let map_type = if self.attributes.pk_wti_logical {
+                quote! { PersistentWtiIndex }
+            } else {
+                quote! { IndexMap }
+            };
             quote! {
-                let pk_map = IndexMap::<#pk_ident, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name);
+                let pk_map = #map_type::<#pk_ident, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name);
                 for page in self.primary_index.1 {
                     let node = page
                         .inner
@@ -175,7 +180,9 @@ impl Generator {
                 let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
             }
         } else {
-            let map_type = if self.pk_upstream {
+            let map_type = if self.attributes.pk_wti_logical {
+                quote! { PersistentWtiIndex }
+            } else if self.pk_upstream {
                 quote! { UpstreamIndexMap }
             } else {
                 quote! { IndexMap }

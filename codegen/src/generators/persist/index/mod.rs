@@ -109,11 +109,16 @@ impl PersistGenerator {
                 let res = if idx.is_unique {
                     match idx.backend {
                         crate::common::model::IndexBackend::WorktablesIndex => {
+                            let map = if cfg!(feature = "logical-index-persistence") {
+                                quote! { PersistentWtiIndex }
+                            } else {
+                                quote! { IndexMap }
+                            };
                             if is_unsized(&t.to_string()) {
-                                quote! { #i: IndexMap::with_maximum_node_size(#const_name), }
+                                quote! { #i: #map::with_maximum_node_size(#const_name), }
                             } else {
                                 quote! {
-                                    #i: IndexMap::with_maximum_node_size(
+                                    #i: #map::with_maximum_node_size(
                                         get_index_page_size_from_data_length::<#t>(#const_name)
                                     ),
                                 }

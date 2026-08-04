@@ -32,6 +32,7 @@ impl Parser {
             pk_upstream: false,
             pk_arctic: false,
             pk_congee: false,
+            pk_wti_logical: false,
             row_schema: vec![],
             primary_key_fields: vec![],
             secondary_index_types: vec![],
@@ -58,6 +59,10 @@ impl Parser {
                     }
                     if meta.path.is_ident("pk_congee") {
                         res.pk_congee = true;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("pk_wti_logical") {
+                        res.pk_wti_logical = true;
                         return Ok(());
                     }
                     if meta.path.is_ident("row_schema") {

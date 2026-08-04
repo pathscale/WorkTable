@@ -8,6 +8,7 @@ repository = "https://github.com/pathscale/WorkTable"
 
 [features]
 s3-support = []
+logical-index-persistence = []
 # Compatibility no-op retained for downstream manifests.
 versioned-row-publication = []
 

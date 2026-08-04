@@ -237,10 +237,15 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
+        let wti_map = if cfg!(feature = "logical-index-persistence") {
+            quote! { PersistentWtiIndex }
+        } else {
+            quote! { IndexMap }
+        };
         let index_setup = if pk_types_unsized {
             quote! {
                 inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                    pk_map: IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name),
+                    pk_map: #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name),
                     reverse_pk_map: IndexMap::new(),
                 });
             }
@@ -249,7 +254,7 @@ impl PersistGenerator {
                 crate::common::model::IndexBackend::WorktablesIndex => quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                     inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                        pk_map: IndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
+                        pk_map: #wti_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
                         reverse_pk_map: IndexMap::new(),
                     });
                 },

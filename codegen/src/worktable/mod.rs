@@ -211,6 +211,32 @@ mod tests {
         assert!(output.is_ok());
     }
 
+    #[cfg(feature = "logical-index-persistence")]
+    #[test]
+    fn logical_persistence_wraps_only_default_wti_backends() {
+        let output = expand(quote! {
+            name: LogicalDefaultBackend,
+            persist: true,
+            columns: {
+                id: u64 primary_key autoincrement,
+                wti_value: u64,
+                congee_value: u64,
+                arctic_value: u64,
+            },
+            indexes: {
+                wti_idx: wti_value unique,
+                congee_idx: congee_value unique using congee,
+                arctic_idx: arctic_value unique using arctic,
+            },
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(output.contains("PersistentWtiIndex"));
+        assert!(output.contains("PersistentCongeeIndex"));
+        assert!(output.contains("PersistentArcticIndex"));
+    }
+
     #[test]
     fn explicit_indexset_is_persistence_compatible() {
         let output = expand(quote! {
