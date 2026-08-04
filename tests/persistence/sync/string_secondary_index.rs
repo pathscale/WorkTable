@@ -29,6 +29,101 @@ worktable! (
     }
 );
 
+worktable! (
+    name: FragmentedStringSecondary,
+    persist: true,
+    columns: {
+        id: u64 primary_key autoincrement,
+        project_id: String,
+    },
+    indexes: {
+        project_idx: project_id,
+    },
+);
+
+#[test]
+fn fragmented_string_index_compacts_after_restart_before_appending() {
+    let path = "tests/data/unsized_secondary_sync/fragmented_restart";
+    let config = DiskConfig::new_with_table_name(
+        path,
+        FragmentedStringSecondaryWorkTable::name_snake_case(),
+        FragmentedStringSecondaryWorkTable::version(),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists(path.to_string()).await;
+        let project_id = "proj-fdfb706b-72bc-4b0c-a96e-6b6235be6fb4".to_string();
+        let mut inserted_ids = Vec::new();
+
+        {
+            let engine = FragmentedStringSecondaryPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
+            let table = FragmentedStringSecondaryWorkTable::load(engine).await.unwrap();
+            for _ in 0..211 {
+                let row = FragmentedStringSecondaryRow {
+                    id: table.get_next_pk().0,
+                    project_id: project_id.clone(),
+                };
+                inserted_ids.push(row.id);
+                table.insert(row).unwrap();
+            }
+            table.wait_for_ops().await.unwrap();
+            for id in inserted_ids.iter().take(37).copied() {
+                table.delete(id).await.unwrap();
+            }
+            table.wait_for_ops().await.unwrap();
+        }
+
+        {
+            let engine = FragmentedStringSecondaryPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
+            let table = FragmentedStringSecondaryWorkTable::load(engine).await.unwrap();
+            for _ in 0..20 {
+                let row = FragmentedStringSecondaryRow {
+                    id: table.get_next_pk().0,
+                    project_id: project_id.clone(),
+                };
+                table.insert(row).unwrap();
+            }
+            table.wait_for_ops().await.unwrap();
+        }
+
+        {
+            let engine = FragmentedStringSecondaryPersistenceEngine::new(config).await.unwrap();
+            let table = FragmentedStringSecondaryWorkTable::load(engine).await.unwrap();
+            assert_eq!(table.select_all().execute().unwrap().len(), 194);
+            assert_eq!(table.select_by_project_id(project_id).execute().unwrap().len(), 194);
+        }
+
+        let index_path = format!("{path}/fragmented_string_secondary/project_idx.wt.idx");
+        let mut index_file = tokio::fs::File::open(index_path).await.unwrap();
+        let page = parse_page::<UnsizedIndexPage<String, { INNER_PAGE_SIZE as u32 }>, { INNER_PAGE_SIZE as u32 }>(
+            &mut index_file,
+            2,
+        )
+        .await
+        .unwrap();
+        let utility_size = worktable::data_bucket::UnsizedIndexPageUtility::<String>::persisted_size(
+            page.inner.slots_size as usize,
+            page.inner.node_id_size as usize,
+        );
+        assert!(
+            utility_size + page.inner.last_value_offset as usize <= INNER_PAGE_SIZE,
+            "slot directory must not overlap values stored at the page tail"
+        );
+
+        remove_dir_if_exists(path.to_string()).await;
+    });
+}
+
 #[test]
 fn test_space_insert_sync() {
     let config = DiskConfig::new_with_table_name(

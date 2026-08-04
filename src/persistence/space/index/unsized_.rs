@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use data_bucket::page::PageId;
 use data_bucket::{
     GeneralHeader, GeneralPage, IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
-    UnsizedIndexPage, VariableSizeMeasurable, parse_page, persist_page, persist_pages_batch,
+    UnsizedIndexPage, UnsizedIndexPageUtility, VariableSizeMeasurable, parse_page, persist_page, persist_pages_batch,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -59,6 +59,32 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    fn compact_page_if_needed(page: &mut UnsizedIndexPage<T, DATA_LENGTH>) -> eyre::Result<()> {
+        let persisted_size =
+            UnsizedIndexPageUtility::<T>::persisted_size(page.slots_size as usize, page.node_id_size as usize)
+                + page.last_value_offset as usize;
+        if persisted_size <= DATA_LENGTH as usize {
+            return Ok(());
+        }
+
+        // Removed variable-width entries leave holes at the page tail. After
+        // reload the in-memory node contains only live values, so it cannot
+        // see that physical fragmentation. Compact before the growing slot
+        // directory can overlap the next tail value.
+        // An empty page cannot pass the occupancy guard above, which also
+        // protects `UnsizedIndexPage::rebuild` from its non-empty assumption.
+        page.rebuild();
+        let compacted_size =
+            UnsizedIndexPageUtility::<T>::persisted_size(page.slots_size as usize, page.node_id_size as usize)
+                + page.last_value_offset as usize;
+        if compacted_size > DATA_LENGTH as usize {
+            return Err(eyre!(
+                "unsized index page requires {compacted_size} bytes after compaction, but its capacity is {DATA_LENGTH}"
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId, version: u32) -> eyre::Result<Self> {
         let space_index = SpaceIndex::<T, DATA_LENGTH>::new(index_file_path, space_id, version).await?;
         Ok(Self {
@@ -138,6 +164,32 @@ where
             key: value.key.clone(),
             link: value.value,
         };
+        let value_size = index_value.aligned_size();
+        let future_node_id_size = if node_id.key < value.key {
+            value_size
+        } else {
+            utility.node_id_size as usize
+        };
+        let future_utility_size =
+            UnsizedIndexPageUtility::<T>::persisted_size(utility.slots_size as usize + 1, future_node_id_size);
+        if future_utility_size + utility.last_value_offset as usize + value_size > DATA_LENGTH as usize {
+            let mut page =
+                parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(&mut self.index_file, page_id.into())
+                    .await?;
+            page.inner.apply_change_event(ChangeEvent::InsertAt {
+                // The page mutation ignores event ids; this synthetic event
+                // exists only to reuse the same insertion accounting.
+                event_id: 0.into(),
+                max_value: node_id,
+                value,
+                index,
+            })?;
+            Self::compact_page_if_needed(&mut page.inner)?;
+            let changed_node_id =
+                (page.inner.node_id.key != utility.node_id.key).then(|| Pair::from(page.inner.node_id.clone()));
+            persist_page(&mut page, &mut self.index_file).await?;
+            return Ok(changed_node_id);
+        }
         let previous_offset = utility.last_value_offset;
         let value_offset = UnsizedIndexPage::<T, DATA_LENGTH>::persist_value(
             &mut self.index_file,
@@ -447,6 +499,10 @@ where
                     pages.insert(new_page_id, general_page);
                 }
             }
+        }
+
+        for page in pages.values_mut() {
+            Self::compact_page_if_needed(&mut page.inner)?;
         }
 
         self.table_of_contents.persist(&mut self.index_file).await?;
