@@ -555,6 +555,25 @@ impl InMemoryGenerator {
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
+        let finish_update = if self.columns.is_sized {
+            quote! {
+                #diff_process_insert
+                #persist_op
+
+                unsafe { self.0.data.with_mut_ref(link, |archived| {
+                    #(#row_updates)*
+                }).map_err(WorkTableError::PagesError)? };
+
+                #diff_process_remove
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             pub async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
             where #pk_ident: From<Pk>
@@ -579,18 +598,7 @@ impl InMemoryGenerator {
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
-                #diff_process_insert
-                #persist_op
-
-                unsafe { self.0.data.with_mut_ref(link, |archived| {
-                    #(#row_updates)*
-                }).map_err(WorkTableError::PagesError)? };
-
-                #diff_process_remove
-
-                #persist_call
-
-                core::result::Result::Ok(())
+                #finish_update
             }
         }
     }
@@ -804,6 +812,27 @@ impl InMemoryGenerator {
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
+        let finish_update = if self.columns.is_sized {
+            quote! {
+                #diff_process_insert
+                #persist_op
+
+                unsafe {
+                    self.0.data.with_mut_ref(link, |archived| {
+                        #(#row_updates)*
+                    }).map_err(WorkTableError::PagesError)?;
+                }
+
+                #diff_process_remove
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
                  let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
@@ -847,20 +876,7 @@ impl InMemoryGenerator {
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
-                #diff_process_insert
-                #persist_op
-
-                unsafe {
-                    self.0.data.with_mut_ref(link, |archived| {
-                        #(#row_updates)*
-                    }).map_err(WorkTableError::PagesError)?;
-                }
-
-                #diff_process_remove
-
-                #persist_call
-
-                core::result::Result::Ok(())
+                #finish_update
             }
         }
     }
