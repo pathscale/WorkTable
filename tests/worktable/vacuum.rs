@@ -217,8 +217,10 @@ async fn vacuum_parallel_with_upserts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-#[ignore]
+#[ignore = "bounded 10-second vacuum soak test"]
 async fn vacuum_loop_test() {
+    const SOAK_DURATION: Duration = Duration::from_secs(10);
+
     let config = VacuumManagerConfig {
         check_interval: Duration::from_millis(1_000),
         ..Default::default()
@@ -238,12 +240,13 @@ async fn vacuum_loop_test() {
 
     let vacuum = table.vacuum();
     vacuum_manager.register(vacuum);
-    let _h = vacuum_manager.run_vacuum_task();
+    let vacuum_task = vacuum_manager.run_vacuum_task();
 
     let insert_table = table.clone();
-    let _task = tokio::spawn(async move {
+    let stop_at = tokio::time::Instant::now() + SOAK_DURATION;
+    let task = tokio::spawn(async move {
         let mut i = 3001;
-        loop {
+        while tokio::time::Instant::now() < stop_at {
             let row = VacuumTestRow {
                 id: insert_table.get_next_pk().into(),
                 value: chrono::Utc::now().timestamp_nanos_opt().unwrap(),
@@ -257,7 +260,7 @@ async fn vacuum_loop_test() {
 
     tokio::time::sleep(Duration::from_millis(1_000)).await;
 
-    loop {
+    while tokio::time::Instant::now() < stop_at {
         tokio::time::sleep(Duration::from_millis(1_000)).await;
 
         let outdated_ts = chrono::Utc::now()
@@ -276,4 +279,7 @@ async fn vacuum_loop_test() {
             table.delete(row.id).await.unwrap();
         }
     }
+
+    task.await.unwrap();
+    vacuum_task.abort();
 }
