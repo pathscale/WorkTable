@@ -327,11 +327,16 @@ impl PersistGenerator {
                         other => return other,
                     }
                     if backoff_spins < 8 {
-                        backoff_spins += 1;
+                        backoff_spins = backoff_spins.saturating_add(1);
                         tokio::task::yield_now().await;
                     } else {
-                        let micros = core::cmp::min(1u64 << (backoff_spins - 8), 256);
-                        backoff_spins += 1;
+                        // Cap the exponent BEFORE shifting: `1u64 << 64` panics
+                        // (overflow) in debug/test builds. Clamp the shift to a
+                        // 256µs ceiling and saturate the counter so a long
+                        // starvation streak can never overflow.
+                        let exponent = core::cmp::min(backoff_spins - 8, 8);
+                        let micros = core::cmp::min(1u64 << exponent, 256);
+                        backoff_spins = backoff_spins.saturating_add(1);
                         tokio::time::sleep(std::time::Duration::from_micros(micros)).await;
                     }
                 }
