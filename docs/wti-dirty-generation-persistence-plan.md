@@ -63,6 +63,18 @@ The first implementation deliberately avoids a new WTI disk format. With the
 6. the existing `SpaceIndex`/`SpaceIndexUnsized` writer applies those events to
    the unchanged DataBucket page format.
 
+Foreground stripes establish same-key mutation order only. They use
+`DefaultHasher`, so stripe identity has no relationship to key or range order.
+The queue analyzer sorts each per-index stream by its global event ID before
+dispatch, and the logical shadow sorts again at its boundary as defense in
+depth. Reversed-delivery regression coverage proves that a Set/Remove pair is
+applied in event-ID order.
+
+Each logical WTI contains 64 inline `parking_lot::Mutex<()>` stripes. Their
+target-dependent fixed footprint is paid once per persisted primary or unique
+WTI; point reads never access them. This is a deliberate write-concurrency
+tradeoff and should be included in schema-level memory measurements.
+
 This is an intentionally smaller step than the checkpoint/WAL design below. It
 moves the measured structural-CDC work off the caller thread while retaining
 format compatibility in both directions: a store written with the feature can
@@ -70,6 +82,19 @@ be reopened without it, and a pre-feature store can be opened with it. The
 existing WorkTable persistence queue remains the recovery authority, including
 its documented best-effort crash-durability boundary; this stage does not add a
 new durable logical WAL.
+
+Shadow divergence is reported as `PersistenceIndexCorruption`, not a generic
+worker error. It quarantines the table's whole persistence engine, rejects later
+persistence submissions, and is surfaced by `wait_for_ops` and `close`.
+Continuing row or sibling-index writes after one index diverges would knowingly
+create an inconsistent store, so the current architecture cannot safely
+quarantine only that index.
+
+The code generator selects this path using the forwarded
+`worktable_codegen/logical-index-persistence` feature. That check intentionally
+runs in the proc-macro crate: emitting a downstream `#[cfg]` would inspect the
+consumer package's feature namespace rather than WorkTable's dependency
+feature. Feature-off and feature-on expansion tests cover both selections.
 
 The DSL contract is unchanged:
 

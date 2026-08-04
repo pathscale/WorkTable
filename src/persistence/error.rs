@@ -79,6 +79,50 @@ where
     }
 }
 
+/// A persisted index no longer agrees with the logical mutation stream.
+///
+/// The safe quarantine boundary is the table's entire persistence engine: a
+/// worker must not continue writing row data or sibling indexes after one
+/// index diverges, because that would knowingly create a store that cannot be
+/// recovered consistently. The in-memory table remains inspectable, while
+/// `wait_for_ops`, `close`, and all later persistence submissions return this
+/// terminal error through [`PersistenceError::IndexCorruption`].
+#[derive(Debug)]
+pub struct PersistenceIndexCorruption {
+    path: PathBuf,
+    reason: String,
+}
+
+impl PersistenceIndexCorruption {
+    pub fn new(path: impl AsRef<Path>, reason: impl Display) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            reason: reason.to_string(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+impl Display for PersistenceIndexCorruption {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "persisted index at {} was quarantined: {}",
+            self.path.display(),
+            self.reason
+        )
+    }
+}
+
+impl Error for PersistenceIndexCorruption {}
+
 /// Terminal and lifecycle errors reported by a persistence task.
 #[derive(Debug)]
 pub enum PersistenceError {
@@ -86,6 +130,8 @@ pub enum PersistenceError {
     Closing,
     /// New work was submitted after graceful shutdown completed.
     Closed,
+    /// An index diverged from its validated logical mutation stream.
+    IndexCorruption(PersistenceIndexCorruption),
     /// The persistence engine or its queue analyzer failed permanently.
     Engine(eyre::Report),
 }
@@ -95,6 +141,7 @@ impl Display for PersistenceError {
         match self {
             Self::Closing => formatter.write_str("persistence task is closing"),
             Self::Closed => formatter.write_str("persistence task is closed"),
+            Self::IndexCorruption(error) => Display::fmt(error, formatter),
             Self::Engine(error) => write!(formatter, "persistence engine failed: {error:#}"),
         }
     }

@@ -7,9 +7,9 @@
 
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::path::{Path, PathBuf};
 
 use data_bucket::{Link, SizeMeasurable, SpaceId, VariableSizeMeasurable};
-use eyre::bail;
 use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
 use indexset::core::node::NodeLike;
@@ -25,13 +25,14 @@ use tokio::fs::File;
 
 use crate::UnsizedNode;
 use crate::persistence::space::BatchChangeEvent;
-use crate::persistence::{SpaceIndex, SpaceIndexOps, SpaceIndexUnsized};
+use crate::persistence::{PersistenceIndexCorruption, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized};
 use crate::prelude::WT_INDEX_EXTENSION;
 
 fn translate_logical_event<T, Node>(
+    index_path: &Path,
     shadow: &BTreeMap<T, Link, Node>,
     event: ChangeEvent<Pair<T, Link>>,
-) -> eyre::Result<Vec<ChangeEvent<Pair<T, Link>>>>
+) -> Result<Vec<ChangeEvent<Pair<T, Link>>>, PersistenceIndexCorruption>
 where
     T: Debug + Eq + Hash + Clone + Send + Ord + 'static,
     Node: NodeLike<Pair<T, Link>> + Send + 'static,
@@ -52,32 +53,43 @@ where
             index: 0,
             ..
         } if max_value.key == value.key && max_value.value == value.value => {
-            let (removed, events) = shadow.remove_cdc(&value.key);
-            if removed.as_ref().map(|(_, link)| *link) != Some(value.value) {
-                bail!(
-                    "logical WTI shadow diverged while removing key {:?}: expected {:?}, found {:?}",
-                    value.key,
-                    value.value,
-                    removed.map(|(_, link)| link),
-                );
+            let found = shadow.get(&value.key).map(|entry| entry.get().value);
+            if found != Some(value.value) {
+                return Err(PersistenceIndexCorruption::new(
+                    index_path,
+                    format!(
+                        "logical WTI shadow diverged while removing key {:?}: expected {:?}, found {:?}",
+                        value.key, value.value, found,
+                    ),
+                ));
             }
+            let (_, events) = shadow.remove_cdc(&value.key);
             Ok(events)
         }
-        _ => bail!("logical WTI persistence received a structural or malformed event"),
+        _ => Err(PersistenceIndexCorruption::new(
+            index_path,
+            "logical WTI persistence received a structural or malformed event",
+        )),
     }
 }
 
 fn translate_logical_batch<T, Node>(
+    index_path: &Path,
     shadow: &BTreeMap<T, Link, Node>,
-    events: BatchChangeEvent<T>,
-) -> eyre::Result<BatchChangeEvent<T>>
+    mut events: BatchChangeEvent<T>,
+) -> Result<BatchChangeEvent<T>, PersistenceIndexCorruption>
 where
     T: Debug + Eq + Hash + Clone + Send + Ord + 'static,
     Node: NodeLike<Pair<T, Link>> + Send + 'static,
 {
+    // BatchOperation already sorts every per-index stream by event id before
+    // dispatch. Sort again at this logical/structural boundary so direct
+    // SpaceIndexOps callers and future batching changes cannot reorder a
+    // same-key Set/Remove pair after the foreground stripe guard is released.
+    events.sort_by_key(ChangeEvent::id);
     let mut structural = Vec::new();
     for event in events {
-        structural.extend(translate_logical_event(shadow, event)?);
+        structural.extend(translate_logical_event(index_path, shadow, event)?);
     }
     Ok(structural)
 }
@@ -89,6 +101,7 @@ pub struct SpaceLogicalIndex<T, const INNER_PAGE_SIZE: u32>
 where
     T: Send + Ord + Eq + Clone + 'static,
 {
+    index_path: PathBuf,
     shadow: BTreeMap<T, Link>,
     disk: SpaceIndex<T, INNER_PAGE_SIZE>,
 }
@@ -123,9 +136,14 @@ where
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
     async fn new(path: String, version: u32) -> eyre::Result<Self> {
+        let index_path = PathBuf::from(&path);
         let mut disk = SpaceIndex::new(path, SpaceId::from(0), version).await?;
         let shadow = disk.parse_indexset().await?;
-        Ok(Self { shadow, disk })
+        Ok(Self {
+            index_path,
+            shadow,
+            disk,
+        })
     }
 }
 
@@ -170,12 +188,12 @@ where
     }
 
     async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
-        let events = translate_logical_event(&self.shadow, event)?;
+        let events = translate_logical_event(&self.index_path, &self.shadow, event)?;
         self.disk.process_change_event_batch(events).await
     }
 
     async fn process_change_event_batch(&mut self, events: BatchChangeEvent<T>) -> eyre::Result<()> {
-        let events = translate_logical_batch(&self.shadow, events)?;
+        let events = translate_logical_batch(&self.index_path, &self.shadow, events)?;
         self.disk.process_change_event_batch(events).await
     }
 }
@@ -185,6 +203,7 @@ pub struct SpaceLogicalIndexUnsized<T, const INNER_PAGE_SIZE: u32>
 where
     T: Send + Ord + Eq + Clone + Default + Debug + SizeMeasurable + VariableSizeMeasurable + 'static,
 {
+    index_path: PathBuf,
     shadow: BTreeMap<T, Link, UnsizedNode<Pair<T, Link>>>,
     disk: SpaceIndexUnsized<T, INNER_PAGE_SIZE>,
 }
@@ -222,9 +241,14 @@ where
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
     async fn new(path: String, version: u32) -> eyre::Result<Self> {
+        let index_path = PathBuf::from(&path);
         let mut disk = SpaceIndexUnsized::new(path, SpaceId::from(0), version).await?;
         let shadow = disk.parse_indexset().await?;
-        Ok(Self { shadow, disk })
+        Ok(Self {
+            index_path,
+            shadow,
+            disk,
+        })
     }
 }
 
@@ -270,12 +294,12 @@ where
     }
 
     async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
-        let events = translate_logical_event(&self.shadow, event)?;
+        let events = translate_logical_event(&self.index_path, &self.shadow, event)?;
         self.disk.process_change_event_batch(events).await
     }
 
     async fn process_change_event_batch(&mut self, events: BatchChangeEvent<T>) -> eyre::Result<()> {
-        let events = translate_logical_batch(&self.shadow, events)?;
+        let events = translate_logical_batch(&self.index_path, &self.shadow, events)?;
         self.disk.process_change_event_batch(events).await
     }
 }
@@ -299,6 +323,7 @@ mod tests {
         let shadow = BTreeMap::<u64, Link>::default();
         let pair = Pair { key: 7, value: link(7) };
         let events = translate_logical_event(
+            Path::new("test.wt.idx"),
             &shadow,
             ChangeEvent::InsertAt {
                 event_id: 0.into(),
@@ -316,6 +341,7 @@ mod tests {
     fn logical_event_requires_an_exact_key_and_link_sentinel() {
         let shadow = BTreeMap::<u64, Link>::default();
         let result = translate_logical_event(
+            Path::new("test.wt.idx"),
             &shadow,
             ChangeEvent::InsertAt {
                 event_id: 0.into(),
@@ -327,5 +353,73 @@ mod tests {
 
         assert!(result.is_err());
         assert!(shadow.get(&7).is_none());
+    }
+
+    #[test]
+    fn logical_batch_restores_event_id_order_after_reversed_delivery() {
+        let shadow = BTreeMap::<u64, Link>::default();
+        let pair = Pair { key: 7, value: link(7) };
+        let insert = ChangeEvent::InsertAt {
+            event_id: 0.into(),
+            max_value: pair.clone(),
+            value: pair.clone(),
+            index: 0,
+        };
+        let remove = ChangeEvent::RemoveAt {
+            event_id: 1.into(),
+            max_value: pair.clone(),
+            value: pair,
+            index: 0,
+        };
+
+        let structural = translate_logical_batch(Path::new("test.wt.idx"), &shadow, vec![remove, insert]).unwrap();
+
+        assert!(!structural.is_empty());
+        assert!(shadow.get(&7).is_none());
+    }
+
+    #[test]
+    fn divergence_is_typed_and_does_not_mutate_the_shadow() {
+        let shadow = BTreeMap::<u64, Link>::default();
+        shadow.insert(7, link(7));
+        let pair = Pair { key: 7, value: link(8) };
+
+        let error = translate_logical_event(
+            Path::new("test.wt.idx"),
+            &shadow,
+            ChangeEvent::RemoveAt {
+                event_id: 1.into(),
+                max_value: pair.clone(),
+                value: pair,
+                index: 0,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.path(), Path::new("test.wt.idx"));
+        assert!(error.reason().contains("shadow diverged"));
+        assert_eq!(shadow.get(&7).map(|entry| entry.get().value), Some(link(7)));
+    }
+
+    #[test]
+    fn logical_set_replacement_derives_the_new_structural_link() {
+        let shadow = BTreeMap::<u64, Link>::default();
+        shadow.insert(7, link(7));
+        let replacement = Pair { key: 7, value: link(8) };
+
+        let structural = translate_logical_event(
+            Path::new("test.wt.idx"),
+            &shadow,
+            ChangeEvent::InsertAt {
+                event_id: 1.into(),
+                max_value: replacement.clone(),
+                value: replacement,
+                index: 0,
+            },
+        )
+        .unwrap();
+
+        assert!(!structural.is_empty());
+        assert_eq!(shadow.get(&7).map(|entry| entry.get().value), Some(link(8)));
     }
 }

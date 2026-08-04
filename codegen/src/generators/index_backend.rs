@@ -39,6 +39,11 @@ pub(crate) fn persistent_unique_index_type(
     value: &TokenStream,
     worktables_node: Option<TokenStream>,
 ) -> syn::Result<TokenStream> {
+    // This intentionally evaluates the proc-macro crate's feature. WorkTable's
+    // public feature forwards to worktable_codegen in Cargo.toml, so the
+    // runtime types and emitted types are selected together. Emitting a cfg in
+    // the expansion would instead test the consuming package's unrelated
+    // feature namespace, which may rename or omit the dependency feature.
     match backend {
         IndexBackend::WorktablesIndex if cfg!(feature = "logical-index-persistence") => Ok(match worktables_node {
             Some(node) => quote! { PersistentWtiIndex<#key, #value, #node> },
