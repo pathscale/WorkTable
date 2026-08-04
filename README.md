@@ -13,7 +13,7 @@ from a macro, and that persisting it is one feature flag away.
 ## Install
 
 ```sh
-cargo add worktable@1.0.0-beta.2
+cargo add worktable@1.0.0-beta.3
 ```
 
 ## What you get
@@ -44,7 +44,7 @@ S3 support layers *on top of* the disk engine rather than replacing it.
 
 ```toml
 [dependencies]
-worktable = { version = "=1.0.0-beta.2", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "=1.0.0-beta.3", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic are explicitly memory-only and require `persist: false`. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
