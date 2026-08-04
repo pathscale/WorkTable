@@ -74,6 +74,11 @@ mod tests {
             !output.contains("async fn into_worktable"),
             "read_only into_worktable should not be async"
         );
+        assert!(
+            output.contains("fn into_worktable_with_mode"),
+            "read_only should generate explicit recovery-mode conversion"
+        );
+        assert!(output.contains("LoadMode :: Strict"));
     }
 
     #[test]
@@ -98,6 +103,11 @@ mod tests {
             output.contains("async fn into_worktable"),
             "normal into_worktable should be async"
         );
+        assert!(
+            output.contains("async fn into_worktable_with_mode"),
+            "normal should generate explicit recovery-mode conversion"
+        );
+        assert!(output.contains("LoadMode :: Strict"));
     }
 
     #[test]

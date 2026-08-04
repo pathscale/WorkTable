@@ -15,7 +15,7 @@ mod util;
 pub mod features;
 
 pub use index::*;
-pub use persistence::{PersistedWorkTable, PersistenceConfig, PersistenceLoadError};
+pub use persistence::{LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError};
 pub use row::*;
 pub use table::*;
 
@@ -35,7 +35,7 @@ pub mod prelude {
     pub use crate::mem_stat::MemStat;
     pub use crate::persistence::{
         AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
-        IndexTableOfContents, InsertOperation, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
+        IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
         PersistenceEngine, PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState,
         PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
         SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, load_persisted_state,

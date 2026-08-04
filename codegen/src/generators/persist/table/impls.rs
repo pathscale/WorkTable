@@ -53,7 +53,11 @@ impl PersistGenerator {
     fn gen_validate_loaded_secondary_state_fn(&self) -> TokenStream {
         if self.columns.indexes.is_empty() {
             return quote! {
-                fn validate_loaded_secondary_state(&self, _path: &str) -> Result<(), PersistenceLoadError> {
+                fn validate_loaded_secondary_state(
+                    &self,
+                    _path: &str,
+                    _mode: LoadMode,
+                ) -> Result<(), PersistenceLoadError> {
                     Ok(())
                 }
             };
@@ -120,19 +124,89 @@ impl PersistGenerator {
                 }
             })
             .collect::<Vec<_>>();
+        let recovery_entries = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(column, index)| {
+                let index_field = &index.name;
+                let row_field = &index.field;
+                let index_name = Literal::string(&index_field.to_string());
+                let field_type = self
+                    .columns
+                    .columns_map
+                    .get(column)
+                    .expect("indexed column should exist")
+                    .to_string();
+                let expected_key = if is_float(&field_type) {
+                    quote! { OrderedFloat(row.#row_field) }
+                } else {
+                    quote! { row.#row_field.clone() }
+                };
+
+                if index.is_unique {
+                    quote! {
+                        for (indexed_key, offset_link) in self.0.indexes.#index_field.iter_values() {
+                            let row = self.0.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {
+                                PersistenceLoadError::corrupt(
+                                    path,
+                                    format!("secondary index {} references an invalid row: {error}", #index_name),
+                                )
+                            })?;
+                            let expected_key = #expected_key;
+                            if indexed_key != expected_key {
+                                return Err(PersistenceLoadError::corrupt(
+                                    path,
+                                    format!("secondary index {} key does not match its referenced row", #index_name),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        for (indexed_key, offset_link) in self.0.indexes.#index_field.iter() {
+                            let row = self.0.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {
+                                PersistenceLoadError::corrupt(
+                                    path,
+                                    format!("secondary index {} references an invalid row: {error}", #index_name),
+                                )
+                            })?;
+                            let expected_key = #expected_key;
+                            if indexed_key != &expected_key {
+                                return Err(PersistenceLoadError::corrupt(
+                                    path,
+                                    format!("secondary index {} key does not match its referenced row", #index_name),
+                                ));
+                            }
+                        }
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
 
         quote! {
-            fn validate_loaded_secondary_state(&self, path: &str) -> Result<(), PersistenceLoadError> {
-                let primary_count = self.0.primary_index.pk_map.len();
-                #(#entry_counts)*
-                for (primary_key, offset_link) in self.0.primary_index.pk_map.iter_values() {
-                    let row = self.0.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {
-                        PersistenceLoadError::corrupt(
-                            path,
-                            format!("primary key {primary_key:?} references an invalid row: {error}"),
-                        )
-                    })?;
-                    #(#expected_entries)*
+            fn validate_loaded_secondary_state(
+                &self,
+                path: &str,
+                mode: LoadMode,
+            ) -> Result<(), PersistenceLoadError> {
+                match mode {
+                    LoadMode::Strict => {
+                        let primary_count = self.0.primary_index.pk_map.len();
+                        #(#entry_counts)*
+                        for (primary_key, offset_link) in self.0.primary_index.pk_map.iter_values() {
+                            let row = self.0.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {
+                                PersistenceLoadError::corrupt(
+                                    path,
+                                    format!("primary key {primary_key:?} references an invalid row: {error}"),
+                                )
+                            })?;
+                            #(#expected_entries)*
+                        }
+                    }
+                    LoadMode::Recovery => {
+                        #(#recovery_entries)*
+                    }
                 }
                 Ok(())
             }
@@ -232,7 +306,11 @@ impl PersistGenerator {
                     ))
                 }
 
-                async fn load(mut engine: E) -> eyre::Result<Self> {
+                async fn load(engine: E) -> eyre::Result<Self> {
+                    Self::load_with(engine, LoadMode::Strict).await
+                }
+
+                async fn load_with(mut engine: E, mode: LoadMode) -> eyre::Result<Self> {
                     let schema = Self::space_info_default().inner;
                     engine
                         .validate_schema(
@@ -247,7 +325,7 @@ impl PersistGenerator {
                     };
                     let table = load_persisted_state(&table_path, async {
                         let space = #space_ident::parse_file(&table_path).await?;
-                        Ok::<_, eyre::Report>(space.into_worktable(engine, &table_path).await?)
+                        Ok::<_, eyre::Report>(space.into_worktable_with_mode(engine, &table_path, mode).await?)
                     }).await?;
                     Ok(table)
                 }

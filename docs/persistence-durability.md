@@ -25,8 +25,8 @@ enqueue new work after the task appears idle.
 
 ## Load validation
 
-Loading an existing table performs an additional startup-only audit before the
-persistence worker starts:
+The default `PersistedWorkTable::load()` path uses `LoadMode::Strict` and performs
+an additional startup-only audit before the persistence worker starts:
 
 - persisted archived rows referenced by the primary index must pass rkyv validation;
 - each physical link must be in the initialized part of its page;
@@ -53,9 +53,46 @@ match MyWorkTable::load(engine).await {
 }
 ```
 
-The audit is proportional to the number of primary-index entries. It runs only during
-`load()` and adds no branch, lock, or scan to steady-state insert, select, update, or
-delete paths.
+The strict audit is proportional to the number of primary-index entries. It runs only
+during `load()` and adds no branch, lock, or scan to steady-state insert, select,
+update, or delete paths.
+
+## Offline index recovery
+
+`PersistedWorkTable::load_with(engine, LoadMode::Recovery)` is a low-level
+escape hatch for an offline recovery program. It exists for a specific case: a
+private copy has an index that cannot be trusted, while another index and the data
+pages may still contain valid rows that can be copied into a fresh table.
+
+Recovery mode relaxes only cross-index completeness and equality. It still:
+
+- parses the persisted files normally;
+- validates every surviving primary-index entry, including its forward/reverse
+  mapping and decoded primary key; and
+- validates every surviving secondary-index entry by checked row decoding and by
+  comparing the index key with the referenced row.
+
+For example, a recovery tool may preserve the rejected directory, copy it to a
+scratch location, move a damaged primary-index file aside in that scratch copy, let
+the engine create an empty primary index, and then read valid rows through a surviving
+secondary index:
+
+```rust
+let scratch = RecoveryWorkTable::load_with(engine, LoadMode::Recovery).await?;
+for row in scratch.select_by_tenant(tenant).execute()? {
+    clean_table.insert(row)?;
+}
+scratch.close().await?;
+clean_table.close().await?;
+
+// Reopen the rebuilt destination using the strict default before publishing it.
+let clean_table = RecoveryWorkTable::load(clean_engine).await?;
+```
+
+Never point recovery mode at a live or only copy, serve traffic from the returned
+table, or treat it as an in-place repair. Do not insert, update, or delete through the
+recovery table. A malformed surviving entry is still rejected; recovery mode does not
+turn arbitrary bytes into rows.
 
 ## Supported recovery procedure
 
@@ -65,15 +102,17 @@ logical generation even though the format cannot commit them atomically.
 
 1. Stop every process that can write the table.
 2. Preserve the rejected table directory for diagnosis.
-3. Restore the **entire** table directory from one application-managed snapshot; or
+3. Restore the **entire** table directory from one application-managed snapshot;
    create a new empty table directory and replay rows from an external authoritative
-   source or event log.
+   source or event log; or use the offline recovery mode above to copy individually
+   validated rows from a scratch copy into a new table.
 4. Open the restored/rebuilt directory and require `load()` to pass before serving it.
 
-WorkTable does not currently provide an in-place salvage tool that can prove which
-side of a torn multi-file batch is authoritative. Full-directory restore or clean
-replay is the supported recovery path. If neither exists, acknowledged data may be
-unrecoverable under this best-effort contract.
+WorkTable does not provide automatic or in-place salvage and cannot prove which side
+of a torn multi-file batch is authoritative. Full-directory restore, clean replay, or
+explicit row-by-row rebuilding from a checked scratch copy are the supported recovery
+paths. If none is possible, acknowledged data may be unrecoverable under this
+best-effort contract.
 
 ## When stronger durability is required
 

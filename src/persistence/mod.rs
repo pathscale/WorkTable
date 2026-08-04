@@ -33,6 +33,26 @@ pub trait PersistenceConfig {
     fn version(&self) -> u32;
 }
 
+/// Controls the consistency checks applied while loading persisted state.
+///
+/// Normal application opens must use [`LoadMode::Strict`], which is also the
+/// default used by [`PersistedWorkTable::load`]. Recovery tools may use
+/// [`LoadMode::Recovery`] on a private copy of a rejected store to read rows
+/// through a surviving index and rebuild them into a fresh table.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LoadMode {
+    /// Reject disagreement between the primary index, secondary indexes, and
+    /// rows before exposing the table.
+    #[default]
+    Strict,
+    /// Permit indexes to contain different sets of otherwise valid rows.
+    ///
+    /// This mode does not disable file parsing, checked row decoding, or
+    /// per-entry key/link validation. It is only for offline recovery; never
+    /// use the returned table to serve live traffic.
+    Recovery,
+}
+
 pub trait PersistedWorkTable<E>: Sized
 where
     E: Send,
@@ -40,6 +60,16 @@ where
     fn new(engine: E) -> impl Future<Output = eyre::Result<Self>> + Send;
 
     fn load(engine: E) -> impl Future<Output = eyre::Result<Self>> + Send;
+
+    /// Loads a table with an explicit consistency policy.
+    ///
+    /// The compatibility default forwards to [`Self::load`], so custom
+    /// persistence implementations remain strict unless they deliberately
+    /// implement recovery semantics. WorkTable's generated disk and read-only
+    /// implementations override this method.
+    fn load_with(engine: E, _mode: LoadMode) -> impl Future<Output = eyre::Result<Self>> + Send {
+        Self::load(engine)
+    }
 }
 
 pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes> {

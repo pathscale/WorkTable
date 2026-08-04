@@ -212,6 +212,14 @@ impl Generator {
         if self.attributes.read_only {
             quote! {
                 pub fn into_worktable(self, path: &str) -> Result<#wt_ident, PersistenceLoadError> {
+                    self.into_worktable_with_mode(path, LoadMode::Strict)
+                }
+
+                pub fn into_worktable_with_mode(
+                    self,
+                    path: &str,
+                    mode: LoadMode,
+                ) -> Result<#wt_ident, PersistenceLoadError> {
                     let mut page_id = 1;
                     let data = self.data.into_iter().map(|p| {
                         let mut data = Data::from_data_page(p);
@@ -240,7 +248,7 @@ impl Generator {
 
                     table.validate_persisted_state(path)?;
                     let worktable = #wt_ident(table);
-                    worktable.validate_loaded_secondary_state(path)?;
+                    worktable.validate_loaded_secondary_state(path, mode)?;
                     Ok(worktable)
                 }
             }
@@ -250,6 +258,26 @@ impl Generator {
                     self,
                     engine: E,
                     path: &str,
+                ) -> Result<#wt_ident, PersistenceLoadError>
+                where
+                    E: PersistenceEngine<
+                        <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                        #pk_type,
+                        #secondary_index_events,
+                        #avt_index_ident,
+                        Config=C
+                    > + Send
+                        + 'static,
+                    C: Clone + PersistenceConfig,
+                {
+                    self.into_worktable_with_mode(engine, path, LoadMode::Strict).await
+                }
+
+                pub async fn into_worktable_with_mode<E, C>(
+                    self,
+                    engine: E,
+                    path: &str,
+                    mode: LoadMode,
                 ) -> Result<#wt_ident, PersistenceLoadError>
                 where
                     E: PersistenceEngine<
@@ -293,7 +321,7 @@ impl Generator {
                         table,
                         #task_ident::run_engine(engine)
                     );
-                    worktable.validate_loaded_secondary_state(path)?;
+                    worktable.validate_loaded_secondary_state(path, mode)?;
                     Ok(worktable)
                 }
             }
