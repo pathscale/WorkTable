@@ -38,7 +38,7 @@ pub mod prelude {
         IndexTableOfContents, InsertOperation, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
         PersistenceEngine, PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState,
         PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
-        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation,
+        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, load_persisted_state,
         map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
         validate_events,
     };
