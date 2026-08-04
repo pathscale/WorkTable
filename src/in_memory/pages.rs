@@ -653,7 +653,11 @@ where
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        // Write the new bytes into the slot.
+        // Write the new bytes into the slot. `save_row_by_link` requires the
+        // serialized wrapped row to be EXACTLY the slot length; the caller only
+        // guaranteed equal *field* sizes, which need not imply equal total
+        // serialized length (alignment/padding). If it does not fit, report it
+        // so the caller can fall back to a reinsert instead of corrupting.
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
         unsafe {
             page.save_row_by_link(&gen_row, link)
