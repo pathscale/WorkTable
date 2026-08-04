@@ -22,13 +22,24 @@ polled to completion on the same thread. No livelock.
 timeouts, so it can never hang the harness) to catch a future regression that
 would make the hazard real (e.g. a blocking, non-cooperative holder).
 
-## F2 — Vacuum can mark a live `page_from` empty (P1, data-loss) — UNDER TEST
+## F2 — Vacuum can mark a live `page_from` empty (P1, data-loss) — NOT REPRODUCED
 
 `src/table/vacuum/vacuum.rs`: `page_from` is `mark_page_empty`'d unconditionally
-after the inner loop, with no `page_from != page_to` guard. If the destination
-search fell through to `allocate_new_or_pop_free()` and returned `page_from`
-(or a temp page now holding the moved rows), reclamation resets it and moved
-rows are lost after the grace period. Under investigation with a dedicated test.
+after the inner loop, with no `page_from != page_to` guard. The concern: the
+destination search falls through to `allocate_new_or_pop_free()` and returns a
+page that ends up holding moved-in rows, which is then reclaimed.
+
+**Result:** `tests/worktable/vacuum_no_row_loss.rs` forces heavy cross-page
+compaction (400 large rows, half deleted from many pages) with a concurrent
+grace-period reader, then audits every survivor by primary key AND unique index
+after vacuum quiesces. It **passes** — no row loss, no resurrection. The
+grace-period deferral added in #46 (`allocate_new_or_pop_free` returns a temp
+page instead of reusing an active source) appears to hold: `page_from` is not
+handed back as a destination while it still holds live rows.
+
+**Disposition:** finding not reproduced at this scale; kept as a standing audit.
+A `debug_assert!(page_from != page_to)` in the loop would make the invariant
+explicit and cheap to enforce — recommended as a belt-and-suspenders follow-up.
 
 ## F3 — Temp destination page mistracking (P2)
 

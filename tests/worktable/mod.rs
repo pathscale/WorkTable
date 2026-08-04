@@ -19,4 +19,5 @@ mod update_in_place_unsized;
 mod upsert;
 mod uuid;
 mod vacuum;
+mod vacuum_no_row_loss;
 mod with_enum;
