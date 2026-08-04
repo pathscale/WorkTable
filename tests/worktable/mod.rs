@@ -14,6 +14,7 @@ mod nid;
 mod option;
 mod tuple_primary_key;
 mod unsized_;
+mod update_in_place_unsized;
 mod upsert;
 mod uuid;
 mod vacuum;
