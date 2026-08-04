@@ -62,3 +62,18 @@ fn test_custom_pk() {
     let pk = table.get_next_pk();
     assert_eq!(pk, CustomId::from(0).into());
 }
+
+#[tokio::test]
+async fn borrowed_custom_primary_key_is_accepted() {
+    let table = TestWorkTable::default();
+    let id = CustomId(42);
+    let row = TestRow {
+        id: id.clone(),
+        test: 7,
+    };
+    table.insert(row.clone()).unwrap();
+
+    assert_eq!(table.select(&id), Some(row));
+    table.delete(&id).await.unwrap();
+    assert!(table.select(&id).is_none());
+}

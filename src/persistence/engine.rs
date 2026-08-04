@@ -1,17 +1,49 @@
 use std::fmt::Debug;
 use std::fs;
+use std::future::Future;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::path::Path;
 
-use futures::StreamExt;
 use futures::future::Either;
 use futures::stream::FuturesUnordered;
+use futures::{FutureExt, StreamExt};
 
 use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
-use crate::persistence::{PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps};
-use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
+use crate::persistence::{
+    PersistenceConfig, PersistenceEngine, PersistenceLoadError, SpaceDataOps, SpaceIndexOps, SpaceSecondaryIndexOps,
+};
+use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey, WT_DATA_EXTENSION};
+
+fn classify_existing_store_error<T>(path: &str, existed: bool, result: eyre::Result<T>) -> eyre::Result<T> {
+    result.map_err(|error| {
+        if existed {
+            PersistenceLoadError::corrupt(path, format!("{error:#}")).into()
+        } else {
+            error
+        }
+    })
+}
+
+async fn load_store_component<T, F>(path: &str, existed: bool, future: F) -> eyre::Result<T>
+where
+    F: Future<Output = eyre::Result<T>>,
+{
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(result) => classify_existing_store_error(path, existed, result),
+        Err(payload) if existed => {
+            let reason = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("persisted-state loader panicked");
+            Err(PersistenceLoadError::corrupt(path, reason).into())
+        }
+        Err(payload) => resume_unwind(payload),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DiskConfig {
@@ -72,6 +104,7 @@ pub struct DiskPersistenceEngine<
     pub data: SpaceData,
     pub primary_index: SpacePrimaryIndex,
     pub secondary_indexes: SpaceSecondaryIndexes,
+    created_data_file: bool,
     phantom_data: PhantomData<(PrimaryKey, SecondaryIndexEvents, PrimaryKeyGenState, AvailableIndexes)>,
 }
 
@@ -110,16 +143,37 @@ where
         Self: Sized,
     {
         let table_path = Path::new(&config.tables_path);
+        let created_data_file = !table_path.join(WT_DATA_EXTENSION).exists();
         if !table_path.exists() {
             fs::create_dir_all(table_path)?;
         }
+        let existed = !created_data_file;
+
+        let data = load_store_component(
+            &config.tables_path,
+            existed,
+            SpaceData::from_table_files_path(config.tables_path.clone(), config.version),
+        )
+        .await?;
+        let primary_index = load_store_component(
+            &config.tables_path,
+            existed,
+            SpacePrimaryIndex::primary_from_table_files_path(config.tables_path.clone(), config.version),
+        )
+        .await?;
+        let secondary_indexes = load_store_component(
+            &config.tables_path,
+            existed,
+            SpaceSecondaryIndexes::from_table_files_path(config.tables_path.clone(), config.version),
+        )
+        .await?;
 
         Ok(Self {
             config: config.clone(),
-            data: SpaceData::from_table_files_path(config.tables_path.clone(), config.version).await?,
-            primary_index: SpacePrimaryIndex::primary_from_table_files_path(config.tables_path.clone(), config.version)
-                .await?,
-            secondary_indexes: SpaceSecondaryIndexes::from_table_files_path(config.tables_path, config.version).await?,
+            data,
+            primary_index,
+            secondary_indexes,
+            created_data_file,
             phantom_data: PhantomData,
         })
     }
@@ -226,6 +280,83 @@ where
             let info = self.data.get_mut_info();
             info.inner.pk_gen_state = pk_gen_state_update;
             self.data.save_info().await?;
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_schema(
+        &mut self,
+        row_schema: Vec<(String, String)>,
+        primary_key_fields: Vec<String>,
+        secondary_index_types: Vec<(String, String)>,
+    ) -> eyre::Result<()> {
+        let info = self.data.get_mut_info();
+        let legacy_empty = info.inner.row_schema.is_empty()
+            && info.inner.primary_key_fields.is_empty()
+            && info.inner.secondary_index_types.is_empty();
+
+        if legacy_empty {
+            info.inner.row_schema = row_schema;
+            info.inner.primary_key_fields = primary_key_fields;
+            info.inner.secondary_index_types = secondary_index_types;
+            return self.data.save_info().await;
+        }
+
+        if info.inner.row_schema != row_schema
+            || info.inner.primary_key_fields != primary_key_fields
+            || info.inner.secondary_index_types != secondary_index_types
+        {
+            return Err(eyre::eyre!(
+                "persisted schema mismatch for {}: stored row schema {:?}, primary key {:?}, indexes {:?}; generated row schema {:?}, primary key {:?}, indexes {:?}",
+                info.inner.name,
+                info.inner.row_schema,
+                info.inner.primary_key_fields,
+                info.inner.secondary_index_types,
+                row_schema,
+                primary_key_fields,
+                secondary_index_types,
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn validate_schema(
+        &mut self,
+        row_schema: Vec<(String, String)>,
+        primary_key_fields: Vec<String>,
+        secondary_index_types: Vec<(String, String)>,
+    ) -> eyre::Result<()> {
+        let info = self.data.get_mut_info();
+        let legacy_empty = info.inner.row_schema.is_empty()
+            && info.inner.primary_key_fields.is_empty()
+            && info.inner.secondary_index_types.is_empty();
+
+        if legacy_empty {
+            if self.created_data_file {
+                info.inner.row_schema = row_schema;
+                info.inner.primary_key_fields = primary_key_fields;
+                info.inner.secondary_index_types = secondary_index_types;
+                return self.data.save_info().await;
+            }
+            return Ok(());
+        }
+
+        if info.inner.row_schema != row_schema
+            || info.inner.primary_key_fields != primary_key_fields
+            || info.inner.secondary_index_types != secondary_index_types
+        {
+            return Err(eyre::eyre!(
+                "persisted schema mismatch for {}: stored row schema {:?}, primary key {:?}, indexes {:?}; generated row schema {:?}, primary key {:?}, indexes {:?}",
+                info.inner.name,
+                info.inner.row_schema,
+                info.inner.primary_key_fields,
+                info.inner.secondary_index_types,
+                row_schema,
+                primary_key_fields,
+                secondary_index_types,
+            ));
         }
 
         Ok(())

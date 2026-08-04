@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::io::SeekFrom;
 use std::path::Path;
 
@@ -187,7 +186,12 @@ where
         &mut self.info
     }
 
-    fn save_info(&mut self) -> impl Future<Output = eyre::Result<()>> + Send {
-        persist_page(&mut self.info, &mut self.data_file)
+    async fn save_info(&mut self) -> eyre::Result<()> {
+        persist_page(&mut self.info, &mut self.data_file).await?;
+        // A generated table may immediately reopen this file through a
+        // separate handle. Make the updated metadata visible before reporting
+        // success, just as `save_data` does for row bytes.
+        self.data_file.flush().await?;
+        Ok(())
     }
 }

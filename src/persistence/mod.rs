@@ -4,7 +4,7 @@ use crate::persistence::operation::BatchOperation;
 
 pub use engine::DiskConfig;
 pub use engine::DiskPersistenceEngine;
-pub use error::{PersistenceError, PersistenceResult, PersistenceState};
+pub use error::{PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState};
 pub use operation::{
     AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,
@@ -56,6 +56,34 @@ pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents
         &mut self,
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
+
+    /// Installs the generated table schema and rejects a non-empty schema that
+    /// belongs to a different table shape.
+    /// Custom engines may keep the default no-op when they do not expose
+    /// WorkTable data files.
+    fn ensure_schema(
+        &mut self,
+        _row_schema: Vec<(String, String)>,
+        _primary_key_fields: Vec<String>,
+        _secondary_index_types: Vec<(String, String)>,
+    ) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { Ok(()) }
+    }
+
+    /// Validates the generated schema while loading an existing store.
+    ///
+    /// Disk engines leave legacy stores with empty schema metadata unchanged,
+    /// so opening an old database does not mutate it as a side effect. A newly
+    /// created store may install its schema from this method. Custom engines
+    /// may keep the default no-op.
+    fn validate_schema(
+        &mut self,
+        _row_schema: Vec<(String, String)>,
+        _primary_key_fields: Vec<String>,
+        _secondary_index_types: Vec<(String, String)>,
+    ) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { Ok(()) }
+    }
 
     fn config(&self) -> &Self::Config;
 }

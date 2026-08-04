@@ -76,10 +76,20 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                 .await
                 .expect("persistence should catch up before vacuum")
                 .expect("persistence engine failed");
+            let physical_bytes_before = table.persisted_data_file_size_bytes().await.unwrap();
 
             let vacuum = table.vacuum();
             let stats = vacuum.vacuum().await.unwrap();
             assert!(stats.pages_freed > 0, "vacuum should have moved rows off a page");
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .expect("persistence should catch up after vacuum")
+                .expect("persistence engine failed");
+            let physical_bytes_after = table.persisted_data_file_size_bytes().await.unwrap();
+            assert!(
+                physical_bytes_after >= physical_bytes_before,
+                "persisted vacuum is logical compaction and must not report implicit file truncation"
+            );
 
             // Insert after vacuum: these operations carry event ids issued
             // after the moves, so if vacuum consumed ids without queueing the

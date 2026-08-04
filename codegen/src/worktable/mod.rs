@@ -37,6 +37,12 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                     "version must be specified before columns/indexes/queries/config",
                 ));
             }
+            "attributes" => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "a separate `attributes` section is not part of the 1.0 grammar; keep `primary_key`, `autoincrement`, `custom`, `optional`, and `using` inline on their column or index declarations",
+                ));
+            }
             _ => return Err(syn::Error::new(ident.span(), "Unexpected identifier")),
         }
     }
@@ -136,6 +142,23 @@ mod tests {
     use quote::quote;
 
     use super::expand;
+
+    #[test]
+    fn separate_attributes_section_has_an_actionable_1_0_diagnostic() {
+        let error = expand(quote! {
+            name: AttributesSection,
+            columns: {
+                id: u64 primary_key,
+            },
+            attributes: {
+                id: primary_key,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("not part of the 1.0 grammar"));
+        assert!(error.to_string().contains("keep `primary_key`"));
+    }
 
     fn assert_composite_primary_key_field_order(output: proc_macro2::TokenStream) {
         let output = output.to_string();

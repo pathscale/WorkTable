@@ -67,7 +67,7 @@ mod tests {
             "read_only should not generate PersistenceTask"
         );
         assert!(
-            output.contains("fn into_worktable (self)"),
+            output.contains("fn into_worktable (self , path : & str)"),
             "read_only should have sync into_worktable without engine param"
         );
         assert!(

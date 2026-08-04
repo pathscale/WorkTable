@@ -9,6 +9,7 @@ mod failure;
 mod index_page;
 mod loaded_index_growth;
 mod read;
+mod schema;
 mod space_index;
 mod sync;
 mod toc;
@@ -55,24 +56,3 @@ worktable!(
         number: u64,
     }
 );
-
-pub async fn get_empty_test_wt() -> TestPersistWorkTable {
-    let config = DiskConfig::new_with_table_name(
-        "tests/data",
-        TestPersistWorkTable::name_snake_case(),
-        TestPersistWorkTable::version(),
-    );
-    let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
-    TestPersistWorkTable::new(engine).await.unwrap()
-}
-
-pub async fn get_test_wt() -> TestPersistWorkTable {
-    let table = get_empty_test_wt().await;
-
-    for i in 1..100 {
-        let row = TestPersistRow { another: i, id: i };
-        table.insert(row).unwrap();
-    }
-
-    table
-}

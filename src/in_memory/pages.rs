@@ -505,6 +505,34 @@ where
         Ok(row.as_ref().clone())
     }
 
+    /// Loads one persisted row through rkyv validation without publishing it.
+    ///
+    /// This is used by the table load audit before the persistence worker is
+    /// started. It is intentionally separate from the steady-state read path.
+    pub fn select_non_ghosted_checked(&self, link: Link) -> Result<Row, ExecutionError>
+    where
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>
+            + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>,
+    {
+        let pages = self.pages.read();
+        let page_id: usize = link.page_id.into();
+        let page_index = page_id
+            .checked_sub(1)
+            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let page = pages
+            .get(page_index)
+            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let wrapped = page.get_row_checked(link).map_err(ExecutionError::DataPageError)?;
+        if wrapped.is_ghosted() {
+            return Err(ExecutionError::Ghosted);
+        }
+        if wrapped.is_deleted() {
+            return Err(ExecutionError::Deleted);
+        }
+        Ok(wrapped.get_inner())
+    }
+
     pub fn select_non_vacuumed(&self, link: Link) -> Result<Row, ExecutionError>
     where
         Row: Archive

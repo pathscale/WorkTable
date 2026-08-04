@@ -44,6 +44,16 @@ worktable!(
 
 const DIR: &str = "tests/data/torn_shutdown/persisted";
 pub const WRITER_ENV: &str = "WT_TORN_SHUTDOWN_WRITER";
+static TORN_STORE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_torn_store_tests() -> std::sync::MutexGuard<'static, ()> {
+    // These process-level tests intentionally mutate the same persisted store.
+    // Cargo runs tests concurrently, so serialize the parent processes while
+    // still allowing each test's writer child to operate on that store.
+    TORN_STORE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn key(i: u64) -> String {
     format!("msg-00000000-0000-4000-8000-{i:012}")
@@ -57,14 +67,18 @@ fn row(i: u64) -> TornShutdownRow {
     }
 }
 
-async fn open_table() -> TornShutdownWorkTable {
+async fn try_open_table() -> eyre::Result<TornShutdownWorkTable> {
     let config = DiskConfig::new_with_table_name(
         DIR,
         TornShutdownWorkTable::name_snake_case(),
         TornShutdownWorkTable::version(),
     );
-    let engine = TornShutdownPersistenceEngine::new(config).await.unwrap();
-    TornShutdownWorkTable::load(engine).await.unwrap()
+    let engine = TornShutdownPersistenceEngine::new(config).await?;
+    TornShutdownWorkTable::load(engine).await
+}
+
+async fn open_table() -> TornShutdownWorkTable {
+    try_open_table().await.unwrap()
 }
 
 /// The writer half, run as a child process: appends rows forever without
@@ -163,6 +177,11 @@ fn tear_the_store_repeatedly() {
                     "writer round {round} was killed by a signal ({status}): the \
                      tear was read as data instead of refused. Child stderr:\n{stderr}"
                 );
+                assert!(
+                    stderr.contains("torn or corrupt"),
+                    "writer round {round} refused the store without the typed corruption message. \
+                     Child stderr:\n{stderr}"
+                );
                 continue;
             }
         };
@@ -176,10 +195,11 @@ fn tear_the_store_repeatedly() {
 /// The bar validated page reads meet TODAY: a store torn by mid-write kills
 /// never takes a process down with a signal. Every load either succeeds or
 /// refuses naming corruption, in the writer children and in this process.
-/// What this bar does NOT include is row fidelity — see the ignored full-bar
-/// test below for that.
+/// What this bar does NOT include is row fidelity — the full Option B load
+/// contract is exercised by the next test.
 #[test]
 fn test_torn_store_fails_clean_never_by_signal() {
+    let _test_guard = lock_torn_store_tests();
     tear_the_store_repeatedly();
 
     let outcome = std::panic::catch_unwind(|| {
@@ -204,71 +224,145 @@ fn test_torn_store_fails_clean_never_by_signal() {
     drop(outcome);
 }
 
-/// The boundary of the design, written down as a test. Persistence here is
-/// best-effort by contract: consumers drain on every catchable exit, the
-/// accepted loss window is the instant between in-memory and on-disk, and a
-/// SIGKILL mid-write may cost data, with an index rebuild (worktable's
-/// rebuild verbs, or a snapshot restore) as the recovery. This test states
-/// what full crash-consistency WOULD look like: a killed store scans as a
-/// consistent prefix, no phantom rows. Validated reads alone cannot meet it,
-/// because a dangling index link into a zeroed region reads as a row of
-/// empty fields that validates perfectly. It stays ignored as documentation
-/// of the accepted risk, not as a demand: run it with
-/// `cargo test -- --ignored test_store_survives_torn_shutdowns` if the
-/// design contract ever changes.
+/// Option B's load boundary: persistence is best-effort, so a SIGKILL may
+/// lose acknowledged rows. The next load must nevertheless do exactly one of
+/// two things: return a validated state containing no phantom rows, or return
+/// the typed `PersistenceLoadError` that directs the caller to restore or
+/// rebuild. A torn store must never become a live table with invented data.
 #[test]
-#[ignore = "documents the accepted design boundary: SIGKILL mid-write may cost data; recovery is rebuild"]
 fn test_store_survives_torn_shutdowns() {
+    let _test_guard = lock_torn_store_tests();
     tear_the_store_repeatedly();
-    // The reckoning: load and scan the torn store IN THIS PROCESS, through
-    // an unwind boundary so a named corruption refusal counts as the fix
-    // working. What must not happen is the process dying of SIGBUS/UB (the
-    // harness reports that as the test binary dying), or the scan returning
-    // rows nobody wrote.
-    let outcome = std::panic::catch_unwind(|| {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_io()
-            .enable_time()
-            .build()
-            .unwrap();
-        runtime.block_on(async {
-            let table = open_table().await;
-            let rows = table.select_all().execute().unwrap();
-            let legal_projects: BTreeSet<String> = (0..3).map(|p| format!("proj-{p:02}")).collect();
-            for row in &rows {
-                assert!(
-                    row.id.starts_with("msg-00000000-0000-4000-8000-"),
-                    "scan returned a row no writer ever inserted (id {:?}): torn bytes \
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        match try_open_table().await {
+            Ok(table) => {
+                let rows = table.select_all().execute().unwrap();
+                let legal_projects: BTreeSet<String> = (0..3).map(|p| format!("proj-{p:02}")).collect();
+                for row in &rows {
+                    assert!(
+                        row.id.starts_with("msg-00000000-0000-4000-8000-"),
+                        "scan returned a row no writer ever inserted (id {:?}): torn bytes \
                      were read as data",
-                    &row.id[..row.id.len().min(60)]
-                );
-                assert!(
-                    legal_projects.contains(&row.project_id),
-                    "row {} carries project {:?}, which no writer ever wrote",
-                    row.id,
-                    row.project_id
-                );
+                        &row.id[..row.id.len().min(60)]
+                    );
+                    assert!(
+                        legal_projects.contains(&row.project_id),
+                        "row {} carries project {:?}, which no writer ever wrote",
+                        row.id,
+                        row.project_id
+                    );
+                }
+                // And the survivor must still accept writes and a drain.
+                table.insert(row(9_000_000)).unwrap();
+                timeout(Duration::from_secs(30), table.wait_for_ops())
+                    .await
+                    .expect("persistence stalled appending to the survivor store")
+                    .expect("persistence engine failed");
             }
-            // And the survivor must still accept writes and a drain.
-            table.insert(row(9_000_000)).unwrap();
-            timeout(Duration::from_secs(30), table.wait_for_ops())
-                .await
-                .expect("persistence stalled appending to the survivor store")
-                .expect("persistence engine failed");
-        });
+            Err(error) => assert!(
+                error.downcast_ref::<PersistenceLoadError>().is_some(),
+                "torn store was refused with an untyped error: {error:#}"
+            ),
+        }
     });
-    if let Err(panic) = outcome {
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .unwrap_or("(non-string panic)");
-        assert!(
-            message.contains("torn or corrupt"),
-            "the torn store failed without naming corruption: {message}"
-        );
+}
+
+#[test]
+fn corrupted_row_is_refused_with_typed_load_error() {
+    let _test_guard = lock_torn_store_tests();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    let link = runtime.block_on(async {
+        remove_dir_if_exists(DIR.to_string()).await;
+        let table = open_table().await;
+        let primary_key = table.insert(row(7)).unwrap();
+        let link = table.0.primary_index.pk_map.get_value(&primary_key).unwrap().0;
+        table.close().await.unwrap();
+        link
+    });
+
+    let data_path = format!(
+        "{DIR}/{}/{}",
+        TornShutdownWorkTable::name_snake_case(),
+        WT_DATA_EXTENSION
+    );
+    let page_id: u32 = link.page_id.into();
+    let byte_offset = u64::from(page_id) * PAGE_SIZE as u64 + GENERAL_HEADER_SIZE as u64 + u64::from(link.offset);
+    {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let mut data_file = std::fs::OpenOptions::new().write(true).open(data_path).unwrap();
+        data_file.seek(SeekFrom::Start(byte_offset)).unwrap();
+        data_file.write_all(&vec![0; link.length as usize]).unwrap();
+        data_file.sync_all().unwrap();
     }
+
+    runtime.block_on(async {
+        let error = match try_open_table().await {
+            Ok(_) => panic!("corrupted row was exposed as a live table"),
+            Err(error) => error,
+        };
+        let typed = error
+            .downcast_ref::<PersistenceLoadError>()
+            .expect("corrupt persisted row must return PersistenceLoadError");
+        assert_eq!(typed.path(), std::path::Path::new(&format!("{DIR}/torn_shutdown")));
+        assert!(!typed.reason().is_empty());
+    });
+}
+
+#[test]
+fn incomplete_secondary_index_is_refused_with_typed_load_error() {
+    let _test_guard = lock_torn_store_tests();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists(DIR.to_string()).await;
+        let table = open_table().await;
+        table.insert(row(11)).unwrap();
+        table.close().await.unwrap();
+    });
+
+    let secondary_path = format!(
+        "{DIR}/{}/project_idx{}",
+        TornShutdownWorkTable::name_snake_case(),
+        WT_INDEX_EXTENSION
+    );
+    {
+        let secondary_file = std::fs::OpenOptions::new().write(true).open(secondary_path).unwrap();
+        secondary_file.set_len(PAGE_SIZE as u64).unwrap();
+        secondary_file.sync_all().unwrap();
+    }
+
+    runtime.block_on(async {
+        let error = match try_open_table().await {
+            Ok(_) => panic!("incomplete secondary index was exposed as a live table"),
+            Err(error) => error,
+        };
+        let typed = error
+            .downcast_ref::<PersistenceLoadError>()
+            .expect("incomplete secondary index must return PersistenceLoadError");
+        assert!(
+            typed.reason().contains("project_idx"),
+            "unexpected reason: {}",
+            typed.reason()
+        );
+    });
 }
 
 /// The clean-shutdown sibling: many short load-append-drain-close sessions,

@@ -3,13 +3,13 @@ pub mod system_info;
 pub mod vacuum;
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
-use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation};
+use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation, PersistenceLoadError};
 use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
     AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
-    TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, convert_change_events, in_memory,
+    TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, UniqueIndex, convert_change_events, in_memory,
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
@@ -22,8 +22,10 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Portable, Serialize};
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -123,6 +125,70 @@ where
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
+    /// Audits the persisted primary-index/data boundary before a table is made
+    /// available to callers.
+    ///
+    /// This load-only scan prevents a torn index link from turning zeroed or
+    /// unrelated bytes into a plausible row. It deliberately does not run on
+    /// steady-state operations.
+    pub fn validate_persisted_state(&self, path: impl AsRef<Path>) -> Result<(), PersistenceLoadError>
+    where
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>
+            + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>,
+    {
+        let path = path.as_ref();
+        let mut links = HashSet::with_capacity(self.primary_index.pk_map.len());
+
+        for (primary_key, offset_link) in self.primary_index.pk_map.iter_values() {
+            if !links.insert(offset_link) {
+                return Err(PersistenceLoadError::corrupt(
+                    path,
+                    format!("multiple primary keys reference physical link {:?}", offset_link.0),
+                ));
+            }
+
+            let row = self.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {
+                PersistenceLoadError::corrupt(
+                    path,
+                    format!("primary key {primary_key:?} references an invalid row: {error}"),
+                )
+            })?;
+            if row.get_primary_key() != primary_key {
+                return Err(PersistenceLoadError::corrupt(
+                    path,
+                    format!("row at {:?} does not match primary key {primary_key:?}", offset_link.0),
+                ));
+            }
+
+            let reverse_key = self.primary_index.reverse_pk_map.get_value(&offset_link);
+            if reverse_key.as_ref() != Some(&primary_key) {
+                return Err(PersistenceLoadError::corrupt(
+                    path,
+                    format!("reverse primary index does not match link {:?}", offset_link.0),
+                ));
+            }
+        }
+
+        if self.primary_index.reverse_pk_map.len() != links.len() {
+            return Err(PersistenceLoadError::corrupt(
+                path,
+                "forward and reverse primary indexes contain different numbers of entries",
+            ));
+        }
+
+        for (offset_link, primary_key) in self.primary_index.reverse_pk_map.iter_values() {
+            if self.primary_index.pk_map.get_value(&primary_key) != Some(offset_link) {
+                return Err(PersistenceLoadError::corrupt(
+                    path,
+                    format!("forward primary index does not match link {:?}", offset_link.0),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn get_next_pk(&self) -> PrimaryKey
     where
         PkGen: PrimaryKeyGenerator<PrimaryKey>,

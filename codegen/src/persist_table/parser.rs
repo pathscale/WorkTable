@@ -2,7 +2,7 @@ use crate::persist_table::generator::PersistTableAttributes;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::ToTokens;
 use syn::spanned::Spanned;
-use syn::{Attribute, ItemStruct};
+use syn::{Attribute, ItemStruct, LitStr};
 
 pub struct Parser;
 
@@ -32,6 +32,9 @@ impl Parser {
             pk_upstream: false,
             pk_arctic: false,
             pk_congee: false,
+            row_schema: vec![],
+            primary_key_fields: vec![],
+            secondary_index_types: vec![],
         };
 
         for attr in attrs {
@@ -55,6 +58,44 @@ impl Parser {
                     }
                     if meta.path.is_ident("pk_congee") {
                         res.pk_congee = true;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("row_schema") {
+                        meta.parse_nested_meta(|field| {
+                            let name = field
+                                .path
+                                .get_ident()
+                                .ok_or_else(|| field.error("row schema field must be an identifier"))?
+                                .to_string();
+                            let type_name = field.value()?.parse::<LitStr>()?.value();
+                            res.row_schema.push((name, type_name));
+                            Ok(())
+                        })?;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("primary_key_fields") {
+                        meta.parse_nested_meta(|field| {
+                            let name = field
+                                .path
+                                .get_ident()
+                                .ok_or_else(|| field.error("primary key field must be an identifier"))?
+                                .to_string();
+                            res.primary_key_fields.push(name);
+                            Ok(())
+                        })?;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("secondary_index_types") {
+                        meta.parse_nested_meta(|index| {
+                            let name = index
+                                .path
+                                .get_ident()
+                                .ok_or_else(|| index.error("secondary index name must be an identifier"))?
+                                .to_string();
+                            let type_name = index.value()?.parse::<LitStr>()?.value();
+                            res.secondary_index_types.push((name, type_name));
+                            Ok(())
+                        })?;
                         return Ok(());
                     }
                     Ok(())

@@ -603,6 +603,7 @@ pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availa
     analyzer_inner_wt: Arc<QueueInnerWorkTable>,
     analyzer_in_progress: Arc<AtomicBool>,
     lifecycle: Arc<PersistenceLifecycle>,
+    table_path: String,
     phantom_data: PhantomData<AvailableIndexes>,
 }
 
@@ -662,6 +663,21 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         self.lifecycle.state()
     }
 
+    /// Returns the current physical size of the table data file.
+    ///
+    /// This is intentionally separate from `VacuumStats`: vacuum currently
+    /// compacts and reuses in-memory pages but does not truncate `.wt.data`.
+    /// Operators can sample this value to observe physical growth.
+    pub async fn persisted_data_file_size_bytes(&self) -> std::io::Result<u64> {
+        tokio::fs::metadata(format!(
+            "{}/{}",
+            self.table_path.trim_end_matches('/'),
+            WT_DATA_EXTENSION
+        ))
+        .await
+        .map(|metadata| metadata.len())
+    }
+
     /// Returns a sink that lets vacuum queue persistence operations for row
     /// moves into this task's operation queue.
     pub fn vacuum_sink(&self) -> Arc<dyn VacuumPersistence<PrimaryKey, SecondaryKeys>>
@@ -681,6 +697,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         PrimaryKey: Clone + Debug + Send + Sync + 'static,
         AvailableIndexes: Copy + Clone + Debug + Hash + Eq + Send + Sync + 'static,
     {
+        let table_path = engine.config().table_path().to_owned();
         let lifecycle = Arc::new(PersistenceLifecycle::new());
         let queue = Arc::new(Queue::new(lifecycle.clone()));
 
@@ -744,6 +761,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             analyzer_inner_wt,
             analyzer_in_progress,
             lifecycle,
+            table_path,
             phantom_data: PhantomData,
         }
     }
