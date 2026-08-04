@@ -18,6 +18,10 @@ categories = ["database-implementations", "data-structures", "caching"]
 default = ["wti-predictable-search"]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
 s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
+# Moves unique WorkTablesIndex structural CDC work out of the table mutation
+# path and into the background persistence worker. The persisted page format
+# is unchanged, so stores remain readable with or without this feature.
+logical-index-persistence = ["worktable_codegen/logical-index-persistence"]
 wti-hybrid-search = ["indexset/wt-slice-binary-search"]
 wti-predictable-search = ["indexset/custom-binary-search"]
 wti-std-search = ["indexset/std-binary-search"]

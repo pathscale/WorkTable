@@ -455,6 +455,71 @@ async fn native_art_backends_recover_concurrent_same_row_updates() {
     remove_dir_if_exists(ROOT.to_string()).await;
 }
 
+#[cfg(feature = "logical-index-persistence")]
+#[tokio::test]
+async fn logical_wti_recovers_concurrent_same_row_updates() {
+    use std::sync::Arc;
+
+    use provider_switch_wti as wti;
+    use tokio::sync::Barrier;
+
+    const ROOT: &str = "tests/data/index_backend_logical_wti_concurrent";
+    const WORKERS: u64 = 8;
+    const UPDATES_PER_WORKER: u64 = 100;
+    remove_dir_if_exists(ROOT.to_string()).await;
+
+    let config = DiskConfig::new_with_table_name(
+        ROOT,
+        wti::ProviderSwitchWorkTable::name_snake_case(),
+        wti::ProviderSwitchWorkTable::version(),
+    );
+    let engine = wti::ProviderSwitchPersistenceEngine::new(config.clone()).await.unwrap();
+    let table = Arc::new(wti::ProviderSwitchWorkTable::load(engine).await.unwrap());
+    let id: u64 = table.get_next_pk().into();
+    table.insert(wti::ProviderSwitchRow { id, unique_key: 1 }).unwrap();
+
+    let barrier = Arc::new(Barrier::new(WORKERS as usize + 1));
+    let mut workers = Vec::new();
+    for worker in 0..WORKERS {
+        let table = Arc::clone(&table);
+        let barrier = Arc::clone(&barrier);
+        workers.push(tokio::spawn(async move {
+            barrier.wait().await;
+            for update in 0..UPDATES_PER_WORKER {
+                table
+                    .update(wti::ProviderSwitchRow {
+                        id,
+                        unique_key: 10_000 + worker * UPDATES_PER_WORKER + update,
+                    })
+                    .await
+                    .unwrap();
+            }
+        }));
+    }
+    barrier.wait().await;
+    for worker in workers {
+        worker.await.unwrap();
+    }
+
+    let expected = table.select(id).unwrap();
+    table.wait_for_ops().await.unwrap();
+    drop(table);
+
+    let engine = wti::ProviderSwitchPersistenceEngine::new(config).await.unwrap();
+    let table = wti::ProviderSwitchWorkTable::load(engine).await.unwrap();
+    assert_eq!(table.select(id), Some(expected.clone()));
+    assert_eq!(table.select_by_unique_key(expected.unique_key), Some(expected.clone()));
+    for key in 10_000..10_000 + WORKERS * UPDATES_PER_WORKER {
+        if key != expected.unique_key {
+            assert!(table.select_by_unique_key(key).is_none());
+        }
+    }
+    table.wait_for_ops().await.unwrap();
+    drop(table);
+
+    remove_dir_if_exists(ROOT.to_string()).await;
+}
+
 #[tokio::test]
 async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() {
     use provider_switch_upstream as upstream;

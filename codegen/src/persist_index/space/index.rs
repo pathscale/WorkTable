@@ -25,6 +25,12 @@ impl Generator {
                     Some(ArtBackend::Congee) => quote! {
                         #i: SpaceCongeeIndex<#t, { #inner_const_name as u32}>,
                     },
+                    None if layout.logical_wti && is_unsized(&t.to_string()) => quote! {
+                        #i: SpaceLogicalIndexUnsized<#t, { #inner_const_name as u32}>,
+                    },
+                    None if layout.logical_wti => quote! {
+                        #i: SpaceLogicalIndex<#t, { #inner_const_name as u32}>,
+                    },
                     None if is_unsized(&t.to_string()) => quote! {
                         #i: SpaceIndexUnsized<#t, { #inner_const_name as u32}>,
                     },
@@ -78,6 +84,12 @@ impl Generator {
                     },
                     Some(ArtBackend::Congee) => quote! {
                         #i: SpaceCongeeIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
+                    },
+                    None if layout.logical_wti && is_unsized(&t.to_string()) => quote! {
+                        #i: SpaceLogicalIndexUnsized::secondary_from_table_files_path(path, #literal_name, version).await?,
+                    },
+                    None if layout.logical_wti => quote! {
+                        #i: SpaceLogicalIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
                     },
                     None if is_unsized(&t.to_string()) => quote! {
                         #i: SpaceIndexUnsized::secondary_from_table_files_path(path, #literal_name, version).await?,
