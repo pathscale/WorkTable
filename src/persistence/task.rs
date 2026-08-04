@@ -396,6 +396,7 @@ mod lifecycle_tests {
 
     struct TestEngine {
         batches: Arc<AtomicUsize>,
+        events: Arc<ParkingMutex<Vec<&'static str>>>,
         config: TestConfig,
         fail: bool,
     }
@@ -406,6 +407,7 @@ mod lifecycle_tests {
         async fn new(config: Self::Config) -> eyre::Result<Self> {
             Ok(Self {
                 batches: Arc::new(AtomicUsize::new(0)),
+                events: Arc::new(ParkingMutex::new(Vec::new())),
                 config,
                 fail: false,
             })
@@ -423,6 +425,12 @@ mod lifecycle_tests {
                 return Err(eyre::eyre!("injected batch failure"));
             }
             self.batches.fetch_add(1, Ordering::Relaxed);
+            self.events.lock().push("batch");
+            Ok(())
+        }
+
+        async fn reclaim_data_pages(&mut self, _page_ids: Vec<PageId>) -> eyre::Result<()> {
+            self.events.lock().push("reclaim");
             Ok(())
         }
 
@@ -451,6 +459,7 @@ mod lifecycle_tests {
         let batches = Arc::new(AtomicUsize::new(0));
         let task = PersistenceTask::run_engine(TestEngine {
             batches: batches.clone(),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
             config: TestConfig,
             fail: false,
         });
@@ -465,6 +474,7 @@ mod lifecycle_tests {
     async fn engine_failure_is_terminal_and_reused_for_later_callers() {
         let task = PersistenceTask::run_engine(TestEngine {
             batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
             config: TestConfig,
             fail: true,
         });
@@ -479,6 +489,30 @@ mod lifecycle_tests {
         let close_error = task.close().await.unwrap_err();
         assert!(Arc::ptr_eq(&wait_error, &close_error));
     }
+
+    #[tokio::test]
+    async fn vacuum_reclamation_waits_for_preceding_row_moves() {
+        let events = Arc::new(ParkingMutex::new(Vec::new()));
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: events.clone(),
+            config: TestConfig,
+            fail: false,
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        task.queue.reclaim_pages(vec![1.into()]).unwrap();
+        task.apply_operation(insert_operation(2)).unwrap();
+        task.wait_for_ops().await.unwrap();
+
+        assert_eq!(&*events.lock(), &["batch", "reclaim", "batch"]);
+    }
+}
+
+#[derive(Debug)]
+enum PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    Operation(Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>),
+    ReclaimPages(Vec<PageId>),
 }
 
 #[derive(Debug)]
@@ -487,7 +521,7 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // element type via `mem::uninitialized`, which aborts at runtime for
     // `Operation` layouts that reject uninit bytes. The queue has a single
     // consumer (the engine task), so a mutexed deque is uncontended here.
-    queue: ParkingMutex<VecDeque<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>>,
+    queue: ParkingMutex<VecDeque<PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>>,
     notify: Notify,
     // usize, not u16: the queue is unbounded and a 16-bit counter wraps at
     // 65_536 queued operations, making the wait triggers see an "empty"
@@ -507,6 +541,13 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     }
 
     pub fn push(&self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
+        self.push_message(PersistenceMessage::Operation(value))
+    }
+
+    fn push_message(
+        &self,
+        value: PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
+    ) -> PersistenceResult {
         let state = self.lifecycle.state.lock();
         match &*state {
             PersistenceState::Running => {}
@@ -525,10 +566,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     /// waiter that reads `len() == 0` (`Acquire`) is guaranteed to observe
     /// `in_progress == true` for the popped-but-unprocessed operation;
     /// otherwise `wait_for_ops` can return while that operation is in flight.
-    pub async fn pop_marking_in_progress(
+    async fn pop_marking_in_progress(
         &self,
         in_progress: &AtomicBool,
-    ) -> Option<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
+    ) -> Option<PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         loop {
             let notified = self.notify.notified();
             // Drain values
@@ -554,17 +595,13 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
         self.notify.notify_waiters();
     }
 
-    pub fn immediate_pop(&self) -> Option<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
+    fn immediate_pop(&self) -> Option<PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         if let Some(v) = self.queue.lock().pop_front() {
             self.len.fetch_sub(1, Ordering::Release);
             Some(v)
         } else {
             None
         }
-    }
-
-    pub fn pop_iter(&self) -> impl Iterator<Item = Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
-        std::iter::from_fn(|| self.immediate_pop())
     }
 
     pub fn len(&self) -> usize {
@@ -593,6 +630,10 @@ where
             bytes,
             link: new_link,
         }))
+    }
+
+    fn reclaim_pages(&self, page_ids: Vec<PageId>) -> PersistenceResult {
+        self.push_message(PersistenceMessage::ReclaimPages(page_ids))
     }
 }
 
@@ -665,9 +706,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 
     /// Returns the current physical size of the table data file.
     ///
-    /// This is intentionally separate from `VacuumStats`: vacuum currently
-    /// compacts and reuses in-memory pages but does not truncate `.wt.data`.
-    /// Operators can sample this value to observe physical growth.
+    /// This is intentionally separate from `VacuumStats`: online vacuum makes
+    /// freed pages durably reusable, but does not truncate `.wt.data`.
+    /// Operators can sample this value to observe physical growth and reuse.
     pub async fn persisted_data_file_size_bytes(&self) -> std::io::Result<u64> {
         tokio::fs::metadata(format!(
             "{}/{}",
@@ -709,10 +750,16 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         let task_analyzer_in_progress = analyzer_in_progress.clone();
 
         let task = async move {
+            let mut pending_reclaim: Option<Vec<PageId>> = None;
             loop {
-                let op = if let Some(next_op) = engine_queue.immediate_pop() {
-                    Some(next_op)
-                } else if analyzer.len() == 0 {
+                let message = if pending_reclaim.is_none() {
+                    engine_queue.immediate_pop()
+                } else {
+                    None
+                };
+                let message = if message.is_some() {
+                    message
+                } else if analyzer.len() == 0 && pending_reclaim.is_none() {
                     task_analyzer_in_progress.store(false, Ordering::Release);
                     engine_lifecycle.notify.notify_waiters();
                     if matches!(engine_lifecycle.state(), PersistenceState::Closing) {
@@ -726,17 +773,35 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 } else {
                     None
                 };
-                if let Some(op) = op
-                    && let Err(err) = analyzer.push(op.clone())
-                {
-                    engine_lifecycle.fail(err);
-                    return;
+
+                if let Some(message) = message {
+                    match message {
+                        PersistenceMessage::Operation(op) => {
+                            if let Err(err) = analyzer.push(op) {
+                                engine_lifecycle.fail(err);
+                                return;
+                            }
+                        }
+                        PersistenceMessage::ReclaimPages(page_ids) => pending_reclaim = Some(page_ids),
+                    }
                 }
-                let ops_available_iter = engine_queue.pop_iter();
-                if let Err(err) = analyzer.extend_from_iter(ops_available_iter) {
-                    engine_lifecycle.fail(err);
-                    return;
+
+                // Pull operations up to, but never past, a reclamation
+                // barrier. This gives the analyzer every CDC event required
+                // for a batch while preserving FIFO ordering for maintenance.
+                while pending_reclaim.is_none() {
+                    match engine_queue.immediate_pop() {
+                        Some(PersistenceMessage::Operation(op)) => {
+                            if let Err(err) = analyzer.push(op) {
+                                engine_lifecycle.fail(err);
+                                return;
+                            }
+                        }
+                        Some(PersistenceMessage::ReclaimPages(page_ids)) => pending_reclaim = Some(page_ids),
+                        None => break,
+                    }
                 }
+
                 if let Some(op_id) = analyzer.get_first_op_id_available() {
                     let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
                     if let Err(e) = batch_op {
@@ -751,6 +816,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     } else {
                         tokio::time::sleep(Duration::from_millis(500)).await;
                     }
+                } else if let Some(page_ids) = pending_reclaim.take()
+                    && let Err(error) = engine.reclaim_data_pages(page_ids).await
+                {
+                    engine_lifecycle.fail(error);
+                    return;
                 }
             }
         };

@@ -1,5 +1,7 @@
 use std::future::Future;
 
+use data_bucket::page::PageId;
+
 use crate::persistence::operation::BatchOperation;
 
 pub use engine::DiskConfig;
@@ -56,6 +58,15 @@ pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents
         &mut self,
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
+
+    /// Persists whole data pages made reusable by vacuum.
+    ///
+    /// The persistence task invokes this only after every row move queued
+    /// before the reclamation barrier has reached the engine. Custom engines
+    /// that do not manage data pages may keep the default no-op.
+    fn reclaim_data_pages(&mut self, _page_ids: Vec<PageId>) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { Ok(()) }
+    }
 
     /// Installs the generated table schema and rejects a non-empty schema that
     /// belongs to a different table shape.

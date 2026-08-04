@@ -202,13 +202,24 @@ where
             // expose the whole page for reuse. Otherwise a concurrent insert
             // could claim a stale fragment between retirement and cleanup.
             registry.remove_link_for_page(page_from);
+            if let Some(persistence) = &self.persistence {
+                // Queue the durable-free marker before publishing this page to
+                // in-memory allocators. Any concurrent reuse is then ordered
+                // after the marker and consumes the durable free range again.
+                persistence.reclaim_pages(vec![page_from])?;
+            }
             self.data_pages.mark_page_empty(page_from);
             pages_freed += 1;
         }
 
         pages_freed += free_pages.len();
+        if let Some(persistence) = &self.persistence
+            && !free_pages.is_empty()
+        {
+            persistence.reclaim_pages(free_pages.iter().copied().collect())?;
+        }
         for id in free_pages {
-            self.data_pages.mark_page_empty(id)
+            self.data_pages.mark_page_empty(id);
         }
         for id in defragmented_pages {
             self.data_pages.mark_page_full(id)
