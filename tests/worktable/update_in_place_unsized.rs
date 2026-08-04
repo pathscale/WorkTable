@@ -102,7 +102,12 @@ async fn different_length_update_is_correct() {
         .unwrap();
 
     table
-        .update_payload(PayloadQuery { payload: "xy".to_string() }, 1)
+        .update_payload(
+            PayloadQuery {
+                payload: "xy".to_string(),
+            },
+            1,
+        )
         .await
         .unwrap();
     assert_eq!(table.select(1).unwrap().payload, "xy");
