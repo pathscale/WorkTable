@@ -113,7 +113,27 @@ where
     }
 
     fn need_to_split(&self, _: usize, value: &T) -> bool {
-        let final_length = self.length + value.aligned_size();
+        let value_size = value.aligned_size();
+        let current_node_id_size = self.max().map(SizeMeasurable::aligned_size).unwrap_or(0);
+        let next_node_id_size = self
+            .max()
+            .map(|current_max| {
+                if value > current_max {
+                    value_size
+                } else {
+                    current_max.aligned_size()
+                }
+            })
+            .unwrap_or(value_size);
+        // `length` deliberately retains removed bytes until a rebuild. That
+        // makes this estimate conservative before reload; persisted pages are
+        // compacted separately when physical fragmentation survives reload.
+        let final_length = self
+            .length
+            .saturating_sub(current_node_id_size)
+            .saturating_add(next_node_id_size)
+            .saturating_add(value_size)
+            .saturating_add(UnsizedIndexPageUtility::<T>::slots_value_size());
         final_length >= self.length_capacity && self.inner.len() > 1
     }
 
