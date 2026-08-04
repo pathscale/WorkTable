@@ -220,8 +220,20 @@ impl InMemoryGenerator {
         }
     }
 
-    fn gen_size_check(&self, unsized_fields: Option<Vec<&Ident>>, idents: &[Ident]) -> TokenStream {
-        if let Some(f) = unsized_fields {
+    fn gen_size_check(
+        &self,
+        unsized_fields: Option<Vec<&Ident>>,
+        idents: &[Ident],
+        idx_idents: Option<&Vec<Ident>>,
+    ) -> TokenStream {
+        // The in-place fast path re-serializes the row directly into its slot and
+        // republishes it, bypassing the generated secondary-index diff. That is
+        // only safe when NONE of the updated columns are indexed; an update that
+        // touches an indexed column must keep the index-maintaining reinsert
+        // path (and its unique-constraint check). Fall back to always-reinsert in
+        // that case.
+        let touches_index = idx_idents.map(|v| !v.is_empty()).unwrap_or(false);
+        if let (Some(f), false) = (unsized_fields, touches_index) {
             let fields_check: Vec<_> = f
                 .iter()
                 .map(|f| {
@@ -253,19 +265,27 @@ impl InMemoryGenerator {
                 #(#fields_check)*
 
                 {
+                    // Serialize the whole read-modify-write against other
+                    // updates of this key by holding the full-row lock (the
+                    // reinsert path does the same). The original query lock only
+                    // covers this query's columns, so two different-column
+                    // updates could otherwise each rebuild the row from a stale
+                    // snapshot and lose each other's write.
+                    drop(_guard);
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new_with_mutation(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
+
+                    // Re-read the current row UNDER the full-row lock so the
+                    // rebuilt row reflects any committed concurrent update.
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
 
                     if need_to_reinsert {
-                        drop(_guard);
-                        let op_lock = { #full_row_lock };
-                        let _guard = LockGuard::new_with_mutation(
-                            op_lock,
-                            self.0.lock_manager.clone(),
-                            pk.clone(),
-                        );
-
                         if let Err(e) = self.reinsert(row_old, row_new).await {
                             self.0.update_state.remove(&pk);
 
@@ -276,26 +296,21 @@ impl InMemoryGenerator {
                         return core::result::Result::Ok(());
                     }
 
-                    // Same-size in-place write at the CURRENT slot. Re-resolve
-                    // the link under the held mutation gate: a concurrent
-                    // different-length update on this key may have reinserted the
-                    // row to a new slot, invalidating the link captured earlier.
-                    // Re-serialize the full rebuilt row (only the changed fields
-                    // differ) and overwrite the slot's bytes so any out-of-line
-                    // `String` field's archived pointer resolves within the slot
-                    // (NOT a `mem::swap`, which would dangle the pointer), then
-                    // republish the row as live.
+                    // Same-size in-place write at the CURRENT slot. Re-serialize
+                    // the full rebuilt row (only the changed fields differ) and
+                    // overwrite the slot's bytes so any out-of-line `String`
+                    // field's archived pointer resolves within the slot (NOT a
+                    // `mem::swap`, which would dangle the pointer), then republish
+                    // the row as live.
                     let current_link: Link = self.0
                         .primary_index
                         .pk_map
                         .get_value(&pk)
                         .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
-                    // Try the same-slot in-place write. Equal field sizes do not
-                    // guarantee an equal TOTAL serialized length (alignment), and
-                    // a concurrent reinsert may have moved the row, so a mismatch
-                    // is expected sometimes — fall back to a full reinsert rather
-                    // than fail. Correctness-first: reinsert always works.
+                    // Equal field sizes do not guarantee an equal TOTAL serialized
+                    // length (alignment), so a same-slot write may not fit — fall
+                    // back to a full reinsert rather than fail. Correctness-first.
                     let in_place_ok = unsafe {
                         self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), current_link).is_ok()
                     };
@@ -313,8 +328,41 @@ impl InMemoryGenerator {
                     return core::result::Result::Ok(());
                 }
             }
-        } else {
+        } else if self.columns.is_sized {
+            // Sized rows never change length; the caller's field swap is safe and
+            // no size check / reinsert is needed.
             quote! {}
+        } else {
+            // Unsized rows where an updated column IS indexed: keep the original
+            // always-reinsert path so secondary-index maintenance and unique
+            // checks run through reinsert.
+            let row_updates = idents
+                .iter()
+                .map(|i| quote! { row_new.#i = row.#i.clone(); })
+                .collect::<Vec<_>>();
+            let full_row_lock = self.gen_full_lock_for_update();
+            quote! {
+                {
+                    drop(_guard);
+                    let op_lock = { #full_row_lock };
+                    let _guard = LockGuard::new_with_mutation(
+                        op_lock,
+                        self.0.lock_manager.clone(),
+                        pk.clone(),
+                    );
+
+                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
+                    let mut row_new = row_old.clone();
+                    #(#row_updates)*
+                    if let Err(e) = self.reinsert(row_old, row_new).await {
+                        self.0.update_state.remove(&pk);
+                        return Err(e);
+                    }
+
+                    self.0.update_state.remove(&pk);
+                    return core::result::Result::Ok(());
+                }
+            }
         }
     }
 
@@ -500,7 +548,7 @@ impl InMemoryGenerator {
             })
             .collect::<Vec<_>>();
 
-        let size_check = self.gen_size_check(unsized_fields, idents);
+        let size_check = self.gen_size_check(unsized_fields, idents, idx_idents);
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
@@ -740,7 +788,7 @@ impl InMemoryGenerator {
                 }
             })
             .collect::<Vec<_>>();
-        let size_check = self.gen_size_check(unsized_fields, idents);
+        let size_check = self.gen_size_check(unsized_fields, idents, idx_idents);
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
