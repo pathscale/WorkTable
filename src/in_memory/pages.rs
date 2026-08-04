@@ -389,12 +389,17 @@ where
                 Err(e) => match e {
                     DataExecutionError::PageIsFull { .. } => {
                         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Relaxed) as usize) {
-                            let mut g = self.empty_pages.write();
-                            if let Some(page_id) = g.pop_front() {
-                                let _pages = self.pages.write();
+                            let empty_page = self.empty_pages.write().pop_front();
+                            if let Some(page_id) = empty_page {
+                                // Retired pages retain their old bytes until
+                                // the read-side grace period completes. Reset
+                                // only after reclamation made the page
+                                // available for reuse.
+                                let _page_access = self.page_access.write();
+                                let pages = self.pages.read();
+                                pages[page_id_mapper(page_id.into())].reset();
                                 self.current_page_id.store(page_id.into(), Ordering::Release);
                             } else {
-                                drop(g);
                                 self.add_next_page(tried_page);
                             }
                         }
@@ -671,17 +676,6 @@ where
             .iter()
             .map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed)))
             .collect()
-    }
-
-    pub(crate) fn reset_page(&self, page_id: PageId) -> Result<(), ExecutionError> {
-        let _page_access = self.page_access.write();
-        let pages = self.pages.read();
-        let page = pages
-            .get(page_id_mapper(page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(page_id))?;
-        page.reset();
-
-        Ok(())
     }
 
     /// Copies a row to another page without exposing either mutable byte
@@ -1042,6 +1036,45 @@ mod tests {
         drop(read_guard);
         pages.reclaim_retired();
         assert!(pages.get_empty_links().contains(&old_link));
+    }
+
+    #[test]
+    fn read_grace_period_prevents_vacuumed_page_reuse() {
+        let pages = DataPages::<TestRow>::from_data(vec![
+            Arc::new(Data::new(1.into())),
+            Arc::new(Data::new(2.into())),
+            Arc::new(Data::new(3.into())),
+        ]);
+        pages.current_page_id.store(2, Ordering::Release);
+        let old_link = pages.insert(TestRow { a: 1, b: 1 }).unwrap();
+        unsafe {
+            pages.with_mut_ref(old_link, |row| row.unghost()).unwrap();
+        }
+        pages.current_page_id.store(3, Ordering::Release);
+
+        let read_guard = pages.read_guard();
+        pages.retire_published_link(old_link);
+        pages.mark_page_empty(old_link.page_id);
+
+        let temporary_page = pages.allocate_new_or_pop_free();
+        assert_ne!(
+            temporary_page.id, old_link.page_id,
+            "vacuumed source page was reused while an old index reader was active"
+        );
+        assert_eq!(
+            pages.select_non_ghosted(old_link),
+            Ok(TestRow { a: 1, b: 1 }),
+            "the old publication must survive until the reader leaves"
+        );
+
+        drop(read_guard);
+        pages.reclaim_retired();
+        assert!(pages.get_empty_pages().contains(&old_link.page_id));
+
+        let reused_page = pages.allocate_new_or_pop_free();
+        assert_eq!(reused_page.id, old_link.page_id);
+        assert_eq!(reused_page.free_offset.load(Ordering::Acquire), 0);
+        assert!(pages.published_slot(old_link).is_none());
     }
 
     #[test]

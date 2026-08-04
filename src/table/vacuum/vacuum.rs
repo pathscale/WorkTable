@@ -146,6 +146,7 @@ where
         let mut free_pages = VecDeque::new();
         let mut defragmented_pages = VecDeque::new();
         free_pages.push_back(additional_allocated_page.id);
+        let mut pages_freed = 0;
 
         let pages_processed = per_page_info.len();
 
@@ -162,24 +163,27 @@ where
                 } else if let Some(id) = free_pages.pop_front() {
                     id
                 } else {
-                    unreachable!("I hope so")
+                    // A source page cannot become a destination until every
+                    // reader that could still hold one of its old links has
+                    // left the grace period. This call reuses it immediately
+                    // when reclamation is safe, or allocates a temporary page
+                    // while a pre-existing reader is still active.
+                    self.data_pages.allocate_new_or_pop_free().id
                 };
                 match self.move_data_from(page_from, page_to).await? {
                     (true, true) => {
                         // from moved fully and on to no more space
-                        free_pages.push_back(page_from);
-                        self.free_page(page_from);
+                        self.data_pages.mark_page_full(page_to);
                         break;
                     }
                     (true, false) => {
                         // from moved fully but to has space
-                        free_pages.push_back(page_from);
-                        self.free_page(page_from);
                         defragmented_pages.push_back(page_to);
                         break;
                     }
                     (false, true) => {
                         // from was not moved but to have NO space
+                        self.data_pages.mark_page_full(page_to);
                         continue;
                     }
                     (false, false) => {
@@ -187,10 +191,15 @@ where
                     }
                 }
             }
+            // Remove the page's empty-link fragments before reclamation can
+            // expose the whole page for reuse. Otherwise a concurrent insert
+            // could claim a stale fragment between retirement and cleanup.
             registry.remove_link_for_page(page_from);
+            self.data_pages.mark_page_empty(page_from);
+            pages_freed += 1;
         }
 
-        let pages_freed = free_pages.len();
+        pages_freed += free_pages.len();
         for id in free_pages {
             self.data_pages.mark_page_empty(id)
         }
@@ -204,10 +213,6 @@ where
             bytes_freed: initial_bytes_freed,
             duration_ns: now.elapsed().as_nanos(),
         })
-    }
-
-    fn free_page(&self, page_id: PageId) {
-        self.data_pages.reset_page(page_id).expect("should exist as called")
     }
 
     async fn move_data_from(&self, from: PageId, to: PageId) -> eyre::Result<(bool, bool)> {
@@ -394,6 +399,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    use data_bucket::Link;
+    use data_bucket::page::PageId;
     use worktable_codegen::{MemStat, worktable};
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
@@ -845,5 +852,75 @@ mod tests {
             let row = table.select(id);
             assert_eq!(row, Some(expected));
         }
+    }
+
+    #[tokio::test]
+    async fn vacuum_does_not_reuse_source_pages_during_a_read_grace_period() {
+        let table = TestWorkTable::default();
+        let mut rows_by_page: HashMap<PageId, Vec<(u64, TestRow, Link)>> = HashMap::new();
+
+        // Two large rows fit on each page. Deleting one from many pages leaves
+        // enough fragmented source pages that the old vacuum implementation
+        // reset and recycled an earlier source as a later destination.
+        for i in 0..40u64 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i as i64,
+                another: i,
+                exchange: format!("{i:02}-{}", "x".repeat(6_000)),
+            };
+            let id = row.id;
+            table.insert(row.clone()).unwrap();
+            let link = table
+                .0
+                .primary_index
+                .pk_map
+                .get_value(&TestPrimaryKey::from(id))
+                .unwrap()
+                .0;
+            rows_by_page.entry(link.page_id).or_default().push((id, row, link));
+        }
+
+        let current_page = table.0.data.current_page_id();
+        let mut protected_rows = Vec::new();
+        for (page_id, rows) in rows_by_page {
+            if page_id == current_page || rows.len() < 2 {
+                continue;
+            }
+
+            protected_rows.push(rows[0].clone());
+            for (id, _, _) in rows.into_iter().skip(1) {
+                table.delete(id).await.unwrap();
+            }
+        }
+        assert!(
+            protected_rows.len() >= 3,
+            "test setup needs several fragmented source pages"
+        );
+
+        // Model a generated reader that already resolved each old physical
+        // link, then pauses while vacuum swings the indexes.
+        let read_guard = table.0.data.read_guard();
+        create_vacuum(&table).defragment().await.unwrap();
+
+        let mut moved = 0;
+        for (id, expected, old_link) in &protected_rows {
+            let current_link = table
+                .0
+                .primary_index
+                .pk_map
+                .get_value(&TestPrimaryKey::from(*id))
+                .unwrap()
+                .0;
+            moved += usize::from(current_link != *old_link);
+            assert_eq!(
+                table.0.data.select_non_ghosted(*old_link),
+                Ok(expected.clone()),
+                "a retired source link was reset or republished before the reader left"
+            );
+        }
+        assert!(moved >= 3, "test setup did not exercise enough vacuum moves");
+
+        drop(read_guard);
     }
 }
