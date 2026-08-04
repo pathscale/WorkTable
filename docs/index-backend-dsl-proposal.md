@@ -158,7 +158,7 @@ Backend dispatch itself is static and should compile away. That does **not** mea
 - Both can emit persistence-compatible structural CDC.
 
 Direct dispatch preserves a strict generated point-read contract with a
-provider-specific implementation. WorkTablesIndex 0.0.4 holds its structural
+provider-specific implementation. WorkTablesIndex 0.0.5 holds its structural
 mapping stable until the selected node is locked, so both hits and misses are
 definitive; a contended lookup drops the structural guard before waiting and
 then retries the mapping. Vanilla IndexSet does not expose a comparable
@@ -209,7 +209,7 @@ Use allocator/RSS measurements for comparative memory results; do not treat the 
 
 This implementation pins two narrow forks for typed topology import/export:
 
-- `WorkTablesIndex 0.0.4` as the default `indexset` dependency alias already used by WorkTable;
+- `WorkTablesIndex 0.0.5` as the default `indexset` dependency alias already used by WorkTable;
 - vanilla `indexset 0.15.0` under the `vanilla_indexset` Cargo name;
 - `congee-wt` at commit `005bfb1968e781800176f2d7e465e6a1af630e1a`;
 - `arctic-wt` at commit `e13fc7df3c040f14ae66c1cb56b1bd0a3f6da3fc`.

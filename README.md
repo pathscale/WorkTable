@@ -76,7 +76,7 @@ a safe API that can race deserialization against page-byte mutation. The former
 no-op for existing manifests.
 
 Generated point lookups use a strict backend-specific visibility contract by
-default. WorkTablesIndex 0.0.4 keeps the structural mapping pinned until its
+default. WorkTablesIndex 0.0.5 keeps the structural mapping pinned until its
 selected node is locked, making both hits and misses definitive; contended
 lookups release the structural guard before waiting and retry the mapping.
 Congee and Arctic use their native concurrent point lookups. The explicit
@@ -91,7 +91,10 @@ only after a complete page mutation, insert visibility is an atomic lifecycle
 transition after every index is installed, and deleted or relocated links are
 not reused until readers that could have captured them have drained. Page bytes
 remain the persistence image and are internally serialized; range queries are
-still non-snapshot reads. The protocol intentionally trades memory, an atomic
+still non-snapshot reads. Archived-page mutations currently take one table-wide
+writer barrier, so even disjoint writes can serialize and latency-sensitive
+deployments should validate contention throughput and tail latency. The
+protocol intentionally trades memory, an atomic
 read-side grace-period counter, and publication bookkeeping for this stronger
 concurrent-read contract. See
 [`docs/versioned-row-publication.md`](docs/versioned-row-publication.md) for the
