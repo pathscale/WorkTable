@@ -235,33 +235,59 @@ impl InMemoryGenerator {
                 .iter()
                 .map(|i| {
                     quote! {
-                        row_new.#i = row.#i;
+                        row_new.#i = row.#i.clone();
                     }
                 })
                 .collect::<Vec<_>>();
             let full_row_lock = self.gen_full_lock_for_update();
+            let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+            let const_name = name_generator.get_page_inner_size_const_ident();
 
             quote! {
-                let mut need_to_reinsert = true;
+                // Reinsert ONLY when an unsized field's serialized size CHANGED,
+                // so the row no longer fits its slot region. A same-size update
+                // (the common case) is written in place at the SAME slot below.
+                // `need_to_reinsert` starts false; the old `true` initializer
+                // forced every unsized update through a full delete-and-reinsert.
+                let mut need_to_reinsert = false;
                 #(#fields_check)*
-                if need_to_reinsert {
-                    drop(_guard);
-                    let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new_with_mutation(
-                        op_lock,
-                        self.0.lock_manager.clone(),
-                        pk.clone(),
-                    );
 
+                {
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
-                    if let Err(e) = self.reinsert(row_old, row_new).await {
-                        self.0.update_state.remove(&pk);
 
-                        return Err(e);
+                    if need_to_reinsert {
+                        drop(_guard);
+                        let op_lock = { #full_row_lock };
+                        let _guard = LockGuard::new_with_mutation(
+                            op_lock,
+                            self.0.lock_manager.clone(),
+                            pk.clone(),
+                        );
+
+                        if let Err(e) = self.reinsert(row_old, row_new).await {
+                            self.0.update_state.remove(&pk);
+
+                            return Err(e);
+                        }
+
+                        self.0.update_state.remove(&pk);
+                        return core::result::Result::Ok(());
                     }
 
+                    // Same-size in-place write at the existing slot. Re-serialize
+                    // the full rebuilt row (only the changed fields differ) and
+                    // overwrite the slot's bytes so any out-of-line `String`
+                    // field's archived pointer resolves within the slot. This
+                    // does NOT `mem::swap` the archived field (which would leave
+                    // an out-of-line pointer dangling into a throwaway buffer),
+                    // and it publishes the new row correctly via `data.update`.
+                    unsafe {
+                        self.0.data.update::<{ #const_name }>(row_new, link)
+                            .map_err(WorkTableError::PagesError)?;
+                    }
+                    self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
                 }
             }
