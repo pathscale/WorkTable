@@ -182,6 +182,16 @@ where
         }
     }
 
+    fn delete_at(&mut self, index: usize) -> Option<T> {
+        let val = NodeLike::delete_at(&mut self.inner, index)?;
+        self.removed_length += val.aligned_size() + UnsizedIndexPageUtility::<T>::slots_value_size();
+
+        if self.removed_length > self.length_capacity / 2 {
+            self.rebuild()
+        }
+        Some(val)
+    }
+
     fn replace(&mut self, idx: usize, value: T) -> Option<T> {
         let value_size = value.aligned_size();
         if let Some(old) = self.inner.get_mut(idx) {
@@ -269,6 +279,17 @@ mod test {
         node.delete(&String::from_utf8(vec![b'2'; 24]).unwrap());
         assert_eq!(node.length, 168);
         assert_eq!(node.removed_length, 40);
+    }
+
+    #[test]
+    fn test_delete_at_updates_removed_length() {
+        let mut node = UnsizedNode::<String>::with_capacity(200);
+        node.insert(String::from_utf8(vec![b'1'; 16]).unwrap());
+        node.insert(String::from_utf8(vec![b'2'; 24]).unwrap());
+
+        assert_eq!(node.delete_at(0), Some(String::from_utf8(vec![b'1'; 16]).unwrap()));
+        assert_eq!(node.removed_length, 32);
+        assert_eq!(node.inner.len(), 1);
     }
 
     #[test]

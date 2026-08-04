@@ -63,6 +63,9 @@ uuid = { version = "1.24.0", features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
 worktable_codegen = { path = "codegen", version = "=1.0.0-beta.2" }
 
+[patch.crates-io]
+WorkTablesIndex = { git = "https://github.com/pathscale/WorkTablesIndex.git", rev = "6f408010553600ed5eeb8913608b1d779dbff258" }
+
 [dev-dependencies]
 chrono = "0.4.43"
 criterion = { version = "0.5", features = ["async_tokio"] }
