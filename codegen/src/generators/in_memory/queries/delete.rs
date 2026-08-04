@@ -46,7 +46,7 @@ impl InMemoryGenerator {
             {
                 let pk: #pk_ident = pk.into();
                 let op_lock = { #full_row_lock };
-                let _guard = LockGuard::new(
+                let _guard = LockGuard::new_with_mutation(
                     op_lock,
                     self.0.lock_manager.clone(),
                     pk.clone(),
@@ -69,6 +69,7 @@ impl InMemoryGenerator {
             where #pk_ident: From<Pk>
             {
                 let pk: #pk_ident = pk.into();
+                let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
                 #delete_logic
                 core::result::Result::Ok(())
             }
@@ -118,10 +119,11 @@ impl InMemoryGenerator {
                         return Err(e);
                     }
                 };
-                // A lock-free insert publishes index reachability before it
-                // clears the staged row's ghost bit. Treat that window as an
-                // absent row: this delete linearizes before the insert's
-                // publication instead of panicking on the hidden version.
+                // Low-level staged or hydrated state can publish index
+                // reachability before clearing the row's ghost bit. Ordinary
+                // insert shares this delete's per-key mutation gate, but keep
+                // this boundary defensive instead of panicking on a hidden
+                // version.
                 let row = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                 #process
             }

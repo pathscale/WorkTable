@@ -33,9 +33,10 @@ async fn upsert_completes_under_extreme_same_key_churn() {
     churn_run(2_000, 1_000).await;
 }
 
-/// A synchronous insert does not participate in the generated async row lock.
-/// Its collision and ghost-publication windows must still return typed errors,
-/// never panic a concurrent locked delete or strand an upsert waiter.
+/// A synchronous insert does not wait on the generated async row-lock chain,
+/// but it shares the FIFO per-key mutation gate with delete and upsert. Its
+/// collision and ghost-publication windows must return typed errors, never
+/// panic a concurrent delete or strand an upsert waiter.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn raw_insert_delete_churn_never_panics_or_stalls() {
     let table = Arc::new(UpsertChurnWorkTable::default());
@@ -166,12 +167,9 @@ async fn churn_run(churn_flips: u64, upserts_per_task: u64) {
         let table = table.clone();
         tokio::spawn(async move {
             for i in 0..CHURN_FLIPS {
-                // Flip the key's existence as fast as possible through the
-                // locked operations. (Raw `insert` is deliberately not used
-                // here: it takes no row lock and publishes the pk entry
-                // before unghosting the data, which trips unrelated
-                // pre-existing races tracked separately in the issue on
-                // lock-free insert vs locked mutations.)
+                // Flip the key's existence through the async row-lock path.
+                // Raw synchronous insert has its own focused churn coverage
+                // above; keeping the paths separate makes failures diagnostic.
                 table
                     .upsert(UpsertChurnRow { id: KEY, val: i })
                     .await

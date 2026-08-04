@@ -62,7 +62,7 @@ impl PersistGenerator {
                 if true {
                     drop(_guard);
                     let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new(
+                    let _guard = LockGuard::new_with_mutation(
                         op_lock,
                         self.0.lock_manager.clone(),
                         pk.clone(),
@@ -85,7 +85,7 @@ impl PersistGenerator {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 let op_lock = { #full_row_lock };
-                let guard = LockGuard::new(
+                let guard = LockGuard::new_with_mutation(
                     op_lock,
                     self.0.lock_manager.clone(),
                     pk.clone(),
@@ -243,7 +243,7 @@ impl PersistGenerator {
                 if need_to_reinsert {
                     drop(_guard);
                     let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new(
+                    let _guard = LockGuard::new_with_mutation(
                         op_lock,
                         self.0.lock_manager.clone(),
                         pk.clone(),
@@ -422,7 +422,7 @@ impl PersistGenerator {
             {
                 let pk: #pk_ident = pk.into();
                 let op_lock = { #custom_lock };
-                let _guard = LockGuard::new(
+                let _guard = LockGuard::new_with_mutation(
                     op_lock,
                     self.0.lock_manager.clone(),
                     pk.clone(),
@@ -506,11 +506,12 @@ impl PersistGenerator {
                 let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
+                    drop(_mutation_guard);
                     let old_guard = guards.remove(&pk).expect("guard should exist for this pk");
                     drop(old_guard);
 
                     let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new(
+                    let _guard = LockGuard::new_with_mutation(
                         op_lock,
                         self.0.lock_manager.clone(),
                         pk.clone(),
@@ -595,6 +596,7 @@ impl PersistGenerator {
                     if self.0.data.select_non_ghosted(link)?.#by_field != by {
                         continue;
                     }
+                    let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
                     let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
                         .map_err(|_| WorkTableError::SerializeError)?;
 
@@ -682,7 +684,7 @@ impl PersistGenerator {
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
 
                 let op_lock = { #custom_lock };
-                let _guard = LockGuard::new(
+                let _guard = LockGuard::new_with_mutation(
                     op_lock,
                     self.0.lock_manager.clone(),
                     pk.clone(),

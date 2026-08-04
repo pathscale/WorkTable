@@ -173,6 +173,7 @@ where
         LockType: 'static,
     {
         let pk = row.get_primary_key().clone();
+        let _mutation_guard = self.lock_manager.mutation_guard(&pk);
         let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
         if self.primary_index.insert_checked(pk.clone(), link).is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;
@@ -226,6 +227,7 @@ where
         PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
     {
         let pk = row.get_primary_key().clone();
+        let _mutation_guard = self.lock_manager.mutation_guard(&pk);
 
         let (link, _) = match self.data.insert_cdc(row.clone()) {
             Ok(result) => result,
