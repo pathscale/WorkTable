@@ -293,6 +293,14 @@ impl PersistGenerator {
                         core::result::Result::Err(e) => return core::result::Result::Err(e),
                     }
                 }
+                // Retries only fire when a racing unlocked insert/delete moved
+                // the row out from under a locked decision (NotFound /
+                // row-absent). A raw insert/delete pair does not join this row
+                // lock, so a hot `yield_now` spin can livelock the upsert
+                // against sustained same-key churn. Escalate the backoff so the
+                // racing mutation's publication settles and the upsert makes
+                // forward progress.
+                let mut backoff_spins: u32 = 0;
                 loop {
                     let op_lock = { #full_row_lock };
                     let guard = LockGuard::new(
@@ -318,7 +326,14 @@ impl PersistGenerator {
                         core::result::Result::Err(WorkTableError::PagesError(e)) if e.is_row_absent() => {}
                         other => return other,
                     }
-                    tokio::task::yield_now().await;
+                    if backoff_spins < 8 {
+                        backoff_spins += 1;
+                        tokio::task::yield_now().await;
+                    } else {
+                        let micros = core::cmp::min(1u64 << (backoff_spins - 8), 256);
+                        backoff_spins += 1;
+                        tokio::time::sleep(std::time::Duration::from_micros(micros)).await;
+                    }
                 }
             }
         }
