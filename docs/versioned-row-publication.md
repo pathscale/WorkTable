@@ -23,8 +23,9 @@ the interval from index lookup through acquisition of a stable row version.
 `DataPages` maintains two representations:
 
 - Archived page bytes are the compact persistence and mutation image. All
-  accesses that can overlap a mutation are serialized by an internal page
-  barrier.
+  accesses that can overlap a mutation are serialized by one internal
+  table-wide page barrier. Its exclusive side currently serializes mutations
+  to disjoint rows and pages as well as mutations to the same page.
 - A concurrent link map holds an immutable application-visible row version.
   Each slot contains one `Arc<Row>` and its ghost, deleted, and vacuum lifecycle
   bits in a single version protected by a short per-slot lock. A reader cannot
@@ -37,7 +38,7 @@ The generated API follows these publication rules:
    index predicates, clone the owned row, and release the guard. Unique and
    primary-key point reads retry when the mapping swings to a replacement link
    while it is being resolved. Point lookup itself uses each provider's strict
-   visibility path: WorkTablesIndex 0.0.4 holds its structural mapping stable
+   visibility path: WorkTablesIndex 0.0.5 holds its structural mapping stable
    until the selected node is locked, making hits and misses definitive, while
    the ART providers retain their native concurrent point algorithms. Vanilla
    `using indexset` is experimental and excluded from this concurrent-read
@@ -107,9 +108,18 @@ mutation APIs.
 
 The protocol adds one owned row copy plus slot/map metadata per live physical
 link, an atomic increment/decrement per generated read, a sharded publication
-map lookup, and writer-side page serialization. These costs are mandatory: the
-previous fast path allowed safe generated reads to race mutation of archived
-bytes, and performance cannot justify undefined behavior. The index-visibility
-algorithm is separate: WorkTablesIndex acquires the selected node while its
-structural mapping is pinned on the uncontended path, and may retry after node
-contention.
+map lookup, and writer-side page serialization. `page_access` is currently one
+`RwLock<()>` per table, not one lock per row or page: insert, update, delete,
+hydration, reset/reuse, and vacuum operations that take its exclusive side form
+a table-wide writer barrier. Immutable published reads do not take that
+exclusive side after hydration, but disjoint writes can still serialize and
+therefore require contention-throughput and tail-latency validation for
+latency-sensitive deployments.
+
+These correctness costs are mandatory: the previous fast path allowed safe
+generated reads to race mutation of archived bytes, and performance cannot
+justify undefined behavior. Finer-grained or sharded page mutation barriers may
+reduce write contention without weakening the publication protocol. The
+index-visibility algorithm is separate: WorkTablesIndex acquires the selected
+node while its structural mapping is pinned on the uncontended path, and may
+retry after node contention.
