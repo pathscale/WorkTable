@@ -276,15 +276,23 @@ impl InMemoryGenerator {
                         return core::result::Result::Ok(());
                     }
 
-                    // Same-size in-place write at the existing slot. Re-serialize
-                    // the full rebuilt row (only the changed fields differ) and
-                    // overwrite the slot's bytes so any out-of-line `String`
-                    // field's archived pointer resolves within the slot. This
-                    // does NOT `mem::swap` the archived field (which would leave
-                    // an out-of-line pointer dangling into a throwaway buffer),
-                    // and it publishes the new row correctly via `data.update`.
+                    // Same-size in-place write at the CURRENT slot. Re-resolve
+                    // the link under the held mutation gate: a concurrent
+                    // different-length update on this key may have reinserted the
+                    // row to a new slot, invalidating the link captured earlier.
+                    // Re-serialize the full rebuilt row (only the changed fields
+                    // differ) and overwrite the slot's bytes so any out-of-line
+                    // `String` field's archived pointer resolves within the slot
+                    // (NOT a `mem::swap`, which would dangle the pointer), then
+                    // republish the row as live.
+                    let current_link: Link = self.0
+                        .primary_index
+                        .pk_map
+                        .get_value(&pk)
+                        .map(Into::into)
+                        .ok_or(WorkTableError::NotFound)?;
                     unsafe {
-                        self.0.data.update::<{ #const_name }>(row_new, link)
+                        self.0.data.update_in_place::<{ #const_name }>(row_new, current_link)
                             .map_err(WorkTableError::PagesError)?;
                     }
                     self.0.update_state.remove(&pk);
