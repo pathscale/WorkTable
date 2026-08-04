@@ -14,7 +14,7 @@ use std::task::{Context, Poll};
 use futures::task::AtomicWaker;
 use parking_lot::Mutex;
 
-pub use map::{LockMap, MutationGuard};
+pub use map::{LockAcquirer, LockMap, MutationGuard};
 pub use row_lock::{FullRowLock, RowLock};
 
 /// Maximum number of spin iterations before falling back to async waiting.

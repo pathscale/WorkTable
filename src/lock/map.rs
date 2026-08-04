@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
 
@@ -28,6 +29,69 @@ pub struct MutationGuard {
     stripe: usize,
 }
 
+#[derive(Debug)]
+struct LockEntry<LockType> {
+    lock: Arc<tokio::sync::RwLock<LockType>>,
+    acquirers: Arc<AtomicUsize>,
+}
+
+/// A tracked reference to one row-lock entry while an operation registers.
+///
+/// Dropping this handle, including through async task cancellation, retries
+/// map cleanup after releasing its lock reference. Clones remain tracked so an
+/// entry cannot be removed while any caller may still register against it.
+#[derive(Debug)]
+pub struct LockAcquirer<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
+    lock: Option<Arc<tokio::sync::RwLock<LockType>>>,
+    acquirers: Arc<AtomicUsize>,
+    lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+    primary_key: PrimaryKey,
+}
+
+impl<LockType, PrimaryKey> Clone for LockAcquirer<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
+    fn clone(&self) -> Self {
+        self.acquirers.fetch_add(1, Ordering::AcqRel);
+        Self {
+            lock: self.lock.clone(),
+            acquirers: self.acquirers.clone(),
+            lock_map: self.lock_map.clone(),
+            primary_key: self.primary_key.clone(),
+        }
+    }
+}
+
+impl<LockType, PrimaryKey> Deref for LockAcquirer<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
+    type Target = tokio::sync::RwLock<LockType>;
+
+    fn deref(&self) -> &Self::Target {
+        self.lock.as_deref().expect("the acquisition lock exists until drop")
+    }
+}
+
+impl<LockType, PrimaryKey> Drop for LockAcquirer<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
+    fn drop(&mut self) {
+        self.acquirers.fetch_sub(1, Ordering::AcqRel);
+        drop(self.lock.take());
+        self.lock_map.remove_with_lock_check(&self.primary_key);
+    }
+}
+
 impl Drop for MutationGuard {
     fn drop(&mut self) {
         self.stripes[self.stripe].serving.fetch_add(1, Ordering::Release);
@@ -36,7 +100,7 @@ impl Drop for MutationGuard {
 
 #[derive(Debug)]
 pub struct LockMap<LockType, PrimaryKey> {
-    map: RwLock<HashMap<PrimaryKey, Arc<tokio::sync::RwLock<LockType>>>>,
+    map: RwLock<HashMap<PrimaryKey, LockEntry<LockType>>>,
     next_id: AtomicU16,
     mutation_stripes: Arc<[MutationStripe; MUTATION_STRIPE_COUNT]>,
 }
@@ -60,11 +124,20 @@ where
         key: PrimaryKey,
         lock: Arc<tokio::sync::RwLock<LockType>>,
     ) -> Option<Arc<tokio::sync::RwLock<LockType>>> {
-        self.map.write().insert(key, lock)
+        self.map
+            .write()
+            .insert(
+                key,
+                LockEntry {
+                    lock,
+                    acquirers: Arc::new(AtomicUsize::new(0)),
+                },
+            )
+            .map(|entry| entry.lock)
     }
 
     pub fn get(&self, key: &PrimaryKey) -> Option<Arc<tokio::sync::RwLock<LockType>>> {
-        self.map.read().get(key).cloned()
+        self.map.read().get(key).map(|entry| entry.lock.clone())
     }
 
     /// Returns the lock for `key`, inserting one built by `f` if absent.
@@ -76,8 +149,9 @@ where
     /// can merge into it, but the *winner* already registered its operation on
     /// a lock that is no longer in the map, so it never waits for the loser and
     /// both proceed into the row at once.
-    pub fn get_or_insert_with<F>(&self, key: PrimaryKey, f: F) -> Arc<tokio::sync::RwLock<LockType>>
+    pub fn get_or_insert_with<F>(self: &Arc<Self>, key: PrimaryKey, f: F) -> LockAcquirer<LockType, PrimaryKey>
     where
+        LockType: RowLock,
         F: FnOnce() -> LockType,
     {
         // Fast path: the row is usually already locked by someone, and a read
@@ -85,17 +159,28 @@ where
         // under the guard, so `remove_with_lock_check` (which needs the write
         // lock) either runs before we looked or sees our extra strong reference
         // and keeps the entry.
-        if let Some(lock) = self.map.read().get(&key) {
-            return lock.clone();
+        if let Some(entry) = self.map.read().get(&key) {
+            entry.acquirers.fetch_add(1, Ordering::AcqRel);
+            return LockAcquirer {
+                lock: Some(entry.lock.clone()),
+                acquirers: entry.acquirers.clone(),
+                lock_map: self.clone(),
+                primary_key: key,
+            };
         }
         let mut map = self.map.write();
         // Re-check: another task can insert between the read and write guards.
-        if let Some(lock) = map.get(&key) {
-            return lock.clone();
+        let entry = map.entry(key.clone()).or_insert_with(|| LockEntry {
+            lock: Arc::new(tokio::sync::RwLock::new(f())),
+            acquirers: Arc::new(AtomicUsize::new(0)),
+        });
+        entry.acquirers.fetch_add(1, Ordering::AcqRel);
+        LockAcquirer {
+            lock: Some(entry.lock.clone()),
+            acquirers: entry.acquirers.clone(),
+            lock_map: self.clone(),
+            primary_key: key,
         }
-        let lock = Arc::new(tokio::sync::RwLock::new(f()));
-        map.insert(key, lock.clone());
-        lock
     }
 
     pub fn remove(&mut self, key: &PrimaryKey) {
@@ -107,24 +192,20 @@ where
         LockType: RowLock,
     {
         let mut set = self.map.write();
-        if let Some(lock) = set.get(key).cloned()
-            && let Ok(guard) = lock.try_read()
-            && !guard.is_locked()
-            // Two strong references means this map entry and our own `lock`
-            // clone above, and nothing else. Any higher count is a task that
-            // has already taken this Arc out of `get_or_insert_with` and is
-            // about to register on it; removing the entry now would let the
-            // next caller build a *second* lock for the same row, and the two
-            // would not serialise against each other.
-            //
-            // Known trade-off: if that other task is cancelled between taking
-            // the Arc and registering its operation, nothing re-triggers this
-            // cleanup and the (unlocked, unused) entry stays in the map until
-            // the next operation on the same key drops its guard. That leaks at
-            // most one empty lock per abandoned key and never affects mutual
-            // exclusion.
-            && Arc::strong_count(&lock) == 2
-        {
+        let should_remove = set.get(key).is_some_and(|entry| {
+            let Ok(guard) = entry.lock.try_read() else {
+                return false;
+            };
+            !guard.is_locked()
+                // Every acquisition is counted before the map guard is released.
+                // A non-zero count means a caller may still register an operation;
+                // removing now would let a second lock be created for the same row.
+                && entry.acquirers.load(Ordering::Acquire) == 0
+                // `insert` is public and accepts an Arc, so retain the old safety
+                // check for callers holding a raw clone outside tracked acquisition.
+                && Arc::strong_count(&entry.lock) == 1
+        });
+        if should_remove {
             set.remove(key);
         }
     }
@@ -159,5 +240,42 @@ where
             stripes: self.mutation_stripes.clone(),
             stripe,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lock::FullRowLock;
+
+    /// Regression for issue #33: cleanup can run while a task owns the value
+    /// returned by `get_or_insert_with`, then that task can be cancelled before
+    /// registering an operation. Dropping the acquisition must retry cleanup.
+    #[test]
+    fn cancelled_acquirer_removes_the_abandoned_entry() {
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let acquirer = lock_map.get_or_insert_with(31, FullRowLock::new);
+
+        lock_map.remove_with_lock_check(&31);
+        assert!(lock_map.map.read().contains_key(&31));
+
+        drop(acquirer);
+        assert!(!lock_map.map.read().contains_key(&31));
+    }
+
+    /// Cloning the acquisition handle represents two tasks between lookup and
+    /// registration. The first cancellation must retain the shared lock, and
+    /// only the last handle may remove it.
+    #[test]
+    fn cleanup_waits_for_every_acquirer_to_drop() {
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let first = lock_map.get_or_insert_with(33, FullRowLock::new);
+        let second = first.clone();
+
+        drop(first);
+        assert!(lock_map.map.read().contains_key(&33));
+
+        drop(second);
+        assert!(!lock_map.map.read().contains_key(&33));
     }
 }
