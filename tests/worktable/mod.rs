@@ -1,6 +1,7 @@
 mod array;
 mod base;
 mod bench;
+mod borrowed_primary_key;
 mod config;
 mod count;
 mod custom_pk;

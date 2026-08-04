@@ -123,7 +123,15 @@ impl PersistGenerator {
                     + 'static,
                 C: Clone + PersistenceConfig,
             {
-                async fn new(engine: E) -> eyre::Result<Self> {
+                async fn new(mut engine: E) -> eyre::Result<Self> {
+                    let schema = Self::space_info_default().inner;
+                    engine
+                        .ensure_schema(
+                            schema.row_schema,
+                            schema.primary_key_fields,
+                            schema.secondary_index_types,
+                        )
+                        .await?;
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
                     #index_setup
@@ -133,7 +141,15 @@ impl PersistGenerator {
                     ))
                 }
 
-                async fn load(engine: E) -> eyre::Result<Self> {
+                async fn load(mut engine: E) -> eyre::Result<Self> {
+                    let schema = Self::space_info_default().inner;
+                    engine
+                        .validate_schema(
+                            schema.row_schema,
+                            schema.primary_key_fields,
+                            schema.secondary_index_types,
+                        )
+                        .await?;
                     let table_path = engine.config().table_path();
                     if !std::path::Path::new(table_path).exists() {
                         return Self::new(engine).await;

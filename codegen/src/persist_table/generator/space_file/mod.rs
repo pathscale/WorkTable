@@ -66,6 +66,17 @@ impl Generator {
         } else {
             quote! { self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32 }
         };
+        let row_schema = self.attributes.row_schema.iter().map(|(name, type_name)| {
+            quote! { (#name.to_string(), #type_name.to_string()) }
+        });
+        let primary_key_fields = self
+            .attributes
+            .primary_key_fields
+            .iter()
+            .map(|name| quote! { #name.to_string() });
+        let secondary_index_types = self.attributes.secondary_index_types.iter().map(|(name, type_name)| {
+            quote! { (#name.to_string(), #type_name.to_string()) }
+        });
 
         quote! {
             fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
@@ -77,9 +88,9 @@ impl Generator {
                         name: #literal_name.to_string(),
                         pk_gen_state: (),
                         empty_links_list: vec![],
-                        primary_key_fields: vec![],
-                        row_schema: vec![],
-                        secondary_index_types: vec![],
+                        primary_key_fields: vec![#(#primary_key_fields),*],
+                        row_schema: vec![#(#row_schema),*],
+                        secondary_index_types: vec![#(#secondary_index_types),*],
                     };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,

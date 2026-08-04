@@ -1,3 +1,5 @@
+#![doc = include_str!("../docs/crate.md")]
+
 pub mod in_memory;
 mod index;
 pub mod lock;

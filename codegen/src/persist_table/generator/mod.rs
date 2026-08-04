@@ -14,6 +14,9 @@ pub struct PersistTableAttributes {
     pub pk_upstream: bool,
     pub pk_arctic: bool,
     pub pk_congee: bool,
+    pub row_schema: Vec<(String, String)>,
+    pub primary_key_fields: Vec<String>,
+    pub secondary_index_types: Vec<(String, String)>,
 }
 
 pub struct Generator {

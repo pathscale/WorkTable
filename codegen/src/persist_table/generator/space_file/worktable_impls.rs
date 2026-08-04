@@ -11,6 +11,7 @@ impl Generator {
         let persisted_pk_fn = self.gen_worktable_persisted_primary_key_fn();
         let wait_for_ops_fn = self.gen_worktable_wait_for_ops_fn();
         let close_fn = self.gen_worktable_close_fn();
+        let persisted_data_file_size_fn = self.gen_persisted_data_file_size_fn();
 
         quote! {
             impl #ident {
@@ -18,6 +19,22 @@ impl Generator {
                 #persisted_pk_fn
                 #wait_for_ops_fn
                 #close_fn
+                #persisted_data_file_size_fn
+            }
+        }
+    }
+
+    fn gen_persisted_data_file_size_fn(&self) -> TokenStream {
+        if self.attributes.read_only {
+            quote! {}
+        } else {
+            quote! {
+                /// Returns the physical size of this table's `.wt.data` file.
+                /// Persisted vacuum currently compacts logical/in-memory pages
+                /// but does not truncate this file.
+                pub async fn persisted_data_file_size_bytes(&self) -> std::io::Result<u64> {
+                    self.1.persisted_data_file_size_bytes().await
+                }
             }
         }
     }
@@ -59,6 +76,17 @@ impl Generator {
         let pk = name_generator.get_primary_key_type_ident();
         let literal_name = name_generator.get_work_table_literal_name();
         let version_const = name_generator.get_version_const_ident();
+        let row_schema = self.attributes.row_schema.iter().map(|(name, type_name)| {
+            quote! { (#name.to_string(), #type_name.to_string()) }
+        });
+        let primary_key_fields = self
+            .attributes
+            .primary_key_fields
+            .iter()
+            .map(|name| quote! { #name.to_string() });
+        let secondary_index_types = self.attributes.secondary_index_types.iter().map(|(name, type_name)| {
+            quote! { (#name.to_string(), #type_name.to_string()) }
+        });
 
         quote! {
             pub fn space_info_default() -> GeneralPage<SpaceInfoPage<<<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>> {
@@ -69,9 +97,9 @@ impl Generator {
                     name: #literal_name.to_string(),
                     pk_gen_state: <<#pk as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State::default(),
                     empty_links_list: vec![],
-                    primary_key_fields: vec![],
-                    row_schema: vec![],
-                    secondary_index_types: vec![],
+                    primary_key_fields: vec![#(#primary_key_fields),*],
+                    row_schema: vec![#(#row_schema),*],
+                    secondary_index_types: vec![#(#secondary_index_types),*],
                 };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,

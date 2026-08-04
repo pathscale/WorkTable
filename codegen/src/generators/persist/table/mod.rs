@@ -126,9 +126,50 @@ impl PersistGenerator {
             worktables_node,
         )?;
 
+        let mut row_schema = self
+            .columns
+            .field_positions
+            .iter()
+            .map(|(name, position)| {
+                let type_name = self.columns.columns_map.get(name).expect("column exists").to_string();
+                (*position, name, Literal::string(&type_name))
+            })
+            .collect::<Vec<_>>();
+        row_schema.sort_by_key(|(position, _, _)| *position);
+        let row_schema_names = row_schema.iter().map(|(_, name, _)| *name).collect::<Vec<_>>();
+        let row_schema_types = row_schema.iter().map(|(_, _, type_name)| type_name).collect::<Vec<_>>();
+        let primary_key_fields = &self.columns.primary_keys;
+        let secondary_indexes = self.columns.indexes.values().collect::<Vec<_>>();
+        let secondary_index_names = secondary_indexes.iter().map(|index| &index.name).collect::<Vec<_>>();
+        let secondary_index_types = secondary_indexes
+            .iter()
+            .map(|index| {
+                let type_name = self
+                    .columns
+                    .columns_map
+                    .get(&index.field)
+                    .expect("indexed column exists")
+                    .to_string();
+                Literal::string(&type_name)
+            })
+            .collect::<Vec<_>>();
+        let schema_attribute = quote! {
+            #[table(
+                row_schema(#(#row_schema_names = #row_schema_types),*),
+                primary_key_fields(#(#primary_key_fields),*)
+            )]
+        };
+        let secondary_schema_attribute = (!secondary_indexes.is_empty()).then(|| {
+            quote! {
+                #[table(secondary_index_types(#(#secondary_index_names = #secondary_index_types),*))]
+            }
+        });
+
         Ok(if self.config.as_ref().and_then(|c| c.page_size).is_some() {
             quote! {
                 #derive
+                #schema_attribute
+                #secondary_schema_attribute
                 pub struct #ident(
                     WorkTable<
                         #row_type,
@@ -147,6 +188,8 @@ impl PersistGenerator {
         } else {
             quote! {
                 #derive
+                #schema_attribute
+                #secondary_schema_attribute
                 pub struct #ident(
                     WorkTable<
                         #row_type,

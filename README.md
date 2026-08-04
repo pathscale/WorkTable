@@ -47,7 +47,7 @@ S3 support layers *on top of* the disk engine rather than replacing it.
 worktable = { version = "=1.0.0-beta.2", features = ["s3-support"] }   # S3 sync, optional
 ```
 
-Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic are explicitly memory-only and require `persist: false`. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
+Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
 
 ### Persistence lifecycle
 
@@ -64,6 +64,35 @@ returned to waiters, graceful close, and later mutation attempts; later durable
 operations are not applied after that failure. Dropping a busy table remains a
 last-resort diagnostic path, so applications should call `close()` during orderly
 shutdown.
+
+These lifecycle calls are not a crash-durability guarantee:
+
+| Boundary | Current guarantee |
+|---|---|
+| Mutation returns | The in-memory change was accepted and its persistence operation was queued. |
+| `wait_for_ops()` returns | The persistence engine completed the queued operations; no fsync or stable-storage guarantee is made. |
+| `close()` returns | Intake stopped, the queue drained, and the engine task joined; no fsync guarantee is made. |
+| Process crash / `SIGKILL` | Acknowledged rows may be lost and the file may be torn. |
+| Power loss | No atomic-batch or stable-storage guarantee. |
+
+The 1.0 beta persistence tier is therefore best-effort rather than a substitute
+for a crash-atomic embedded database. Applications requiring crash durability
+need an external snapshot/rebuild strategy. A graceful persistence error is
+terminal and surfaced consistently, but abrupt termination can currently leave
+bytes that decode as a row no writer inserted; see the tracked durability work
+before treating persisted files as authoritative storage.
+
+Generated persisted tables store row-schema, primary-key, and secondary-index
+metadata in `SpaceInfo`. Existing legacy files whose schema metadata is
+completely empty remain readable and are not rewritten merely by loading them;
+their schema therefore cannot be validated. A non-empty schema mismatch is
+rejected before rows are loaded.
+
+Persisted vacuum compacts the live in-memory layout and keeps disk indexes
+consistent with moved rows, but it does not truncate `.wt.data`. Use
+`persisted_data_file_size_bytes().await` on a generated persisted table to
+observe physical growth and decide when to snapshot/rebuild or run future
+offline compaction.
 
 WorkTablesIndex uses its predictable branch-based node search by default in WorkTable. This avoids a measured regression for sequential numeric-key workloads. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-hybrid-search`, `wti-std-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Prefer one search feature for an unambiguous build. If Cargo feature unification enables several, WorkTablesIndex applies the documented deterministic precedence rather than rejecting the graph.
 
@@ -131,6 +160,9 @@ with persistence as an option rather than an assumption.
 structs that will be used for table logic.
 
 ```rust
+use worktable::prelude::*;
+use worktable::worktable;
+
 worktable!(
     name: Test,
     columns: {
@@ -180,6 +212,17 @@ Flags list:
 
 - `primary_key` flag and related to it.
 - `optional` flag.
+
+Column modifiers are intentionally inline in the 1.0 DSL. A separate
+`attributes` section is not supported; the macro emits an actionable diagnostic
+if one is used. This keeps one canonical grammar through the 1.0 compatibility
+freeze:
+
+```text
+id: u64 primary_key autoincrement,
+tenant: String primary_key,
+nickname: String optional,
+```
 
 #### `primary_key` flag declaration
 
@@ -296,7 +339,7 @@ method for now is `select_by_<indexed_column_name>`. It will be described below.
 
 There are some default query implementations that are available for all `WorkTable`'s:
 
-- `select(&self, pk: <Name>PrimaryKey) -> Option<<Name>Row>`;
+- `select(&self, pk: impl Into<<Name>PrimaryKey>) -> Option<<Name>Row>`; borrowed `String`, `str`, tuple, and generated primary-key forms are accepted;
 - `insert(&self, row: <Name>Row) -> Result<<Name>PrimaryKey, WorkTableError>`;
 - `upsert(&self, row: <Name>Row) -> Result<(), WorkTableError>`;
 - `update(&self, row: <Name>Row) -> Result<(), WorkTableError>`;
@@ -305,7 +348,7 @@ There are some default query implementations that are available for all `WorkTab
 
 ### `queries` declaration
 
-`indexes` field is used to define table's queries schema. Queries are used to update/select/delete data.
+`queries` field is used to define table's queries schema. Queries are used to update/select/delete data.
 
 ```
 queries: {
