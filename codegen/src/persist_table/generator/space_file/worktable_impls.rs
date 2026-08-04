@@ -30,7 +30,7 @@ impl Generator {
         } else {
             quote! {
                 /// Returns the physical size of this table's `.wt.data` file.
-                /// Persisted vacuum currently compacts logical/in-memory pages
+                /// Persisted vacuum makes freed pages reusable across reloads,
                 /// but does not truncate this file.
                 pub async fn persisted_data_file_size_bytes(&self) -> std::io::Result<u64> {
                     self.1.persisted_data_file_size_bytes().await

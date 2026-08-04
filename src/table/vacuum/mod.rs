@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use data_bucket::Link;
+use data_bucket::page::PageId;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 
@@ -38,6 +39,10 @@ pub trait VacuumPersistence<PrimaryKey, SecondaryEvents>: Send + Sync {
         primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
         secondary_keys_events: SecondaryEvents,
     ) -> PersistenceResult;
+
+    /// Queue a barrier that makes pages reusable only after all preceding row
+    /// moves have become durable.
+    fn reclaim_pages(&self, page_ids: Vec<PageId>) -> PersistenceResult;
 }
 
 /// Trait for unifying different [`WorkTable`] related [`EmptyDataVacuum`]'s.

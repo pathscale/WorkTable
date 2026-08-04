@@ -285,6 +285,10 @@ where
         Ok(())
     }
 
+    async fn reclaim_data_pages(&mut self, page_ids: Vec<data_bucket::page::PageId>) -> eyre::Result<()> {
+        self.data.reclaim_data_pages(page_ids).await
+    }
+
     async fn ensure_schema(
         &mut self,
         row_schema: Vec<(String, String)>,

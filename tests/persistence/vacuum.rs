@@ -47,6 +47,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
 
         let mut rows = HashMap::new();
         let deleted: Vec<u64>;
+        let reused_after_reload_id: u64;
         {
             let engine = VacuumPersistPersistenceEngine::new(config.clone()).await.unwrap();
             let table = VacuumPersistWorkTable::load(engine).await.unwrap();
@@ -88,7 +89,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             let physical_bytes_after = table.persisted_data_file_size_bytes().await.unwrap();
             assert!(
                 physical_bytes_after >= physical_bytes_before,
-                "persisted vacuum is logical compaction and must not report implicit file truncation"
+                "online vacuum may append a relocation page; durable reclamation is reuse, not truncation"
             );
 
             // Insert after vacuum: these operations carry event ids issued
@@ -131,6 +132,41 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             let engine = VacuumPersistPersistenceEngine::new(config.clone()).await.unwrap();
             let table = VacuumPersistWorkTable::load(engine).await.unwrap();
 
+            let physical_bytes_before_reuse = table.persisted_data_file_size_bytes().await.unwrap();
+            let durable_free_bytes: u64 = table
+                .0
+                .data
+                .get_empty_links()
+                .iter()
+                .map(|link| u64::from(link.length))
+                .sum();
+            assert!(
+                durable_free_bytes > 0,
+                "vacuum-freed ranges must survive reload so later inserts can reuse them"
+            );
+
+            // Exercise reuse after reload. Without durable free-page metadata,
+            // this insert allocates a new page and grows `.wt.data` again.
+            let reused_row = VacuumPersistRow {
+                id: table.get_next_pk().into(),
+                test: 1_100,
+                another: 1_100,
+                exchange: "reused-after-reload".to_string(),
+            };
+            let reused_id = reused_row.id;
+            reused_after_reload_id = reused_id;
+            table.insert(reused_row.clone()).unwrap();
+            rows.insert(reused_id, reused_row);
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .expect("persistence should catch up after durable page reuse")
+                .expect("persistence engine failed");
+            assert_eq!(
+                table.persisted_data_file_size_bytes().await.unwrap(),
+                physical_bytes_before_reuse,
+                "an insert after reload must consume vacuum-freed space instead of extending the file"
+            );
+
             assert_eq!(table.select_all().execute().unwrap().len(), rows.len());
             for (id, expected) in &rows {
                 assert_eq!(table.select(*id).as_ref(), Some(expected));
@@ -144,6 +180,31 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             for id in &deleted {
                 assert_eq!(table.select(*id), None);
             }
+        }
+        {
+            // Reload once more and allocate from the remaining durable range.
+            // The first reused slot must have been removed from the free
+            // metadata before its bytes were written, or this insert could
+            // overwrite it after reopening the table.
+            let engine = VacuumPersistPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = VacuumPersistWorkTable::load(engine).await.unwrap();
+            let second_reused_row = VacuumPersistRow {
+                id: table.get_next_pk().into(),
+                test: 1_101,
+                another: 1_101,
+                exchange: "second-reuse-after-reload".to_string(),
+            };
+            table.insert(second_reused_row).unwrap();
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .expect("persistence should catch up after a second durable page reuse")
+                .expect("persistence engine failed");
+
+            assert_eq!(
+                table.select(reused_after_reload_id).as_ref(),
+                rows.get(&reused_after_reload_id),
+                "consumed durable free ranges must not be offered again after another reload"
+            );
         }
     })
 }

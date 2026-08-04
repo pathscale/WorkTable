@@ -33,6 +33,7 @@ pub trait SpaceDataOps<PkGenState> {
     fn bootstrap(file: &mut File, table_name: String, version: u32) -> impl Future<Output = eyre::Result<()>> + Send;
     fn save_data(&mut self, link: Link, bytes: &[u8]) -> impl Future<Output = eyre::Result<()>> + Send;
     fn save_batch_data(&mut self, batch_data: BatchData) -> impl Future<Output = eyre::Result<()>> + Send;
+    fn reclaim_data_pages(&mut self, page_ids: Vec<PageId>) -> impl Future<Output = eyre::Result<()>> + Send;
     fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>>;
     fn save_info(&mut self) -> impl Future<Output = eyre::Result<()>> + Send;
 }

@@ -37,6 +37,63 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
         self.data_file.write_all(bytes.as_ref()).await?;
         Ok(())
     }
+
+    /// Removes written byte ranges from the durable free-range list.
+    ///
+    /// This is persisted before the corresponding row bytes. A crash between
+    /// those writes can leak reusable space, but can never leave a live row
+    /// described as free and eligible to be overwritten after reload.
+    fn consume_reusable_ranges(&mut self, used_links: impl IntoIterator<Item = Link>) -> bool {
+        let mut changed = false;
+
+        for used in used_links {
+            let used_start = u64::from(used.offset);
+            let used_end = used_start + u64::from(used.length);
+            let mut remaining = Vec::with_capacity(self.info.inner.empty_links_list.len() + 1);
+
+            for free in self.info.inner.empty_links_list.drain(..) {
+                if free.page_id != used.page_id {
+                    remaining.push(free);
+                    continue;
+                }
+
+                let free_start = u64::from(free.offset);
+                let free_end = free_start + u64::from(free.length);
+                let overlap_start = free_start.max(used_start);
+                let overlap_end = free_end.min(used_end);
+                if overlap_start >= overlap_end {
+                    remaining.push(free);
+                    continue;
+                }
+
+                changed = true;
+                if free_start < overlap_start {
+                    remaining.push(Link {
+                        page_id: free.page_id,
+                        offset: free.offset,
+                        length: (overlap_start - free_start) as u32,
+                    });
+                }
+                if overlap_end < free_end {
+                    remaining.push(Link {
+                        page_id: free.page_id,
+                        offset: overlap_end as u32,
+                        length: (free_end - overlap_end) as u32,
+                    });
+                }
+            }
+
+            self.info.inner.empty_links_list = remaining;
+        }
+
+        if changed {
+            self.info.inner.empty_links_list.sort_by_key(|link| {
+                let page_id: u32 = link.page_id.into();
+                (page_id, link.offset)
+            });
+        }
+        changed
+    }
 }
 
 impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceDataOps<PkGenState>
@@ -100,6 +157,9 @@ where
     }
 
     async fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
+        if self.consume_reusable_ranges([link]) {
+            self.save_info().await?;
+        }
         if link.page_id > self.last_page_id.into() {
             let mut page = GeneralPage {
                 header: GeneralHeader::new(link.page_id, PageType::Data, 0.into()),
@@ -123,6 +183,11 @@ where
     }
 
     async fn save_batch_data(&mut self, batch_data: BatchData) -> eyre::Result<()> {
+        let used_links = batch_data.values().flat_map(|ops| ops.iter().map(|(link, _)| *link));
+        if self.consume_reusable_ranges(used_links.collect::<Vec<_>>()) {
+            self.save_info().await?;
+        }
+
         let page_ids = batch_data.keys().map(|id| (*id).into()).collect::<Vec<_>>();
         let ids_to_create = page_ids
             .iter()
@@ -180,6 +245,40 @@ where
         self.data_file.flush().await?;
 
         Ok(())
+    }
+
+    async fn reclaim_data_pages(&mut self, page_ids: Vec<data_bucket::page::PageId>) -> eyre::Result<()> {
+        let mut page_ids = page_ids
+            .into_iter()
+            .filter(|page_id| {
+                let id: u32 = (*page_id).into();
+                id != 0 && id <= self.last_page_id
+            })
+            .collect::<Vec<_>>();
+        page_ids.sort_unstable();
+        page_ids.dedup();
+
+        if page_ids.is_empty() {
+            return Ok(());
+        }
+
+        self.info
+            .inner
+            .empty_links_list
+            .retain(|link| !page_ids.contains(&link.page_id));
+        self.info
+            .inner
+            .empty_links_list
+            .extend(page_ids.into_iter().map(|page_id| Link {
+                page_id,
+                offset: 0,
+                length: INNER_PAGE_SIZE as u32,
+            }));
+        self.info.inner.empty_links_list.sort_by_key(|link| {
+            let page_id: u32 = link.page_id.into();
+            (page_id, link.offset)
+        });
+        self.save_info().await
     }
 
     fn get_mut_info(&mut self) -> &mut GeneralPage<SpaceInfoPage<PkGenState>> {
