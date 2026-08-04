@@ -5,6 +5,9 @@
 //! logical Set/Remove event. The background disk-side shadow index translates
 //! it back into structural events, preserving the existing on-disk format
 //! while removing structural CDC bookkeeping from foreground mutations.
+//! `index = 0` and `max_value == value` are an intentionally synthetic marker,
+//! not claims about the live WTI node position or maximum; the shadow validates
+//! that marker and derives the real structural metadata itself.
 
 use std::array;
 use std::collections::hash_map::DefaultHasher;
@@ -24,6 +27,10 @@ use crate::index::UniqueIndex;
 use crate::util::OffsetEqLink;
 use crate::{IndexMap, TableIndexCdc};
 
+// A stripe provides per-key exclusion only: DefaultHasher has no relationship
+// to key order, so callers must not infer range or cross-key ordering from the
+// selected mutex. Reads never touch this fixed inline table. Logical batches
+// are ordered independently by event id in the persistence worker.
 const MUTATION_STRIPES: usize = 64;
 
 /// A persisted WorkTablesIndex whose foreground mutations emit logical CDC.

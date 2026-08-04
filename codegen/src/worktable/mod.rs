@@ -206,9 +206,16 @@ mod tests {
             indexes: {
                 value_idx: value unique,
             },
-        });
+        })
+        .unwrap()
+        .to_string();
 
-        assert!(output.is_ok());
+        if cfg!(feature = "logical-index-persistence") {
+            assert!(output.contains("PersistentWtiIndex"));
+        } else {
+            assert!(output.contains("IndexMap"));
+            assert!(!output.contains("PersistentWtiIndex"));
+        }
     }
 
     #[cfg(feature = "logical-index-persistence")]

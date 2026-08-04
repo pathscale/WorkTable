@@ -13,7 +13,9 @@ use tokio::task::JoinHandle;
 use worktable_codegen::worktable;
 
 use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery};
-use crate::persistence::{PersistenceEngine, PersistenceError, PersistenceResult, PersistenceState};
+use crate::persistence::{
+    PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceResult, PersistenceState,
+};
 use crate::prelude::*;
 use crate::util::OptimizedVec;
 use crate::vacuum::VacuumPersistence;
@@ -81,7 +83,10 @@ impl PersistenceLifecycle {
         let error = match &*state {
             PersistenceState::Failed(error) => error.clone(),
             _ => {
-                let error = Arc::new(PersistenceError::Engine(report));
+                let error = Arc::new(match report.downcast::<PersistenceIndexCorruption>() {
+                    Ok(corruption) => PersistenceError::IndexCorruption(corruption),
+                    Err(report) => PersistenceError::Engine(report),
+                });
                 *state = PersistenceState::Failed(error.clone());
                 error
             }
@@ -506,6 +511,25 @@ mod lifecycle_tests {
         task.wait_for_ops().await.unwrap();
 
         assert_eq!(&*events.lock(), &["batch", "reclaim", "batch"]);
+    }
+
+    #[test]
+    fn typed_index_corruption_quarantines_the_persistence_lifecycle() {
+        let lifecycle = PersistenceLifecycle::new();
+        let error = lifecycle.fail(
+            PersistenceIndexCorruption::new("table/primary.wt.idx", "shadow diverged from logical stream").into(),
+        );
+
+        match error.as_ref() {
+            PersistenceError::IndexCorruption(corruption) => {
+                assert_eq!(corruption.path(), std::path::Path::new("table/primary.wt.idx"));
+                assert!(corruption.reason().contains("shadow diverged"));
+            }
+            other => panic!("expected typed index corruption, got {other:?}"),
+        }
+
+        let intake_error = lifecycle.ensure_running().unwrap_err();
+        assert!(Arc::ptr_eq(&error, &intake_error));
     }
 }
 

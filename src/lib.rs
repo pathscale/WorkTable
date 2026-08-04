@@ -36,9 +36,9 @@ pub mod prelude {
     pub use crate::persistence::{
         AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
         IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
-        PersistenceEngine, PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState,
-        PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
-        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized,
+        PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceResult,
+        PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData,
+        SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized,
         SpaceSecondaryIndexOps, UpdateOperation, load_persisted_state, map_index_pages_to_toc_and_general,
         map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
     };
