@@ -17,15 +17,21 @@
 //! field changed size.
 //!
 //! ## Why the obvious fix is not enough (do not just flip the initializer)
-//! Setting the initializer to `false` correctly lets same-length updates skip
-//! reinsert — but the in-place archived write in this custom-update path then
-//! CORRUPTS variable-length rows in existing tests
-//! (`worktable::unsized_::update_parallel_more_strings`, `update_many_times`,
-//! `in_place::test_update_in_place_and_update_unsized_multithread`): reads come
-//! back as raw archived bytes. So a real fix must make the in-place write of an
-//! (even equal-length) archived `String` field safe in this path, not merely
-//! change when the fast path is taken. That is a storage/codegen change beyond a
-//! one-liner; tracked here so the fix has a proof.
+//! Setting the initializer to `false` lets same-length updates skip reinsert —
+//! but the in-place write then CORRUPTS long strings. The generated field write
+//! is `mem::swap(&mut archived.inner.<field>, &mut archived_row.<field>)`.
+//! `ArchivedString` is a union: short strings (<= rkyv INLINE_CAPACITY) are
+//! inline, so the swap is self-contained; LONG strings are out-of-line — a
+//! relative pointer + length whose characters live in `archived_row`'s buffer.
+//! Swapping only the pointer into the slot leaves it pointing at bytes that were
+//! never written to the slot → reads come back as raw archived bytes (see
+//! `worktable::unsized_::update_parallel_more_strings`, `update_many_times`,
+//! `in_place::test_update_in_place_and_update_unsized_multithread`).
+//!
+//! A real fix must overwrite the existing out-of-line byte region in place
+//! (e.g. `ArchivedStringRepr::as_bytes_seal`) when the new value fits, reinserting
+//! only when it doesn't — preserving field-level semantics. Unsafe archived-memory
+//! work; a subtle error is silent corruption. See docs/pr46-review-findings.md (F4).
 //!
 //! The observable is the row's physical `Link`: an in-place update keeps it, a
 //! reinsert changes it. Remove `#[ignore]` when the in-place path is fixed.

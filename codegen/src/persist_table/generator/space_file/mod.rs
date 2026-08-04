@@ -66,6 +66,17 @@ impl Generator {
         } else {
             quote! { self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32 }
         };
+        let row_schema = self.attributes.row_schema.iter().map(|(name, type_name)| {
+            quote! { (#name.to_string(), #type_name.to_string()) }
+        });
+        let primary_key_fields = self
+            .attributes
+            .primary_key_fields
+            .iter()
+            .map(|name| quote! { #name.to_string() });
+        let secondary_index_types = self.attributes.secondary_index_types.iter().map(|(name, type_name)| {
+            quote! { (#name.to_string(), #type_name.to_string()) }
+        });
 
         quote! {
             fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
@@ -77,9 +88,9 @@ impl Generator {
                         name: #literal_name.to_string(),
                         pk_gen_state: (),
                         empty_links_list: vec![],
-                        primary_key_fields: vec![],
-                        row_schema: vec![],
-                        secondary_index_types: vec![],
+                        primary_key_fields: vec![#(#primary_key_fields),*],
+                        row_schema: vec![#(#row_schema),*],
+                        secondary_index_types: vec![#(#secondary_index_types),*],
                     };
                 let header = GeneralHeader {
                     data_version: DATA_VERSION,
@@ -200,7 +211,7 @@ impl Generator {
 
         if self.attributes.read_only {
             quote! {
-                pub fn into_worktable(self) -> #wt_ident {
+                pub fn into_worktable(self, path: &str) -> Result<#wt_ident, PersistenceLoadError> {
                     let mut page_id = 1;
                     let data = self.data.into_iter().map(|p| {
                         let mut data = Data::from_data_page(p);
@@ -227,12 +238,19 @@ impl Generator {
                         pk_phantom: std::marker::PhantomData,
                     };
 
-                    #wt_ident(table)
+                    table.validate_persisted_state(path)?;
+                    let worktable = #wt_ident(table);
+                    worktable.validate_loaded_secondary_state(path)?;
+                    Ok(worktable)
                 }
             }
         } else {
             quote! {
-                pub async fn into_worktable<E, C>(self, engine: E) -> #wt_ident
+                pub async fn into_worktable<E, C>(
+                    self,
+                    engine: E,
+                    path: &str,
+                ) -> Result<#wt_ident, PersistenceLoadError>
                 where
                     E: PersistenceEngine<
                         <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
@@ -270,10 +288,13 @@ impl Generator {
                         pk_phantom: std::marker::PhantomData,
                     };
 
-                    #wt_ident(
+                    table.validate_persisted_state(path)?;
+                    let worktable = #wt_ident(
                         table,
                         #task_ident::run_engine(engine)
-                    )
+                    );
+                    worktable.validate_loaded_secondary_state(path)?;
+                    Ok(worktable)
                 }
             }
         }

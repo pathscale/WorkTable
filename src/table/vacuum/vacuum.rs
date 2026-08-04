@@ -170,6 +170,13 @@ where
                     // while a pre-existing reader is still active.
                     self.data_pages.allocate_new_or_pop_free().id
                 };
+                // `page_from` is `mark_page_empty`'d after this loop; it must
+                // never also be the destination, or the post-loop reclamation
+                // would drop the rows just moved into it. (Review finding F2.)
+                debug_assert_ne!(
+                    page_from, page_to,
+                    "vacuum destination must differ from the source being reclaimed"
+                );
                 match self.move_data_from(page_from, page_to).await? {
                     (true, true) => {
                         // from moved fully and on to no more space

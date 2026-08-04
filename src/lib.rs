@@ -1,3 +1,5 @@
+#![doc = include_str!("../docs/crate.md")]
+
 pub mod in_memory;
 mod index;
 pub mod lock;
@@ -13,7 +15,7 @@ mod util;
 pub mod features;
 
 pub use index::*;
-pub use persistence::{PersistedWorkTable, PersistenceConfig};
+pub use persistence::{PersistedWorkTable, PersistenceConfig, PersistenceLoadError};
 pub use row::*;
 pub use table::*;
 
@@ -34,10 +36,11 @@ pub mod prelude {
     pub use crate::persistence::{
         AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
         IndexTableOfContents, InsertOperation, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
-        PersistenceEngine, PersistenceError, PersistenceResult, PersistenceState, PersistenceTask,
-        ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex,
-        SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, map_index_pages_to_toc_and_general,
-        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
+        PersistenceEngine, PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState,
+        PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
+        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation,
+        map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
+        validate_events,
     };
     pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};

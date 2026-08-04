@@ -1,9 +1,9 @@
 use convert_case::{Case, Casing};
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 use crate::common::model::GeneratorType;
-use crate::common::name_generator::{WorktableNameGenerator, is_unsized_vec};
+use crate::common::name_generator::{WorktableNameGenerator, is_float, is_unsized_vec};
 use crate::generators::persist::PersistGenerator;
 
 impl PersistGenerator {
@@ -26,6 +26,7 @@ impl PersistGenerator {
         let count_fn = self.gen_table_count_fn();
         let system_info_fn = self.gen_system_info_fn();
         let vacuum_fn = self.gen_table_vacuum_fn();
+        let validate_loaded_secondary_state_fn = self.gen_validate_loaded_secondary_state_fn();
 
         quote! {
             #persisted_impl
@@ -44,6 +45,96 @@ impl PersistGenerator {
                 #iter_with_async_fn
                 #system_info_fn
                 #vacuum_fn
+                #validate_loaded_secondary_state_fn
+            }
+        }
+    }
+
+    fn gen_validate_loaded_secondary_state_fn(&self) -> TokenStream {
+        if self.columns.indexes.is_empty() {
+            return quote! {
+                fn validate_loaded_secondary_state(&self, _path: &str) -> Result<(), PersistenceLoadError> {
+                    Ok(())
+                }
+            };
+        }
+
+        let expected_entries = self
+            .columns
+            .indexes
+            .iter()
+            .map(|(column, index)| {
+                let index_field = &index.name;
+                let row_field = &index.field;
+                let index_name = Literal::string(&index_field.to_string());
+                let field_type = self
+                    .columns
+                    .columns_map
+                    .get(column)
+                    .expect("indexed column should exist")
+                    .to_string();
+                let key = if is_float(&field_type) {
+                    quote! { OrderedFloat(row.#row_field) }
+                } else {
+                    quote! { row.#row_field.clone() }
+                };
+
+                if index.is_unique {
+                    quote! {
+                        if self.0.indexes.#index_field.lookup_for_select(&#key).map(|link| link.0) != Some(offset_link.0) {
+                            return Err(PersistenceLoadError::corrupt(
+                                path,
+                                format!("secondary index {} does not reference primary key {primary_key:?}", #index_name),
+                            ));
+                        }
+                    }
+                } else {
+                    quote! {
+                        if !self.0.indexes.#index_field
+                            .get(&#key)
+                            .any(|(_, candidate_link)| candidate_link.0 == offset_link.0)
+                        {
+                            return Err(PersistenceLoadError::corrupt(
+                                path,
+                                format!("secondary index {} does not reference primary key {primary_key:?}", #index_name),
+                            ));
+                        }
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        let entry_counts = self
+            .columns
+            .indexes
+            .values()
+            .map(|index| {
+                let index_field = &index.name;
+                let index_name = Literal::string(&index_field.to_string());
+                quote! {
+                    if self.0.indexes.#index_field.len() != primary_count {
+                        return Err(PersistenceLoadError::corrupt(
+                            path,
+                            format!("secondary index {} contains a different number of rows than the primary index", #index_name),
+                        ));
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        quote! {
+            fn validate_loaded_secondary_state(&self, path: &str) -> Result<(), PersistenceLoadError> {
+                let primary_count = self.0.primary_index.pk_map.len();
+                #(#entry_counts)*
+                for (primary_key, offset_link) in self.0.primary_index.pk_map.iter_values() {
+                    let row = self.0.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {
+                        PersistenceLoadError::corrupt(
+                            path,
+                            format!("primary key {primary_key:?} references an invalid row: {error}"),
+                        )
+                    })?;
+                    #(#expected_entries)*
+                }
+                Ok(())
             }
         }
     }
@@ -123,7 +214,15 @@ impl PersistGenerator {
                     + 'static,
                 C: Clone + PersistenceConfig,
             {
-                async fn new(engine: E) -> eyre::Result<Self> {
+                async fn new(mut engine: E) -> eyre::Result<Self> {
+                    let schema = Self::space_info_default().inner;
+                    engine
+                        .ensure_schema(
+                            schema.row_schema,
+                            schema.primary_key_fields,
+                            schema.secondary_index_types,
+                        )
+                        .await?;
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
                     #index_setup
@@ -133,13 +232,23 @@ impl PersistGenerator {
                     ))
                 }
 
-                async fn load(engine: E) -> eyre::Result<Self> {
-                    let table_path = engine.config().table_path();
-                    if !std::path::Path::new(table_path).exists() {
+                async fn load(mut engine: E) -> eyre::Result<Self> {
+                    let schema = Self::space_info_default().inner;
+                    engine
+                        .validate_schema(
+                            schema.row_schema,
+                            schema.primary_key_fields,
+                            schema.secondary_index_types,
+                        )
+                        .await?;
+                    let table_path = engine.config().table_path().to_owned();
+                    if !std::path::Path::new(&table_path).exists() {
                         return Self::new(engine).await;
                     };
-                    let space = #space_ident::parse_file(table_path).await?;
-                    let table = space.into_worktable(engine).await;
+                    let space = #space_ident::parse_file(&table_path)
+                        .await
+                        .map_err(|error| PersistenceLoadError::corrupt(&table_path, error))?;
+                    let table = space.into_worktable(engine, &table_path).await?;
                     Ok(table)
                 }
             }

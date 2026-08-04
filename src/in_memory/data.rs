@@ -204,6 +204,35 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         rkyv::deserialize::<_, rkyv::rancor::Error>(row).map_err(|_| ExecutionError::DeserializeError)
     }
 
+    /// Validates persisted bytes before deserializing them.
+    ///
+    /// The regular in-memory path only reads bytes written by WorkTable in the
+    /// same process. Loading persisted data is different: an abrupt shutdown
+    /// may leave a link or archived value only partially written. This method
+    /// is deliberately reserved for load-time validation so steady-state row
+    /// reads keep their existing cost.
+    pub fn get_row_checked(&self, link: Link) -> Result<Row, ExecutionError>
+    where
+        Row: Archive,
+        <Row as Archive>::Archived: Portable
+            + Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>
+            + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>,
+    {
+        let start = link.offset as usize;
+        let end = start
+            .checked_add(link.length as usize)
+            .ok_or(ExecutionError::InvalidLink)?;
+        let initialized = self.free_offset.load(Ordering::Acquire) as usize;
+        if link.length == 0 || end > initialized || end > DATA_LENGTH {
+            return Err(ExecutionError::InvalidLink);
+        }
+
+        let inner_data = unsafe { &*self.inner_data.get() };
+        let archived = rkyv::access::<<Row as Archive>::Archived, rkyv::rancor::Error>(&inner_data[start..end])
+            .map_err(|_| ExecutionError::DeserializeError)?;
+        rkyv::deserialize::<_, rkyv::rancor::Error>(archived).map_err(|_| ExecutionError::DeserializeError)
+    }
+
     pub fn get_raw_row(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
         let inner_data = unsafe { &mut *self.inner_data.get() };
         let bytes = &mut inner_data[link.offset as usize..(link.offset + link.length) as usize];
