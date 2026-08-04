@@ -137,6 +137,40 @@ mod tests {
 
     use super::expand;
 
+    fn assert_composite_primary_key_field_order(output: proc_macro2::TokenStream) {
+        let output = output.to_string();
+        let get_primary_key = output
+            .split("fn get_primary_key")
+            .nth(1)
+            .expect("generated TableRow implementation");
+        let tenant = get_primary_key
+            .find("self . tenant_id . clone")
+            .expect("first primary-key field");
+        let record = get_primary_key
+            .find("self . record_id . clone")
+            .expect("second primary-key field");
+
+        assert!(tenant < record, "composite primary-key declaration order changed");
+    }
+
+    #[test]
+    fn composite_primary_key_codegen_preserves_declaration_order() {
+        for persist in [true, false] {
+            let output = expand(quote! {
+                name: CompositePrimaryKeyOrder,
+                persist: #persist,
+                columns: {
+                    tenant_id: u64 primary_key,
+                    record_id: u64 primary_key,
+                    value: i64,
+                },
+            })
+            .unwrap();
+
+            assert_composite_primary_key_field_order(output);
+        }
+    }
+
     #[test]
     fn absent_using_keeps_worktables_index_default() {
         let output = expand(quote! {
