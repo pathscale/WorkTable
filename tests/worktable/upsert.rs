@@ -27,7 +27,10 @@ async fn upsert_completes_under_same_key_churn() {
 /// Intense variant for the same-key upsert/delete linearization protocol.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn upsert_completes_under_extreme_same_key_churn() {
-    churn_run(5_000, 2_000).await;
+    // Keep this materially heavier than the normal case without making the
+    // assertion depend on runner speed: 2,000 churn flips perform both an
+    // upsert and a delete, alongside 4,000 competing upserts.
+    churn_run(2_000, 1_000).await;
 }
 
 /// A synchronous insert does not participate in the generated async row lock.

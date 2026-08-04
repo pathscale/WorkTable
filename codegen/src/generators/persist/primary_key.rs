@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use crate::common::model::{GeneratorType, PrimaryKey};
 use crate::common::name_generator::{WorktableNameGenerator, is_unsized_vec};
@@ -26,7 +26,7 @@ impl PersistGenerator {
                         .clone(),
                 )
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<IndexMap<_, _>>();
 
         let def = self.gen_primary_key_type()?;
         let impl_ = self.gen_table_primary_key_impl()?;

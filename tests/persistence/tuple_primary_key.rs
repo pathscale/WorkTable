@@ -53,6 +53,7 @@ async fn composite_primary_key_survives_mutations_and_reload() {
         for row in &rows {
             assert_eq!(table.select((row.tenant_id, row.record_id)), Some(row.clone()));
         }
+        table.close().await.unwrap();
     }
 
     {
@@ -84,5 +85,6 @@ async fn composite_primary_key_survives_mutations_and_reload() {
         assert!(table.select((7, 41)).is_none());
         assert_eq!(table.select((7, 42)).unwrap().value, 99);
         assert_eq!(table.select((8, 1)), Some(rows[2].clone()));
+        table.close().await.unwrap();
     }
 }
