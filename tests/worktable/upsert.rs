@@ -44,10 +44,24 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
     let churn = {
         let table = table.clone();
         tokio::spawn(async move {
+            let mut insert_successes = 0;
+            let mut insert_conflicts = 0;
+            let mut delete_successes = 0;
+            let mut delete_misses = 0;
             for i in 0..5_000u64 {
-                let _ = table.insert(UpsertChurnRow { id: KEY, val: i });
-                let _ = table.delete(KEY).await;
+                match table.insert(UpsertChurnRow { id: KEY, val: i }) {
+                    Ok(_) => insert_successes += 1,
+                    Err(WorkTableError::PrimaryAlreadyExists) => insert_conflicts += 1,
+                    Err(error) => panic!("raw insert returned an unexpected error: {error:?}"),
+                }
+                match table.delete(KEY).await {
+                    Ok(()) => delete_successes += 1,
+                    Err(WorkTableError::NotFound) => delete_misses += 1,
+                    Err(error) => panic!("delete returned an unexpected error: {error:?}"),
+                }
             }
+
+            (insert_successes, insert_conflicts, delete_successes, delete_misses)
         })
     };
 
@@ -67,16 +81,50 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
         }));
     }
 
-    timeout(Duration::from_secs(60), churn)
+    let (insert_successes, insert_conflicts, delete_successes, delete_misses) = timeout(Duration::from_secs(60), churn)
         .await
         .expect("raw insert/delete churn starved")
         .unwrap();
+    assert_eq!(insert_successes + insert_conflicts, 5_000);
+    assert_eq!(delete_successes + delete_misses, 5_000);
     for handle in upserters {
         timeout(Duration::from_secs(60), handle)
             .await
             .expect("upserter starved during raw insert/delete churn")
             .unwrap();
     }
+
+    // Force a deterministic final state, then audit every layer used to reach
+    // the row. A liveness-only test would miss a stale reverse entry, a ghost
+    // publication, or a primary link that points at unrelated data.
+    let expected = UpsertChurnRow { id: KEY, val: 424_242 };
+    table.upsert(expected.clone()).await.unwrap();
+
+    let pk = UpsertChurnPrimaryKey::from(KEY);
+    let link = table
+        .0
+        .primary_index
+        .pk_map
+        .get_value(&pk)
+        .expect("final row must have one primary-index entry");
+    assert_eq!(table.0.primary_index.pk_map.len(), 1);
+    assert_eq!(table.0.primary_index.reverse_pk_map.len(), 1);
+    assert_eq!(
+        table
+            .0
+            .primary_index
+            .reverse_pk_map
+            .get(&link)
+            .map(|entry| entry.get().value.clone()),
+        Some(pk),
+        "reverse index must point back to the final primary key"
+    );
+    assert_eq!(
+        table.0.data.select_non_ghosted(link.0),
+        Ok(expected.clone()),
+        "primary-index link must resolve to the final non-ghosted row"
+    );
+    assert_eq!(table.select(KEY), Some(expected));
 }
 
 /// Pins the exact publication schedule that used to let delete unwrap a
