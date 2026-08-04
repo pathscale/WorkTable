@@ -64,7 +64,6 @@ fn link_of(table: &UnsizedUpdateWorkTable, pk: u64) -> Link {
 }
 
 #[tokio::test]
-#[ignore = "WIP PR#48: in-place fix still corrupts via publication path — see docs"]
 async fn same_length_update_stays_in_place() {
     let table = UnsizedUpdateWorkTable::default();
     table

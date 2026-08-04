@@ -629,6 +629,50 @@ where
         Ok(result)
     }
 
+    /// In-place update of an already-live row at `link`: re-serialize the full
+    /// row into the SAME slot and republish it as LIVE (unghosted). Unlike
+    /// [`Self::update`], this does not stage the row as a new (ghosted)
+    /// publication — a live row that is edited must stay visible to readers.
+    /// The caller must guarantee the new row serializes to the same length as
+    /// the current slot (so it fits exactly).
+    ///
+    /// # Safety
+    /// Same contract as [`Self::update`]: `link` must be valid and no other
+    /// mutable references to the row may exist during modification.
+    pub unsafe fn update_in_place<const N: usize>(&self, row: Row, link: Link) -> Result<(), ExecutionError>
+    where
+        Row: Archive + Clone,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable + ArchivedRowWrapper,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived:
+            Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        let _page_access = self.page_access.write();
+        let pages = self.pages.read();
+        let page = pages
+            .get(page_id_mapper(link.page_id.into()))
+            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        // Write the new bytes into the slot.
+        let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
+        unsafe {
+            page.save_row_by_link(&gen_row, link)
+                .map_err(ExecutionError::DataPageError)?;
+        }
+        // Clear the ghost bit on the stored row and republish the LIVE image
+        // from the page, exactly like `with_mut_ref` — so the publication cache
+        // is not left ghosted (a fresh `from_inner` wrapper is ghosted).
+        unsafe {
+            page.get_mut_row_ref(link)
+                .map_err(ExecutionError::DataPageError)?
+                .unseal_unchecked()
+                .unghost();
+        }
+        let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
+        self.publish_wrapped_row(link, wrapped);
+        Ok(())
+    }
+
     pub fn delete(&self, link: Link) -> Result<(), ExecutionError>
     where
         Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
