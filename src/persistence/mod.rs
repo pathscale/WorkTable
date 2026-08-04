@@ -4,7 +4,7 @@ use crate::persistence::operation::BatchOperation;
 
 pub use engine::DiskConfig;
 pub use engine::DiskPersistenceEngine;
-pub use error::{PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState};
+pub use error::{PersistenceError, PersistenceLoadError, PersistenceResult, PersistenceState, load_persisted_state};
 pub use operation::{
     AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,

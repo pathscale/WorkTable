@@ -245,10 +245,10 @@ impl PersistGenerator {
                     if !std::path::Path::new(&table_path).exists() {
                         return Self::new(engine).await;
                     };
-                    let space = #space_ident::parse_file(&table_path)
-                        .await
-                        .map_err(|error| PersistenceLoadError::corrupt(&table_path, error))?;
-                    let table = space.into_worktable(engine, &table_path).await?;
+                    let table = load_persisted_state(&table_path, async {
+                        let space = #space_ident::parse_file(&table_path).await?;
+                        Ok::<_, eyre::Report>(space.into_worktable(engine, &table_path).await?)
+                    }).await?;
                     Ok(table)
                 }
             }
