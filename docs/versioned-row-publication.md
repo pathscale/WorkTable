@@ -1,6 +1,7 @@
 # Versioned row publication
 
-Status: feature-gated prototype behind `versioned-row-publication`.
+Status: mandatory for generated safe APIs. The former
+`versioned-row-publication` Cargo feature is retained as a compatibility no-op.
 
 ## Problem
 
@@ -19,7 +20,7 @@ the interval from index lookup through acquisition of a stable row version.
 
 ## Protocol
 
-With the feature enabled, `DataPages` maintains two representations:
+`DataPages` maintains two representations:
 
 - Archived page bytes are the compact persistence and mutation image. All
   accesses that can overlap a mutation are serialized by an internal page
@@ -63,7 +64,7 @@ The generated API follows these publication rules:
    admitting write traffic. Subsequent generated reads use the published
    version map.
 
-The grace period is quiescent-state reclamation: a feature-only atomic counter
+The grace period is quiescent-state reclamation: an atomic counter
 tracks generated reads, and retirement queues are drained when that counter is
 zero. `Arc` ownership independently keeps a version alive after a reader has
 acquired it.
@@ -102,16 +103,13 @@ than spinning without a bound. The guarantee also does not cover callers that
 bypass generated table methods and directly invoke low-level `Data` page
 mutation APIs.
 
-## Cost model and rollout
+## Cost model
 
-The feature is off by default. Cargo features unify across a dependency graph,
-so any dependency enabling it enables it for every WorkTable consumer in that
-build. It adds one owned row copy plus slot/map
-metadata per live physical link, an atomic increment/decrement per generated
-read, a sharded publication-map lookup, and writer-side page serialization.
-The index-visibility algorithm is always active and separate from row
-publication: WorkTablesIndex acquires the selected node while its structural
-mapping is pinned on the uncontended path, and may retry after node contention.
-Those costs are inappropriate to impose silently on latency-sensitive users.
-The default path remains unchanged; benchmark results for both modes must be
-reported before this feature is proposed for default enablement.
+The protocol adds one owned row copy plus slot/map metadata per live physical
+link, an atomic increment/decrement per generated read, a sharded publication
+map lookup, and writer-side page serialization. These costs are mandatory: the
+previous fast path allowed safe generated reads to race mutation of archived
+bytes, and performance cannot justify undefined behavior. The index-visibility
+algorithm is separate: WorkTablesIndex acquires the selected node while its
+structural mapping is pinned on the uncontended path, and may retry after node
+contention.

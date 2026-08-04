@@ -1,7 +1,6 @@
 mod data;
 mod empty_link_registry;
 mod pages;
-#[cfg(feature = "versioned-row-publication")]
 mod publication;
 mod row;
 

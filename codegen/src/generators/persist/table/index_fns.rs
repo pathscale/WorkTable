@@ -83,36 +83,26 @@ impl PersistGenerator {
                 row.#row_field_ident.eq(&by)
             }
         };
-        let select = if cfg!(feature = "versioned-row-publication") {
-            quote! {
-                for _ in 0..64 {
-                    let link: Link = self.0.indexes.#field_ident
-                        .lookup_for_select(#by)
-                        .map(Into::into)?;
-                    if let Ok(row) = self.0.data.select_non_ghosted(link) {
-                        if #predicate_matches {
-                            return Some(row);
-                        }
-                    }
-
-                    let current_link: Option<Link> = self.0.indexes.#field_ident
-                        .lookup_for_select(#by)
-                        .map(Into::into);
-                    if current_link == Some(link) {
-                        return None;
-                    }
-                    std::hint::spin_loop();
-                }
-                None
-            }
-        } else {
-            quote! {
+        let select = quote! {
+            for _ in 0..64 {
                 let link: Link = self.0.indexes.#field_ident
                     .lookup_for_select(#by)
                     .map(Into::into)?;
-                let row = self.0.data.select_non_ghosted(link).ok()?;
-                #predicate_matches.then_some(row)
+                if let Ok(row) = self.0.data.select_non_ghosted(link) {
+                    if #predicate_matches {
+                        return Some(row);
+                    }
+                }
+
+                let current_link: Option<Link> = self.0.indexes.#field_ident
+                    .lookup_for_select(#by)
+                    .map(Into::into);
+                if current_link == Some(link) {
+                    return None;
+                }
+                std::hint::spin_loop();
             }
+            None
         };
 
         Ok(quote! {
@@ -182,33 +172,21 @@ impl PersistGenerator {
         let row_field_ident = &idx.field;
         let column_pascal = Ident::new(&i.to_string().to_case(Case::Pascal), Span::mixed_site());
 
-        let revalidate = cfg!(feature = "versioned-row-publication");
         let (range_bounds, range_arg) = if is_float(type_.to_string().as_str()) {
             (
                 quote! { std::ops::RangeBounds<#type_> },
-                if revalidate {
-                    quote! {
-                        (
-                            predicate_range.0.as_ref().map(|v| OrderedFloat(*v)),
-                            predicate_range.1.as_ref().map(|v| OrderedFloat(*v)),
-                        )
-                    }
-                } else {
-                    quote! {
+                quote! {
                     (
-                        range.start_bound().map(|v| OrderedFloat(*v)),
-                        range.end_bound().map(|v| OrderedFloat(*v)),
+                        predicate_range.0.as_ref().map(|v| OrderedFloat(*v)),
+                        predicate_range.1.as_ref().map(|v| OrderedFloat(*v)),
                     )
-                    }
                 },
             )
-        } else if revalidate {
+        } else {
             (
                 quote! { std::ops::RangeBounds<#type_> },
                 quote! { predicate_range.clone() },
             )
-        } else {
-            (quote! { std::ops::RangeBounds<#type_> }, quote! { range })
         };
         let (index_range, select_row) = if idx.is_unique {
             (
@@ -231,21 +209,17 @@ impl PersistGenerator {
                 },
             )
         };
-        let predicate_setup = revalidate.then(|| {
-            quote! {
-                let predicate_range = (
-                    range.start_bound().cloned(),
-                    range.end_bound().cloned(),
-                );
-            }
-        });
-        let predicate_filter = revalidate.then(|| {
-            quote! {
-                .filter(move |row| {
-                    std::ops::RangeBounds::contains(&predicate_range, &row.#row_field_ident)
-                })
-            }
-        });
+        let predicate_setup = quote! {
+            let predicate_range = (
+                range.start_bound().cloned(),
+                range.end_bound().cloned(),
+            );
+        };
+        let predicate_filter = quote! {
+            .filter(move |row| {
+                std::ops::RangeBounds::contains(&predicate_range, &row.#row_field_ident)
+            })
+        };
 
         Ok(quote! {
             pub fn #fn_name<'a, R>(&'a self, range: R) -> SelectQueryBuilder<#row_ident,

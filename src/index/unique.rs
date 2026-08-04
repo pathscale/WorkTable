@@ -292,9 +292,22 @@ mod tests {
             threads.push(std::thread::spawn(move || {
                 for sequence in 0..1_000_u64 {
                     let key = worker * 1_000 + sequence;
-                    assert_eq!(index.insert_value_checked(key, key + 1), Some(()));
-                    assert_eq!(index.get_value(&key), Some(key + 1));
-                    assert_eq!(index.remove_value(&key), Some((key, key + 1)));
+                    let backend = std::any::type_name::<I>();
+                    assert_eq!(
+                        index.insert_value_checked(key, key + 1),
+                        Some(()),
+                        "backend={backend}, key={key}, operation=insert"
+                    );
+                    assert_eq!(
+                        index.get_value(&key),
+                        Some(key + 1),
+                        "backend={backend}, key={key}, operation=get"
+                    );
+                    assert_eq!(
+                        index.remove_value(&key),
+                        Some((key, key + 1)),
+                        "backend={backend}, key={key}, operation=remove"
+                    );
                 }
             }));
         }
