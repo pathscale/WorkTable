@@ -1,11 +1,15 @@
+macro_rules! count_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use worktable::prelude::*;
 use worktable::worktable;
 
 // The test checks updates for 3 indecies at once
 worktable!(
     name: Test,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         val: i64,
         attr1: String,
         attr2: i16,
@@ -69,3 +73,11 @@ async fn count() {
     // Count by WT
     assert_eq!(4, test_table.count());
 }
+
+        }
+    };
+}
+
+count_backend_suite!(wti, worktables_index);
+count_backend_suite!(congee, congee);
+count_backend_suite!(arctic, arctic);

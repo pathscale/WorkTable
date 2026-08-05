@@ -12,6 +12,9 @@
 //! that EVERY surviving row — by primary key AND by secondary index — is still
 //! present and correct after vacuum quiesces.
 
+macro_rules! vacuum_no_loss_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,8 +25,9 @@ use worktable_codegen::worktable;
 
 worktable!(
     name: VacuumLoss,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         value: i64,
         data: String
     },
@@ -112,3 +116,11 @@ async fn vacuum_never_loses_surviving_rows() {
         assert_eq!(table.select(id), None, "deleted row {id} resurrected by vacuum");
     }
 }
+
+        }
+    };
+}
+
+vacuum_no_loss_backend_suite!(wti, worktables_index);
+vacuum_no_loss_backend_suite!(congee, congee);
+vacuum_no_loss_backend_suite!(arctic, arctic);

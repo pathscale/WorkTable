@@ -1,3 +1,6 @@
+macro_rules! in_place_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,8 +11,9 @@ use worktable::worktable;
 
 worktable!(
     name: Test,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         val: i64,
         val1: u64,
         val2: i16,
@@ -372,3 +376,11 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
     assert_eq!(errors, 0);
     Ok(())
 }
+
+        }
+    };
+}
+
+in_place_backend_suite!(wti, worktables_index);
+in_place_backend_suite!(congee, congee);
+in_place_backend_suite!(arctic, arctic);

@@ -1,3 +1,6 @@
+macro_rules! base_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,8 +11,9 @@ use worktable::worktable;
 
 worktable! (
     name: Test,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         test: i64,
         another: u64,
         exchange: String
@@ -185,7 +189,7 @@ async fn update_string() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let updated = TestRow {
         id: pk.clone().into(),
         test: 2,
@@ -265,7 +269,7 @@ async fn delete() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
+    let link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
     assert!(selected_row.is_none());
@@ -281,7 +285,7 @@ async fn delete() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(updated.clone()).unwrap();
-    let new_link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
+    let new_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     assert_eq!(link, new_link)
 }
@@ -366,7 +370,7 @@ async fn delete_and_insert_less() {
         exchange: "test1234567890".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
+    let link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
     assert!(selected_row.is_none());
@@ -378,7 +382,7 @@ async fn delete_and_insert_less() {
         exchange: "test1".to_string(),
     };
     let pk = table.insert(updated.clone()).unwrap();
-    let new_link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
+    let new_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     assert_ne!(link.0, new_link.0)
 }
@@ -400,7 +404,7 @@ async fn delete_and_replace() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
+    let link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
     assert!(selected_row.is_none());
@@ -412,7 +416,7 @@ async fn delete_and_replace() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(updated.clone()).unwrap();
-    let new_link = table.0.primary_index.pk_map.get(&pk).map(|kv| kv.get().value).unwrap();
+    let new_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     assert_eq!(link, new_link)
 }
@@ -1199,3 +1203,11 @@ async fn _bench() {
         let _ = table.select(a).expect("TODO: panic message");
     }
 }
+
+        }
+    };
+}
+
+base_backend_suite!(wti, worktables_index);
+base_backend_suite!(congee, congee);
+base_backend_suite!(arctic, arctic);
