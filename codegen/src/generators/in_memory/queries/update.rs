@@ -367,8 +367,10 @@ impl InMemoryGenerator {
                         return core::result::Result::Ok(());
                     }
 
-                    let row_old_for_reinsert = self.0.select(pk.clone()).expect("should not be deleted by other thread");
-                    if let Err(e) = self.reinsert(row_old_for_reinsert, row_new).await {
+                    // `update_in_place` checks serialization and exact slot
+                    // length before touching page bytes, so its error path
+                    // leaves this locked snapshot authoritative for fallback.
+                    if let Err(e) = self.reinsert(row_old, row_new).await {
                         self.0.update_state.remove(&pk);
                         return Err(e);
                     }
