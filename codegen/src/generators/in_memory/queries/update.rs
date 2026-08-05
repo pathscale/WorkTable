@@ -66,8 +66,36 @@ impl InMemoryGenerator {
         // column and therefore always reinserts, correctly.)
         let const_name = name_generator.get_page_inner_size_const_ident();
         let full_row_in_place_eligible = !self.columns.is_sized && self.columns.indexes.is_empty();
-        let size_check = if self.columns.is_sized {
-            quote! {}
+        let update_body = if self.columns.is_sized {
+            quote! {
+                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                    .map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe {
+                    rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                        .unseal_unchecked()
+                };
+
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                #diff_process_insert
+                #persist_op
+
+                unsafe {
+                    self.0
+                        .data
+                        .with_mut_ref(link, move |archived| {
+                            #(#row_updates)*
+                        })
+                        .map_err(WorkTableError::PagesError)?
+                };
+
+                #diff_process_remove
+
+                self.0.update_state.remove(&pk);
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
         } else if full_row_in_place_eligible {
             quote! {
                 // No secondary indexes: same-size unsized full-row update may go
@@ -93,29 +121,27 @@ impl InMemoryGenerator {
                     return Err(e);
                 }
                 self.0.update_state.remove(&pk);
-                return core::result::Result::Ok(());
+                core::result::Result::Ok(())
             }
         } else {
             quote! {
-                if true {
-                    drop(_guard);
-                    let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new_with_mutation(
-                        op_lock,
-                        self.0.lock_manager.clone(),
-                        pk.clone(),
-                    );
-                    let row_old = self.0.data.select_non_ghosted(link)?;
-                    if let Err(e) = self.reinsert(row_old, row).await {
-                        self.0.update_state.remove(&pk);
-
-                        return Err(e);
-                    }
-
+                drop(_guard);
+                let op_lock = { #full_row_lock };
+                let _guard = LockGuard::new_with_mutation(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
+                let row_old = self.0.data.select_non_ghosted(link)?;
+                if let Err(e) = self.reinsert(row_old, row).await {
                     self.0.update_state.remove(&pk);
 
-                    return core::result::Result::Ok(());
+                    return Err(e);
                 }
+
+                self.0.update_state.remove(&pk);
+
+                core::result::Result::Ok(())
             }
         };
 
@@ -150,26 +176,7 @@ impl InMemoryGenerator {
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 self.0.update_state.insert(pk.clone(), row_old);
 
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                #size_check
-
-                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
-
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
-                #diff_process_insert
-                #persist_op
-
-                unsafe { self.0.data.with_mut_ref(link, move |archived| {
-                    #(#row_updates)*
-                }).map_err(WorkTableError::PagesError)? };
-
-                #diff_process_remove
-
-                self.0.update_state.remove(&pk);
-
-                #persist_call
-
-                core::result::Result::Ok(())
+                #update_body
             }
         }
     }
