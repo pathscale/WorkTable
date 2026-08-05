@@ -135,6 +135,10 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         if length != link.length {
             return Err(ExecutionError::InvalidLink);
         }
+        debug_assert_eq!(
+            length, link.length,
+            "slot length was checked before archived bytes are overwritten"
+        );
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[link.offset as usize..][..link.length as usize].copy_from_slice(bytes.as_slice());

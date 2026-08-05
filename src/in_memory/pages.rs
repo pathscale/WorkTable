@@ -645,6 +645,12 @@ where
     /// generated persisted update path deliberately keeps the reinsert path for
     /// this reason.
     ///
+    /// Serialization and the exact-length check finish before any page byte is
+    /// changed. `page_access` excludes low-level archived-page readers during
+    /// the copy, while generated reads continue from the old immutable
+    /// publication until [`Self::publish_wrapped_row`] replaces the complete
+    /// owned row and flags together.
+    ///
     /// # Safety
     /// Same contract as [`Self::update`]: `link` must be valid and no other
     /// mutable references to the row may exist during modification.
@@ -909,6 +915,7 @@ mod tests {
     use crate::in_memory::pages::{DataPages, ExecutionError};
     use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::ArchivedRowWrapper;
+    use data_bucket::Link;
 
     #[derive(Archive, Copy, Clone, Deserialize, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
     struct TestRow {
@@ -1087,6 +1094,32 @@ mod tests {
         writer.join().unwrap();
         reader.join().unwrap();
         assert_eq!(pages.select_non_ghosted(link), Ok(TestRow { a: 1, b: 1 }));
+    }
+
+    #[test]
+    fn failed_exact_length_update_preserves_page_bytes_and_publication() {
+        let pages = DataPages::<TestRow>::new();
+        let old_row = TestRow { a: 10, b: 20 };
+        let link = pages.insert(old_row).unwrap();
+        unsafe {
+            pages.with_mut_ref(link, |row| row.unghost()).unwrap();
+        }
+        let old_bytes = pages.select_raw(link).unwrap();
+        let wrong_length = Link {
+            length: link.length - 1,
+            ..link
+        };
+
+        let result = unsafe { pages.update_in_place::<DATA_INNER_LENGTH>(TestRow { a: 30, b: 40 }, wrong_length) };
+
+        assert!(matches!(
+            result,
+            Err(ExecutionError::DataPageError(
+                crate::in_memory::DataExecutionError::InvalidLink
+            ))
+        ));
+        assert_eq!(pages.select_raw(link).unwrap(), old_bytes);
+        assert_eq!(pages.select_non_ghosted(link), Ok(old_row));
     }
 
     #[test]
