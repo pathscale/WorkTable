@@ -636,6 +636,15 @@ where
     /// The caller must guarantee the new row serializes to the same length as
     /// the current slot (so it fits exactly).
     ///
+    /// # Persistence
+    /// This path emits **no** persistence CDC. It is only sound for tables that
+    /// are not persisted (or on a persistence sink that reconstructs state from
+    /// the page image on reload). Do NOT route a persisted-table update through
+    /// this method: the row would change in memory and republish but no change
+    /// event would reach disk, silently losing durability until reload. The
+    /// generated persisted update path deliberately keeps the reinsert path for
+    /// this reason.
+    ///
     /// # Safety
     /// Same contract as [`Self::update`]: `link` must be valid and no other
     /// mutable references to the row may exist during modification.
@@ -658,7 +667,8 @@ where
         // guaranteed equal *field* sizes, which need not imply equal total
         // serialized length (alignment/padding). If it does not fit, report it
         // so the caller can fall back to a reinsert instead of corrupting.
-        let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
+        // `row` is consumed by the wrapper here (no clone): it is not used again.
+        let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         unsafe {
             page.save_row_by_link(&gen_row, link)
                 .map_err(ExecutionError::DataPageError)?;

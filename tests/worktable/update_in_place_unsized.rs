@@ -128,3 +128,69 @@ async fn different_length_update_is_correct() {
         .unwrap();
     assert_eq!(table.select(1).unwrap().payload, "much longer payload");
 }
+
+/// F5 (review): a reader resolving key K concurrently with same-size in-place
+/// updates must always observe a VALID payload — one of the values written,
+/// never a torn/partial read. The in-place path keeps the same slot and
+/// republishes via `PublishedRow::replace` (whole version swapped under a lock),
+/// so every `select` should return a well-formed, expected-length string.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_reads_during_in_place_update_never_tear() {
+    use std::sync::Arc;
+
+    let table = Arc::new(UnsizedUpdateWorkTable::default());
+    // 4-digit payloads: every same-length update takes the in-place path.
+    table
+        .insert(UnsizedUpdateRow {
+            id: 1,
+            payload: "0000".to_string(),
+        })
+        .unwrap();
+
+    let writer = {
+        let table = table.clone();
+        tokio::spawn(async move {
+            for i in 0..20_000u64 {
+                table
+                    .update_payload(
+                        PayloadQuery {
+                            payload: format!("{:04}", i % 10000),
+                        },
+                        1,
+                    )
+                    .await
+                    .unwrap();
+            }
+        })
+    };
+
+    let mut readers = Vec::new();
+    for _ in 0..3 {
+        let table = table.clone();
+        readers.push(tokio::spawn(async move {
+            for _ in 0..50_000u64 {
+                if let Some(row) = table.select(1) {
+                    // Any observed value must be a valid 4-char ASCII-digit
+                    // string — never garbage bytes from a torn read.
+                    assert_eq!(row.payload.len(), 4, "torn read: payload {:?}", row.payload);
+                    assert!(
+                        row.payload.bytes().all(|b| b.is_ascii_digit()),
+                        "torn read: non-digit payload {:?}",
+                        row.payload
+                    );
+                }
+            }
+        }));
+    }
+
+    writer.await.unwrap();
+    for r in readers {
+        r.await.unwrap();
+    }
+
+    // Final value is the writer's last write.
+    assert_eq!(
+        table.select(1).unwrap().payload,
+        format!("{:04}", (20_000u64 - 1) % 10000)
+    );
+}
