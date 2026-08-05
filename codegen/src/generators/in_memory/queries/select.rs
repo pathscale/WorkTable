@@ -35,10 +35,29 @@ impl InMemoryGenerator {
                 let iter = std::iter::once_with(move || {
                     let read_guard = self.0.data.read_guard();
                     self.0.primary_index.pk_map
-                        .iter_links()
-                        .filter_map(move |link| {
+                        .iter_values()
+                        .filter_map(move |(primary_key, link)| {
                             let _read_guard = &read_guard;
-                            self.0.data.select_non_ghosted(link.0).ok()
+                            let mut current_link = link.0;
+                            for _ in 0..64 {
+                                if let Ok(row) = self.0.data.select_non_ghosted(current_link) {
+                                    return Some(row);
+                                }
+
+                                // A reinsert publishes the replacement link
+                                // before retiring the captured one. Follow that
+                                // replacement instead of silently omitting the
+                                // row from a concurrent full-table scan.
+                                let replacement: Link = self.0.primary_index.pk_map
+                                    .lookup_for_select(&primary_key)
+                                    .map(Into::into)?;
+                                if replacement == current_link {
+                                    return None;
+                                }
+                                current_link = replacement;
+                                std::hint::spin_loop();
+                            }
+                            None
                         })
                 }).flatten();
 
