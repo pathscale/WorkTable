@@ -75,7 +75,6 @@ impl InMemoryGenerator {
                         .unseal_unchecked()
                 };
 
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #diff_process_insert
                 #persist_op
 
@@ -385,14 +384,9 @@ impl InMemoryGenerator {
                     return core::result::Result::Ok(());
                 }
             }
-        } else if self.columns.is_sized {
-            // Sized rows never change length; the caller's field swap is safe and
-            // no size check / reinsert is needed.
-            quote! {}
-        } else {
-            // Unsized rows where an updated column IS indexed: keep the original
-            // always-reinsert path so secondary-index maintenance and unique
-            // checks run through reinsert.
+        } else if touches_index {
+            // Updating an indexed column must keep the index-maintaining
+            // reinsert path, regardless of the row's storage shape.
             let row_updates = idents
                 .iter()
                 .map(|i| quote! { row_new.#i = row.#i.clone(); })
@@ -420,6 +414,11 @@ impl InMemoryGenerator {
                     return core::result::Result::Ok(());
                 }
             }
+        } else {
+            // Other columns make the row unsized, but this query updates only
+            // fixed-width, unindexed fields. The caller can safely swap those
+            // archived fields in place without rebuilding the full row.
+            quote! {}
         }
     }
 
@@ -605,6 +604,7 @@ impl InMemoryGenerator {
             })
             .collect::<Vec<_>>();
 
+        let archived_swap_is_safe = self.columns.is_sized || (unsized_fields.is_none() && idx_idents.is_none());
         let size_check = self.gen_size_check(unsized_fields, idents, idx_idents);
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
@@ -612,7 +612,7 @@ impl InMemoryGenerator {
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
-        let finish_update = if self.columns.is_sized {
+        let finish_update = if archived_swap_is_safe {
             quote! {
                 #diff_process_insert
                 #persist_op
@@ -653,7 +653,6 @@ impl InMemoryGenerator {
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
                 #finish_update
             }
@@ -784,7 +783,6 @@ impl InMemoryGenerator {
                     guards.insert(pk.clone(), LockGuard::new(op_lock, self.0.lock_manager.clone(), pk));
                 }
 
-                let op_id = OperationId::Multi(uuid::Uuid::now_v7());
                 for pk in pks.into_iter() {
                     // Re-resolve and re-validate under the held lock. The
                     // query's lock set includes the predicate column, so the
@@ -931,7 +929,6 @@ impl InMemoryGenerator {
                     }
                 };
 
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
                 #finish_update
             }

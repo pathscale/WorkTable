@@ -44,10 +44,12 @@ macro_rules! unsized_in_place_suite {
                 columns: {
                     id: u64 primary_key using $using,
                     payload: String,
+                    balance: f64,
                 },
                 queries: {
                     update: {
                         Payload(payload) by id,
+                        Balance(balance) by id,
                     }
                 }
             );
@@ -72,6 +74,7 @@ macro_rules! unsized_in_place_suite {
                     .insert(UnsizedUpdateRow {
                         id: 1,
                         payload: "abcdefgh".to_string(), // 8 bytes
+                        balance: 1.0,
                     })
                     .unwrap();
 
@@ -105,6 +108,7 @@ macro_rules! unsized_in_place_suite {
                     .insert(UnsizedUpdateRow {
                         id: 1,
                         payload: "abcdefghij".to_string(),
+                        balance: 1.0,
                     })
                     .unwrap();
 
@@ -146,6 +150,7 @@ macro_rules! unsized_in_place_suite {
                     .insert(UnsizedUpdateRow {
                         id: 1,
                         payload: "0000".to_string(),
+                        balance: 1.0,
                     })
                     .unwrap();
 
@@ -199,6 +204,33 @@ macro_rules! unsized_in_place_suite {
                 assert_eq!(
                     table.select(1).unwrap().payload,
                     format!("{:04}", (20_000u64 - 1) % 10000)
+                );
+            }
+
+            #[tokio::test]
+            async fn fixed_width_update_on_unsized_row_stays_in_place() {
+                let table = UnsizedUpdateWorkTable::default();
+                table
+                    .insert(UnsizedUpdateRow {
+                        id: 1,
+                        payload: "out-of-line payload that must remain unchanged".to_string(),
+                        balance: 1.0,
+                    })
+                    .unwrap();
+                let before = link_of(&table, 1);
+
+                table
+                    .update_balance(BalanceQuery { balance: 42.5 }, 1)
+                    .await
+                    .unwrap();
+
+                let after = link_of(&table, 1);
+                let row = table.select(1).unwrap();
+                assert_eq!(before, after);
+                assert_eq!(row.balance, 42.5);
+                assert_eq!(
+                    row.payload,
+                    "out-of-line payload that must remain unchanged"
                 );
             }
         }
