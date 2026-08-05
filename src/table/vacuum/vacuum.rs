@@ -14,7 +14,7 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
-use crate::lock::{Lock, LockMap, RowLock};
+use crate::lock::{Lock, LockGuard, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
 use crate::vacuum::VacuumPersistence;
 use crate::vacuum::VacuumStats;
@@ -279,30 +279,46 @@ where
         drop(range);
 
         for (from_link, pk) in links {
-            let lock = self.full_row_lock(&pk).await;
-            let _mutation_guard = self.lock_manager.mutation_guard(&pk);
-            if self
-                .data_pages
-                .with_ref(from_link.0, |r| r.is_deleted())
-                .expect("link should be valid")
-            {
-                lock.unlock();
-                self.lock_manager.remove_with_lock_check(&pk);
-                continue;
-            }
-            let (raw_data, new_link) = unsafe {
-                self.data_pages
-                    .move_row_for_vacuum(from_link.0, to)
-                    .expect("links and destination capacity were checked")
-            };
-            self.update_index_after_move(pk.clone(), from_link.0, new_link, raw_data)?;
-            self.data_pages.retire_published_link(from_link.0);
-
-            lock.unlock();
-            self.lock_manager.remove_with_lock_check(&pk);
+            self.move_candidate_if_current(from_link.0, pk, to).await?;
         }
 
         Ok((from_page_will_be_moved, to_page_will_be_filled))
+    }
+
+    /// Moves a reverse-index candidate only if it is still the forward-index
+    /// location after the row lock is acquired.
+    ///
+    /// `move_data_from` snapshots the reverse index before taking per-row
+    /// locks. A concurrent reinsert may move the key and recycle the captured
+    /// slot for a different row in that interval. Revalidating under the row
+    /// lock prevents vacuum from publishing that replacement row under the
+    /// stale candidate's primary key.
+    async fn move_candidate_if_current(&self, from_link: Link, pk: PrimaryKey, to: PageId) -> eyre::Result<bool> {
+        let lock = self.full_row_lock(&pk).await;
+        let _guard = LockGuard::new_with_mutation(lock, self.lock_manager.clone(), pk.clone());
+
+        let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
+        if current_link != Some(from_link) {
+            return Ok(false);
+        }
+
+        if self
+            .data_pages
+            .with_ref(from_link, |r| r.is_deleted())
+            .expect("a current primary-index link should be valid")
+        {
+            return Ok(false);
+        }
+
+        let (raw_data, new_link) = unsafe {
+            self.data_pages
+                .move_row_for_vacuum(from_link, to)
+                .expect("links and destination capacity were checked")
+        };
+        self.update_index_after_move(pk, from_link, new_link, raw_data)?;
+        self.data_pages.retire_published_link(from_link);
+
+        Ok(true)
     }
 
     async fn full_row_lock(&self, pk: &PrimaryKey) -> Arc<Lock> {
@@ -941,5 +957,75 @@ mod tests {
         assert!(moved >= 3, "test setup did not exercise enough vacuum moves");
 
         drop(read_guard);
+    }
+
+    #[tokio::test]
+    async fn vacuum_skips_a_stale_candidate_after_its_link_is_reused() {
+        let table = TestWorkTable::default();
+        let target = TestRow {
+            id: table.get_next_pk().into(),
+            test: 10,
+            another: 10,
+            exchange: "target00".to_string(),
+        };
+        let target_id = target.id;
+        table.insert(target).unwrap();
+
+        // Model the reverse-index snapshot taken before vacuum waits for the
+        // row lock.
+        let stale_link = table
+            .0
+            .primary_index
+            .pk_map
+            .get_value(&TestPrimaryKey::from(target_id))
+            .unwrap()
+            .0;
+
+        // A same-sized reinsert moves the target and retires its old slot.
+        let updated_target = TestRow {
+            id: target_id,
+            test: 11,
+            another: 11,
+            exchange: "updated0".to_string(),
+        };
+        table.update(updated_target.clone()).await.unwrap();
+        let current_target_link = table
+            .0
+            .primary_index
+            .pk_map
+            .get_value(&TestPrimaryKey::from(target_id))
+            .unwrap()
+            .0;
+        assert_ne!(current_target_link, stale_link);
+
+        // Reuse the retired physical slot for a different row. Without the
+        // post-lock forward-index check, vacuum would move this row and bind
+        // it to `target_id`.
+        let replacement = TestRow {
+            id: table.get_next_pk().into(),
+            test: 12,
+            another: 12,
+            exchange: "reused00".to_string(),
+        };
+        let replacement_id = replacement.id;
+        table.insert(replacement.clone()).unwrap();
+        let replacement_link = table
+            .0
+            .primary_index
+            .pk_map
+            .get_value(&TestPrimaryKey::from(replacement_id))
+            .unwrap()
+            .0;
+        assert_eq!(replacement_link, stale_link, "test setup must recycle the stale slot");
+
+        let destination = table.0.data.allocate_new_or_pop_free().id;
+        let moved = create_vacuum(&table)
+            .move_candidate_if_current(stale_link, TestPrimaryKey::from(target_id), destination)
+            .await
+            .unwrap();
+
+        assert!(!moved, "vacuum must reject a candidate whose key moved");
+        assert_eq!(table.select(target_id), Some(updated_target));
+        assert_eq!(table.select(replacement_id), Some(replacement));
     }
 }
