@@ -403,7 +403,14 @@ mod lifecycle_tests {
         batches: Arc<AtomicUsize>,
         events: Arc<ParkingMutex<Vec<&'static str>>>,
         config: TestConfig,
-        fail: bool,
+        failure: TestFailure,
+    }
+
+    #[derive(Clone, Copy)]
+    enum TestFailure {
+        None,
+        Engine,
+        IndexCorruption,
     }
 
     impl PersistenceEngine<(), u64, TestEvents, TestIndex> for TestEngine {
@@ -414,7 +421,7 @@ mod lifecycle_tests {
                 batches: Arc::new(AtomicUsize::new(0)),
                 events: Arc::new(ParkingMutex::new(Vec::new())),
                 config,
-                fail: false,
+                failure: TestFailure::None,
             })
         }
 
@@ -426,8 +433,14 @@ mod lifecycle_tests {
             &mut self,
             _batch_op: BatchOperation<(), u64, TestEvents, TestIndex>,
         ) -> eyre::Result<()> {
-            if self.fail {
-                return Err(eyre::eyre!("injected batch failure"));
+            match self.failure {
+                TestFailure::None => {}
+                TestFailure::Engine => return Err(eyre::eyre!("injected batch failure")),
+                TestFailure::IndexCorruption => {
+                    return Err(
+                        PersistenceIndexCorruption::new("table/primary.wt.idx", "injected shadow divergence").into(),
+                    );
+                }
             }
             self.batches.fetch_add(1, Ordering::Relaxed);
             self.events.lock().push("batch");
@@ -466,7 +479,7 @@ mod lifecycle_tests {
             batches: batches.clone(),
             events: Arc::new(ParkingMutex::new(Vec::new())),
             config: TestConfig,
-            fail: false,
+            failure: TestFailure::None,
         });
 
         task.apply_operation(insert_operation(1)).unwrap();
@@ -481,7 +494,7 @@ mod lifecycle_tests {
             batches: Arc::new(AtomicUsize::new(0)),
             events: Arc::new(ParkingMutex::new(Vec::new())),
             config: TestConfig,
-            fail: true,
+            failure: TestFailure::Engine,
         });
 
         task.apply_operation(insert_operation(1)).unwrap();
@@ -502,7 +515,7 @@ mod lifecycle_tests {
             batches: Arc::new(AtomicUsize::new(0)),
             events: events.clone(),
             config: TestConfig,
-            fail: false,
+            failure: TestFailure::None,
         });
 
         task.apply_operation(insert_operation(1)).unwrap();
@@ -511,6 +524,25 @@ mod lifecycle_tests {
         task.wait_for_ops().await.unwrap();
 
         assert_eq!(&*events.lock(), &["batch", "reclaim", "batch"]);
+    }
+
+    #[tokio::test]
+    async fn index_corruption_from_engine_is_typed_and_terminal_for_callers() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::IndexCorruption,
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        let wait_error = task.wait_for_ops().await.unwrap_err();
+        assert!(matches!(wait_error.as_ref(), PersistenceError::IndexCorruption(_)));
+
+        let intake_error = task.apply_operation(insert_operation(2)).unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &intake_error));
+        let close_error = task.close().await.unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &close_error));
     }
 
     #[test]
@@ -840,11 +872,23 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     } else {
                         tokio::time::sleep(Duration::from_millis(500)).await;
                     }
-                } else if let Some(page_ids) = pending_reclaim.take()
-                    && let Err(error) = engine.reclaim_data_pages(page_ids).await
-                {
-                    engine_lifecycle.fail(error);
-                    return;
+                } else if let Some(page_ids) = pending_reclaim.take() {
+                    // `get_first_op_id_available() == None` is only sufficient
+                    // when the analyzer itself is empty. If its operation-id
+                    // index ever loses an entry, reclaiming here would make a
+                    // source page reusable before its buffered row move became
+                    // durable. Fail terminally instead of trusting that state.
+                    let buffered_operations = analyzer.len();
+                    if buffered_operations != 0 {
+                        engine_lifecycle.fail(eyre::eyre!(
+                            "persistence reclamation barrier found {buffered_operations} buffered operations without an operation-id index entry"
+                        ));
+                        return;
+                    }
+                    if let Err(error) = engine.reclaim_data_pages(page_ids).await {
+                        engine_lifecycle.fail(error);
+                        return;
+                    }
                 }
             }
         };
