@@ -98,6 +98,16 @@ impl Drop for MutationGuard {
     }
 }
 
+/// Registry for per-row async locks and synchronous mutation stripes.
+///
+/// # Sync/async lock boundary
+///
+/// The `parking_lot` map guard is never returned and never crosses an
+/// `.await`. Acquisition clones a tracked `Arc<tokio::sync::RwLock<_>>` before
+/// releasing the map guard. Cleanup may synchronously take the short-lived map
+/// write guard, but only probes the per-row lock with `try_read`; it never waits
+/// on a Tokio lock while holding the map. This one-way boundary prevents a
+/// map-lock/per-row-lock cycle during cancellation and `Drop`.
 #[derive(Debug)]
 pub struct LockMap<LockType, PrimaryKey> {
     map: RwLock<HashMap<PrimaryKey, LockEntry<LockType>>>,
@@ -119,6 +129,12 @@ impl<LockType, PrimaryKey> LockMap<LockType, PrimaryKey>
 where
     PrimaryKey: Hash + Eq + Debug + Clone,
 {
+    /// Inserts a raw lock entry.
+    ///
+    /// A returned or externally retained `Arc` pins cleanup through
+    /// `Arc::strong_count`. Generated operations should prefer
+    /// [`Self::get_or_insert_with`], whose [`LockAcquirer`] makes cancellation
+    /// tracking explicit.
     pub fn insert(
         &self,
         key: PrimaryKey,
@@ -136,6 +152,8 @@ where
             .map(|entry| entry.lock)
     }
 
+    /// Returns an untracked raw lock clone, which keeps the map entry alive
+    /// until that clone is dropped.
     pub fn get(&self, key: &PrimaryKey) -> Option<Arc<tokio::sync::RwLock<LockType>>> {
         self.map.read().get(key).map(|entry| entry.lock.clone())
     }
@@ -277,5 +295,25 @@ mod tests {
 
         drop(second);
         assert!(!lock_map.map.read().contains_key(&33));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelling_async_waiter_releases_tracking_without_deadlock() {
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let owner = lock_map.get_or_insert_with(41, FullRowLock::new);
+        let owner_guard = owner.write().await;
+        let waiter = lock_map.get_or_insert_with(41, FullRowLock::new);
+        let waiting_task = tokio::spawn(async move {
+            let _guard = waiter.write().await;
+        });
+        tokio::task::yield_now().await;
+
+        waiting_task.abort();
+        assert!(waiting_task.await.unwrap_err().is_cancelled());
+        assert!(lock_map.map.read().contains_key(&41));
+
+        drop(owner_guard);
+        drop(owner);
+        assert!(!lock_map.map.read().contains_key(&41));
     }
 }
