@@ -306,6 +306,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap as StdBTreeMap;
+
     use data_bucket::page::PageId;
 
     use super::*;
@@ -421,5 +423,60 @@ mod tests {
 
         assert!(!structural.is_empty());
         assert_eq!(shadow.get(&7).map(|entry| entry.get().value), Some(link(8)));
+    }
+
+    #[test]
+    fn shuffled_large_logical_batch_replays_in_event_id_order() {
+        let shadow = BTreeMap::<u64, Link>::default();
+        let mut expected = StdBTreeMap::<u64, Link>::new();
+        let mut events = Vec::new();
+
+        for event_id in 0_u64..2_000 {
+            let key = event_id.wrapping_mul(17) % 97;
+            let event = if event_id % 5 == 0 {
+                if let Some(old_link) = expected.remove(&key) {
+                    let pair = Pair { key, value: old_link };
+                    ChangeEvent::RemoveAt {
+                        event_id: event_id.into(),
+                        max_value: pair.clone(),
+                        value: pair,
+                        index: 0,
+                    }
+                } else {
+                    let new_link = link(event_id as u32);
+                    expected.insert(key, new_link);
+                    let pair = Pair { key, value: new_link };
+                    ChangeEvent::InsertAt {
+                        event_id: event_id.into(),
+                        max_value: pair.clone(),
+                        value: pair,
+                        index: 0,
+                    }
+                }
+            } else {
+                let new_link = link(event_id as u32);
+                expected.insert(key, new_link);
+                let pair = Pair { key, value: new_link };
+                ChangeEvent::InsertAt {
+                    event_id: event_id.into(),
+                    max_value: pair.clone(),
+                    value: pair,
+                    index: 0,
+                }
+            };
+            events.push(event);
+        }
+
+        fastrand::Rng::with_seed(0x10_91ca1).shuffle(&mut events);
+        let structural = translate_logical_batch(Path::new("test.wt.idx"), &shadow, events).unwrap();
+
+        assert!(!structural.is_empty());
+        for key in 0..97 {
+            assert_eq!(
+                shadow.get(&key).map(|entry| entry.get().value),
+                expected.get(&key).copied(),
+                "key {key}"
+            );
+        }
     }
 }
