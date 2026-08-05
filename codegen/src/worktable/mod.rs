@@ -218,6 +218,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fixed_width_update_on_unsized_table_uses_archived_swap() {
+        let output = expand(quote! {
+            name: MixedWidthUpdate,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                payload: String,
+                balance: f64,
+            },
+            queries: {
+                update: {
+                    Balance(balance) by id,
+                }
+            }
+        })
+        .unwrap()
+        .to_string();
+
+        let update = output
+            .split("pub async fn update_balance")
+            .nth(1)
+            .expect("generated balance update");
+        assert!(
+            update.contains("data . with_mut_ref"),
+            "fixed-width unindexed field must update archived storage in place"
+        );
+        assert!(
+            !update.contains("self . reinsert"),
+            "an unrelated String column must not force a fixed-width update through reinsert"
+        );
+        assert!(
+            !update.contains("Uuid :: now_v7"),
+            "non-persistent updates must not generate an unused operation id"
+        );
+    }
+
     #[cfg(feature = "logical-index-persistence")]
     #[test]
     fn logical_persistence_wraps_only_default_wti_backends() {
