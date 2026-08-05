@@ -195,6 +195,44 @@ mod tests {
     }
 
     #[test]
+    fn unsized_full_row_update_reresolves_its_link_after_lock_upgrade() {
+        for persist in [true, false] {
+            let output = expand(quote! {
+                name: UnsizedFullRowUpdate,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    payload: String,
+                    indexed: u64,
+                },
+                indexes: {
+                    indexed_idx: indexed unique,
+                },
+            })
+            .unwrap()
+            .to_string();
+
+            let update = output
+                .split("async fn update_with_guard")
+                .nth(1)
+                .expect("generated full-row update helper");
+            let upgraded = update
+                .split("drop (_guard)")
+                .nth(1)
+                .expect("unsized update upgrades to a full-row guard");
+
+            assert!(
+                upgraded.contains("let current_link : Link = self . 0 . primary_index . pk_map . get_value (& pk)"),
+                "full-row update must resolve the primary link after upgrading its guard"
+            );
+            assert!(
+                upgraded.contains("select_non_ghosted (current_link)"),
+                "full-row update must not read row_old through its pre-upgrade link"
+            );
+        }
+    }
+
+    #[test]
     fn absent_using_keeps_worktables_index_default() {
         let output = expand(quote! {
             name: DefaultBackend,

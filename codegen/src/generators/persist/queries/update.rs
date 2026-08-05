@@ -67,7 +67,16 @@ impl PersistGenerator {
                         self.0.lock_manager.clone(),
                         pk.clone(),
                     );
-                    let row_old = self.0.data.select_non_ghosted(link)?;
+                    // Vacuum or another reinsert can move the row while the
+                    // first guard is dropped. Re-resolve under the full-row
+                    // guard so a recycled stale slot cannot supply row_old.
+                    let current_link: Link = self.0
+                        .primary_index
+                        .pk_map
+                        .get_value(&pk)
+                        .map(Into::into)
+                        .ok_or(WorkTableError::NotFound)?;
+                    let row_old = self.0.data.select_non_ghosted(current_link)?;
                     if let Err(e) = self.reinsert(row_old, row).await {
                         self.0.update_state.remove(&pk);
 
