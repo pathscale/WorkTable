@@ -59,6 +59,7 @@ impl InMemoryGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         // A full-row `update(row)` replaces EVERY column, so it inherently
         // rewrites every secondary index. The in-place fast path only applies
         // when no updated field is indexed (it emits no index diff), so a
@@ -85,6 +86,7 @@ impl InMemoryGenerator {
                 #data_write
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -99,6 +101,7 @@ impl InMemoryGenerator {
                     self.0.data.update_in_place::<{ #const_name }>(row.clone(), link).is_ok()
                 };
                 if in_place_ok {
+                    #columnar_dirty
                     return core::result::Result::Ok(());
                 }
                 drop(_guard);
@@ -619,6 +622,8 @@ impl InMemoryGenerator {
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
         let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
 
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
+
         let finish_update = if archived_swap_is_safe {
             quote! {
                 #diff_process_insert
@@ -627,6 +632,7 @@ impl InMemoryGenerator {
                 #data_write
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -780,6 +786,7 @@ impl InMemoryGenerator {
         };
         let full_row_lock = self.gen_full_lock_for_update();
         let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         let loop_tail = if has_unsized {
             quote! {}
@@ -868,6 +875,7 @@ impl InMemoryGenerator {
                     #size_check
                     #loop_tail
                 }
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -945,6 +953,8 @@ impl InMemoryGenerator {
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
+
         let finish_update = if archived_swap_is_safe {
             quote! {
                 #diff_process_insert
@@ -953,6 +963,7 @@ impl InMemoryGenerator {
                 #data_write
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 

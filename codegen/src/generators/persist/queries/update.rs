@@ -59,6 +59,7 @@ impl PersistGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let const_name = name_generator.get_page_inner_size_const_ident();
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
         // A full-row update rewrites every column, hence every secondary
@@ -91,6 +92,7 @@ impl PersistGenerator {
                             link,
                         });
                         self.1.apply_operation(op)?;
+                        #columnar_dirty
                         return core::result::Result::Ok(());
                     }
                 }
@@ -135,6 +137,7 @@ impl PersistGenerator {
                 #persist_op
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -672,6 +675,7 @@ impl PersistGenerator {
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
         let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let finish_update = if archived_swap_is_safe {
             quote! {
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
@@ -680,6 +684,7 @@ impl PersistGenerator {
                 #persist_op
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -851,6 +856,7 @@ impl PersistGenerator {
         };
         let full_row_lock = self.gen_full_lock_for_update();
         let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         let loop_tail = if has_unsized {
             quote! {}
@@ -939,6 +945,7 @@ impl PersistGenerator {
                     #size_check
                     #loop_tail
                 }
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -1014,6 +1021,7 @@ impl PersistGenerator {
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
         let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let finish_update = if archived_swap_is_safe {
             quote! {
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
@@ -1022,6 +1030,7 @@ impl PersistGenerator {
                 #persist_op
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 

@@ -1,4 +1,5 @@
 mod column;
+mod columnar;
 mod config;
 mod index;
 pub mod operation;
@@ -8,6 +9,7 @@ mod primary_key;
 mod queries;
 
 pub use column::{Columns, Row};
+pub use columnar::{ColumnCompression, ColumnarFieldConfig, ColumnarIndex};
 pub use config::Config;
 pub use index::{Index, IndexBackend};
 pub use operation::Operation;

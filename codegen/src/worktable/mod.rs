@@ -16,6 +16,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut columns = None;
     let mut queries = None;
     let mut indexes = None;
+    let mut columnar_indexes = None;
     let mut config = None;
 
     let name = parser.parse_name()?;
@@ -31,6 +32,10 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             "indexes" => {
                 let res = parser.parse_indexes()?;
                 indexes = Some(res);
+            }
+            "columnar_indexes" => {
+                let res = parser.parse_columnar_indexes()?;
+                columnar_indexes = Some(res);
             }
             "queries" => {
                 let res = parser.parse_queries()?;
@@ -80,8 +85,12 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     if let Some(i) = indexes {
         columns.indexes = i
     }
+    if let Some(i) = columnar_indexes {
+        columns.columnar_indexes = i;
+    }
 
     worktable_dsl::validate::validate_index_backends(&columns, persistence)?;
+    worktable_dsl::validate::validate_columnar_indexes(&columns)?;
     worktable_dsl::validate::validate_page_size(config.as_ref(), persistence)?;
     worktable_dsl::validate::validate_arctic_page_size(&columns, config.as_ref())?;
     if let Some(q) = &queries {
@@ -155,6 +164,57 @@ mod tests {
 
         assert!(error.to_string().contains("not part of the 1.0 grammar"));
         assert!(error.to_string().contains("keep `primary_key`"));
+    }
+
+    #[test]
+    fn columnar_index_requires_columnar_fields() {
+        let error = expand(quote! {
+            name: InvalidColumnarIndex,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                host_id: u64,
+            },
+            columnar_indexes: {
+                host_lookup: {
+                    columns: [host_id],
+                    cluster_by: [host_id],
+                },
+            },
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires field `host_id` to declare `columnar(...)`")
+        );
+    }
+
+    #[test]
+    fn columnar_field_and_index_generate_scan_projection_and_lookup_apis() {
+        let output = expand(quote! {
+            name: ColumnarCodegen,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                host_id: u64 columnar(chunk_rows(1024), compression(auto)),
+                timestamp: i64 columnar(chunk_rows(2048), compression(none)),
+            },
+            columnar_indexes: {
+                host_time: {
+                    columns: [host_id, timestamp],
+                    cluster_by: [host_id, timestamp],
+                },
+            },
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(output.contains("columnar_scan_host_id"));
+        assert!(output.contains("columnar_project_timestamp"));
+        assert!(output.contains("columnar_select_host_time"));
+        assert!(output.contains("ColumnarColumn :: new (1024"));
     }
 
     fn assert_composite_primary_key_field_order(output: proc_macro2::TokenStream) {

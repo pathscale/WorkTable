@@ -3,6 +3,7 @@ mod base;
 mod bench;
 mod borrowed_primary_key;
 mod cancel_safety;
+mod columnar;
 mod concurrency;
 mod config;
 mod count;

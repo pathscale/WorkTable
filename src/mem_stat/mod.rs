@@ -1,6 +1,7 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
 mod primitives;
 
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::rc::Rc;
 use alloc::sync::Arc;
 use core::fmt::Debug;
@@ -76,6 +77,33 @@ where
         self.data.used_bytes() as usize + self.primary_index.pk_map.used_size() + self.indexes.used_size()
     }
 }
+
+macro_rules! impl_tuple_mem_stat {
+    ($($name:ident),+) => {
+        impl<$($name: MemStat),+> MemStat for ($($name,)+) {
+            fn heap_size(&self) -> usize {
+                #[allow(non_snake_case)]
+                let ($($name,)+) = self;
+                0usize $(+ $name.heap_size())+
+            }
+
+            fn used_size(&self) -> usize {
+                #[allow(non_snake_case)]
+                let ($($name,)+) = self;
+                0usize $(+ $name.used_size())+
+            }
+        }
+    };
+}
+
+impl_tuple_mem_stat!(A);
+impl_tuple_mem_stat!(A, B);
+impl_tuple_mem_stat!(A, B, C);
+impl_tuple_mem_stat!(A, B, C, D);
+impl_tuple_mem_stat!(A, B, C, D, E);
+impl_tuple_mem_stat!(A, B, C, D, E, F);
+impl_tuple_mem_stat!(A, B, C, D, E, F, G);
+impl_tuple_mem_stat!(A, B, C, D, E, F, G, H);
 
 impl<T: MemStat> MemStat for Option<T> {
     fn heap_size(&self) -> usize {
@@ -289,6 +317,40 @@ impl<K: MemStat + Eq + core::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
         let kv_used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
 
         base_used + kv_used
+    }
+}
+
+impl<K: MemStat + Ord, V: MemStat> MemStat for BTreeMap<K, V> {
+    fn heap_size(&self) -> usize {
+        self.len() * core::mem::size_of::<(K, V)>()
+            + self
+                .iter()
+                .map(|(key, value)| key.heap_size() + value.heap_size())
+                .sum::<usize>()
+    }
+
+    fn used_size(&self) -> usize {
+        self.heap_size()
+    }
+}
+
+impl<T: MemStat + Ord> MemStat for BTreeSet<T> {
+    fn heap_size(&self) -> usize {
+        self.len() * core::mem::size_of::<T>() + self.iter().map(MemStat::heap_size).sum::<usize>()
+    }
+
+    fn used_size(&self) -> usize {
+        self.heap_size()
+    }
+}
+
+impl<T: MemStat> MemStat for parking_lot::RwLock<T> {
+    fn heap_size(&self) -> usize {
+        self.read().heap_size()
+    }
+
+    fn used_size(&self) -> usize {
+        self.read().used_size()
     }
 }
 

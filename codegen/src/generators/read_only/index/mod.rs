@@ -10,6 +10,7 @@ use quote::quote;
 
 impl ReadOnlyGenerator {
     pub fn gen_index_def(&mut self) -> syn::Result<TokenStream> {
+        let columnar_def = crate::generators::columnar::definitions(&self.name, &self.columns);
         let type_def = self.gen_type_def()?;
         let impl_def = self.gen_secondary_index_impl_def();
         let info_def = self.gen_secondary_index_info_impl_def();
@@ -17,6 +18,7 @@ impl ReadOnlyGenerator {
         let available_indexes = self.gen_available_indexes();
 
         Ok(quote! {
+            #columnar_def
             #type_def
             #impl_def
             #info_def
@@ -71,11 +73,13 @@ impl ReadOnlyGenerator {
             #[derive(Debug, MemStat, PersistIndex)]
             #[index(read_only)]
         };
+        let columnar_field = crate::generators::columnar::index_struct_field(&self.name, &self.columns, true);
 
         Ok(quote! {
             #derive
             pub struct #ident {
-                #(#index_rows),*
+                #(#index_rows,)*
+                #columnar_field
             }
         })
     }
@@ -138,12 +142,14 @@ impl ReadOnlyGenerator {
                 Ok::<_, syn::Error>(res)
             })
             .collect::<Result<Vec<_>, syn::Error>>()?;
+        let columnar_field = crate::generators::columnar::index_default_field(&self.columns);
 
         Ok(quote! {
             impl Default for #index_type_ident {
                 fn default() -> Self {
                     Self {
                         #(#index_rows)*
+                        #columnar_field
                     }
                 }
             }

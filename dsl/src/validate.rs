@@ -314,3 +314,48 @@ pub fn all(
     }
     errors
 }
+
+/// Columnar indexes must cluster by columnar fields that exist and must not
+/// collide with a columnar field's own generated scan methods.
+pub fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
+    for index in columns.columnar_indexes.values() {
+        if columns.columnar_fields.contains_key(&index.name) {
+            return Err(syn::Error::new(
+                index.name.span(),
+                format!(
+                    "columnar index `{}` conflicts with a columnar field name and would generate duplicate scan methods",
+                    index.name
+                ),
+            ));
+        }
+        for field in &index.columns {
+            if !columns.columns_map.contains_key(field) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!("columnar index `{}` references unknown field `{field}`", index.name),
+                ));
+            }
+            if !columns.columnar_fields.contains_key(field) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!(
+                        "columnar index `{}` requires field `{field}` to declare `columnar(...)`",
+                        index.name
+                    ),
+                ));
+            }
+        }
+        for field in &index.cluster_by {
+            if !index.columns.contains(field) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!(
+                        "columnar index `{}` clusters by `{field}`, which is absent from `columns`",
+                        index.name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}

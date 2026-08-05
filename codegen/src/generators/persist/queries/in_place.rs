@@ -97,6 +97,7 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident<Pk, F: FnMut(#column_types)>(
@@ -147,6 +148,8 @@ impl PersistGenerator {
                     unreachable!("just built as an update operation")
                 };
                 self.1.apply_operation(op)?;
+
+                #columnar_dirty
 
                 Ok(())
             }
