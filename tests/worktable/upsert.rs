@@ -1,3 +1,6 @@
+macro_rules! upsert_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,8 +10,9 @@ use worktable::worktable;
 
 worktable!(
     name: UpsertChurn,
+    persist: false,
     columns: {
-        id: u64 primary_key,
+        id: u64 primary_key using $using,
         val: u64,
     },
 );
@@ -210,3 +214,11 @@ async fn churn_run(churn_flips: u64, upserts_per_task: u64) {
     table.upsert(UpsertChurnRow { id: KEY, val: 424_242 }).await.unwrap();
     assert_eq!(table.select(KEY).map(|r| r.val), Some(424_242));
 }
+
+        }
+    };
+}
+
+upsert_backend_suite!(wti, worktables_index);
+upsert_backend_suite!(congee, congee);
+upsert_backend_suite!(arctic, arctic);

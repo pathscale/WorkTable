@@ -1,3 +1,6 @@
+macro_rules! unsized_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,8 +11,9 @@ use worktable::worktable;
 
 worktable! (
     name: Test,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         test: i64,
         another: u64,
         exchange: String,
@@ -38,7 +42,7 @@ async fn test_update_string_full_row() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     table
         .update(TestRow {
@@ -74,7 +78,7 @@ async fn test_update_string_by_unique() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeByTestQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -105,7 +109,7 @@ async fn test_update_string_by_pk() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeByIdQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -136,7 +140,7 @@ async fn test_update_string_by_non_unique() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row1.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
@@ -144,7 +148,7 @@ async fn test_update_string_by_non_unique() {
         exchange: "test".to_string(),
     };
     let pk = table.insert(row2.clone()).unwrap();
-    let second_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let second_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeByAbotherQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -291,8 +295,9 @@ async fn update_parallel() {
 
 worktable! (
     name: TestMoreStrings,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         test: i64,
         another: u64,
         exchange: String,
@@ -329,7 +334,7 @@ async fn test_update_many_strings_by_unique() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeAndSomeByTestQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -365,7 +370,7 @@ async fn test_update_many_strings_by_pk() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeAndSomeByIdQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -401,7 +406,7 @@ async fn test_update_many_strings_by_non_unique() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row1.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let row2 = TestMoreStringsRow {
         id: table.get_next_pk().into(),
         test: 2,
@@ -411,7 +416,7 @@ async fn test_update_many_strings_by_non_unique() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row2.clone()).unwrap();
-    let second_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let second_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeAndSomeByAnotherQuery {
         exchange: "bigger test to test string update".to_string(),
@@ -466,7 +471,7 @@ async fn test_update_many_strings_by_string() {
         other_srting: "other er".to_string(),
     };
     let pk = table.insert(row1.clone()).unwrap();
-    let first_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let row2 = TestMoreStringsRow {
         id: table.get_next_pk().into(),
         test: 2,
@@ -476,7 +481,7 @@ async fn test_update_many_strings_by_string() {
         other_srting: "other".to_string(),
     };
     let pk = table.insert(row2.clone()).unwrap();
-    let second_link = table.0.primary_index.pk_map.get(&pk).unwrap().get().value;
+    let second_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = SomeOtherByExchangeQuery {
         other_srting: "bigger test to test string update".to_string(),
@@ -954,3 +959,11 @@ async fn upsert_parallel() {
         assert_eq!(&row.exchange, e)
     }
 }
+
+        }
+    };
+}
+
+unsized_backend_suite!(wti, worktables_index);
+unsized_backend_suite!(congee, congee);
+unsized_backend_suite!(arctic, arctic);

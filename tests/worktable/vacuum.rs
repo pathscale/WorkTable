@@ -1,3 +1,6 @@
+macro_rules! vacuum_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use chrono::TimeDelta;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -9,8 +12,9 @@ use worktable_codegen::worktable;
 
 worktable!(
     name: VacuumTest,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         value: i64,
         data: String
     },
@@ -283,3 +287,11 @@ async fn vacuum_loop_test() {
     task.await.unwrap();
     vacuum_task.abort();
 }
+
+        }
+    };
+}
+
+vacuum_backend_suite!(wti, worktables_index);
+vacuum_backend_suite!(congee, congee);
+vacuum_backend_suite!(arctic, arctic);

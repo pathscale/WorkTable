@@ -1,10 +1,14 @@
+macro_rules! float_backend_suite {
+    ($module:ident, $using:ident) => {
+        mod $module {
 use worktable::prelude::*;
 use worktable::worktable;
 
 worktable! (
     name: TestFloat,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         test: i64,
         another: f64,
         exchange: String
@@ -18,8 +22,9 @@ worktable! (
 
 worktable! (
     name: TestUniqueFloat,
+    persist: false,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using $using,
         value: f64,
     },
     indexes: {
@@ -45,8 +50,8 @@ fn unique_float_point_read_revalidates_the_returned_row() {
         .0
         .primary_index
         .pk_map
-        .get(&TestUniqueFloatPrimaryKey(second.id))
-        .map(|entry| entry.get().value.0)
+        .get_value(&TestUniqueFloatPrimaryKey(second.id))
+        .map(|value| value.0)
         .unwrap();
     TableIndex::insert(&table.0.indexes.value_idx, OrderedFloat(first.value), second_link);
 
@@ -76,8 +81,8 @@ fn float_range_read_revalidates_each_resolved_row() {
         .0
         .primary_index
         .pk_map
-        .get(&TestFloatPrimaryKey(outside.id))
-        .map(|entry| entry.get().value.0)
+        .get_value(&TestFloatPrimaryKey(outside.id))
+        .map(|value| value.0)
         .unwrap();
     TableIndex::insert(&table.0.indexes.another_idx, OrderedFloat(15.0), outside_link);
 
@@ -203,3 +208,11 @@ fn select_by_another_range_test() {
     assert_eq!(results.first().unwrap().another, 50.0);
     assert_eq!(results.last().unwrap().another, 20.0);
 }
+
+        }
+    };
+}
+
+float_backend_suite!(wti, worktables_index);
+float_backend_suite!(congee, congee);
+float_backend_suite!(arctic, arctic);
