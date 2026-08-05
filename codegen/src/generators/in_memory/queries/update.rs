@@ -384,6 +384,11 @@ impl InMemoryGenerator {
                     return core::result::Result::Ok(());
                 }
             }
+        } else if self.columns.is_sized {
+            // A fixed-size row can always update archived fields in place. If
+            // one is indexed, finish_update applies the corresponding index
+            // diffs around that mutation.
+            quote! {}
         } else if touches_index {
             // Updating an indexed column must keep the index-maintaining
             // reinsert path, regardless of the row's storage shape.
