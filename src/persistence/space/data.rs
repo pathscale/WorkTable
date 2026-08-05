@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::SeekFrom;
 use std::path::Path;
 
@@ -18,6 +19,121 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+
+fn link_sort_key(link: &Link) -> (u32, u32) {
+    (link.page_id.into(), link.offset)
+}
+
+fn link_end(link: &Link) -> u64 {
+    u64::from(link.offset) + u64::from(link.length)
+}
+
+/// Sorts and coalesces ranges within each page.
+fn normalize_ranges(mut ranges: Vec<Link>) -> (Vec<Link>, bool) {
+    let was_sorted = ranges
+        .windows(2)
+        .all(|pair| link_sort_key(&pair[0]) <= link_sort_key(&pair[1]));
+    ranges.sort_unstable_by_key(link_sort_key);
+
+    let mut changed = !was_sorted;
+    let mut normalized: Vec<Link> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if range.length == 0 {
+            changed = true;
+            continue;
+        }
+
+        if let Some(last) = normalized.last_mut()
+            && last.page_id == range.page_id
+            && u64::from(range.offset) <= link_end(last)
+        {
+            let end = link_end(last).max(link_end(&range));
+            last.length = (end - u64::from(last.offset)) as u32;
+            changed = true;
+            continue;
+        }
+
+        normalized.push(range);
+    }
+
+    (normalized, changed)
+}
+
+/// Subtracts sorted, coalesced used ranges from sorted, coalesced free ranges.
+///
+/// Both cursors only move forward, so the subtraction is O(f log f + u log u)
+/// for sorting and O(f + u) for the scan instead of rebuilding the full free
+/// list once per used link.
+fn subtract_used_ranges(free_ranges: Vec<Link>, used_ranges: impl IntoIterator<Item = Link>) -> (Vec<Link>, bool) {
+    let (free_ranges, mut changed) = normalize_ranges(free_ranges);
+    let (used_ranges, _) = normalize_ranges(used_ranges.into_iter().collect());
+    if used_ranges.is_empty() {
+        return (free_ranges, changed);
+    }
+
+    let mut remaining = Vec::with_capacity(free_ranges.len() + used_ranges.len());
+    let mut used_index = 0;
+
+    for free in free_ranges {
+        let free_page: u32 = free.page_id.into();
+        let free_start = u64::from(free.offset);
+        let free_end = link_end(&free);
+
+        while let Some(used) = used_ranges.get(used_index) {
+            let used_page: u32 = used.page_id.into();
+            if used_page < free_page || (used_page == free_page && link_end(used) <= free_start) {
+                used_index += 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut cursor = free_start;
+        let mut scan = used_index;
+        while let Some(used) = used_ranges.get(scan) {
+            let used_page: u32 = used.page_id.into();
+            let used_start = u64::from(used.offset);
+            let used_end = link_end(used);
+            if used_page != free_page || used_start >= free_end {
+                break;
+            }
+
+            if used_end > cursor {
+                if cursor < used_start {
+                    let segment_end = used_start.min(free_end);
+                    remaining.push(Link {
+                        page_id: free.page_id,
+                        offset: cursor as u32,
+                        length: (segment_end - cursor) as u32,
+                    });
+                }
+
+                let overlap_end = used_end.min(free_end);
+                if cursor.max(used_start) < overlap_end {
+                    changed = true;
+                    cursor = overlap_end;
+                }
+            }
+
+            if used_end <= free_end {
+                scan += 1;
+            } else {
+                break;
+            }
+        }
+        used_index = scan;
+
+        if cursor < free_end {
+            remaining.push(Link {
+                page_id: free.page_id,
+                offset: cursor as u32,
+                length: (free_end - cursor) as u32,
+            });
+        }
+    }
+
+    (remaining, changed)
+}
 
 #[derive(Debug)]
 pub struct SpaceData<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> {
@@ -44,54 +160,9 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
     /// those writes can leak reusable space, but can never leave a live row
     /// described as free and eligible to be overwritten after reload.
     fn consume_reusable_ranges(&mut self, used_links: impl IntoIterator<Item = Link>) -> bool {
-        let mut changed = false;
-
-        for used in used_links {
-            let used_start = u64::from(used.offset);
-            let used_end = used_start + u64::from(used.length);
-            let mut remaining = Vec::with_capacity(self.info.inner.empty_links_list.len() + 1);
-
-            for free in self.info.inner.empty_links_list.drain(..) {
-                if free.page_id != used.page_id {
-                    remaining.push(free);
-                    continue;
-                }
-
-                let free_start = u64::from(free.offset);
-                let free_end = free_start + u64::from(free.length);
-                let overlap_start = free_start.max(used_start);
-                let overlap_end = free_end.min(used_end);
-                if overlap_start >= overlap_end {
-                    remaining.push(free);
-                    continue;
-                }
-
-                changed = true;
-                if free_start < overlap_start {
-                    remaining.push(Link {
-                        page_id: free.page_id,
-                        offset: free.offset,
-                        length: (overlap_start - free_start) as u32,
-                    });
-                }
-                if overlap_end < free_end {
-                    remaining.push(Link {
-                        page_id: free.page_id,
-                        offset: overlap_end as u32,
-                        length: (free_end - overlap_end) as u32,
-                    });
-                }
-            }
-
-            self.info.inner.empty_links_list = remaining;
-        }
-
-        if changed {
-            self.info.inner.empty_links_list.sort_by_key(|link| {
-                let page_id: u32 = link.page_id.into();
-                (page_id, link.offset)
-            });
-        }
+        let free_ranges = std::mem::take(&mut self.info.inner.empty_links_list);
+        let (remaining, changed) = subtract_used_ranges(free_ranges, used_links);
+        self.info.inner.empty_links_list = remaining;
         changed
     }
 }
@@ -184,7 +255,7 @@ where
 
     async fn save_batch_data(&mut self, batch_data: BatchData) -> eyre::Result<()> {
         let used_links = batch_data.values().flat_map(|ops| ops.iter().map(|(link, _)| *link));
-        if self.consume_reusable_ranges(used_links.collect::<Vec<_>>()) {
+        if self.consume_reusable_ranges(used_links) {
             self.save_info().await?;
         }
 
@@ -248,15 +319,13 @@ where
     }
 
     async fn reclaim_data_pages(&mut self, page_ids: Vec<data_bucket::page::PageId>) -> eyre::Result<()> {
-        let mut page_ids = page_ids
+        let page_ids = page_ids
             .into_iter()
             .filter(|page_id| {
                 let id: u32 = (*page_id).into();
                 id != 0 && id <= self.last_page_id
             })
-            .collect::<Vec<_>>();
-        page_ids.sort_unstable();
-        page_ids.dedup();
+            .collect::<HashSet<_>>();
 
         if page_ids.is_empty() {
             return Ok(());
@@ -266,6 +335,8 @@ where
             .inner
             .empty_links_list
             .retain(|link| !page_ids.contains(&link.page_id));
+        let mut page_ids = page_ids.into_iter().collect::<Vec<_>>();
+        page_ids.sort_unstable();
         self.info
             .inner
             .empty_links_list
@@ -292,5 +363,84 @@ where
         // success, just as `save_data` does for row bytes.
         self.data_file.flush().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use data_bucket::page::PageId;
+
+    use super::subtract_used_ranges;
+    use crate::prelude::Link;
+
+    fn link(page_id: u32, offset: u32, length: u32) -> Link {
+        Link {
+            page_id: PageId::from(page_id),
+            offset,
+            length,
+        }
+    }
+
+    #[test]
+    fn reusable_ranges_are_subtracted_in_one_sorted_scan() {
+        let free = vec![link(2, 0, 50), link(1, 0, 100)];
+        let used = vec![link(1, 40, 20), link(2, 0, 10), link(1, 10, 20), link(1, 25, 30)];
+
+        let (remaining, changed) = subtract_used_ranges(free, used);
+
+        assert!(changed);
+        assert_eq!(remaining, vec![link(1, 0, 10), link(1, 60, 40), link(2, 10, 40)]);
+    }
+
+    #[test]
+    fn non_overlapping_used_ranges_leave_free_ranges_unchanged() {
+        let free = vec![link(1, 0, 10), link(1, 20, 10), link(2, 0, 10)];
+        let used = vec![link(1, 10, 10), link(3, 0, 10)];
+
+        let (remaining, changed) = subtract_used_ranges(free.clone(), used);
+
+        assert!(!changed);
+        assert_eq!(remaining, free);
+    }
+
+    #[test]
+    fn randomized_subtraction_matches_byte_level_coverage() {
+        const PAGES: usize = 4;
+        const BYTES: usize = 64;
+        let mut rng = fastrand::Rng::with_seed(0x51ce_5eed);
+
+        for case in 0..1_000 {
+            let mut free = Vec::new();
+            let mut used = Vec::new();
+            let mut expected = [[false; BYTES]; PAGES];
+
+            for _ in 0..rng.usize(0..20) {
+                let page = rng.usize(0..PAGES);
+                let start = rng.usize(0..BYTES);
+                let end = rng.usize(start + 1..=BYTES);
+                free.push(link((page + 1) as u32, start as u32, (end - start) as u32));
+                expected[page][start..end].fill(true);
+            }
+            for _ in 0..rng.usize(0..20) {
+                let page = rng.usize(0..PAGES);
+                let start = rng.usize(0..BYTES);
+                let end = rng.usize(start + 1..=BYTES);
+                used.push(link((page + 1) as u32, start as u32, (end - start) as u32));
+                expected[page][start..end].fill(false);
+            }
+
+            let (remaining, _) = subtract_used_ranges(free, used);
+            let mut actual = [[false; BYTES]; PAGES];
+            for range in remaining {
+                let page: u32 = range.page_id.into();
+                let page = page as usize - 1;
+                let start = range.offset as usize;
+                let end = start + range.length as usize;
+                assert!(actual[page][start..end].iter().all(|occupied| !occupied), "case {case}");
+                actual[page][start..end].fill(true);
+            }
+
+            assert_eq!(actual, expected, "case {case}");
+        }
     }
 }
