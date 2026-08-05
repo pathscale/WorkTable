@@ -55,8 +55,46 @@ impl InMemoryGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        // A full-row `update(row)` replaces EVERY column, so it inherently
+        // rewrites every secondary index. The in-place fast path only applies
+        // when no updated field is indexed (it emits no index diff), so a
+        // full-row update on a table with any secondary index must reinsert.
+        // Only a table with NO secondary indexes and an unsized column can use
+        // the in-place same-size path here. (The custom single-column updates —
+        // gen_unique_update / gen_pk_update — get the fast path via
+        // gen_size_check; gen_non_unique_update updates a non-unique-indexed
+        // column and therefore always reinserts, correctly.)
+        let const_name = name_generator.get_page_inner_size_const_ident();
+        let full_row_in_place_eligible = !self.columns.is_sized && self.columns.indexes.is_empty();
         let size_check = if self.columns.is_sized {
             quote! {}
+        } else if full_row_in_place_eligible {
+            quote! {
+                // No secondary indexes: same-size unsized full-row update may go
+                // in place at the current slot. `update_in_place` re-validates
+                // the serialized length and we fall back to reinsert otherwise.
+                let in_place_ok = unsafe {
+                    self.0.data.update_in_place::<{ #const_name }>(row.clone(), link).is_ok()
+                };
+                if in_place_ok {
+                    self.0.update_state.remove(&pk);
+                    return core::result::Result::Ok(());
+                }
+                drop(_guard);
+                let op_lock = { #full_row_lock };
+                let _guard = LockGuard::new_with_mutation(
+                    op_lock,
+                    self.0.lock_manager.clone(),
+                    pk.clone(),
+                );
+                let row_old = self.0.data.select_non_ghosted(link)?;
+                if let Err(e) = self.reinsert(row_old, row).await {
+                    self.0.update_state.remove(&pk);
+                    return Err(e);
+                }
+                self.0.update_state.remove(&pk);
+                return core::result::Result::Ok(());
+            }
         } else {
             quote! {
                 if true {
@@ -302,6 +340,14 @@ impl InMemoryGenerator {
                     // field's archived pointer resolves within the slot (NOT a
                     // `mem::swap`, which would dangle the pointer), then republish
                     // the row as live.
+                    // Re-resolve the link under the held full-row lock. The
+                    // earlier size check (#fields_check) read field sizes from the
+                    // link captured before the lock, which a concurrent reinsert
+                    // could have moved. CORRECTNESS DOES NOT rely on that size
+                    // decision being current: `update_in_place` re-validates that
+                    // the serialized row is EXACTLY the slot length and returns
+                    // Err on mismatch, and we fall back to a full reinsert below.
+                    // Do not remove that length re-check or this fallback.
                     let current_link: Link = self.0
                         .primary_index
                         .pk_map
@@ -311,6 +357,8 @@ impl InMemoryGenerator {
                     // Equal field sizes do not guarantee an equal TOTAL serialized
                     // length (alignment), so a same-slot write may not fit — fall
                     // back to a full reinsert rather than fail. Correctness-first.
+                    // The clone is paid only so `row_new` survives for that rare
+                    // reinsert fallback; the common in-place path drops it.
                     let in_place_ok = unsafe {
                         self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), current_link).is_ok()
                     };
