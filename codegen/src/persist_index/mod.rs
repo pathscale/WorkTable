@@ -83,4 +83,26 @@ mod tests {
             "read_only index should have from_persisted method"
         );
     }
+
+    #[test]
+    fn skipped_derived_field_is_not_part_of_persisted_index_format() {
+        let input = quote! {
+            #[derive(Debug, Default)]
+            pub struct DerivedIndex {
+                durable: TreeIndex<i64, Link>,
+                #[index(skip)]
+                columnar: ParkingRwLock<DerivedColumnarData>,
+            }
+        };
+
+        let output = expand(input).unwrap().to_string();
+        let persisted_type = output
+            .split("struct DerivedIndexPersisted")
+            .nth(1)
+            .expect("persisted index type");
+        let persisted_fields = persisted_type.split('}').next().unwrap();
+        assert!(persisted_fields.contains("durable"));
+        assert!(!persisted_fields.contains("columnar"));
+        assert!(output.contains("columnar : Default :: default"));
+    }
 }

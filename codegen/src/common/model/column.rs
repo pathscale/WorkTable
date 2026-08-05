@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::common::model::index::Index;
-use crate::common::model::{GeneratorType, IndexBackend};
+use crate::common::model::{ColumnarFieldConfig, ColumnarIndex, GeneratorType, IndexBackend};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -17,6 +17,8 @@ pub struct Columns {
     pub columns_map: HashMap<Ident, TokenStream>,
     pub field_positions: HashMap<Ident, usize>,
     pub indexes: IndexMap<Ident, Index>,
+    pub columnar_fields: IndexMap<Ident, ColumnarFieldConfig>,
+    pub columnar_indexes: IndexMap<Ident, ColumnarIndex>,
     pub primary_keys: Vec<Ident>,
     pub primary_index_backend: IndexBackend,
     pub generator_type: GeneratorType,
@@ -30,6 +32,7 @@ pub struct Row {
     pub gen_type: GeneratorType,
     pub optional: bool,
     pub index_backend: Option<IndexBackend>,
+    pub columnar: Option<ColumnarFieldConfig>,
 }
 
 impl Columns {
@@ -40,6 +43,7 @@ impl Columns {
         let mut pk = vec![];
         let mut gen_type = None;
         let mut primary_index_backend = None;
+        let mut columnar_fields = IndexMap::new();
 
         for (pos, row) in rows.into_iter().enumerate() {
             let type_ = &row.type_;
@@ -53,6 +57,9 @@ impl Columns {
             };
             columns_map.insert(row.name.clone(), type_);
             field_positions.insert(row.name.clone(), pos);
+            if let Some(config) = row.columnar {
+                columnar_fields.insert(row.name.clone(), config);
+            }
 
             if row.is_primary_key {
                 if let Some(t) = gen_type {
@@ -90,6 +97,8 @@ impl Columns {
             is_sized: sized,
             columns_map,
             indexes: Default::default(),
+            columnar_fields,
+            columnar_indexes: Default::default(),
             primary_keys: pk,
             primary_index_backend: primary_index_backend.unwrap_or_default(),
             generator_type: gen_type.expect("set"),

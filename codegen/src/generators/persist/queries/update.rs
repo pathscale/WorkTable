@@ -55,6 +55,7 @@ impl PersistGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let size_check = if self.columns.is_sized {
             quote! {}
         } else {
@@ -126,6 +127,7 @@ impl PersistGenerator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
+                #columnar_dirty
 
                 self.0.update_state.remove(&pk);
 
@@ -415,6 +417,7 @@ impl PersistGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -448,6 +451,7 @@ impl PersistGenerator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -544,6 +548,7 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -621,6 +626,7 @@ impl PersistGenerator {
 
                     guards.remove(&pk);
                 }
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -664,6 +670,7 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -718,6 +725,7 @@ impl PersistGenerator {
                 }
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 

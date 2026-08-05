@@ -17,6 +17,7 @@ pub struct Generator {
     pub struct_def: ItemStruct,
     pub field_types: HashMap<Ident, TokenStream>,
     pub attributes: PersistIndexAttributes,
+    pub skipped_fields: Vec<Ident>,
 }
 
 pub(super) struct IndexLayout {
@@ -87,11 +88,29 @@ impl WorktableNameGenerator {
 }
 
 impl Generator {
-    pub fn with_attributes(struct_def: ItemStruct, attributes: PersistIndexAttributes) -> Self {
+    pub fn with_attributes(mut struct_def: ItemStruct, attributes: PersistIndexAttributes) -> Self {
         let mut fields = vec![];
         let mut types = vec![];
+        let mut skipped_fields = vec![];
 
         for field in &struct_def.fields {
+            let skipped = field.attrs.iter().any(|attribute| {
+                if !attribute.path().is_ident("index") {
+                    return false;
+                }
+                let mut skipped = false;
+                let _ = attribute.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("skip") {
+                        skipped = true;
+                    }
+                    Ok(())
+                });
+                skipped
+            });
+            if skipped {
+                skipped_fields.push(field.ident.clone().expect("index fields should always be named fields"));
+                continue;
+            }
             fields.push(field.ident.clone().expect("index fields should always be named fields"));
 
             let syn::Type::Path(type_path) = &field.ty else {
@@ -119,12 +138,21 @@ impl Generator {
 
             types.push(ty.to_token_stream());
         }
+        if let syn::Fields::Named(named) = &mut struct_def.fields {
+            named.named = named
+                .named
+                .iter()
+                .filter(|field| !skipped_fields.iter().any(|ident| field.ident.as_ref() == Some(ident)))
+                .cloned()
+                .collect();
+        }
         let map = fields.into_iter().zip(types).collect::<HashMap<_, _>>();
 
         Self {
             struct_def,
             field_types: map,
             attributes,
+            skipped_fields,
         }
     }
 
@@ -577,6 +605,7 @@ impl Generator {
                 }
             })
             .collect::<syn::Result<Vec<_>>>()?;
+        let skipped_fields = &self.skipped_fields;
 
         Ok(quote! {
             fn from_persisted(persisted: Self::PersistedIndex) -> Self {
@@ -584,6 +613,7 @@ impl Generator {
 
                 Self {
                     #(#idents,)*
+                    #(#skipped_fields: Default::default(),)*
                 }
             }
         })

@@ -110,6 +110,8 @@ impl Parser {
 
         let index_backend = self.try_parse_index_backend()?;
 
+        let columnar = self.try_parse_columnar_field()?;
+
         self.try_parse_comma()?;
 
         Ok(Row {
@@ -119,6 +121,7 @@ impl Parser {
             gen_type,
             optional,
             index_backend,
+            columnar,
         })
     }
 }
@@ -322,6 +325,18 @@ mod tests {
             let row = parser.parse_row().unwrap();
 
             assert_eq!(row.index_backend, Some(crate::common::model::IndexBackend::Congee));
+        }
+
+        #[test]
+        fn test_columnar_field_parse() {
+            let row_tokens = quote! {
+                host_id: u64 columnar(chunk_rows(65_536), compression(auto)),
+            };
+            let mut parser = Parser::new(row_tokens);
+            let row = parser.parse_row().unwrap();
+            let config = row.columnar.unwrap();
+            assert_eq!(config.chunk_rows, 65_536);
+            assert_eq!(config.compression, crate::common::model::ColumnCompression::Auto);
         }
 
         #[test]
