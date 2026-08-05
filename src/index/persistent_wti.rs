@@ -10,7 +10,6 @@
 //! that marker and derives the real structural metadata itself.
 
 use std::array;
-use std::collections::hash_map::DefaultHasher;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::ops::RangeBounds;
@@ -22,16 +21,27 @@ use indexset::cdc::change::{ChangeEvent, Id};
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
 use parking_lot::{Mutex, MutexGuard};
+use rustc_hash::FxHasher;
 
 use crate::index::UniqueIndex;
 use crate::util::OffsetEqLink;
 use crate::{IndexMap, TableIndexCdc};
 
-// A stripe provides per-key exclusion only: DefaultHasher has no relationship
+// A stripe provides per-key exclusion only: FxHasher has no relationship
 // to key order, so callers must not infer range or cross-key ordering from the
 // selected mutex. Reads never touch this fixed inline table. Logical batches
 // are ordered independently by event id in the persistence worker.
 const MUTATION_STRIPES: usize = 64;
+
+#[inline]
+fn mutation_stripe_index<Q: Hash + ?Sized>(key: &Q) -> usize {
+    // Stripe selection is not a security boundary. FxHasher avoids SipHash's
+    // per-mutation cost and distributes the overwhelmingly common sequential
+    // integer keys across the power-of-two stripe table.
+    let mut hasher = FxHasher::default();
+    key.hash(&mut hasher);
+    hasher.finish() as usize & (MUTATION_STRIPES - 1)
+}
 
 /// A persisted WorkTablesIndex whose foreground mutations emit logical CDC.
 ///
@@ -45,6 +55,9 @@ where
 {
     inner: IndexMap<K, V, Node>,
     next_event_id: AtomicU64,
+    // Fixed inline allocation: 64 parking_lot mutexes per persisted WTI. The
+    // enclosing index's allocation size accounts for these; there is no
+    // per-mutation or per-key mutex allocation.
     mutation_stripes: [Mutex<()>; MUTATION_STRIPES],
 }
 
@@ -96,10 +109,9 @@ where
         &self.inner
     }
 
+    #[inline]
     fn mutation_stripe<Q: Hash + ?Sized>(&self, key: &Q) -> MutexGuard<'_, ()> {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        self.mutation_stripes[hasher.finish() as usize % MUTATION_STRIPES].lock()
+        self.mutation_stripes[mutation_stripe_index(key)].lock()
     }
 
     fn next_event_id(&self) -> Id {
@@ -267,6 +279,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use data_bucket::page::PageId;
 
     use super::*;
@@ -304,5 +318,13 @@ mod tests {
 
         assert!(index.insert_checked_cdc(8, link(8)).is_some());
         assert_eq!(index.next_event_id.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn sequential_integer_keys_use_every_mutation_stripe() {
+        let stripes = (0_u64..4_096)
+            .map(|key| mutation_stripe_index(&key))
+            .collect::<HashSet<_>>();
+        assert_eq!(stripes.len(), MUTATION_STRIPES);
     }
 }
