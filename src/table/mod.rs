@@ -254,6 +254,13 @@ where
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    self.primary_index.remove(&pk, link);
+                    self.indexes.delete_from_indexes(row, link, inserted_already)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                }
                 IndexError::NotFound => Err(WorkTableError::NotFound),
             };
         }
@@ -336,6 +343,32 @@ where
                         (ack_op, WorkTableError::PagesError(e))
                     } else {
                         (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
+                    }
+                }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    let (_, rollback_pk_events) = self.primary_index.remove_cdc(pk.clone(), link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    let (rollback_secondary_events, _) =
+                        self.indexes
+                            .delete_from_indexes_cdc(row.clone(), link, inserted_already);
+
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
+                    if let Err(e) = self.data.delete(link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::ColumnSlotIdExhausted(bits))
                     }
                 }
                 IndexError::NotFound => {
@@ -439,6 +472,13 @@ where
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    self.primary_index.insert(pk.clone(), old_link);
+                    self.indexes.delete_from_indexes(row_new, new_link, inserted_already)?;
+                    self.data.delete(new_link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                }
                 IndexError::NotFound => Err(WorkTableError::NotFound),
             };
         }
@@ -536,6 +576,32 @@ where
                         (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
                     }
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    let (_, rollback_pk_events) = self.primary_index.insert_cdc(pk.clone(), old_link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    let (rollback_secondary_events, _) =
+                        self.indexes
+                            .delete_from_indexes_cdc(row_new, new_link, inserted_already);
+
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
+                    if let Err(e) = self.data.delete(new_link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::ColumnSlotIdExhausted(bits))
+                    }
+                }
                 IndexError::NotFound => {
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
                         id: OperationId::Single(Uuid::now_v7()),
@@ -591,6 +657,8 @@ pub enum WorkTableError {
     AlreadyExists(#[error(not(source))] String),
     #[display("Row with this primary key already exists")]
     PrimaryAlreadyExists,
+    #[display("ColumnSlotId{} capacity is exhausted", _0)]
+    ColumnSlotIdExhausted(#[error(not(source))] u8),
     SerializeError,
     SecondaryIndexError,
     PrimaryUpdateTry,

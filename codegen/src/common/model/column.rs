@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::common::model::index::Index;
-use crate::common::model::{ColumnarFieldConfig, ColumnarIndex, GeneratorType, IndexBackend};
+use crate::common::model::{ColumnSlotIdType, ColumnarFieldConfig, ColumnarIndex, GeneratorType, IndexBackend};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -19,6 +19,7 @@ pub struct Columns {
     pub indexes: IndexMap<Ident, Index>,
     pub columnar_fields: IndexMap<Ident, ColumnarFieldConfig>,
     pub columnar_indexes: IndexMap<Ident, ColumnarIndex>,
+    pub column_slot_id: ColumnSlotIdType,
     pub primary_keys: Vec<Ident>,
     pub primary_index_backend: IndexBackend,
     pub generator_type: GeneratorType,
@@ -99,6 +100,7 @@ impl Columns {
             indexes: Default::default(),
             columnar_fields,
             columnar_indexes: Default::default(),
+            column_slot_id: Default::default(),
             primary_keys: pk,
             primary_index_backend: primary_index_backend.unwrap_or_default(),
             generator_type: gen_type.expect("set"),

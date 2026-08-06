@@ -527,6 +527,28 @@ impl InMemoryGenerator {
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
                             }
+                            IndexError::ColumnSlotIdExhausted {
+                                bits,
+                                inserted_already,
+                            } => {
+                                let (rollback_secondary_events, _): (#secondary_events_ident, _) = self.0.indexes.delete_from_indexes_cdc(
+                                    row_new.merge(row_old.clone()),
+                                    link,
+                                    inserted_already
+                                );
+
+                                let mut merged_events = secondary_events.clone();
+                                merged_events.extend(rollback_secondary_events);
+
+                                let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: merged_events,
+                                });
+                                self.1.apply_operation(ack_op);
+
+                                Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                            }
                             IndexError::NotFound => Err(WorkTableError::NotFound),
                         };
                     }
@@ -550,6 +572,15 @@ impl InMemoryGenerator {
                                 .delete_from_indexes(row_new.merge(row_old.clone()), link, inserted_already)?;
 
                             Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                        }
+                        IndexError::ColumnSlotIdExhausted {
+                            bits,
+                            inserted_already,
+                        } => {
+                            self.0.indexes
+                                .delete_from_indexes(row_new.merge(row_old.clone()), link, inserted_already)?;
+
+                            Err(WorkTableError::ColumnSlotIdExhausted(bits))
                         }
                         IndexError::NotFound => Err(WorkTableError::NotFound),
                     };

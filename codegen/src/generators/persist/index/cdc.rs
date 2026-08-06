@@ -68,7 +68,7 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
-        let columnar_save = crate::generators::columnar::save_row(&self.columns);
+        let columnar_save = crate::generators::columnar::save_row_cdc(&self.columns);
 
         quote! {
             fn save_row_cdc(&self, row: #row_type_ident, link: Link) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
@@ -150,7 +150,7 @@ impl PersistGenerator {
             })
             .unzip();
         let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
-        let columnar_reinsert = crate::generators::columnar::reinsert_row(&self.columns);
+        let columnar_reinsert = crate::generators::columnar::reinsert_row_cdc(&self.columns);
 
         quote! {
             fn reinsert_row_cdc(

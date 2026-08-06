@@ -108,10 +108,18 @@ impl Parser {
             false
         };
 
-        let index_backend = self.try_parse_index_backend()?;
-
         let columnar = self.try_parse_columnar_field()?;
 
+        let index_backend = self.try_parse_index_backend()?;
+
+        if let Some(next) = self.input_iter.peek()
+            && !matches!(next, TokenTree::Punct(punct) if punct.as_char() == ',')
+        {
+            return Err(syn::Error::new(
+                next.span(),
+                "unexpected column attribute; expected attributes in `primary_key`, generator, `optional`, `columnar`, `using` order",
+            ));
+        }
         self.try_parse_comma()?;
 
         Ok(Row {
@@ -258,7 +266,7 @@ mod tests {
 
         #[test]
         fn test_row_parse_no_comma() {
-            let row_tokens = quote! {id: i64 primary_key TreeIndex};
+            let row_tokens = quote! {id: i64 primary_key};
 
             let mut parser = Parser::new(row_tokens);
             let row = parser.parse_row();
@@ -330,13 +338,13 @@ mod tests {
         #[test]
         fn test_columnar_field_parse() {
             let row_tokens = quote! {
-                host_id: u64 columnar(chunk_rows(65_536), compression(auto)),
+                host_id: u64 columnar(chunk_rows(65_536), compression(none)),
             };
             let mut parser = Parser::new(row_tokens);
             let row = parser.parse_row().unwrap();
             let config = row.columnar.unwrap();
-            assert_eq!(config.chunk_rows, 65_536);
-            assert_eq!(config.compression, crate::common::model::ColumnCompression::Auto);
+            assert_eq!(config.chunk_rows, Some(65_536));
+            assert_eq!(config.compression, crate::common::model::ColumnCompression::None);
         }
 
         #[test]
