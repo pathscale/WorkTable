@@ -318,6 +318,22 @@ pub fn all(
 /// Columnar indexes must cluster by columnar fields that exist and must not
 /// collide with a columnar field's own generated scan methods.
 pub fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
+    for primary_key in &columns.primary_keys {
+        if columns.columnar_fields.contains_key(primary_key) {
+            return Err(syn::Error::new(
+                primary_key.span(),
+                "the primary key participates in columnar identity implicitly and must not declare `columnar`",
+            ));
+        }
+    }
+
+    if !columns.columnar_indexes.is_empty() && columns.columnar_fields.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "`columnar_indexes` requires at least one field declaring `columnar`",
+        ));
+    }
+
     for index in columns.columnar_indexes.values() {
         if columns.columnar_fields.contains_key(&index.name) {
             return Err(syn::Error::new(
@@ -328,7 +344,7 @@ pub fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
                 ),
             ));
         }
-        for field in &index.columns {
+        for field in &index.cluster_by {
             if !columns.columns_map.contains_key(field) {
                 return Err(syn::Error::new(
                     field.span(),
@@ -340,17 +356,6 @@ pub fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
                     field.span(),
                     format!(
                         "columnar index `{}` requires field `{field}` to declare `columnar(...)`",
-                        index.name
-                    ),
-                ));
-            }
-        }
-        for field in &index.cluster_by {
-            if !index.columns.contains(field) {
-                return Err(syn::Error::new(
-                    field.span(),
-                    format!(
-                        "columnar index `{}` clusters by `{field}`, which is absent from `columns`",
                         index.name
                     ),
                 ));

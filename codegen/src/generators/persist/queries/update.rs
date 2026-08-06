@@ -571,6 +571,32 @@ impl PersistGenerator {
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
                             }
+                            IndexError::ColumnSlotIdExhausted {
+                                bits,
+                                inserted_already,
+                            } => {
+                                let (rollback_secondary_events, _): (#secondary_events_ident, _) = self.0.indexes.delete_from_indexes_cdc(
+                                    row_new.merge(row_old.clone()),
+                                    link,
+                                    inserted_already
+                                );
+
+                                let mut merged_events = secondary_events.clone();
+                                merged_events.extend(rollback_secondary_events);
+
+                                let ack_op: Operation<
+                                    <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                                    #pk_ident,
+                                    #secondary_events_ident
+                                > = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: merged_events,
+                                });
+                                self.1.apply_operation(ack_op)?;
+
+                                Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                            }
                             IndexError::NotFound => {
                                 // The insert side produced events before it
                                 // failed, and the index has already assigned

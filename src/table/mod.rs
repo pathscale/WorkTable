@@ -324,6 +324,13 @@ where
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    self.primary_index.remove(&pk, link);
+                    self.indexes.delete_from_indexes(row, link, inserted_already)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                }
                 IndexError::NotFound => {
                     // Mirror the AlreadyExists arm. Returning without rollback
                     // left the primary key permanently bound to a ghosted row
@@ -807,6 +814,32 @@ where
                         (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
                     }
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    let (_, rollback_pk_events) = self.primary_index.remove_cdc(pk.clone(), link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    let (rollback_secondary_events, _) =
+                        self.indexes
+                            .delete_from_indexes_cdc(row.clone(), link, inserted_already);
+
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
+                    if let Err(e) = self.data.delete(link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::ColumnSlotIdExhausted(bits))
+                    }
+                }
                 IndexError::NotFound => {
                     // Mirror the AlreadyExists arm: roll the primary index and
                     // the row's secondary entries back and release the data
@@ -1164,6 +1197,16 @@ where
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    // The primary index still points at old_link here (it is
+                    // swung only after every index check passes), so the
+                    // unwind only has to drop what reinsert_row published on
+                    // the new link and release the new slot.
+                    self.indexes.delete_from_indexes(row_new, new_link, inserted_already)?;
+                    self.data.delete(new_link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                }
                 IndexError::NotFound => {
                     // The primary index was never swung and the new row is
                     // still ghosted, so no reader can observe it; release the
@@ -1266,6 +1309,32 @@ where
                         (ack_op, WorkTableError::PagesError(e))
                     } else {
                         (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
+                    }
+                }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    let (_, rollback_pk_events) = self.primary_index.insert_cdc(pk.clone(), old_link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    let (rollback_secondary_events, _) =
+                        self.indexes
+                            .delete_from_indexes_cdc(row_new, new_link, inserted_already);
+
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(Uuid::now_v7()),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
+                    if let Err(e) = self.data.delete(new_link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::ColumnSlotIdExhausted(bits))
                     }
                 }
                 IndexError::NotFound => {
@@ -1378,6 +1447,8 @@ pub enum WorkTableError {
     AlreadyExists(#[error(not(source))] String),
     #[display("Row with this primary key already exists")]
     PrimaryAlreadyExists,
+    #[display("ColumnSlotId{} capacity is exhausted", _0)]
+    ColumnSlotIdExhausted(#[error(not(source))] u8),
     SerializeError,
     SecondaryIndexError,
     PrimaryUpdateTry,

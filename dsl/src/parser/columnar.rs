@@ -5,7 +5,7 @@ use proc_macro2::{Delimiter, Ident, TokenTree};
 use syn::spanned::Spanned as _;
 
 use crate::common::Parser;
-use crate::common::model::{ColumnCompression, ColumnarFieldConfig, ColumnarIndex};
+use crate::common::model::{ColumnCompression, ColumnarFieldConfig, ColumnarIndex, ColumnarIndexes};
 
 impl Parser {
     pub(super) fn try_parse_columnar_field(&mut self) -> syn::Result<Option<ColumnarFieldConfig>> {
@@ -18,15 +18,14 @@ impl Parser {
 
         let attribute_span = attribute.span();
         self.input_iter.next();
-        let Some(TokenTree::Group(group)) = self.input_iter.next() else {
-            return Err(syn::Error::new(
-                attribute_span,
-                "expected `columnar(...)` after the field type",
-            ));
+        let Some(TokenTree::Group(group)) = self.input_iter.peek() else {
+            return Ok(Some(ColumnarFieldConfig::default()));
         };
+        let group = group.clone();
         if group.delimiter() != Delimiter::Parenthesis {
             return Err(syn::Error::new(group.span(), "expected `columnar(...)`"));
         }
+        self.input_iter.next();
 
         let mut config = ColumnarFieldConfig::default();
         let mut saw_chunk_rows = false;
@@ -73,7 +72,7 @@ impl Parser {
                     if parsed == 0 {
                         return Err(syn::Error::new(rows.span(), "`chunk_rows` must be greater than zero"));
                     }
-                    config.chunk_rows = parsed;
+                    config.chunk_rows = Some(parsed);
                 }
                 "compression" => {
                     if saw_compression {
@@ -89,14 +88,18 @@ impl Parser {
                     }
                     config.compression = match compression.to_string().as_str() {
                         "none" => ColumnCompression::None,
-                        "auto" => ColumnCompression::Auto,
-                        "delta" => ColumnCompression::Delta,
-                        "rle" => ColumnCompression::Rle,
-                        "dictionary" => ColumnCompression::Dictionary,
+                        "auto" | "delta" | "rle" | "dictionary" => {
+                            return Err(syn::Error::new(
+                                compression.span(),
+                                format!(
+                                    "compression({compression}) is declared but not implemented in this release; only compression(none) is currently supported"
+                                ),
+                            ));
+                        }
                         _ => {
                             return Err(syn::Error::new(
                                 compression.span(),
-                                "unknown compression; expected `none`, `auto`, `delta`, `rle`, or `dictionary`",
+                                "unknown compression; only `none` is currently supported",
                             ));
                         }
                     };
@@ -114,7 +117,7 @@ impl Parser {
         Ok(Some(config))
     }
 
-    pub fn parse_columnar_indexes(&mut self) -> syn::Result<IndexMap<Ident, ColumnarIndex>> {
+    pub fn parse_columnar_indexes(&mut self) -> syn::Result<ColumnarIndexes> {
         let section = self
             .input_iter
             .next()
@@ -149,6 +152,7 @@ impl Parser {
                 return Err(syn::Error::new(name.span(), "expected a columnar index name"));
             };
             parser.parse_colon()?;
+
             let definition = parser
                 .input_iter
                 .next()
@@ -161,7 +165,6 @@ impl Parser {
             }
 
             let mut definition_parser = Parser::new(definition.stream());
-            let mut columns = None;
             let mut cluster_by = None;
             while definition_parser.has_next() {
                 let property = definition_parser
@@ -169,56 +172,56 @@ impl Parser {
                     .next()
                     .ok_or_else(|| syn::Error::new(definition.span(), "expected a columnar index property"))?;
                 let TokenTree::Ident(property) = property else {
-                    return Err(syn::Error::new(property.span(), "expected `columns` or `cluster_by`"));
+                    return Err(syn::Error::new(property.span(), "expected `cluster_by`"));
                 };
                 definition_parser.parse_colon()?;
-                let values = parse_ident_list(&mut definition_parser, property.span())?;
                 match property.to_string().as_str() {
-                    "columns" if columns.is_none() => columns = Some(values),
-                    "cluster_by" if cluster_by.is_none() => cluster_by = Some(values),
-                    "columns" | "cluster_by" => {
+                    "cluster_by" if cluster_by.is_none() => {
+                        cluster_by = Some(parse_ident_list(&mut definition_parser, property.span())?)
+                    }
+                    "cluster_by" => {
                         return Err(syn::Error::new(property.span(), "duplicate columnar index property"));
+                    }
+                    "columns" => {
+                        return Err(syn::Error::new(
+                            property.span(),
+                            "`columns` has no independent columnar-index semantics; remove it because projected fields are selected from base column stores",
+                        ));
+                    }
+                    "include" => {
+                        return Err(syn::Error::new(
+                            property.span(),
+                            "`include` is reserved for a future covering columnar projection and is not implemented",
+                        ));
                     }
                     _ => {
                         return Err(syn::Error::new(
                             property.span(),
-                            "unknown columnar index property; expected `columns` or `cluster_by`",
+                            "unknown columnar index property; expected `cluster_by`",
                         ));
                     }
                 }
                 definition_parser.try_parse_comma()?;
             }
 
-            let columns =
-                columns.ok_or_else(|| syn::Error::new(name.span(), "columnar index requires `columns: [...]`"))?;
-            if columns.is_empty() {
-                return Err(syn::Error::new(name.span(), "columnar index `columns` cannot be empty"));
-            }
-            let cluster_by = cluster_by.unwrap_or_else(|| columns.clone());
+            let cluster_by = cluster_by
+                .ok_or_else(|| syn::Error::new(name.span(), "columnar index requires `cluster_by: [...]`"))?;
             if cluster_by.is_empty() {
                 return Err(syn::Error::new(
                     name.span(),
                     "columnar index `cluster_by` cannot be empty",
                 ));
             }
-            ensure_unique(&columns, "columnar index `columns` contains a duplicate")?;
             ensure_unique(&cluster_by, "columnar index `cluster_by` contains a duplicate")?;
 
             if indexes.contains_key(&name) {
                 return Err(syn::Error::new(name.span(), "duplicate columnar index name"));
             }
-            indexes.insert(
-                name.clone(),
-                ColumnarIndex {
-                    name,
-                    columns,
-                    cluster_by,
-                },
-            );
+            indexes.insert(name.clone(), ColumnarIndex { name, cluster_by });
             parser.try_parse_comma()?;
         }
         self.try_parse_comma()?;
-        Ok(indexes)
+        Ok(ColumnarIndexes { indexes })
     }
 }
 
@@ -269,23 +272,40 @@ mod tests {
     #[test]
     fn parses_columnar_field_options() {
         let mut parser = Parser::new(quote! {
-            columnar(chunk_rows(65_536), compression(delta))
+            columnar(chunk_rows(65_536), compression(none))
         });
         let config = parser.try_parse_columnar_field().unwrap().unwrap();
-        assert_eq!(config.chunk_rows, 65_536);
-        assert_eq!(config.compression, ColumnCompression::Delta);
+        assert_eq!(config.chunk_rows, Some(65_536));
+        assert_eq!(config.compression, ColumnCompression::None);
     }
 
     #[test]
     fn empty_columnar_field_uses_defaults() {
-        let mut parser = Parser::new(quote! { columnar() });
+        let mut parser = Parser::new(quote! { columnar });
         let config = parser.try_parse_columnar_field().unwrap().unwrap();
         assert_eq!(config.chunk_rows, ColumnarFieldConfig::default().chunk_rows);
-        assert_eq!(config.compression, ColumnCompression::Auto);
+        assert_eq!(config.compression, ColumnCompression::None);
     }
 
     #[test]
     fn parses_columnar_indexes() {
+        let mut parser = Parser::new(quote! {
+            columnar_indexes: {
+                host_time: {
+                    cluster_by: [host_id, timestamp],
+                },
+            },
+        });
+        let indexes = parser.parse_columnar_indexes().unwrap();
+        let index = indexes.indexes.values().next().unwrap();
+        assert_eq!(
+            index.cluster_by.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["host_id", "timestamp"]
+        );
+    }
+
+    #[test]
+    fn rejects_inert_columns_property() {
         let mut parser = Parser::new(quote! {
             columnar_indexes: {
                 host_time: {
@@ -294,15 +314,14 @@ mod tests {
                 },
             },
         });
-        let indexes = parser.parse_columnar_indexes().unwrap();
-        let index = indexes.values().next().unwrap();
-        assert_eq!(
-            index.columns.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["host_id", "timestamp"]
-        );
-        assert_eq!(
-            index.cluster_by.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["host_id", "timestamp"]
-        );
+        let error = parser.parse_columnar_indexes().unwrap_err();
+        assert!(error.to_string().contains("no independent columnar-index semantics"));
+    }
+
+    #[test]
+    fn rejects_unimplemented_compression() {
+        let mut parser = Parser::new(quote! { columnar(compression(dictionary)) });
+        let error = parser.try_parse_columnar_field().unwrap_err();
+        assert!(error.to_string().contains("not implemented"));
     }
 }

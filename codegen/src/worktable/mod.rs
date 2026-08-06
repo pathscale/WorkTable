@@ -86,7 +86,34 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         columns.indexes = i
     }
     if let Some(i) = columnar_indexes {
-        columns.columnar_indexes = i;
+        columns.columnar_indexes = i.indexes;
+    }
+
+    let columnar_chunk_rows = config
+        .as_ref()
+        .map(|config| config.columnar_chunk_rows)
+        .unwrap_or(crate::common::model::DEFAULT_COLUMNAR_CHUNK_ROWS);
+    columns.column_slot_id = config
+        .as_ref()
+        .map(|config| config.columnar_slot_id)
+        .unwrap_or_default();
+    for field in columns.columnar_fields.values_mut() {
+        let chunk_rows = field.chunk_rows.unwrap_or(columnar_chunk_rows);
+        let (smaller, larger) = if chunk_rows <= columnar_chunk_rows {
+            (chunk_rows, columnar_chunk_rows)
+        } else {
+            (columnar_chunk_rows, chunk_rows)
+        };
+        let nested = larger % smaller == 0 && (larger / smaller).is_power_of_two();
+        if !nested {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "columnar chunk_rows({chunk_rows}) must be a power-of-two multiple or divisor of config.columnar_chunk_rows ({columnar_chunk_rows})"
+                ),
+            ));
+        }
+        field.chunk_rows = Some(chunk_rows);
     }
 
     worktable_dsl::validate::validate_index_backends(&columns, persistence)?;
@@ -177,7 +204,6 @@ mod tests {
             },
             columnar_indexes: {
                 host_lookup: {
-                    columns: [host_id],
                     cluster_by: [host_id],
                 },
             },
@@ -187,7 +213,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("requires field `host_id` to declare `columnar(...)`")
+                .contains("requires at least one field declaring `columnar`")
         );
     }
 
@@ -198,12 +224,11 @@ mod tests {
             persist: false,
             columns: {
                 id: u64 primary_key,
-                host_id: u64 columnar(chunk_rows(1024), compression(auto)),
+                host_id: u64 columnar(chunk_rows(1024), compression(none)),
                 timestamp: i64 columnar(chunk_rows(2048), compression(none)),
             },
             columnar_indexes: {
                 host_time: {
-                    columns: [host_id, timestamp],
                     cluster_by: [host_id, timestamp],
                 },
             },
@@ -215,6 +240,76 @@ mod tests {
         assert!(output.contains("columnar_project_timestamp"));
         assert!(output.contains("columnar_select_host_time"));
         assert!(output.contains("ColumnarColumn :: new (1024"));
+    }
+
+    #[test]
+    fn columnar_config_is_table_scoped_and_row_derives_stops_at_new_keys() {
+        let output = expand(quote! {
+            name: ColumnarConfig,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u64 columnar,
+            },
+            config: {
+                row_derives: Default,
+                columnar_slot_id: ColumnSlotId16,
+                columnar_chunk_rows: 1024,
+            },
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(output.contains("ColumnSlotId16"));
+        assert!(output.contains("ColumnarColumn :: new (1024"));
+    }
+
+    #[test]
+    fn columnar_chunk_override_must_nest_with_table_default() {
+        let error = expand(quote! {
+            name: InvalidColumnarChunk,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u64 columnar(chunk_rows(50_000)),
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("power-of-two multiple or divisor"));
+    }
+
+    #[test]
+    fn primary_key_cannot_redeclare_columnar_identity() {
+        let error = expand(quote! {
+            name: InvalidColumnarPrimaryKey,
+            persist: false,
+            columns: {
+                id: u64 primary_key columnar,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("must not declare `columnar`"));
+    }
+
+    #[test]
+    fn duplicate_columnar_config_is_rejected() {
+        let error = expand(quote! {
+            name: DuplicateColumnarConfig,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u64 columnar,
+            },
+            config: {
+                columnar_slot_id: ColumnSlotId16,
+                columnar_slot_id: ColumnSlotId32,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("Duplicate `columnar_slot_id`"));
     }
 
     fn assert_composite_primary_key_field_order(output: proc_macro2::TokenStream) {

@@ -28,7 +28,10 @@ mod util;
 #[cfg(feature = "s3-support")]
 pub mod features;
 
-pub use columnar::{ClusteredColumnarIndex, ColumnCompression, ColumnRowId, ColumnarColumn};
+pub use columnar::{
+    ClusteredColumnarIndex, ColumnCompression, ColumnSlotId, ColumnSlotId8, ColumnSlotId16, ColumnSlotId32,
+    ColumnSlotId64, ColumnarColumn, ColumnarRowRef, next_columnar_incarnation,
+};
 pub use index::*;
 #[cfg(feature = "std")]
 pub use persistence::{
@@ -95,12 +98,12 @@ pub mod prelude {
     pub use crate::{};
     pub use crate::{
         ArcticEntry, ArcticIndex, ArcticKey, ArcticMultiIndex, ArcticStringKey, AvailableIndex, BatchDeleteError,
-        BatchInsertError, ClusteredColumnarIndex, ColumnCompression, ColumnRowId, ColumnarColumn, CongeeIndex,
-        CongeeKey, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex,
-        PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex,
-        TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
-        TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode, WorkTable, WorkTableError,
-        validate_arctic_link,
+        BatchInsertError, ClusteredColumnarIndex, ColumnCompression, ColumnSlotId, ColumnSlotId8, ColumnSlotId16,
+        ColumnSlotId32, ColumnSlotId64, ColumnarColumn, ColumnarRowRef, CongeeIndex, CongeeKey, Difference, IndexError,
+        IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArcticMultiIndex,
+        PersistentArtIndex, PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc,
+        TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
+        UniqueIndex, UnsizedNode, WorkTable, WorkTableError, next_columnar_incarnation, validate_arctic_link,
     };
     /// The upstream IndexSet backend, when the `vanilla-index` feature selects it.
     #[cfg(feature = "vanilla-index")]

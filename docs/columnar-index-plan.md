@@ -1,11 +1,21 @@
-# Columnar fields and indexes
+# Columnar side-index implementation plan
 
-Status: initial implementation in `feat/columnar-fields-indexes`.
+Status: phase-one implementation in `feat/columnar-fields-indexes`. The complete user and reviewer
+guide is [`columnar-fields-and-indexes-guide-v3.md`](columnar-fields-and-indexes-guide-v3.md).
 
-## Syntax
+## Scope boundary
 
-Columnar storage is a property of an individual field. It is not a table
-layout, and row storage remains authoritative.
+WorkTable has three distinct storage flavors:
+
+1. **Tabular** — the existing authoritative row engine.
+2. **Tabular + columnar side indexes** — the scope of this branch. Selected field values and
+   clustered keys are duplicated into derived structures for cheaper columnar-flavored access.
+3. **Columnar** — an authoritative vector layout, vectorized execution, sealed/encoded segments,
+   and native columnar persistence. This is not implemented by this branch.
+
+The phase-one feature must not be marketed or documented as the third flavor.
+
+## Accepted DSL
 
 ```rust
 worktable!(
@@ -13,152 +23,120 @@ worktable!(
     persist: true,
     columns: {
         id: u128 primary_key,
-        host_id: u64 columnar(
-            chunk_rows(65_536),
-            compression(auto),
-        ),
-        timestamp: i64 columnar(
-            chunk_rows(65_536),
-            compression(delta),
-        ),
-        temperature: i64 columnar(
-            chunk_rows(32_768),
-            compression(auto),
-        ),
-        label: String,
+        host_id: u64 columnar,
+        captured_at_ns: u64 columnar,
+        temperature: i64 columnar(chunk_rows(32_768), compression(none)),
+        status: String columnar,
+        diagnostic_blob: DiagnosticBlob,
     },
     columnar_indexes: {
         host_time: {
-            columns: [host_id, timestamp, temperature],
-            cluster_by: [host_id, timestamp],
+            cluster_by: [host_id, captured_at_ns],
         },
+    },
+    config: {
+        columnar_slot_id: ColumnSlotId32,
+        columnar_chunk_rows: 65_536,
     },
 );
 ```
 
-`columnar(...)` creates a base column replica. A field does not need to be in a
-`columnar_indexes` declaration to benefit from sequential scan or projection.
-For example, `temperature` can be projected after `host_time` produces logical
-row IDs, while a columnar `status` field that appears in no index can still be
-scanned directly.
+- Bare `columnar` uses defaults.
+- `compression(none)` is the only accepted policy until a codec exists.
+- `cluster_by` orders index metadata, not the side-field vectors.
+- `columns:` inside a columnar index has been removed as semantically redundant.
+- Slot width is a table setting, independent of whether the table declares any clustered side
+  index.
 
-`columnar_indexes` declares ordering and lookup metadata over existing base
-columns. `cluster_by` belongs here because it describes index order, not field
-storage order. Conventional WorkTable indexes are unchanged and may coexist
-with columnar indexes.
+## Identity and capacity
 
-## Implemented model
+`ColumnSlotId8|16|32|64` uses its complete unsigned range for side-index slot positions. It neither
+replaces the primary key nor represents sort rank.
 
-The initial implementation adds:
-
-- per-field `columnar(chunk_rows(...), compression(...))` parsing and
-  validation;
-- a `columnar_indexes` section with `columns` and `cluster_by` validation;
-- a stable `ColumnRowId`, independent of physical `data_bucket::Link` values;
-- separately chunked vectors for every columnar field;
-- a shared primary-key-to-row-ID directory;
-- ordered clustered metadata backed by a `BTreeMap` and row-ID sets;
-- generated exact-lookup, ordered-index-scan, field-scan, and projection APIs;
-- maintenance for inserts, updates, in-place updates, deletes, reinserts, and
-  vacuum link changes;
-- derived-state rebuild after persisted/read-only load without changing the
-  existing WorkTable disk format.
-
-For the example above, generated APIs include:
-
-```rust
-let ids = table.columnar_select_host_time(host_id, timestamp);
-let temperatures = table.columnar_project_temperature(&ids);
-let primary_keys = table.columnar_resolve_primary_keys(&ids);
-let all_temperatures = table.columnar_scan_temperature();
-let clustered_ids = table.columnar_scan_host_time();
-```
-
-Field scans and projections return owned values in this first API. That keeps
-locks out of the public return type and gives callers a coherent batch they can
-retain independently of later mutations.
-
-## Stable identity and mutation flow
-
-The row store remains the source of truth:
+An opaque `ColumnarRowRef` carries:
 
 ```text
-primary key -> WorkTable row/link
-            -> ColumnRowId directory
-            -> per-field chunks
-            -> zero or more clustered columnar indexes
+primary key + slot + separate u64 generation + table incarnation
 ```
 
-A vacuum may change the WorkTable link without changing `ColumnRowId`. An
-update with the same primary key also retains the row ID. Delete removes the
-directory entry, field slots, and clustered entries; IDs are not reused during
-the process lifetime.
+Delete increments the generation before slot reuse. Generation never wraps; an exhausted slot is
+retired. Table incarnation invalidates retained refs across a new/reopened instance. The ref is not
+serializable and exposes only the authoritative primary key.
 
-Generated mutation paths use the existing per-key mutation gate. Direct row
-insert/reinsert/delete hooks update columnar state under its own lock. Update
-paths that mutate archived fields in place mark the replica dirty; the next
-columnar access rebuilds it from authoritative rows while preserving IDs for
-surviving primary keys. This is deliberately a correctness-first design. The
-dirty rebuild can later become an incremental difference application once its
-concurrency invariants and benchmark benefit are established.
+The schema author is responsible for selecting a width that covers maximum simultaneously live
+side-indexed rows. Exceeding it returns `WorkTableError::ColumnSlotIdExhausted(bits)` and rolls back
+the insert. The implementation never widens, truncates, wraps, or evicts automatically.
 
-## Chunk alignment
+## Implemented side structures
 
-Each field owns its `chunk_rows` setting. Different values remain correct
-because all access is joined by `ColumnRowId`; equal values provide an aligned
-fast path for multi-column vector work. The runtime does not require aligned
-physical chunks.
+Generated tables maintain under one table-local `RwLock`:
 
-## Persistence
+- primary-key → `(ColumnSlotId, generation)` directory;
+- reusable slot set and generation vector;
+- process/table incarnation;
+- chunked `Vec<Vec<Option<T>>>` for each opted-in field;
+- primary-key side column for ref validation; and
+- a `BTreeMap<composite key, BTreeSet<slot>>` for each `columnar_indexes` entry.
 
-This change does not introduce a columnar on-disk format. The row store and
-existing indexes retain their current formats. Generated columnar state is
-marked as derived and skipped by `PersistIndex`; a loaded table rebuilds it
-from authoritative rows on first columnar access.
+Insert/update/delete/reinsert hooks maintain these after the authoritative row mutation. A vacuum
+link change does not change the slot. In-place paths without a typed delta mark the side indexes
+dirty; `rebuild_columnar()` lets applications pay the whole-table rebuild cost deliberately.
 
-That choice keeps this PR format-compatible and lets benchmarks answer whether
-native column checkpoints are worth their complexity. A later format can add
-sealed immutable chunks, manifests, checksums, and recovery watermarks without
-changing the DSL or logical row identity.
+Persisted tables skip these derived fields in their existing index disk format and rebuild them
+from authoritative rows after load. This branch adds no on-disk format.
 
-## Compression boundary
+## Current generated operations
 
-The DSL accepts `none`, `auto`, `delta`, `rle`, and `dictionary`, and generated
-columns retain the requested policy as metadata. Mutable chunks are currently
-stored unencoded: `auto` resolves to no encoding, and the explicit codecs are
-not yet applied. `ColumnCompression::is_encoded()` therefore returns `false`.
+```rust
+table.columnar_select_host_time(host_id, captured_at_ns)?;
+table.columnar_scan_host_time()?;
+table.columnar_scan_status()?;
+table.columnar_project_temperature(&row_refs)?;
+table.columnar_is_dirty();
+table.rebuild_columnar()?;
+table.columnar_slots_in_use();
+table.columnar_slots_high_water();
+```
 
-This is intentional rather than a compression claim. Encoding belongs on
-sealed/immutable chunks so point updates do not repeatedly rewrite compressed
-buffers. Codec implementation and per-type validation are follow-up work and
-must be benchmarked independently.
+They return owned `Vec` collections. Full-key equality is the only clustered predicate in phase
+one.
 
-## Current concurrency boundary
+## Phase-one correctness gates
 
-Columnar state is derived and protected by a table-local read/write lock.
-Ordinary row reads do not touch it, so declaring a columnar field does not add a
-lock to the existing select path. Columnar reads clone a result batch while
-holding the replica read lock. Mutations update or dirty the replica only after
-the authoritative row operation succeeds.
+- Same-primary-key delete/reinsert into the same slot must invalidate the old ref.
+- A ref from another table incarnation must fail validation.
+- Slot exhaustion must roll back the authoritative mutation.
+- All four slot widths must enforce their numeric range without wrapping.
+- Mutation paths must update or dirty side indexes before returning.
+- A dirty rebuild must preserve live slot/generation mappings.
+- Macro validation must reject primary-key `columnar`, unknown/non-columnar cluster keys, duplicate
+  keys/names/config, inert compression, non-nesting chunks, `columns:`, and reserved `include:`.
+- Persisted load must reconstruct side indexes without changing the current disk format.
 
-Before calling this production-ready for HFT workloads, benchmarks must cover:
+## Performance gates
 
-- row-operation throughput with no columnar access;
-- insert/update/delete overhead with columnar fields and indexes;
-- exact lookup and ordered scan throughput;
-- p50/p95/p99 latency under mixed readers and writers;
-- dirty-rebuild latency after in-place updates;
-- memory amplification by field type, chunk size, and index cardinality.
+Before an HFT-facing claim or default:
 
-## Next implementation slices
+- compare tabular baseline against fields-only and fields-plus-clustered side indexes;
+- measure row select, insert, update, delete, churn, exact lookup, scan, and gather;
+- report p50/p95/p99, allocations, memory, and code size;
+- run 1→core-count concurrency with correctness counters;
+- measure first-reader and explicit dirty rebuild costs; and
+- repeat across supported WorkTablesIndex, congee-wt, and arctic-wt `Using` configurations.
 
-1. Add range predicates and generated projection batches that fetch several
-   fields in one lock acquisition.
-2. Replace dirty full rebuilds with typed incremental mutations for archived
-   in-place updates.
-3. Add null bitmaps and specialized fixed-width chunk kernels.
-4. Seal cold chunks and implement actual delta/RLE/dictionary codecs.
-5. Benchmark row-store random projection against native column checkpoints,
-   then add a disk format only if the result justifies it.
-6. Add a cost model that chooses conventional index lookup, clustered
-   columnar lookup, or base-column scan.
+## Follow-up within the side-index flavor
+
+1. Namespaced builders and prefix/range predicates.
+2. Bounded `scan_batches` and one-lock multi-field projection.
+3. Per-chunk dirty tracking and typed in-place deltas.
+4. Validity bitmaps, fixed-width kernels, and variable-width offset buffers.
+5. Optional sealed side-index snapshots if benchmarks justify persistence.
+
+## Separate full-columnar flavor
+
+SAP HANA's unified-table record lifecycle is useful prior art for a future third flavor: an
+uncompressed row write delta, a column delta, a compressed main, asynchronous merge, old/new
+snapshot coexistence, and vector/block execution. That is a separate architecture and performance
+contract. It must not arrive by quietly changing what `columnar` side indexes mean.
+
+See the v3 guide for the detailed comparison and citation.
