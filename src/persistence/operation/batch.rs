@@ -15,6 +15,9 @@ use crate::persistence::task::{LastEventIds, QueueInnerRow};
 use crate::prelude::*;
 use crate::prelude::{From, Order, SelectQueryExecutor};
 
+// Ephemeral metadata rebuilt for every persistence batch, not a persisted
+// schema. One Multi operation deliberately owns several rows, so operation_id
+// is non-unique while pos is the unique association back to the ops vector.
 worktable! (
     name: BatchInner,
     columns: {
@@ -80,43 +83,51 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
     ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
 ) -> BatchData {
     type PhysicalSlot = (PageId, u32);
-    type SequencedWrite = (OperationId, usize, Link, Vec<u8>);
 
-    let mut latest: HashMap<PhysicalSlot, SequencedWrite> = HashMap::new();
-    for (sequence, op) in ops.iter().enumerate() {
-        let Some(bytes) = op.bytes() else {
-            continue;
-        };
-        let link = op.link();
-        let operation_id = op.operation_id();
-        let key = (link.page_id, link.offset);
-        match latest.entry(key) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                if (operation_id, sequence) > (entry.get().0, entry.get().1) {
-                    entry.insert((operation_id, sequence, link, bytes.to_vec()));
-                }
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert((operation_id, sequence, link, bytes.to_vec()));
+    fn collect_in_order<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
+        ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
+        order: impl Iterator<Item = usize> + Clone,
+    ) -> BatchData {
+        let mut latest: HashMap<PhysicalSlot, usize> = HashMap::with_capacity(ops.len());
+        for sequence in order.clone() {
+            let op = &ops[sequence];
+            if op.bytes().is_some() {
+                let link = op.link();
+                latest.insert((link.page_id, link.offset), sequence);
             }
         }
+
+        let mut ordered = HashMap::new();
+        for sequence in order {
+            let op = &ops[sequence];
+            let Some(bytes) = op.bytes() else {
+                continue;
+            };
+            let link = op.link();
+            if latest.get(&(link.page_id, link.offset)) != Some(&sequence) {
+                continue;
+            }
+            ordered
+                .entry(link.page_id)
+                .or_insert_with(Vec::new)
+                .push((link, bytes.to_vec()));
+        }
+        ordered
     }
 
-    let mut ordered = HashMap::new();
-    for (_, (operation_id, sequence, link, bytes)) in latest {
-        ordered
-            .entry(link.page_id)
-            .or_insert_with(Vec::new)
-            .push((operation_id, sequence, link, bytes));
+    // The analyzer already establishes this order. Keep that production path
+    // linear; only defensive callers that construct an unsorted BatchOperation
+    // pay for an index sort.
+    if ops
+        .windows(2)
+        .all(|pair| pair[0].operation_id() <= pair[1].operation_id())
+    {
+        collect_in_order(ops, 0..ops.len())
+    } else {
+        let mut order = (0..ops.len()).collect::<Vec<_>>();
+        order.sort_unstable_by_key(|sequence| (ops[*sequence].operation_id(), *sequence));
+        collect_in_order(ops, order.into_iter())
     }
-    ordered
-        .into_iter()
-        .map(|(page_id, mut writes)| {
-            writes.sort_unstable_by_key(|(operation_id, sequence, _, _)| (*operation_id, *sequence));
-            let writes = writes.into_iter().map(|(_, _, link, bytes)| (link, bytes)).collect();
-            (page_id, writes)
-        })
-        .collect()
 }
 
 #[derive(Debug)]
@@ -151,6 +162,30 @@ where
             phantom_data: PhantomData,
         }
     }
+
+    /// Remove metadata immediately after `self.ops.remove(removed_pos)`.
+    ///
+    /// At entry, `self.ops.len()` is already one shorter while `info_wt` still
+    /// has the old positions. Shifting upward positions in ascending order
+    /// keeps every unique destination vacant as it is filled.
+    async fn remove_info_at_pos(&self, removed_pos: usize) -> eyre::Result<()> {
+        let row = self
+            .info_wt
+            .select_by_pos(removed_pos)
+            .ok_or_else(|| eyre::eyre!("batch metadata position {removed_pos} is missing"))?;
+        self.info_wt.delete_without_lock::<_>(row.id).await?;
+
+        for old_pos in (removed_pos + 1)..=self.ops.len() {
+            let row = self
+                .info_wt
+                .select_by_pos(old_pos)
+                .ok_or_else(|| eyre::eyre!("batch metadata position {old_pos} is missing during reindex"))?;
+            self.info_wt
+                .update_pos_by_id(PosByIdQuery { pos: old_pos - 1 }, row.id)
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes>
@@ -168,7 +203,7 @@ where
     async fn remove_operations_from_events(
         &mut self,
         invalid_events: PreparedIndexEvents<PrimaryKey, SecondaryEvents>,
-    ) -> Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>> {
+    ) -> eyre::Result<Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>> {
         let mut removed_ops = Vec::new();
 
         for ev in &invalid_events.primary_evs {
@@ -186,7 +221,7 @@ where
             }) {
                 let pos = self.ops.len() - (operation_pos_rev + 1);
                 let op = self.ops.remove(pos);
-                self.remove_info_at_pos(pos).await;
+                self.remove_info_at_pos(pos).await?;
                 removed_ops.push(op);
             }
         }
@@ -198,7 +233,7 @@ where
             }) {
                 let pos = self.ops.len() - (operation_pos_rev + 1);
                 let op = self.ops.remove(pos);
-                self.remove_info_at_pos(pos).await;
+                self.remove_info_at_pos(pos).await?;
                 removed_ops.push(op);
             };
             // else it was already removed with primary
@@ -222,26 +257,7 @@ where
             prepared_evs.secondary_evs.remove(op_secondary);
         }
 
-        removed_ops
-    }
-
-    async fn remove_info_at_pos(&self, removed_pos: usize) {
-        let row = self
-            .info_wt
-            .select_by_pos(removed_pos)
-            .expect("batch metadata position must exist");
-        self.info_wt.delete_without_lock::<_>(row.id).await.unwrap();
-
-        for old_pos in (removed_pos + 1)..=self.ops.len() {
-            let row = self
-                .info_wt
-                .select_by_pos(old_pos)
-                .expect("later batch metadata position must exist");
-            self.info_wt
-                .update_pos_by_id(PosByIdQuery { pos: old_pos - 1 }, row.id)
-                .await
-                .unwrap();
-        }
+        Ok(removed_ops)
     }
 
     pub fn get_last_event_ids(&self) -> LastEventIds<AvailableIndexes> {
@@ -304,7 +320,7 @@ where
                 primary_evs: primary_invalid_events,
                 secondary_evs: secondary_invalid_events,
             };
-            let ops = self.remove_operations_from_events(events_to_remove).await;
+            let ops = self.remove_operations_from_events(events_to_remove).await?;
             ops_to_remove.extend(ops);
         }
 
@@ -446,7 +462,7 @@ mod tests {
     use data_bucket::Link;
     use uuid::Uuid;
 
-    use super::latest_data_writes;
+    use super::{BatchOperation, latest_data_writes};
     use crate::persistence::operation::{InsertOperation, Operation, OperationId};
 
     fn insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
@@ -556,5 +572,14 @@ mod tests {
         ]);
 
         assert_eq!(batch.get(&1.into()).unwrap(), &vec![(new_link, vec![2; 6])]);
+    }
+
+    #[tokio::test]
+    async fn missing_batch_metadata_returns_an_error_instead_of_panicking() {
+        let batch: BatchOperation<(), u64, (), ()> = BatchOperation::new(vec![], Default::default());
+
+        let error = batch.remove_info_at_pos(0).await.unwrap_err();
+
+        assert!(error.to_string().contains("batch metadata position 0 is missing"));
     }
 }
