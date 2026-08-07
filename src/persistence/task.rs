@@ -2,11 +2,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use data_bucket::page::PageId;
+use futures::FutureExt;
 use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -417,6 +419,7 @@ mod lifecycle_tests {
         None,
         Engine,
         IndexCorruption,
+        Panic,
     }
 
     impl PersistenceEngine<(), u64, TestEvents, TestIndex> for TestEngine {
@@ -447,6 +450,7 @@ mod lifecycle_tests {
                         PersistenceIndexCorruption::new("table/primary.wt.idx", "injected shadow divergence").into(),
                     );
                 }
+                TestFailure::Panic => panic!("injected persistence worker panic"),
             }
             self.batches.fetch_add(1, Ordering::Relaxed);
             self.events.lock().push("batch");
@@ -565,6 +569,23 @@ mod lifecycle_tests {
 
         let close_error = task.close().await.unwrap_err();
         assert!(Arc::ptr_eq(&wait_error, &close_error));
+    }
+
+    #[tokio::test]
+    async fn engine_panic_is_terminal_and_reported_to_waiters() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::Panic,
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        let wait_error = task.wait_for_failure().await.unwrap_err();
+        assert!(wait_error.to_string().contains("injected persistence worker panic"));
+
+        let intake_error = task.apply_operation(insert_operation(2)).unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &intake_error));
     }
 
     #[tokio::test]
@@ -864,7 +885,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         let analyzer_in_progress = Arc::new(AtomicBool::new(true));
         let task_analyzer_in_progress = analyzer_in_progress.clone();
 
-        let task = async move {
+        let worker = async move {
             let mut pending_reclaim: Option<Vec<PageId>> = None;
             loop {
                 let message = if pending_reclaim.is_none() {
@@ -951,6 +972,17 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 }
             }
         };
+        let supervisor_lifecycle = lifecycle.clone();
+        let task = async move {
+            if let Err(payload) = AssertUnwindSafe(worker).catch_unwind().await {
+                let reason = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("persistence worker panicked without a message");
+                supervisor_lifecycle.fail(eyre::eyre!("persistence worker panicked: {reason}"));
+            }
+        };
         let engine_task_handle = tokio::spawn(task);
         Self {
             queue,
@@ -1004,6 +1036,22 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             tokio::select! {
                 _ = self.lifecycle.notify.notified() => {},
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+        }
+    }
+
+    /// Waits until the worker fails or closes.
+    ///
+    /// Unlike [`Self::wait_for_ops`], an idle healthy worker does not satisfy
+    /// this future. Applications can keep it alive as a failure notification
+    /// without forcing persistence queues to drain or polling their state.
+    pub async fn wait_for_failure(&self) -> PersistenceResult {
+        loop {
+            let notified = self.lifecycle.notify.notified();
+            match self.lifecycle.state() {
+                PersistenceState::Failed(error) => return Err(error),
+                PersistenceState::Closed => return Ok(()),
+                PersistenceState::Running | PersistenceState::Closing => notified.await,
             }
         }
     }

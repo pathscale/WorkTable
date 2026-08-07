@@ -10,6 +10,7 @@ impl Generator {
         let space_info_fn = self.gen_worktable_space_info_fn();
         let persisted_pk_fn = self.gen_worktable_persisted_primary_key_fn();
         let wait_for_ops_fn = self.gen_worktable_wait_for_ops_fn();
+        let wait_for_failure_fn = self.gen_worktable_wait_for_failure_fn();
         let close_fn = self.gen_worktable_close_fn();
         let persisted_data_file_size_fn = self.gen_persisted_data_file_size_fn();
 
@@ -18,6 +19,7 @@ impl Generator {
                 #space_info_fn
                 #persisted_pk_fn
                 #wait_for_ops_fn
+                #wait_for_failure_fn
                 #close_fn
                 #persisted_data_file_size_fn
             }
@@ -50,6 +52,24 @@ impl Generator {
             quote! {
                 pub async fn wait_for_ops(&self) -> PersistenceResult {
                    self.1.wait_for_ops().await
+                }
+            }
+        }
+    }
+
+    fn gen_worktable_wait_for_failure_fn(&self) -> TokenStream {
+        if self.attributes.read_only {
+            quote! {
+                pub async fn wait_for_persistence_failure(&self) -> PersistenceResult {
+                    std::future::pending().await
+                }
+            }
+        } else {
+            quote! {
+                /// Waits for this table's persistence worker to fail.
+                /// An idle healthy worker does not complete this future.
+                pub async fn wait_for_persistence_failure(&self) -> PersistenceResult {
+                    self.1.wait_for_failure().await
                 }
             }
         }
