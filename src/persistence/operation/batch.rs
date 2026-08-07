@@ -66,16 +66,18 @@ impl From<QueueInnerRow> for BatchInnerRow {
     }
 }
 
-/// Coalesces durable row writes by physical storage slot.
+/// Coalesces durable row writes by physical storage slot and preserves their
+/// creation order.
 ///
 /// `Link::length` can change when an unsized row is reinserted into a reused
 /// `(page_id, offset)`. Treating the two lengths as different keys leaves
-/// overlapping writes in the same batch, whose eventual application order is
-/// derived from a hash map. The newest operation must be the only write for a
-/// physical slot. WorkTable-generated operation IDs use `Uuid::now_v7`, whose
-/// shared process context guarantees creation-order sorting even within one
-/// millisecond; callers constructing `Operation` values manually must preserve
-/// that ordering contract.
+/// overlapping writes in the same batch. The newest operation must be the only
+/// write for an identical physical start, and writes at different starts must
+/// still be applied oldest-to-newest: range splitting can make them overlap.
+/// WorkTable-generated operation IDs use `Uuid::now_v7`, whose shared process
+/// context guarantees creation-order sorting even within one millisecond;
+/// callers constructing `Operation` values manually must preserve that
+/// ordering contract.
 fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
     ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
 ) -> BatchData {
@@ -99,11 +101,21 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
         }
     }
 
-    let mut data = HashMap::new();
-    for (_, (_, link, bytes)) in latest {
-        data.entry(link.page_id).or_insert_with(Vec::new).push((link, bytes));
+    let mut ordered = HashMap::new();
+    for (_, (operation_id, link, bytes)) in latest {
+        ordered
+            .entry(link.page_id)
+            .or_insert_with(Vec::new)
+            .push((operation_id, link, bytes));
     }
-    data
+    ordered
+        .into_iter()
+        .map(|(page_id, mut writes)| {
+            writes.sort_unstable_by_key(|(operation_id, _, _)| *operation_id);
+            let writes = writes.into_iter().map(|(_, link, bytes)| (link, bytes)).collect();
+            (page_id, writes)
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -454,5 +466,26 @@ mod tests {
         let writes = batch.get(&1.into()).unwrap();
 
         assert_eq!(writes, &vec![(new_link, vec![2; 6])]);
+    }
+
+    #[test]
+    fn overlapping_reused_ranges_remain_in_creation_order() {
+        let older_link = Link {
+            page_id: 1.into(),
+            offset: 128,
+            length: 8,
+        };
+        let newer_link = Link {
+            page_id: 1.into(),
+            offset: 132,
+            length: 8,
+        };
+
+        for _ in 0..128 {
+            let batch = latest_data_writes(&[insert(2, newer_link, vec![2; 8]), insert(1, older_link, vec![1; 8])]);
+            let writes = batch.get(&1.into()).unwrap();
+
+            assert_eq!(writes, &vec![(older_link, vec![1; 8]), (newer_link, vec![2; 8])]);
+        }
     }
 }
