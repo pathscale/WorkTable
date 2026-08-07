@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::prelude::From;
 
-pub use batch::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, PosByOpIdQuery};
+pub use batch::{BatchInnerRow, BatchInnerWorkTable, BatchOperation};
 pub use operation::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, UpdateOperation};
 pub use util::validate_events;
 

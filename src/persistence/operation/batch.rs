@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -26,17 +26,15 @@ worktable! (
         pos: usize,
     },
     indexes: {
-        operation_id_idx: operation_id unique,
+        operation_id_idx: operation_id,
         page_id_idx: page_id,
         link_idx: link,
         op_type_idx: op_type,
+        pos_idx: pos unique,
     },
     queries: {
         update: {
-            PosByOpId(pos) by operation_id,
-        },
-        delete: {
-            ByOpId() by operation_id,
+            PosById(pos) by id,
         }
     }
 );
@@ -81,8 +79,11 @@ impl From<QueueInnerRow> for BatchInnerRow {
 fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
     ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
 ) -> BatchData {
-    let mut latest: HashMap<(PageId, u32), (OperationId, Link, Vec<u8>)> = HashMap::new();
-    for op in ops {
+    type PhysicalSlot = (PageId, u32);
+    type SequencedWrite = (OperationId, usize, Link, Vec<u8>);
+
+    let mut latest: HashMap<PhysicalSlot, SequencedWrite> = HashMap::new();
+    for (sequence, op) in ops.iter().enumerate() {
         let Some(bytes) = op.bytes() else {
             continue;
         };
@@ -91,28 +92,28 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
         let key = (link.page_id, link.offset);
         match latest.entry(key) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
-                if operation_id > entry.get().0 {
-                    entry.insert((operation_id, link, bytes.to_vec()));
+                if (operation_id, sequence) > (entry.get().0, entry.get().1) {
+                    entry.insert((operation_id, sequence, link, bytes.to_vec()));
                 }
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert((operation_id, link, bytes.to_vec()));
+                entry.insert((operation_id, sequence, link, bytes.to_vec()));
             }
         }
     }
 
     let mut ordered = HashMap::new();
-    for (_, (operation_id, link, bytes)) in latest {
+    for (_, (operation_id, sequence, link, bytes)) in latest {
         ordered
             .entry(link.page_id)
             .or_insert_with(Vec::new)
-            .push((operation_id, link, bytes));
+            .push((operation_id, sequence, link, bytes));
     }
     ordered
         .into_iter()
         .map(|(page_id, mut writes)| {
-            writes.sort_unstable_by_key(|(operation_id, _, _)| *operation_id);
-            let writes = writes.into_iter().map(|(_, link, bytes)| (link, bytes)).collect();
+            writes.sort_unstable_by_key(|(operation_id, sequence, _, _)| (*operation_id, *sequence));
+            let writes = writes.into_iter().map(|(_, _, link, bytes)| (link, bytes)).collect();
             (page_id, writes)
         })
         .collect()
@@ -167,8 +168,8 @@ where
     async fn remove_operations_from_events(
         &mut self,
         invalid_events: PreparedIndexEvents<PrimaryKey, SecondaryEvents>,
-    ) -> HashSet<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>> {
-        let mut removed_ops = HashSet::new();
+    ) -> Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>> {
+        let mut removed_ops = Vec::new();
 
         for ev in &invalid_events.primary_evs {
             if let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
@@ -183,27 +184,26 @@ where
                     false
                 }
             }) {
-                let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
-                removed_ops.insert(op);
+                let pos = self.ops.len() - (operation_pos_rev + 1);
+                let op = self.ops.remove(pos);
+                self.remove_info_at_pos(pos).await;
+                removed_ops.push(op);
             }
         }
-        for (index, id) in invalid_events.secondary_evs.iter_event_ids() {
+        let secondary_event_ids = invalid_events.secondary_evs.iter_event_ids().collect::<Vec<_>>();
+        for (index, id) in secondary_event_ids {
             if let Some(operation_pos_rev) = self.ops.iter().rev().position(|op| {
                 let evs = op.secondary_key_events();
                 evs.contains_event(index, id)
             }) {
-                let op = self.ops.remove(self.ops.len() - (operation_pos_rev + 1));
-                removed_ops.insert(op);
+                let pos = self.ops.len() - (operation_pos_rev + 1);
+                let op = self.ops.remove(pos);
+                self.remove_info_at_pos(pos).await;
+                removed_ops.push(op);
             };
             // else it was already removed with primary
         }
         for op in &removed_ops {
-            let pk = self
-                .info_wt
-                .select_by_operation_id(op.operation_id())
-                .expect("exists as all should be inserted on prepare step")
-                .id;
-            self.info_wt.delete_without_lock::<_>(pk).await.unwrap();
             let prepared_evs = self
                 .prepared_index_evs
                 .as_mut()
@@ -223,6 +223,25 @@ where
         }
 
         removed_ops
+    }
+
+    async fn remove_info_at_pos(&self, removed_pos: usize) {
+        let row = self
+            .info_wt
+            .select_by_pos(removed_pos)
+            .expect("batch metadata position must exist");
+        self.info_wt.delete_without_lock::<_>(row.id).await.unwrap();
+
+        for old_pos in (removed_pos + 1)..=self.ops.len() {
+            let row = self
+                .info_wt
+                .select_by_pos(old_pos)
+                .expect("later batch metadata position must exist");
+            self.info_wt
+                .update_pos_by_id(PosByIdQuery { pos: old_pos - 1 }, row.id)
+                .await
+                .unwrap();
+        }
     }
 
     pub fn get_last_event_ids(&self) -> LastEventIds<AvailableIndexes> {
@@ -351,12 +370,6 @@ where
             }
         }
 
-        for (pos, op) in self.ops.iter().enumerate() {
-            let op_id = op.operation_id();
-            let q = PosByOpIdQuery { pos };
-            self.info_wt.update_pos_by_op_id(q, op_id).await?
-        }
-
         Ok(Some(ops_to_remove))
     }
 
@@ -447,6 +460,17 @@ mod tests {
         })
     }
 
+    fn multi_insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
+        Operation::Insert(InsertOperation {
+            id: OperationId::Multi(Uuid::from_u128(id)),
+            primary_key_events: vec![],
+            secondary_keys_events: (),
+            pk_gen_state: (),
+            bytes,
+            link,
+        })
+    }
+
     #[test]
     fn variable_length_link_reuse_keeps_only_the_newest_physical_write() {
         let old_link = Link {
@@ -487,5 +511,50 @@ mod tests {
 
             assert_eq!(writes, &vec![(older_link, vec![1; 8]), (newer_link, vec![2; 8])]);
         }
+    }
+
+    #[test]
+    fn equal_id_overlapping_writes_preserve_batch_order() {
+        let older_link = Link {
+            page_id: 1.into(),
+            offset: 128,
+            length: 8,
+        };
+        let newer_link = Link {
+            page_id: 1.into(),
+            offset: 132,
+            length: 8,
+        };
+
+        let batch = latest_data_writes(&[
+            multi_insert(1, older_link, vec![1; 8]),
+            multi_insert(1, newer_link, vec![2; 8]),
+        ]);
+
+        assert_eq!(
+            batch.get(&1.into()).unwrap(),
+            &vec![(older_link, vec![1; 8]), (newer_link, vec![2; 8])]
+        );
+    }
+
+    #[test]
+    fn equal_id_physical_slot_reuse_keeps_later_batch_write() {
+        let old_link = Link {
+            page_id: 1.into(),
+            offset: 128,
+            length: 4,
+        };
+        let new_link = Link {
+            page_id: 1.into(),
+            offset: 128,
+            length: 6,
+        };
+
+        let batch = latest_data_writes(&[
+            multi_insert(1, old_link, vec![1; 4]),
+            multi_insert(1, new_link, vec![2; 6]),
+        ]);
+
+        assert_eq!(batch.get(&1.into()).unwrap(), &vec![(new_link, vec![2; 6])]);
     }
 }
