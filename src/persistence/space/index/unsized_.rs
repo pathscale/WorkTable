@@ -390,15 +390,27 @@ where
 
     async fn process_change_event_batch(&mut self, events: BatchChangeEvent<T>) -> eyre::Result<()> {
         let mut pages: HashMap<PageId, _> = HashMap::new();
+        // A split can change a page's maximum and therefore its table-of-
+        // contents key while later events in the same CDC batch still refer
+        // to the pre-split maximum. Keep those historical identities scoped
+        // to this batch so the event reaches the page it was generated from.
+        let mut page_aliases: HashMap<(T, Link), PageId> = HashMap::new();
         for ev in events {
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. } | ChangeEvent::RemoveAt { max_value, .. } => {
-                    let page_id = &(max_value.key.clone(), max_value.value);
+                    let event_page_key = (max_value.key.clone(), max_value.value);
 
                     let page_index = self
                         .table_of_contents
-                        .get(page_id)
-                        .expect("page should be available in table of contents");
+                        .get(&event_page_key)
+                        .or_else(|| page_aliases.get(&event_page_key).copied())
+                        .ok_or_else(|| {
+                            eyre!(
+                                "unsized index event references missing page {event_page_key:?}: event={ev:?}; table_of_contents={:?}; buffered_pages={:?}",
+                                self.table_of_contents.iter().collect::<Vec<_>>(),
+                                pages.keys().collect::<Vec<_>>()
+                            )
+                        })?;
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
@@ -413,19 +425,19 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
-                    page_to_update.inner.apply_change_event(ev.clone())?;
-                    if &(
+                    let current_page_key = (
                         page_to_update.inner.node_id.key.clone(),
                         page_to_update.inner.node_id.link,
-                    ) != page_id
-                    {
-                        self.table_of_contents.update_key(
-                            page_id,
-                            (
-                                page_to_update.inner.node_id.key.clone(),
-                                page_to_update.inner.node_id.link,
-                            ),
-                        );
+                    );
+                    page_to_update.inner.apply_change_event(ev.clone())?;
+                    let updated_page_key = (
+                        page_to_update.inner.node_id.key.clone(),
+                        page_to_update.inner.node_id.link,
+                    );
+                    page_aliases.insert(event_page_key, page_index);
+                    page_aliases.insert(current_page_key.clone(), page_index);
+                    if updated_page_key != current_page_key {
+                        self.table_of_contents.update_key(&current_page_key, updated_page_key);
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -452,12 +464,19 @@ where
                     max_value,
                     split_index,
                 } => {
-                    let page_id = &(max_value.key.clone(), max_value.value);
+                    let event_page_key = (max_value.key.clone(), max_value.value);
 
                     let page_index = self
                         .table_of_contents
-                        .get(page_id)
-                        .expect("page should be available in table of contents");
+                        .get(&event_page_key)
+                        .or_else(|| page_aliases.get(&event_page_key).copied())
+                        .ok_or_else(|| {
+                            eyre!(
+                                "unsized index split references missing page {event_page_key:?}: event={ev:?}; table_of_contents={:?}; buffered_pages={:?}",
+                                self.table_of_contents.iter().collect::<Vec<_>>(),
+                                pages.keys().collect::<Vec<_>>()
+                            )
+                        })?;
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
@@ -472,6 +491,10 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
+                    let current_page_key = (
+                        page_to_update.inner.node_id.key.clone(),
+                        page_to_update.inner.node_id.link,
+                    );
                     let splitted_page = page_to_update.inner.split(*split_index);
 
                     let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
@@ -481,7 +504,7 @@ where
                     };
 
                     self.table_of_contents.update_key(
-                        page_id,
+                        &current_page_key,
                         (
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
@@ -497,6 +520,10 @@ where
                         header,
                     };
                     pages.insert(new_page_id, general_page);
+                    // The pre-split maximum remains the right page's identity.
+                    // A following remove/insert pair can still name it even
+                    // after the remove temporarily lowers that maximum.
+                    page_aliases.insert(event_page_key, new_page_id);
                 }
             }
         }
