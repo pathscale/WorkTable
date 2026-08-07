@@ -12,7 +12,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use worktable_codegen::worktable;
 
-use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, PosByOpIdQuery};
+use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId};
 use crate::persistence::{
     PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceResult, PersistenceState,
 };
@@ -288,27 +288,33 @@ where
             ops_pos_set.extend(rows.into_iter().map(|r| (r.pos, r.id)))
         }
 
-        let mut ops = Vec::with_capacity(ops_pos_set.len());
+        // Queue row IDs are monotonic insertion sequence numbers. Restore that
+        // sequence after HashSet collection so operations sharing one Multi ID
+        // remain in their original order through the stable OperationId sort.
+        let mut ops_positions = ops_pos_set.into_iter().collect::<Vec<_>>();
+        ops_positions.sort_unstable_by_key(|(_, id)| *id);
+
+        let mut queued_ops = Vec::with_capacity(ops_positions.len());
         let info_wt = BatchInnerWorkTable::default();
-        for (pos, id) in ops_pos_set {
-            let mut row: BatchInnerRow = self.queue_inner_wt.select(id).expect("exists as Id exists").into();
+        for (pos, id) in ops_positions {
+            let row: BatchInnerRow = self.queue_inner_wt.select(id).expect("exists as Id exists").into();
             let op = self
                 .operations
                 .remove(pos)
                 .expect("should be available as presented in table");
-            row.pos = ops.len();
-            row.op_type = op.operation_type();
-            ops.push(op);
-            info_wt.insert(row)?;
+            queued_ops.push((op, row));
             self.queue_inner_wt.delete_without_lock::<_>(id).await?
         }
         // println!("New wt generated {:?}", start.elapsed());
-        // return ops sorted by `OperationId`
-        ops.sort_by_key(|k| k.operation_id());
-        for (pos, op) in ops.iter().enumerate() {
-            let op_id = op.operation_id();
-            let q = PosByOpIdQuery { pos };
-            info_wt.update_pos_by_op_id(q, op_id).await?;
+        // The sort is stable, so queue creation order breaks ties for rows
+        // produced by one multi-row operation.
+        queued_ops.sort_by_key(|(op, _)| op.operation_id());
+        let mut ops = Vec::with_capacity(queued_ops.len());
+        for (pos, (op, mut row)) in queued_ops.into_iter().enumerate() {
+            row.pos = pos;
+            row.op_type = op.operation_type();
+            info_wt.insert(row)?;
+            ops.push(op);
         }
 
         let mut op = BatchOperation::new(ops, info_wt);
@@ -470,6 +476,59 @@ mod lifecycle_tests {
                 length: 1,
             },
         })
+    }
+
+    fn multi_insert_operation(id: u128, offset: u32, byte: u8) -> Operation<(), u64, TestEvents> {
+        Operation::Insert(InsertOperation {
+            id: OperationId::Multi(uuid::Uuid::from_u128(id)),
+            pk_gen_state: (),
+            primary_key_events: vec![],
+            secondary_keys_events: TestEvents,
+            bytes: vec![byte; 8],
+            link: Link {
+                page_id: 1.into(),
+                offset,
+                length: 8,
+            },
+        })
+    }
+
+    #[tokio::test]
+    async fn analyzer_preserves_queue_order_for_operations_sharing_a_multi_id() {
+        let queue_inner_wt = Arc::new(QueueInnerWorkTable::default());
+        let mut analyzer: QueueAnalyzer<(), u64, TestEvents, TestIndex> = QueueAnalyzer::new(queue_inner_wt);
+        analyzer.push(multi_insert_operation(1, 128, 1)).unwrap();
+        analyzer.push(multi_insert_operation(1, 132, 2)).unwrap();
+
+        let batch = analyzer
+            .collect_batch_from_op_id(OperationId::Multi(uuid::Uuid::from_u128(1)))
+            .await
+            .unwrap()
+            .unwrap()
+            .get_batch_data_op()
+            .unwrap();
+
+        assert_eq!(
+            batch.get(&1.into()).unwrap(),
+            &vec![
+                (
+                    Link {
+                        page_id: 1.into(),
+                        offset: 128,
+                        length: 8,
+                    },
+                    vec![1; 8],
+                ),
+                (
+                    Link {
+                        page_id: 1.into(),
+                        offset: 132,
+                        length: 8,
+                    },
+                    vec![2; 8],
+                ),
+            ]
+        );
     }
 
     #[tokio::test]
