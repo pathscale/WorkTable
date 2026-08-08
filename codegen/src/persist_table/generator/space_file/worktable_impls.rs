@@ -10,7 +10,7 @@ impl Generator {
         let space_info_fn = self.gen_worktable_space_info_fn();
         let persisted_pk_fn = self.gen_worktable_persisted_primary_key_fn();
         let wait_for_ops_fn = self.gen_worktable_wait_for_ops_fn();
-        let wait_for_failure_fn = self.gen_worktable_wait_for_failure_fn();
+        let persistence_monitor_fn = self.gen_worktable_persistence_monitor_fn();
         let close_fn = self.gen_worktable_close_fn();
         let persisted_data_file_size_fn = self.gen_persisted_data_file_size_fn();
 
@@ -19,7 +19,7 @@ impl Generator {
                 #space_info_fn
                 #persisted_pk_fn
                 #wait_for_ops_fn
-                #wait_for_failure_fn
+                #persistence_monitor_fn
                 #close_fn
                 #persisted_data_file_size_fn
             }
@@ -57,16 +57,15 @@ impl Generator {
         }
     }
 
-    fn gen_worktable_wait_for_failure_fn(&self) -> TokenStream {
+    fn gen_worktable_persistence_monitor_fn(&self) -> TokenStream {
         if self.attributes.read_only {
             quote! {}
         } else {
             quote! {
-                /// Waits for this table's persistence worker to fail or close.
-                /// An idle healthy worker does not complete this future.
-                /// A graceful close returns `Ok(())`.
-                pub async fn wait_for_persistence_failure(&self) -> PersistenceResult {
-                    self.1.wait_for_failure().await
+                /// Returns a cloneable terminal-state monitor that does not
+                /// borrow the table and can therefore observe `close()`.
+                pub fn persistence_monitor(&self) -> PersistenceMonitor {
+                    self.1.monitor()
                 }
             }
         }

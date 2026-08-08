@@ -2,13 +2,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use data_bucket::page::PageId;
-use futures::FutureExt;
 use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -113,9 +111,8 @@ impl PersistenceLifecycle {
     }
 }
 
-/// Marks a worker cancellation as terminal even when its future never runs to
-/// completion. Tokio cancellation drops the future; it is not a panic and
-/// therefore cannot be observed by `catch_unwind`.
+/// Marks every non-graceful worker exit as terminal, including cancellation
+/// before the worker future's first poll and panic unwinding during a poll.
 struct WorkerCompletionGuard {
     lifecycle: Arc<PersistenceLifecycle>,
     armed: bool,
@@ -134,7 +131,42 @@ impl WorkerCompletionGuard {
 impl Drop for WorkerCompletionGuard {
     fn drop(&mut self) {
         if self.armed {
-            self.lifecycle.fail(eyre::eyre!("persistence worker was cancelled"));
+            let reason = if std::thread::panicking() {
+                "persistence worker panicked"
+            } else {
+                "persistence worker was cancelled"
+            };
+            self.lifecycle.fail(eyre::eyre!(reason));
+        }
+    }
+}
+
+/// Cloneable terminal-state handle independent of table ownership.
+///
+/// Create this handle before spawning a supervisor. The table can then still
+/// be moved into `close()`, while the supervisor observes either graceful
+/// closure or a terminal persistence failure.
+#[derive(Clone, Debug)]
+pub struct PersistenceMonitor {
+    lifecycle: Arc<PersistenceLifecycle>,
+}
+
+impl PersistenceMonitor {
+    /// Waits until the worker fails or closes.
+    pub async fn wait_for_failure(self) -> PersistenceResult {
+        loop {
+            let notified = self.lifecycle.terminal_notify.notified();
+            tokio::pin!(notified);
+            // `notify_waiters` does not retain a permit. Register this waiter
+            // before reading the lifecycle state so a terminal transition
+            // cannot land between the state read and the first poll of
+            // `notified` and be lost forever.
+            notified.as_mut().enable();
+            match self.lifecycle.state() {
+                PersistenceState::Failed(error) => return Err(error),
+                PersistenceState::Closed => return Ok(()),
+                PersistenceState::Running | PersistenceState::Closing => notified.await,
+            }
         }
     }
 }
@@ -581,6 +613,22 @@ mod lifecycle_tests {
         task.close().await.unwrap();
 
         assert_eq!(batches.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn detached_monitor_observes_graceful_close() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::None,
+        });
+        let monitor = task.monitor();
+        let waiter = tokio::spawn(monitor.wait_for_failure());
+
+        task.close().await.unwrap();
+
+        waiter.await.unwrap().unwrap();
     }
 
     #[tokio::test]
@@ -1044,18 +1092,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 }
             }
         };
-        let supervisor_lifecycle = lifecycle.clone();
         // Constructed outside the async block so cancellation before its first
         // poll still drops the guard and publishes terminal failure.
         let completion_guard = WorkerCompletionGuard::new(lifecycle.clone());
         let task = async move {
-            if let Err(payload) = AssertUnwindSafe(worker).catch_unwind().await {
-                // The process panic hook already records the local diagnostic.
-                // Do not propagate arbitrary panic payloads to API consumers:
-                // engines can panic with paths or row-derived strings.
-                drop(payload);
-                supervisor_lifecycle.fail(eyre::eyre!("persistence worker panicked"));
-            }
+            worker.await;
             completion_guard.disarm();
         };
         let engine_task_handle = tokio::spawn(task);
@@ -1115,28 +1156,19 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         }
     }
 
+    /// Returns a cloneable monitor independent of this task's ownership.
+    pub fn monitor(&self) -> PersistenceMonitor {
+        PersistenceMonitor {
+            lifecycle: self.lifecycle.clone(),
+        }
+    }
+
     /// Waits until the worker fails or closes.
     ///
-    /// Unlike [`Self::wait_for_ops`], an idle healthy worker does not satisfy
-    /// this future. Applications can keep it alive as a terminal-state
-    /// notification without forcing persistence queues to drain or polling
-    /// their state. A graceful close returns `Ok(())`; a failure returns the
-    /// shared terminal error.
+    /// Prefer [`Self::monitor`] when another task must keep waiting while this
+    /// task is moved into [`Self::close`].
     pub async fn wait_for_failure(&self) -> PersistenceResult {
-        loop {
-            let notified = self.lifecycle.terminal_notify.notified();
-            tokio::pin!(notified);
-            // `notify_waiters` does not retain a permit. Register this waiter
-            // before reading the lifecycle state so a terminal transition
-            // cannot land between the state read and the first poll of
-            // `notified` and be lost forever.
-            notified.as_mut().enable();
-            match self.lifecycle.state() {
-                PersistenceState::Failed(error) => return Err(error),
-                PersistenceState::Closed => return Ok(()),
-                PersistenceState::Running | PersistenceState::Closing => notified.await,
-            }
-        }
+        self.monitor().wait_for_failure().await
     }
 
     pub async fn close(mut self) -> PersistenceResult {

@@ -20,7 +20,7 @@ pub use space::{
     SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps,
     map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
 };
-pub use task::PersistenceTask;
+pub use task::{PersistenceMonitor, PersistenceTask};
 
 mod engine;
 mod error;

@@ -410,7 +410,7 @@ where
                         .or_else(|| page_aliases.get(&event_page_key))
                         .ok_or_else(|| {
                             eyre!(
-                                "unsized index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                                "unsized index event for {event_page_key:?} references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
                                 self.table_of_contents.pages.len(),
                                 pages.len(),
                                 page_aliases.len()
@@ -451,16 +451,28 @@ where
                         }
                         _ => false,
                     };
-                    let current_page_key = can_change_max.then(|| {
+                    #[cfg(debug_assertions)]
+                    let debug_pre_event_page_key = (
+                        page_to_update.inner.node_id.key.clone(),
+                        page_to_update.inner.node_id.link,
+                    );
+                    let pre_event_page_key = can_change_max.then(|| {
                         (
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
                         )
                     });
                     page_to_update.inner.apply_change_event(ev.clone())?;
-                    if let Some(current_page_key) = current_page_key
-                        && (page_to_update.inner.node_id.key != current_page_key.0
-                            || page_to_update.inner.node_id.link != current_page_key.1)
+                    #[cfg(debug_assertions)]
+                    debug_assert!(
+                        can_change_max
+                            || (page_to_update.inner.node_id.key == debug_pre_event_page_key.0
+                                && page_to_update.inner.node_id.link == debug_pre_event_page_key.1),
+                        "data_bucket changed an unsized page identity outside WorkTable's can_change_max predicate"
+                    );
+                    if let Some(pre_event_page_key) = pre_event_page_key
+                        && (page_to_update.inner.node_id.key != pre_event_page_key.0
+                            || page_to_update.inner.node_id.link != pre_event_page_key.1)
                     {
                         let updated_page_key = (
                             page_to_update.inner.node_id.key.clone(),
@@ -470,8 +482,8 @@ where
                         // `event_page_key` may be a historical alias, so using
                         // it as the canonical update target can remove or
                         // rewrite the wrong segment.
-                        self.table_of_contents.update_key(&current_page_key, updated_page_key);
-                        page_aliases.replace(page_index, [event_page_key, current_page_key])?;
+                        self.table_of_contents.update_key(&pre_event_page_key, updated_page_key);
+                        page_aliases.replace(page_index, [event_page_key, pre_event_page_key])?;
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -506,7 +518,7 @@ where
                         .or_else(|| page_aliases.get(&event_page_key))
                         .ok_or_else(|| {
                             eyre!(
-                                "unsized index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                                "unsized index split for {event_page_key:?} references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
                                 self.table_of_contents.pages.len(),
                                 pages.len(),
                                 page_aliases.len()
@@ -526,7 +538,7 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
-                    let current_page_key = (
+                    let pre_split_page_key = (
                         page_to_update.inner.node_id.key.clone(),
                         page_to_update.inner.node_id.link,
                     );
@@ -539,7 +551,7 @@ where
                     };
 
                     self.table_of_contents.update_key(
-                        &current_page_key,
+                        &pre_split_page_key,
                         (
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
@@ -559,7 +571,7 @@ where
                     // A following remove/insert pair can still name it even
                     // after the remove temporarily lowers that maximum.
                     page_aliases.remove_page(page_index);
-                    page_aliases.replace(new_page_id, [event_page_key, current_page_key])?;
+                    page_aliases.replace(new_page_id, [event_page_key, pre_split_page_key])?;
                 }
             }
         }
