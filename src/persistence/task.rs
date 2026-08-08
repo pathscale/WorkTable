@@ -43,14 +43,18 @@ const MAX_PAGE_AMOUNT: usize = 16;
 #[derive(Debug)]
 struct PersistenceLifecycle {
     state: ParkingMutex<PersistenceState>,
-    notify: Notify,
+    /// Terminal transitions only: `Failed` or `Closed`.
+    terminal_notify: Notify,
+    /// Queue-drain and lifecycle progress observed by `wait_for_ops`.
+    progress_notify: Notify,
 }
 
 impl PersistenceLifecycle {
     fn new() -> Self {
         Self {
             state: ParkingMutex::new(PersistenceState::Running),
-            notify: Notify::new(),
+            terminal_notify: Notify::new(),
+            progress_notify: Notify::new(),
         }
     }
 
@@ -63,7 +67,7 @@ impl PersistenceLifecycle {
         match &*state {
             PersistenceState::Running => {
                 *state = PersistenceState::Closing;
-                self.notify.notify_waiters();
+                self.progress_notify.notify_waiters();
                 Ok(())
             }
             PersistenceState::Closing => Ok(()),
@@ -77,7 +81,8 @@ impl PersistenceLifecycle {
         if matches!(*state, PersistenceState::Closing) {
             *state = PersistenceState::Closed;
         }
-        self.notify.notify_waiters();
+        self.terminal_notify.notify_waiters();
+        self.progress_notify.notify_waiters();
     }
 
     fn fail(&self, report: eyre::Report) -> Arc<PersistenceError> {
@@ -93,7 +98,8 @@ impl PersistenceLifecycle {
                 error
             }
         };
-        self.notify.notify_waiters();
+        self.terminal_notify.notify_waiters();
+        self.progress_notify.notify_waiters();
         error
     }
 
@@ -963,7 +969,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     message
                 } else if analyzer.len() == 0 && pending_reclaim.is_none() {
                     task_analyzer_in_progress.store(false, Ordering::Release);
-                    engine_lifecycle.notify.notify_waiters();
+                    engine_lifecycle.progress_notify.notify_waiters();
                     if matches!(engine_lifecycle.state(), PersistenceState::Closing) {
                         engine_lifecycle.finish_close();
                         return;
@@ -1103,7 +1109,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             }
 
             tokio::select! {
-                _ = self.lifecycle.notify.notified() => {},
+                _ = self.lifecycle.progress_notify.notified() => {},
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             }
         }
@@ -1118,7 +1124,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     /// shared terminal error.
     pub async fn wait_for_failure(&self) -> PersistenceResult {
         loop {
-            let notified = self.lifecycle.notify.notified();
+            let notified = self.lifecycle.terminal_notify.notified();
             tokio::pin!(notified);
             // `notify_waiters` does not retain a permit. Register this waiter
             // before reading the lifecycle state so a terminal transition

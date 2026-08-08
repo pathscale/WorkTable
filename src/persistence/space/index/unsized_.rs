@@ -430,20 +430,48 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
-                    let current_page_key = (
-                        page_to_update.inner.node_id.key.clone(),
-                        page_to_update.inner.node_id.link,
-                    );
+                    // `apply_change_event` can only rewrite `node_id` in these
+                    // exact cases. Avoid cloning an unsized maximum for the
+                    // overwhelmingly common interior insert/remove path.
+                    let can_change_max = match &ev {
+                        ChangeEvent::InsertAt { value, index, .. } => {
+                            value.key > page_to_update.inner.node_id.key
+                                || *index == page_to_update.inner.slots_size as usize
+                        }
+                        ChangeEvent::RemoveAt {
+                            max_value,
+                            value,
+                            index,
+                            ..
+                        } => {
+                            value == max_value
+                                && *index != 0
+                                && page_to_update.inner.slots_size != 0
+                                && *index == page_to_update.inner.slots_size as usize - 1
+                        }
+                        _ => false,
+                    };
+                    let current_page_key = can_change_max.then(|| {
+                        (
+                            page_to_update.inner.node_id.key.clone(),
+                            page_to_update.inner.node_id.link,
+                        )
+                    });
                     page_to_update.inner.apply_change_event(ev.clone())?;
-                    if page_to_update.inner.node_id.key != current_page_key.0
-                        || page_to_update.inner.node_id.link != current_page_key.1
+                    if let Some(current_page_key) = current_page_key
+                        && (page_to_update.inner.node_id.key != current_page_key.0
+                            || page_to_update.inner.node_id.link != current_page_key.1)
                     {
                         let updated_page_key = (
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
                         );
+                        // The TOC owns the buffered page's actual identity.
+                        // `event_page_key` may be a historical alias, so using
+                        // it as the canonical update target can remove or
+                        // rewrite the wrong segment.
                         self.table_of_contents.update_key(&current_page_key, updated_page_key);
-                        page_aliases.replace(page_index, [event_page_key, current_page_key]);
+                        page_aliases.replace(page_index, [event_page_key, current_page_key])?;
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -531,7 +559,7 @@ where
                     // A following remove/insert pair can still name it even
                     // after the remove temporarily lowers that maximum.
                     page_aliases.remove_page(page_index);
-                    page_aliases.replace(new_page_id, [event_page_key, current_page_key]);
+                    page_aliases.replace(new_page_id, [event_page_key, current_page_key])?;
                 }
             }
         }
@@ -569,17 +597,20 @@ impl<T: Eq> PageAliasKeys<T> {
         self.slots.iter().flatten().any(|stored| stored == key)
     }
 
-    fn push(&mut self, key: (T, Link)) {
-        let slot = self
-            .slots
-            .iter_mut()
-            .find(|slot| slot.is_none())
-            .expect("a page has at most two transitional aliases");
+    fn push(&mut self, key: (T, Link)) -> bool {
+        let Some(slot) = self.slots.iter_mut().find(|slot| slot.is_none()) else {
+            return false;
+        };
         *slot = Some(key);
+        true
     }
 
     fn len(&self) -> usize {
         self.slots.iter().flatten().count()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &(T, Link)> {
+        self.slots.iter().flatten()
     }
 }
 
@@ -610,24 +641,39 @@ impl<T: Hash + Eq + Clone> PageAliases<T> {
         }
     }
 
-    fn replace(&mut self, page_id: PageId, keys: impl IntoIterator<Item = (T, Link)>) {
-        self.remove_page(page_id);
+    fn replace(&mut self, page_id: PageId, keys: impl IntoIterator<Item = (T, Link)>) -> eyre::Result<()> {
         let mut page_keys = PageAliasKeys::default();
         for key in keys {
             if page_keys.contains(&key) {
                 continue;
             }
-            // `(value, Link)` identifies one physical index entry, so it
-            // cannot be owned by another page at the same time. Keep one copy
-            // in each direction instead of interning keys behind `Arc` for an
-            // impossible cross-page migration path.
-            let previous = self.by_key.insert(key.clone(), page_id);
-            debug_assert!(previous.is_none(), "an alias cannot belong to two pages");
-            page_keys.push(key);
+            if !page_keys.push(key) {
+                return Err(eyre!("page {page_id:?} exceeded the two transitional alias invariant"));
+            }
+        }
+
+        // `(value, Link)` identifies one physical index entry, so it cannot be
+        // owned by another page. Enforce that invariant in release builds
+        // before changing either direction, rather than leaving the maps
+        // inconsistent if a future event-shape regression violates it.
+        for key in page_keys.iter() {
+            if let Some(previous_page) = self.by_key.get(key)
+                && *previous_page != page_id
+            {
+                return Err(eyre!(
+                    "page alias ownership collision between {previous_page:?} and {page_id:?}"
+                ));
+            }
+        }
+
+        self.remove_page(page_id);
+        for key in page_keys.iter() {
+            self.by_key.insert(key.clone(), page_id);
         }
         if page_keys.len() != 0 {
             self.by_page.insert(page_id, page_keys);
         }
+        Ok(())
     }
 }
 
@@ -648,7 +694,9 @@ mod alias_tests {
         let page_id = PageId::from(7);
         let mut aliases = PageAliases::default();
         for revision in 0..1_000 {
-            aliases.replace(page_id, [(format!("key-{revision}"), link(revision))]);
+            aliases
+                .replace(page_id, [(format!("key-{revision}"), link(revision))])
+                .unwrap();
         }
 
         assert_eq!(aliases.len(), 1);
@@ -660,12 +708,14 @@ mod alias_tests {
         let old_page = PageId::from(3);
         let right_page = PageId::from(4);
         let mut aliases = PageAliases::default();
-        aliases.replace(old_page, [("older".to_string(), link(1))]);
+        aliases.replace(old_page, [("older".to_string(), link(1))]).unwrap();
         aliases.remove_page(old_page);
-        aliases.replace(
-            right_page,
-            [("event".to_string(), link(2)), ("current".to_string(), link(3))],
-        );
+        aliases
+            .replace(
+                right_page,
+                [("event".to_string(), link(2)), ("current".to_string(), link(3))],
+            )
+            .unwrap();
 
         assert_eq!(aliases.len(), 2);
         assert_eq!(aliases.by_page.get(&right_page).map(PageAliasKeys::len), Some(2));
@@ -679,8 +729,10 @@ mod alias_tests {
         let after_remove = ("after-remove".to_string(), link(3));
         let mut aliases = PageAliases::default();
 
-        aliases.replace(right_page, [pre_split.clone(), post_split.clone()]);
-        aliases.replace(right_page, [pre_split.clone(), after_remove]);
+        aliases
+            .replace(right_page, [pre_split.clone(), post_split.clone()])
+            .unwrap();
+        aliases.replace(right_page, [pre_split.clone(), after_remove]).unwrap();
 
         assert_eq!(aliases.get(&pre_split), Some(right_page));
         assert_eq!(aliases.get(&post_split), None);
@@ -690,10 +742,14 @@ mod alias_tests {
     fn replacing_many_pages_preserves_constant_work_per_page() {
         let mut aliases = PageAliases::default();
         for page in 1..=1_000 {
-            aliases.replace(PageId::from(page), [(format!("old-{page}"), link(page))]);
+            aliases
+                .replace(PageId::from(page), [(format!("old-{page}"), link(page))])
+                .unwrap();
         }
         for page in 1..=1_000 {
-            aliases.replace(PageId::from(page), [(format!("new-{page}"), link(page + 1_000))]);
+            aliases
+                .replace(PageId::from(page), [(format!("new-{page}"), link(page + 1_000))])
+                .unwrap();
         }
 
         assert_eq!(aliases.len(), 1_000);
@@ -704,5 +760,31 @@ mod alias_tests {
                 Some(PageId::from(page))
             );
         }
+    }
+
+    #[test]
+    fn alias_invariants_fail_without_corrupting_existing_ownership() {
+        let first_page = PageId::from(1);
+        let second_page = PageId::from(2);
+        let shared = ("shared".to_string(), link(1));
+        let mut aliases = PageAliases::default();
+        aliases.replace(first_page, [shared.clone()]).unwrap();
+
+        assert!(aliases.replace(second_page, [shared.clone()]).is_err());
+        assert_eq!(aliases.get(&shared), Some(first_page));
+        assert!(
+            aliases
+                .replace(
+                    second_page,
+                    [
+                        ("one".to_string(), link(2)),
+                        ("two".to_string(), link(3)),
+                        ("three".to_string(), link(4)),
+                    ],
+                )
+                .is_err()
+        );
+        assert_eq!(aliases.get(&shared), Some(first_page));
+        assert!(!aliases.by_page.contains_key(&second_page));
     }
 }
