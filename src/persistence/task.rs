@@ -1052,6 +1052,12 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     pub async fn wait_for_failure(&self) -> PersistenceResult {
         loop {
             let notified = self.lifecycle.notify.notified();
+            tokio::pin!(notified);
+            // `notify_waiters` does not retain a permit. Register this waiter
+            // before reading the lifecycle state so a terminal transition
+            // cannot land between the state read and the first poll of
+            // `notified` and be lost forever.
+            notified.as_mut().enable();
             match self.lifecycle.state() {
                 PersistenceState::Failed(error) => return Err(error),
                 PersistenceState::Closed => return Ok(()),
