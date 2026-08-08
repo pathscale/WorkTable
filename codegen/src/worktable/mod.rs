@@ -8,6 +8,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut columns = None;
     let mut queries = None;
     let mut indexes = None;
+    let mut columnar_indexes = None;
     let mut config = None;
 
     let name = parser.parse_name()?;
@@ -22,6 +23,10 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             "indexes" => {
                 let res = parser.parse_indexes()?;
                 indexes = Some(res);
+            }
+            "columnar_indexes" => {
+                let res = parser.parse_columnar_indexes()?;
+                columnar_indexes = Some(res);
             }
             "queries" => {
                 let res = parser.parse_queries()?;
@@ -51,14 +56,93 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     if let Some(i) = indexes {
         columns.indexes = i
     }
+    if let Some(i) = columnar_indexes {
+        columns.columnar_indexes = i.indexes;
+    }
+
+    let columnar_chunk_rows = config
+        .as_ref()
+        .map(|config| config.columnar_chunk_rows)
+        .unwrap_or(crate::common::model::DEFAULT_COLUMNAR_CHUNK_ROWS);
+    columns.column_slot_id = config
+        .as_ref()
+        .map(|config| config.columnar_slot_id)
+        .unwrap_or_default();
+    for field in columns.columnar_fields.values_mut() {
+        let chunk_rows = field.chunk_rows.unwrap_or(columnar_chunk_rows);
+        let (smaller, larger) = if chunk_rows <= columnar_chunk_rows {
+            (chunk_rows, columnar_chunk_rows)
+        } else {
+            (columnar_chunk_rows, chunk_rows)
+        };
+        let nested = larger % smaller == 0 && (larger / smaller).is_power_of_two();
+        if !nested {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "columnar chunk_rows({chunk_rows}) must be a power-of-two multiple or divisor of config.columnar_chunk_rows ({columnar_chunk_rows})"
+                ),
+            ));
+        }
+        field.chunk_rows = Some(chunk_rows);
+    }
 
     validate_index_backends(&columns, persistence)?;
+    validate_columnar_indexes(&columns)?;
 
     if persistence.is_persisted() {
         crate::generators::persist::expand(name, columns, queries, config, version)
     } else {
         crate::generators::in_memory::expand_from_parsed(name, columns, queries, config)
     }
+}
+
+fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
+    for primary_key in &columns.primary_keys {
+        if columns.columnar_fields.contains_key(primary_key) {
+            return Err(syn::Error::new(
+                primary_key.span(),
+                "the primary key participates in columnar identity implicitly and must not declare `columnar`",
+            ));
+        }
+    }
+
+    if !columns.columnar_indexes.is_empty() && columns.columnar_fields.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "`columnar_indexes` requires at least one field declaring `columnar`",
+        ));
+    }
+
+    for index in columns.columnar_indexes.values() {
+        if columns.columnar_fields.contains_key(&index.name) {
+            return Err(syn::Error::new(
+                index.name.span(),
+                format!(
+                    "columnar index `{}` conflicts with a columnar field name and would generate duplicate scan methods",
+                    index.name
+                ),
+            ));
+        }
+        for field in &index.cluster_by {
+            if !columns.columns_map.contains_key(field) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!("columnar index `{}` references unknown field `{field}`", index.name),
+                ));
+            }
+            if !columns.columnar_fields.contains_key(field) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!(
+                        "columnar index `{}` requires field `{field}` to declare `columnar(...)`",
+                        index.name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::Result<()> {
@@ -158,6 +242,125 @@ mod tests {
 
         assert!(error.to_string().contains("not part of the 1.0 grammar"));
         assert!(error.to_string().contains("keep `primary_key`"));
+    }
+
+    #[test]
+    fn columnar_index_requires_columnar_fields() {
+        let error = expand(quote! {
+            name: InvalidColumnarIndex,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                host_id: u64,
+            },
+            columnar_indexes: {
+                host_lookup: {
+                    cluster_by: [host_id],
+                },
+            },
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires at least one field declaring `columnar`")
+        );
+    }
+
+    #[test]
+    fn columnar_field_and_index_generate_scan_projection_and_lookup_apis() {
+        let output = expand(quote! {
+            name: ColumnarCodegen,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                host_id: u64 columnar(chunk_rows(1024), compression(none)),
+                timestamp: i64 columnar(chunk_rows(2048), compression(none)),
+            },
+            columnar_indexes: {
+                host_time: {
+                    cluster_by: [host_id, timestamp],
+                },
+            },
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(output.contains("columnar_scan_host_id"));
+        assert!(output.contains("columnar_project_timestamp"));
+        assert!(output.contains("columnar_select_host_time"));
+        assert!(output.contains("ColumnarColumn :: new (1024"));
+    }
+
+    #[test]
+    fn columnar_config_is_table_scoped_and_row_derives_stops_at_new_keys() {
+        let output = expand(quote! {
+            name: ColumnarConfig,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u64 columnar,
+            },
+            config: {
+                row_derives: Default,
+                columnar_slot_id: ColumnSlotId16,
+                columnar_chunk_rows: 1024,
+            },
+        })
+        .unwrap()
+        .to_string();
+
+        assert!(output.contains("ColumnSlotId16"));
+        assert!(output.contains("ColumnarColumn :: new (1024"));
+    }
+
+    #[test]
+    fn columnar_chunk_override_must_nest_with_table_default() {
+        let error = expand(quote! {
+            name: InvalidColumnarChunk,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u64 columnar(chunk_rows(50_000)),
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("power-of-two multiple or divisor"));
+    }
+
+    #[test]
+    fn primary_key_cannot_redeclare_columnar_identity() {
+        let error = expand(quote! {
+            name: InvalidColumnarPrimaryKey,
+            persist: false,
+            columns: {
+                id: u64 primary_key columnar,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("must not declare `columnar`"));
+    }
+
+    #[test]
+    fn duplicate_columnar_config_is_rejected() {
+        let error = expand(quote! {
+            name: DuplicateColumnarConfig,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u64 columnar,
+            },
+            config: {
+                columnar_slot_id: ColumnSlotId16,
+                columnar_slot_id: ColumnSlotId32,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("Duplicate `columnar_slot_id`"));
     }
 
     fn assert_composite_primary_key_field_order(output: proc_macro2::TokenStream) {

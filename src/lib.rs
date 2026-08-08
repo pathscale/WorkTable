@@ -1,5 +1,6 @@
 #![doc = include_str!("../docs/crate.md")]
 
+mod columnar;
 pub mod in_memory;
 mod index;
 pub mod lock;
@@ -14,6 +15,10 @@ mod util;
 #[cfg(feature = "s3-support")]
 pub mod features;
 
+pub use columnar::{
+    ClusteredColumnarIndex, ColumnCompression, ColumnSlotId, ColumnSlotId8, ColumnSlotId16, ColumnSlotId32,
+    ColumnSlotId64, ColumnarColumn, ColumnarRowRef, next_columnar_incarnation,
+};
 pub use index::*;
 pub use persistence::{LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError};
 pub use row::*;
@@ -48,12 +53,13 @@ pub mod prelude {
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
-        ArcticIndex, ArcticKey, AvailableIndex, CongeeIndex, CongeeKey, Difference, IndexError, IndexMap,
-        IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArtIndex, PersistentCongeeIndex,
-        PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
-        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
-        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
-        vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
+        ArcticIndex, ArcticKey, AvailableIndex, ClusteredColumnarIndex, ColumnCompression, ColumnSlotId, ColumnSlotId8,
+        ColumnSlotId16, ColumnSlotId32, ColumnSlotId64, ColumnarColumn, ColumnarRowRef, CongeeIndex, CongeeKey,
+        Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArtIndex,
+        PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow,
+        TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
+        UniqueIndex, UnsizedNode, UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError,
+        next_columnar_incarnation, vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

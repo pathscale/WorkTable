@@ -16,6 +16,12 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         match ident.to_string().as_str() {
             "columns" => columns = Some(parser.parse_columns()?),
             "indexes" => indexes = Some(parser.parse_indexes()?),
+            "columnar_indexes" => {
+                return Err(Error::new(
+                    ident.span(),
+                    "worktable_version! does not support columnar_indexes",
+                ));
+            }
             "queries" => {
                 return Err(Error::new(ident.span(), "worktable_version! does not support queries"));
             }
@@ -118,6 +124,25 @@ mod tests {
 
         let res = expand(input);
         assert!(res.is_err(), "should reject config section");
+    }
+
+    #[test]
+    fn test_rejects_columnar_indexes_explicitly() {
+        let input = quote! {
+            name: UserV1,
+            columns: {
+                id: u64 primary_key,
+                value: u64,
+            },
+            columnar_indexes: {
+                value_idx: {
+                    cluster_by: [value],
+                },
+            },
+        };
+
+        let error = expand(input).unwrap_err();
+        assert!(error.to_string().contains("does not support columnar_indexes"));
     }
 
     #[test]
