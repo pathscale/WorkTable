@@ -54,7 +54,21 @@ where
         &mut self.pages[self.current_page]
     }
 
-    pub fn insert(&mut self, node_id: T, page_id: PageId) -> eyre::Result<()>
+    /// Inserts a fresh page identity into the table of contents.
+    ///
+    /// This compatibility entry point preserves the historical infallible API.
+    /// Persistence paths that can report a truncated loaded chain should use
+    /// [`Self::try_insert`] instead.
+    pub fn insert(&mut self, node_id: T, page_id: PageId)
+    where
+        T: Clone + SizeMeasurable,
+    {
+        self.try_insert(node_id, page_id)
+            .expect("table-of-contents chain should be fully loaded");
+    }
+
+    /// Fallible variant of [`Self::insert`] for persistence paths.
+    pub fn try_insert(&mut self, node_id: T, page_id: PageId) -> eyre::Result<()>
     where
         T: Clone + SizeMeasurable,
     {
@@ -241,7 +255,7 @@ mod tests {
     fn insert_to_empty() {
         let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let key = 1;
-        toc.insert(key, 1.into()).unwrap();
+        toc.insert(key, 1.into());
 
         let page = toc.pages[toc.current_page].clone();
         assert!(
@@ -259,7 +273,7 @@ mod tests {
     #[test]
     fn checked_update_reports_a_missing_identity_without_mutating_the_toc() {
         let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(1)));
-        toc.insert(7, 2.into()).unwrap();
+        toc.insert(7, 2.into());
 
         assert!(!toc.try_update_key(&8, 9));
         assert_eq!(toc.get(&7), Some(2.into()));
@@ -271,7 +285,7 @@ mod tests {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
         for key in 0..10 {
-            toc.insert(key, 1.into()).unwrap();
+            toc.insert(key, 1.into());
             keys.push(key);
         }
 
@@ -296,7 +310,7 @@ mod tests {
     fn insert_reaches_existing_tail_after_reload_resets_cursor() {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         for key in 0..10 {
-            toc.insert(key, u32::from(key).into()).unwrap();
+            toc.insert(key, u32::from(key).into());
         }
         assert!(toc.pages.len() > 1, "fixture must span TOC pages");
 
@@ -305,7 +319,7 @@ mod tests {
         // forward until an existing or newly-created tail can accept it.
         toc.current_page = 0;
         let before_sizes: Vec<_> = toc.pages.iter().map(|page| page.inner.estimated_size()).collect();
-        toc.insert(200, PageId::from(200)).unwrap();
+        toc.insert(200, PageId::from(200));
 
         assert_eq!(toc.get(&200), Some(PageId::from(200)));
         for (page, before_size) in toc.pages.iter().zip(before_sizes) {
@@ -324,13 +338,13 @@ mod tests {
     fn insert_reports_a_truncated_segment_chain() {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         for key in 0..10 {
-            toc.insert(key, u32::from(key).into()).unwrap();
+            toc.insert(key, u32::from(key).into());
         }
         assert!(!toc.pages[0].header.next_id.is_empty());
         toc.pages.truncate(1);
         toc.current_page = 0;
 
-        let error = toc.insert(200, PageId::from(200)).unwrap_err();
+        let error = toc.try_insert(200, PageId::from(200)).unwrap_err();
 
         assert!(error.to_string().contains("links past the loaded chain"));
     }
@@ -340,7 +354,7 @@ mod tests {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
         for key in 0..10 {
-            toc.insert(key, 1.into()).unwrap();
+            toc.insert(key, 1.into());
             keys.push(key);
         }
 
@@ -368,7 +382,7 @@ mod tests {
         let new_key = keys.last().unwrap() + 1;
         let id = toc.pop_empty_page_id().unwrap();
         let before_insert_segments = toc.pages.len();
-        toc.insert(new_key, id).unwrap();
+        toc.insert(new_key, id);
         assert_eq!(toc.get(&new_key), Some(id), "reused page id was not recorded");
         assert_eq!(
             toc.pages.len(),
