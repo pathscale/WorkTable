@@ -107,6 +107,32 @@ impl PersistenceLifecycle {
     }
 }
 
+/// Marks a worker cancellation as terminal even when its future never runs to
+/// completion. Tokio cancellation drops the future; it is not a panic and
+/// therefore cannot be observed by `catch_unwind`.
+struct WorkerCompletionGuard {
+    lifecycle: Arc<PersistenceLifecycle>,
+    armed: bool,
+}
+
+impl WorkerCompletionGuard {
+    fn new(lifecycle: Arc<PersistenceLifecycle>) -> Self {
+        Self { lifecycle, armed: true }
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for WorkerCompletionGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.lifecycle.fail(eyre::eyre!("persistence worker was cancelled"));
+        }
+    }
+}
+
 pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> {
     operations: OptimizedVec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     queue_inner_wt: Arc<QueueInnerWorkTable>,
@@ -591,6 +617,43 @@ mod lifecycle_tests {
         assert!(Arc::ptr_eq(&wait_error, &intake_error));
     }
 
+    #[test]
+    fn runtime_shutdown_is_terminal_and_rejects_later_operations() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let task = runtime.block_on(async {
+            let task = PersistenceTask::run_engine(TestEngine {
+                batches: Arc::new(AtomicUsize::new(0)),
+                events: Arc::new(ParkingMutex::new(Vec::new())),
+                config: TestConfig,
+                failure: TestFailure::None,
+            });
+            tokio::task::yield_now().await;
+            task
+        });
+
+        drop(runtime);
+
+        let verifier = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let wait_error = verifier
+            .block_on(async { tokio::time::timeout(Duration::from_secs(1), task.wait_for_failure()).await })
+            .expect("cancelled worker must notify terminal waiters")
+            .unwrap_err();
+        assert_eq!(
+            wait_error.to_string(),
+            "persistence engine failed: persistence worker was cancelled"
+        );
+
+        let intake_error = task.apply_operation(insert_operation(1)).unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &intake_error));
+    }
+
     #[tokio::test]
     async fn vacuum_reclamation_waits_for_preceding_row_moves() {
         let events = Arc::new(ParkingMutex::new(Vec::new()));
@@ -976,6 +1039,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             }
         };
         let supervisor_lifecycle = lifecycle.clone();
+        // Constructed outside the async block so cancellation before its first
+        // poll still drops the guard and publishes terminal failure.
+        let completion_guard = WorkerCompletionGuard::new(lifecycle.clone());
         let task = async move {
             if let Err(payload) = AssertUnwindSafe(worker).catch_unwind().await {
                 // The process panic hook already records the local diagnostic.
@@ -984,6 +1050,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 drop(payload);
                 supervisor_lifecycle.fail(eyre::eyre!("persistence worker panicked"));
             }
+            completion_guard.disarm();
         };
         let engine_task_handle = tokio::spawn(task);
         Self {

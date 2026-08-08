@@ -394,6 +394,10 @@ where
         // contents key while later events in the same CDC batch still refer
         // to the pre-split maximum. Keep those historical identities scoped
         // to this batch so the event reaches the page it was generated from.
+        // At most two transitional identities per buffered page. Replacing a
+        // page maximum consumes its prior aliases; a split may retain both the
+        // event's identity and the page's actual pre-split identity for the
+        // new right page. Memory is therefore bounded by pages, not operations.
         let mut page_aliases: HashMap<(T, Link), PageId> = HashMap::new();
         for ev in events {
             match &ev {
@@ -438,7 +442,7 @@ where
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
                         );
-                        page_aliases.insert(current_page_key.clone(), page_index);
+                        replace_page_aliases(&mut page_aliases, page_index, [current_page_key.clone()]);
                         self.table_of_contents.update_key(&current_page_key, updated_page_key);
                     }
                 }
@@ -526,8 +530,8 @@ where
                     // The pre-split maximum remains the right page's identity.
                     // A following remove/insert pair can still name it even
                     // after the remove temporarily lowers that maximum.
-                    page_aliases.insert(event_page_key, new_page_id);
-                    page_aliases.insert(current_page_key, new_page_id);
+                    page_aliases.retain(|_, target| *target != page_index);
+                    replace_page_aliases(&mut page_aliases, new_page_id, [event_page_key, current_page_key]);
                 }
             }
         }
@@ -542,5 +546,57 @@ where
         // batch is visible to other handles once it reports done.
         self.index_file.flush().await?;
         Ok(())
+    }
+}
+
+fn replace_page_aliases<T: Hash + Eq>(
+    aliases: &mut HashMap<(T, Link), PageId>,
+    page_id: PageId,
+    keys: impl IntoIterator<Item = (T, Link)>,
+) {
+    aliases.retain(|_, target| *target != page_id);
+    for key in keys {
+        aliases.insert(key, page_id);
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    fn link(offset: u32) -> Link {
+        Link {
+            page_id: 1.into(),
+            offset,
+            length: 8,
+        }
+    }
+
+    #[test]
+    fn repeated_maximum_changes_keep_one_alias_per_page() {
+        let page_id = PageId::from(7);
+        let mut aliases = HashMap::new();
+        for revision in 0..1_000 {
+            replace_page_aliases(&mut aliases, page_id, [(format!("key-{revision}"), link(revision))]);
+        }
+
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases.get(&("key-999".into(), link(999))).copied(), Some(page_id));
+    }
+
+    #[test]
+    fn split_keeps_only_the_two_live_transitional_identities() {
+        let old_page = PageId::from(3);
+        let right_page = PageId::from(4);
+        let mut aliases = HashMap::from([(("older".to_string(), link(1)), old_page)]);
+        aliases.retain(|_, target| *target != old_page);
+        replace_page_aliases(
+            &mut aliases,
+            right_page,
+            [("event".to_string(), link(2)), ("current".to_string(), link(3))],
+        );
+
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.values().all(|target| *target == right_page));
     }
 }
