@@ -550,8 +550,8 @@ where
 }
 
 struct PageAliases<T> {
-    by_key: HashMap<Arc<(T, Link)>, PageId>,
-    by_page: HashMap<PageId, Vec<Arc<(T, Link)>>>,
+    by_key: HashMap<(T, Link), PageId>,
+    by_page: HashMap<PageId, Vec<(T, Link)>>,
 }
 
 impl<T> Default for PageAliases<T> {
@@ -563,7 +563,7 @@ impl<T> Default for PageAliases<T> {
     }
 }
 
-impl<T: Hash + Eq> PageAliases<T> {
+impl<T: Hash + Eq + Clone> PageAliases<T> {
     fn get(&self, key: &(T, Link)) -> Option<PageId> {
         self.by_key.get(key).copied()
     }
@@ -577,9 +577,7 @@ impl<T: Hash + Eq> PageAliases<T> {
             return;
         };
         for key in keys {
-            if self.by_key.get(key.as_ref()) == Some(&page_id) {
-                self.by_key.remove(key.as_ref());
-            }
+            self.by_key.remove(&key);
         }
     }
 
@@ -587,47 +585,19 @@ impl<T: Hash + Eq> PageAliases<T> {
         self.remove_page(page_id);
         let mut page_keys = Vec::with_capacity(2);
         for key in keys {
-            if page_keys
-                .iter()
-                .any(|existing: &Arc<(T, Link)>| existing.as_ref() == &key)
-            {
+            if page_keys.contains(&key) {
                 continue;
             }
-
-            let key = Arc::new(key);
-            let existing = self
-                .by_key
-                .get_key_value(key.as_ref())
-                .map(|(stored, previous_page)| (stored.clone(), *previous_page));
-            let shared_key = if let Some((stored, previous_page)) = existing {
-                *self
-                    .by_key
-                    .get_mut(stored.as_ref())
-                    .expect("alias found immediately before update") = page_id;
-                if previous_page != page_id {
-                    self.remove_key_from_page(previous_page, stored.as_ref());
-                }
-                stored
-            } else {
-                self.by_key.insert(key.clone(), page_id);
-                key
-            };
-            page_keys.push(shared_key);
+            // `(value, Link)` identifies one physical index entry, so it
+            // cannot be owned by another page at the same time. Keep one copy
+            // in each direction instead of interning keys behind `Arc` for an
+            // impossible cross-page migration path.
+            let previous = self.by_key.insert(key.clone(), page_id);
+            debug_assert!(previous.is_none(), "an alias cannot belong to two pages");
+            page_keys.push(key);
         }
         if !page_keys.is_empty() {
             self.by_page.insert(page_id, page_keys);
-        }
-    }
-
-    fn remove_key_from_page(&mut self, page_id: PageId, key: &(T, Link)) {
-        let remove_page = if let Some(keys) = self.by_page.get_mut(&page_id) {
-            keys.retain(|existing| existing.as_ref() != key);
-            keys.is_empty()
-        } else {
-            false
-        };
-        if remove_page {
-            self.by_page.remove(&page_id);
         }
     }
 }
