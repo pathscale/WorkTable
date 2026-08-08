@@ -56,8 +56,11 @@ where
 
     /// Inserts a fresh page identity into the table of contents.
     ///
-    /// This compatibility entry point preserves the historical infallible API.
-    /// Persistence paths that can report a truncated loaded chain should use
+    /// This restores source compatibility with the public infallible API that
+    /// preceded PR #63. A fully constructed table of contents owns its complete
+    /// segment chain, so failure here is an internal invariant violation and
+    /// retains the historical panic-level contract. Loaded persistence paths,
+    /// where a truncated chain can be reported to the caller, must use
     /// [`Self::try_insert`] instead.
     pub fn insert(&mut self, node_id: T, page_id: PageId)
     where
