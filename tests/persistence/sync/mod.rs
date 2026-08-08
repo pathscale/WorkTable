@@ -9,6 +9,7 @@ mod failure;
 mod failure_multi_index;
 mod many_strings;
 mod option;
+mod repeated_string_upsert;
 mod string_primary_index;
 mod string_re_read;
 mod string_secondary_index;

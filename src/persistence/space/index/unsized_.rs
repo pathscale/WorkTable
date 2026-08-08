@@ -28,6 +28,11 @@ use crate::persistence::space::BatchChangeEvent;
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
 
+// Normal persistence batches begin at 16 source pages. Keep that common case
+// inline while allowing analyzer retries to grow beyond it without turning a
+// recovery batch into a terminal capacity error.
+const INLINE_BATCH_ALIASED_PAGES: usize = 16;
+
 #[derive(Debug)]
 pub struct SpaceIndexUnsized<T: Ord + Eq, const DATA_LENGTH: u32> {
     space_id: SpaceId,
@@ -59,6 +64,21 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    fn resolve_batch_page(
+        &self,
+        aliases: &PageAliases<T>,
+        event_page_key: &(T, Link),
+    ) -> Option<(PageId, Option<(T, Link)>)> {
+        self.table_of_contents
+            .get(event_page_key)
+            .map(|page_id| (page_id, None))
+            .or_else(|| {
+                aliases
+                    .resolve(event_page_key)
+                    .map(|(page_id, current_key)| (page_id, Some(current_key.clone())))
+            })
+    }
+
     fn compact_page_if_needed(page: &mut UnsizedIndexPage<T, DATA_LENGTH>) -> eyre::Result<()> {
         let persisted_size =
             UnsizedIndexPageUtility::<T>::persisted_size(page.slots_size as usize, page.node_id_size as usize)
@@ -390,15 +410,33 @@ where
 
     async fn process_change_event_batch(&mut self, events: BatchChangeEvent<T>) -> eyre::Result<()> {
         let mut pages: HashMap<PageId, _> = HashMap::new();
+        // A split can change a page's maximum and therefore its table-of-
+        // contents key while later events in the same CDC batch still refer
+        // to the pre-split maximum. Keep those historical identities scoped
+        // to this batch so the event reaches the page it was generated from.
+        // At most two transitional identities per buffered page: the event's
+        // identity and the page's actual pre-apply identity. Keeping both is
+        // required when a split is followed by a remove/insert pair that still
+        // names the pre-split maximum. Memory is bounded by pages, not events.
+        let mut page_aliases = PageAliases::default();
         for ev in events {
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. } | ChangeEvent::RemoveAt { max_value, .. } => {
-                    let page_id = &(max_value.key.clone(), max_value.value);
-
-                    let page_index = self
-                        .table_of_contents
-                        .get(page_id)
-                        .expect("page should be available in table of contents");
+                    let event_page_key = (max_value.key.clone(), max_value.value);
+                    // A direct TOC hit means the event key is the page's
+                    // canonical pre-event identity. An alias hit carries the
+                    // current canonical identity captured when the alias was
+                    // installed. This lets us compare the actual post-apply
+                    // identity without predicting DataBucket's mutation rules.
+                    let Some((page_index, aliased_page_key)) = self.resolve_batch_page(&page_aliases, &event_page_key)
+                    else {
+                        return Err(eyre!(
+                            "unsized index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                            self.table_of_contents.pages.len(),
+                            pages.len(),
+                            page_aliases.len()
+                        ));
+                    };
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
@@ -413,19 +451,35 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
+                    let canonical_page_key = aliased_page_key.as_ref().unwrap_or(&event_page_key);
                     page_to_update.inner.apply_change_event(ev.clone())?;
-                    if &(
-                        page_to_update.inner.node_id.key.clone(),
-                        page_to_update.inner.node_id.link,
-                    ) != page_id
+                    if page_to_update.inner.node_id.key != canonical_page_key.0
+                        || page_to_update.inner.node_id.link != canonical_page_key.1
                     {
-                        self.table_of_contents.update_key(
-                            page_id,
-                            (
-                                page_to_update.inner.node_id.key.clone(),
-                                page_to_update.inner.node_id.link,
-                            ),
+                        let pre_event_page_key = aliased_page_key.unwrap_or_else(|| event_page_key.clone());
+                        let updated_page_key = (
+                            page_to_update.inner.node_id.key.clone(),
+                            page_to_update.inner.node_id.link,
                         );
+                        // The TOC owns the buffered page's actual identity.
+                        // `event_page_key` may be a historical alias, so using
+                        // it as the canonical update target can remove or
+                        // rewrite the wrong segment.
+                        if !self
+                            .table_of_contents
+                            .try_update_key(&pre_event_page_key, updated_page_key.clone())
+                        {
+                            return Err(eyre!(
+                                "unsized index page identity is absent from the table of contents (page={page_index:?}, toc_segments={})",
+                                self.table_of_contents.pages.len()
+                            ));
+                        }
+                        if self.table_of_contents.get(&updated_page_key) != Some(page_index) {
+                            return Err(eyre!(
+                                "unsized index page identity update did not become canonical (page={page_index:?})"
+                            ));
+                        }
+                        page_aliases.replace(page_index, updated_page_key, event_page_key, pre_event_page_key)?;
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -452,12 +506,17 @@ where
                     max_value,
                     split_index,
                 } => {
-                    let page_id = &(max_value.key.clone(), max_value.value);
+                    let event_page_key = (max_value.key.clone(), max_value.value);
 
-                    let page_index = self
-                        .table_of_contents
-                        .get(page_id)
-                        .expect("page should be available in table of contents");
+                    let Some((page_index, aliased_page_key)) = self.resolve_batch_page(&page_aliases, &event_page_key)
+                    else {
+                        return Err(eyre!(
+                            "unsized index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                            self.table_of_contents.pages.len(),
+                            pages.len(),
+                            page_aliases.len()
+                        ));
+                    };
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
@@ -472,6 +531,15 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
+                    let canonical_page_key = aliased_page_key.as_ref().unwrap_or(&event_page_key);
+                    if page_to_update.inner.node_id.key != canonical_page_key.0
+                        || page_to_update.inner.node_id.link != canonical_page_key.1
+                    {
+                        return Err(eyre!(
+                            "unsized index split found a buffered page with a mismatched identity (page={page_index:?})"
+                        ));
+                    }
+                    let pre_split_page_key = aliased_page_key.unwrap_or_else(|| event_page_key.clone());
                     let splitted_page = page_to_update.inner.split(*split_index);
 
                     let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
@@ -480,23 +548,36 @@ where
                         self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
                     };
 
-                    self.table_of_contents.update_key(
-                        page_id,
-                        (
-                            page_to_update.inner.node_id.key.clone(),
-                            page_to_update.inner.node_id.link,
-                        ),
+                    let left_page_key = (
+                        page_to_update.inner.node_id.key.clone(),
+                        page_to_update.inner.node_id.link,
                     );
-                    self.table_of_contents.insert(
-                        (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
-                        new_page_id,
-                    );
+                    if !self
+                        .table_of_contents
+                        .try_update_key(&pre_split_page_key, left_page_key)
+                    {
+                        return Err(eyre!(
+                            "unsized index split identity is absent from the table of contents (page={page_index:?})"
+                        ));
+                    }
+                    let right_page_key = (splitted_page.node_id.key.clone(), splitted_page.node_id.link);
+                    self.table_of_contents.insert(right_page_key.clone(), new_page_id);
+                    if self.table_of_contents.get(&right_page_key) != Some(new_page_id) {
+                        return Err(eyre!(
+                            "unsized index split identity did not become canonical (page={new_page_id:?})"
+                        ));
+                    }
                     let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
                     let general_page = GeneralPage {
                         inner: splitted_page,
                         header,
                     };
                     pages.insert(new_page_id, general_page);
+                    // The pre-split maximum remains the right page's identity.
+                    // A following remove/insert pair can still name it even
+                    // after the remove temporarily lowers that maximum.
+                    page_aliases.remove_page(page_index);
+                    page_aliases.replace(new_page_id, right_page_key, event_page_key, pre_split_page_key)?;
                 }
             }
         }
@@ -511,5 +592,274 @@ where
         // batch is visible to other handles once it reports done.
         self.index_file.flush().await?;
         Ok(())
+    }
+}
+
+/// Transitional event identities for pages whose canonical TOC key changed
+/// earlier in the same CDC batch.
+///
+/// Each page owns at most the event identity and its actual pre-event identity.
+/// The current canonical identity is retained alongside them so alias lookup
+/// never has to predict page mutation semantics. Normal batches use the inline
+/// slots; analyzer retries may spill into `overflow` without losing events.
+struct PageAliases<T> {
+    inline: [Option<PageAliasEntry<T>>; INLINE_BATCH_ALIASED_PAGES],
+    overflow: Vec<PageAliasEntry<T>>,
+}
+
+struct PageAliasEntry<T> {
+    page_id: PageId,
+    current_key: (T, Link),
+    aliases: [Option<(T, Link)>; 2],
+}
+
+impl<T> Default for PageAliases<T> {
+    fn default() -> Self {
+        Self {
+            inline: std::array::from_fn(|_| None),
+            overflow: Vec::new(),
+        }
+    }
+}
+
+impl<T: Eq> PageAliases<T> {
+    fn entries(&self) -> impl Iterator<Item = &PageAliasEntry<T>> {
+        self.inline.iter().flatten().chain(self.overflow.iter())
+    }
+
+    fn resolve(&self, key: &(T, Link)) -> Option<(PageId, &(T, Link))> {
+        self.entries().find_map(|entry| {
+            entry
+                .aliases
+                .iter()
+                .flatten()
+                .any(|alias| alias == key)
+                .then_some((entry.page_id, &entry.current_key))
+        })
+    }
+
+    #[cfg(test)]
+    fn get(&self, key: &(T, Link)) -> Option<PageId> {
+        self.resolve(key).map(|(page_id, _)| page_id)
+    }
+
+    fn len(&self) -> usize {
+        self.entries().map(|entry| entry.aliases.iter().flatten().count()).sum()
+    }
+
+    #[cfg(test)]
+    fn page_len(&self) -> usize {
+        self.entries().count()
+    }
+
+    fn remove_page(&mut self, page_id: PageId) {
+        if let Some(slot) = self
+            .inline
+            .iter_mut()
+            .find(|slot| slot.as_ref().is_some_and(|entry| entry.page_id == page_id))
+        {
+            *slot = None;
+        } else if let Some(index) = self.overflow.iter().position(|entry| entry.page_id == page_id) {
+            self.overflow.swap_remove(index);
+        }
+    }
+
+    fn replace(
+        &mut self,
+        page_id: PageId,
+        current_key: (T, Link),
+        event_key: (T, Link),
+        pre_event_key: (T, Link),
+    ) -> eyre::Result<()> {
+        let first_alias = (event_key != current_key).then_some(event_key);
+        let second_alias =
+            (pre_event_key != current_key && first_alias.as_ref() != Some(&pre_event_key)).then_some(pre_event_key);
+
+        if first_alias.is_none() && second_alias.is_none() {
+            self.remove_page(page_id);
+            return Ok(());
+        }
+
+        for alias in [first_alias.as_ref(), second_alias.as_ref()].into_iter().flatten() {
+            if let Some(owner) = self
+                .entries()
+                .find(|entry| entry.page_id != page_id && entry.aliases.iter().flatten().any(|stored| stored == alias))
+            {
+                return Err(eyre!(
+                    "page alias ownership collision between {:?} and {page_id:?}",
+                    owner.page_id
+                ));
+            }
+        }
+
+        let entry = PageAliasEntry {
+            page_id,
+            current_key,
+            aliases: [first_alias, second_alias],
+        };
+        if let Some(slot) = self
+            .inline
+            .iter_mut()
+            .find(|slot| slot.as_ref().is_some_and(|stored| stored.page_id == page_id))
+        {
+            *slot = Some(entry);
+        } else if let Some(slot) = self.overflow.iter_mut().find(|stored| stored.page_id == page_id) {
+            *slot = entry;
+        } else if let Some(slot) = self.inline.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(entry);
+        } else {
+            self.overflow.push(entry);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    fn link(offset: u32) -> Link {
+        Link {
+            page_id: 1.into(),
+            offset,
+            length: 8,
+        }
+    }
+
+    #[test]
+    fn repeated_maximum_changes_keep_one_alias_per_page() {
+        let page_id = PageId::from(7);
+        let mut aliases = PageAliases::default();
+        for revision in 0..1_000 {
+            let current = (format!("current-{revision}"), link(revision + 1_000));
+            aliases
+                .replace(
+                    page_id,
+                    current,
+                    (format!("key-{revision}"), link(revision)),
+                    (format!("key-{revision}"), link(revision)),
+                )
+                .unwrap();
+        }
+
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases.get(&("key-999".into(), link(999))), Some(page_id));
+        assert_eq!(aliases.page_len(), 1);
+    }
+
+    #[test]
+    fn canonical_only_transition_stores_no_alias_entry() {
+        let page_id = PageId::from(7);
+        let canonical = ("current".to_string(), link(1));
+        let mut aliases = PageAliases::default();
+
+        aliases
+            .replace(page_id, canonical.clone(), canonical.clone(), canonical)
+            .unwrap();
+
+        assert_eq!(aliases.page_len(), 0);
+        assert_eq!(aliases.len(), 0);
+    }
+
+    #[test]
+    fn split_keeps_only_the_two_live_transitional_identities() {
+        let old_page = PageId::from(3);
+        let right_page = PageId::from(4);
+        let mut aliases = PageAliases::default();
+        aliases
+            .replace(
+                old_page,
+                ("old-current".to_string(), link(9)),
+                ("older".to_string(), link(1)),
+                ("older".to_string(), link(1)),
+            )
+            .unwrap();
+        aliases.remove_page(old_page);
+        aliases
+            .replace(
+                right_page,
+                ("right-current".to_string(), link(4)),
+                ("event".to_string(), link(2)),
+                ("pre-split".to_string(), link(3)),
+            )
+            .unwrap();
+
+        assert_eq!(aliases.len(), 2);
+        assert_eq!(aliases.page_len(), 1);
+    }
+
+    #[test]
+    fn split_remove_insert_preserves_the_event_identity() {
+        let right_page = PageId::from(4);
+        let pre_split = ("pre-split".to_string(), link(1));
+        let post_split = ("post-split".to_string(), link(2));
+        let after_remove = ("after-remove".to_string(), link(3));
+        let mut aliases = PageAliases::default();
+
+        aliases
+            .replace(right_page, post_split.clone(), pre_split.clone(), pre_split.clone())
+            .unwrap();
+        aliases
+            .replace(right_page, after_remove.clone(), pre_split.clone(), post_split.clone())
+            .unwrap();
+
+        assert_eq!(aliases.get(&pre_split), Some(right_page));
+        assert_eq!(aliases.get(&post_split), Some(right_page));
+        assert_eq!(
+            aliases.resolve(&pre_split).map(|(_, current)| current),
+            Some(&after_remove)
+        );
+    }
+
+    #[test]
+    fn batches_beyond_inline_capacity_preserve_every_alias() {
+        let mut aliases = PageAliases::default();
+        let page_count = INLINE_BATCH_ALIASED_PAGES as u32 + 8;
+        for page in 1..=page_count {
+            aliases
+                .replace(
+                    PageId::from(page),
+                    (format!("current-{page}"), link(page + 1_000)),
+                    (format!("old-{page}"), link(page)),
+                    (format!("old-{page}"), link(page)),
+                )
+                .unwrap();
+        }
+        assert_eq!(aliases.page_len(), page_count as usize);
+        assert_eq!(aliases.overflow.len(), 8);
+        assert_eq!(aliases.get(&("old-1".into(), link(1))), Some(PageId::from(1)));
+        assert_eq!(
+            aliases.get(&(format!("old-{page_count}"), link(page_count))),
+            Some(PageId::from(page_count))
+        );
+    }
+
+    #[test]
+    fn alias_invariants_fail_without_corrupting_existing_ownership() {
+        let first_page = PageId::from(1);
+        let second_page = PageId::from(2);
+        let shared = ("shared".to_string(), link(1));
+        let mut aliases = PageAliases::default();
+        aliases
+            .replace(
+                first_page,
+                ("first-current".to_string(), link(9)),
+                shared.clone(),
+                shared.clone(),
+            )
+            .unwrap();
+
+        assert!(
+            aliases
+                .replace(
+                    second_page,
+                    ("second-current".to_string(), link(10)),
+                    shared.clone(),
+                    shared.clone(),
+                )
+                .is_err()
+        );
+        assert_eq!(aliases.get(&shared), Some(first_page));
+        assert_eq!(aliases.page_len(), 1);
     }
 }

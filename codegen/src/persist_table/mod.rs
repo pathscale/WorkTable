@@ -78,6 +78,10 @@ mod tests {
             output.contains("fn into_worktable_with_mode"),
             "read_only should generate explicit recovery-mode conversion"
         );
+        assert!(
+            !output.contains("persistence_monitor"),
+            "read_only should not expose monitoring for a worker it does not have"
+        );
         assert!(output.contains("LoadMode :: Strict"));
     }
 
@@ -107,6 +111,7 @@ mod tests {
             output.contains("async fn into_worktable_with_mode"),
             "normal should generate explicit recovery-mode conversion"
         );
+        assert!(output.contains("fn persistence_monitor"));
         assert!(output.contains("LoadMode :: Strict"));
     }
 

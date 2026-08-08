@@ -114,14 +114,29 @@ where
     where
         T: Clone + Debug,
     {
+        assert!(
+            self.try_update_key(old_key, new_key),
+            "Page with key {old_key:?} not found"
+        );
+    }
+
+    /// Updates a page identity without panicking when the old identity is
+    /// absent. Batch replay uses this checked form because an absent key is a
+    /// persistence invariant failure that must surface through `Result`.
+    pub fn try_update_key(&mut self, old_key: &T, new_key: T) -> bool
+    where
+        T: Clone,
+    {
         let page = self.get_current_page_mut();
         if page.inner.update_key(old_key, new_key.clone()).is_none() {
             for page in self.pages.iter_mut() {
                 if page.inner.update_key(old_key, new_key.clone()).is_some() {
-                    return;
+                    return true;
                 }
             }
-            panic!("Page with key {old_key:?} not found");
+            false
+        } else {
+            true
         }
     }
 
@@ -227,6 +242,16 @@ mod tests {
             page.inner.estimated_size() > 0,
             "`estimated_size` is zero, but it shouldn't"
         );
+    }
+
+    #[test]
+    fn checked_update_reports_a_missing_identity_without_mutating_the_toc() {
+        let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        toc.insert(7, 2.into());
+
+        assert!(!toc.try_update_key(&8, 9));
+        assert_eq!(toc.get(&7), Some(2.into()));
+        assert_eq!(toc.get(&9), None);
     }
 
     #[test]
