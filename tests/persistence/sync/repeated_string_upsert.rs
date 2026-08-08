@@ -54,6 +54,14 @@ fn repeated_varying_string_upserts_keep_the_worker_healthy() {
                 })
                 .unwrap();
             table.wait_for_ops().await.unwrap();
+            table.close().await.unwrap();
+        }
+        {
+            // Loading a multi-segment TOC resets its insertion cursor to the
+            // first segment. The next split must carry a new identity through
+            // the existing chain instead of dropping it at that full page.
+            let engine = StringBlobPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = StringBlobWorkTable::load(engine).await.unwrap();
 
             for revision in 0..1_000 {
                 table
@@ -70,11 +78,13 @@ fn repeated_varying_string_upserts_keep_the_worker_healthy() {
                 .await
                 .expect("persistence stalled after repeated string upserts")
                 .expect("persistence worker failed after repeated string upserts");
+            table.close().await.unwrap();
         }
         {
             let engine = StringBlobPersistenceEngine::new(config).await.unwrap();
             let table = StringBlobWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select("settings".to_string()).unwrap().value.len(), 1_063);
+            table.close().await.unwrap();
         }
     });
 }

@@ -58,31 +58,47 @@ where
     where
         T: Clone + SizeMeasurable,
     {
+        // Replacing an existing identity must not leave duplicate mappings in
+        // separate TOC segments or inflate the page's estimated size.
+        let mut first_existing = None;
+        for index in 0..self.pages.len() {
+            if self.pages[index].inner.contains(&node_id) {
+                self.pages[index].inner.remove_without_record(&node_id);
+                first_existing.get_or_insert(index);
+            }
+        }
+        if let Some(first) = first_existing {
+            self.current_page = first;
+        }
+
         let next_page_id = self.next_page_id.clone();
 
-        let page = self.get_current_page_mut();
-        page.inner.insert(node_id.clone(), page_id);
-        if page.inner.estimated_size() > DATA_LENGTH as usize {
-            page.inner.remove_without_record(&node_id);
-            if page.header.next_id.is_empty() {
-                let next_page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
-                let header = page.header.follow_with_page_id(next_page_id.into());
-                page.header.next_id = next_page_id.into();
-                self.pages.push(GeneralPage {
-                    header,
-                    inner: TableOfContentsPage::default(),
-                });
-                self.current_page += 1;
-
-                let page = self.get_current_page_mut();
-                page.inner.insert(node_id.clone(), page_id);
-            } else {
-                let mut i = self.current_page;
-                while !self.pages[i].header.next_id.is_empty() {
-                    i += 1;
-                }
-                self.current_page = i;
+        loop {
+            let page = self.get_current_page_mut();
+            page.inner.insert(node_id.clone(), page_id);
+            if page.inner.estimated_size() <= DATA_LENGTH as usize {
+                return;
             }
+            page.inner.remove_without_record(&node_id);
+
+            if !page.header.next_id.is_empty() {
+                self.current_page += 1;
+                continue;
+            }
+
+            let next_page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
+            let header = page.header.follow_with_page_id(next_page_id.into());
+            page.header.next_id = next_page_id.into();
+            let mut next_page = GeneralPage {
+                header,
+                inner: TableOfContentsPage::default(),
+            };
+            // Preserve the old behavior for an entry larger than one segment:
+            // it gets its own page rather than creating pages forever.
+            next_page.inner.insert(node_id, page_id);
+            self.pages.push(next_page);
+            self.current_page = self.pages.len() - 1;
+            return;
         }
     }
 
@@ -211,6 +227,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::persistence::space::index::table_of_contents::IndexTableOfContents;
+    use data_bucket::page::PageId;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU32;
 
@@ -281,6 +298,23 @@ mod tests {
     }
 
     #[test]
+    fn insert_reaches_existing_tail_after_reload_resets_cursor() {
+        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        for key in 0..10 {
+            toc.insert(key, u32::from(key).into());
+        }
+        assert!(toc.pages.len() > 1, "fixture must span TOC pages");
+
+        // `parse_from_file` starts at the first TOC segment. When that segment
+        // is already full and has a successor, a new page identity must carry
+        // forward until an existing or newly-created tail can accept it.
+        toc.current_page = 0;
+        toc.insert(200, PageId::from(200));
+
+        assert_eq!(toc.get(&200), Some(PageId::from(200)));
+    }
+
+    #[test]
     fn reinsert_on_empty_space() {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
@@ -313,10 +347,10 @@ mod tests {
         let new_key = keys.last().unwrap() + 1;
         let id = toc.pop_empty_page_id().unwrap();
         toc.insert(new_key, id);
-        assert_eq!(
-            before_remove_current_page, toc.current_page,
-            "`current_page` not moved back to before remove state and is {}",
-            toc.current_page,
+        assert_eq!(toc.get(&new_key), Some(id), "reused page id was not recorded");
+        assert!(
+            toc.current_page >= before_remove_current_page,
+            "`current_page` did not advance to a segment that could hold the identity"
         );
         assert_eq!(
             toc.pages[after_remove_current_page].inner.clone().pop_empty_page(),
