@@ -63,6 +63,13 @@ where
         &mut self,
         events: BatchChangeEvent<T>,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
+
+    /// Validates persistence-only index metadata before a loaded table is
+    /// exposed. Backends whose constructors fully validate their format may
+    /// keep the default no-op.
+    fn validate_loaded_state(&mut self) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { Ok(()) }
+    }
 }
 
 pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
@@ -77,6 +84,10 @@ pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
         &mut self,
         events: SecondaryIndexEvents,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
+
+    fn validate_loaded_state(&mut self) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { Ok(()) }
+    }
 }
 
 pub async fn open_or_create_file<S: AsRef<str>>(path: S) -> eyre::Result<File> {

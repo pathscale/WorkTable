@@ -512,4 +512,32 @@ where
         self.index_file.flush().await?;
         Ok(())
     }
+
+    async fn validate_loaded_state(&mut self) -> eyre::Result<()> {
+        let entries: Vec<_> = self
+            .table_of_contents
+            .iter()
+            .map(|(node_id, page_id)| (node_id.clone(), *page_id))
+            .collect();
+        let mut page_ids = std::collections::HashSet::with_capacity(entries.len());
+
+        for (node_id, page_id) in entries {
+            if !page_ids.insert(page_id) {
+                return Err(eyre!("table of contents maps more than one node to page {page_id:?}"));
+            }
+            let page = parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
+                &mut self.index_file,
+                page_id.into(),
+            )
+            .await?;
+            let persisted_node_id = (page.inner.node_id.key, page.inner.node_id.link);
+            if persisted_node_id != node_id {
+                return Err(eyre!(
+                    "table of contents maps node {node_id:?} to page {page_id:?}, but that page declares node {persisted_node_id:?}"
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }

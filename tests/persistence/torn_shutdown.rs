@@ -345,7 +345,11 @@ fn incomplete_secondary_index_is_refused_with_typed_load_error() {
     );
     {
         let secondary_file = std::fs::OpenOptions::new().write(true).open(secondary_path).unwrap();
-        secondary_file.set_len(PAGE_SIZE as u64).unwrap();
+        // A one-row secondary index may already occupy exactly one page, so
+        // truncating to PAGE_SIZE can be a no-op. An empty existing file is a
+        // deterministic incomplete-index fixture: parsing or the startup
+        // cardinality audit must refuse it.
+        secondary_file.set_len(0).unwrap();
         secondary_file.sync_all().unwrap();
     }
 
