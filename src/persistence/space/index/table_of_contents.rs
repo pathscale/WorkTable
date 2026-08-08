@@ -54,35 +54,30 @@ where
         &mut self.pages[self.current_page]
     }
 
-    pub fn insert(&mut self, node_id: T, page_id: PageId)
+    pub fn insert(&mut self, node_id: T, page_id: PageId) -> eyre::Result<()>
     where
         T: Clone + SizeMeasurable,
     {
-        // Replacing an existing identity must not leave duplicate mappings in
-        // separate TOC segments or inflate the page's estimated size.
-        let mut first_existing = None;
-        for index in 0..self.pages.len() {
-            if self.pages[index].inner.contains(&node_id) {
-                self.pages[index].inner.remove_without_record(&node_id);
-                first_existing.get_or_insert(index);
-            }
-        }
-        if let Some(first) = first_existing {
-            self.current_page = first;
-        }
-
         let next_page_id = self.next_page_id.clone();
+        let entry_size = (node_id.clone(), page_id).aligned_size();
 
         loop {
-            let page = self.get_current_page_mut();
-            page.inner.insert(node_id.clone(), page_id);
-            if page.inner.estimated_size() <= DATA_LENGTH as usize {
-                return;
+            let page = &mut self.pages[self.current_page];
+            if page.inner.estimated_size() + entry_size <= DATA_LENGTH as usize {
+                page.inner.insert(node_id, page_id);
+                return Ok(());
             }
-            page.inner.remove_without_record(&node_id);
 
             if !page.header.next_id.is_empty() {
-                self.current_page += 1;
+                let next = self.current_page + 1;
+                if next >= self.pages.len() {
+                    return Err(eyre::eyre!(
+                        "table-of-contents segment {} links past the loaded chain of {} segments",
+                        self.current_page,
+                        self.pages.len()
+                    ));
+                }
+                self.current_page = next;
                 continue;
             }
 
@@ -98,7 +93,7 @@ where
             next_page.inner.insert(node_id, page_id);
             self.pages.push(next_page);
             self.current_page = self.pages.len() - 1;
-            return;
+            return Ok(());
         }
     }
 
@@ -246,7 +241,7 @@ mod tests {
     fn insert_to_empty() {
         let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let key = 1;
-        toc.insert(key, 1.into());
+        toc.insert(key, 1.into()).unwrap();
 
         let page = toc.pages[toc.current_page].clone();
         assert!(
@@ -264,7 +259,7 @@ mod tests {
     #[test]
     fn checked_update_reports_a_missing_identity_without_mutating_the_toc() {
         let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(1)));
-        toc.insert(7, 2.into());
+        toc.insert(7, 2.into()).unwrap();
 
         assert!(!toc.try_update_key(&8, 9));
         assert_eq!(toc.get(&7), Some(2.into()));
@@ -276,7 +271,7 @@ mod tests {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
         for key in 0..10 {
-            toc.insert(key, 1.into());
+            toc.insert(key, 1.into()).unwrap();
             keys.push(key);
         }
 
@@ -301,7 +296,7 @@ mod tests {
     fn insert_reaches_existing_tail_after_reload_resets_cursor() {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         for key in 0..10 {
-            toc.insert(key, u32::from(key).into());
+            toc.insert(key, u32::from(key).into()).unwrap();
         }
         assert!(toc.pages.len() > 1, "fixture must span TOC pages");
 
@@ -309,9 +304,35 @@ mod tests {
         // is already full and has a successor, a new page identity must carry
         // forward until an existing or newly-created tail can accept it.
         toc.current_page = 0;
-        toc.insert(200, PageId::from(200));
+        let before_sizes: Vec<_> = toc.pages.iter().map(|page| page.inner.estimated_size()).collect();
+        toc.insert(200, PageId::from(200)).unwrap();
 
         assert_eq!(toc.get(&200), Some(PageId::from(200)));
+        for (page, before_size) in toc.pages.iter().zip(before_sizes) {
+            if page.inner.contains(&200) {
+                continue;
+            }
+            assert_eq!(
+                page.inner.estimated_size(),
+                before_size,
+                "probing a full TOC segment must not change its persisted size"
+            );
+        }
+    }
+
+    #[test]
+    fn insert_reports_a_truncated_segment_chain() {
+        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        for key in 0..10 {
+            toc.insert(key, u32::from(key).into()).unwrap();
+        }
+        assert!(!toc.pages[0].header.next_id.is_empty());
+        toc.pages.truncate(1);
+        toc.current_page = 0;
+
+        let error = toc.insert(200, PageId::from(200)).unwrap_err();
+
+        assert!(error.to_string().contains("links past the loaded chain"));
     }
 
     #[test]
@@ -319,7 +340,7 @@ mod tests {
         let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
         for key in 0..10 {
-            toc.insert(key, 1.into());
+            toc.insert(key, 1.into()).unwrap();
             keys.push(key);
         }
 
@@ -346,11 +367,18 @@ mod tests {
 
         let new_key = keys.last().unwrap() + 1;
         let id = toc.pop_empty_page_id().unwrap();
-        toc.insert(new_key, id);
+        let before_insert_segments = toc.pages.len();
+        toc.insert(new_key, id).unwrap();
         assert_eq!(toc.get(&new_key), Some(id), "reused page id was not recorded");
-        assert!(
-            toc.current_page >= before_remove_current_page,
-            "`current_page` did not advance to a segment that could hold the identity"
+        assert_eq!(
+            toc.pages.len(),
+            before_insert_segments + 1,
+            "the fixture's full successor chain should append one segment"
+        );
+        assert_eq!(
+            toc.current_page,
+            toc.pages.len() - 1,
+            "the cursor should name the segment that accepted the identity"
         );
         assert_eq!(
             toc.pages[after_remove_current_page].inner.clone().pop_empty_page(),

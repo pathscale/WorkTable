@@ -246,7 +246,7 @@ where
             self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
         };
         self.table_of_contents
-            .insert((node_id.key.clone(), node_id.value), page_id);
+            .insert((node_id.key.clone(), node_id.value), page_id)?;
         self.table_of_contents.persist(&mut self.index_file).await?;
         self.add_new_index_page(node_id, page_id).await?;
 
@@ -279,7 +279,7 @@ where
         self.table_of_contents.insert(
             (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
             new_page_id,
-        );
+        )?;
         self.table_of_contents.persist(&mut self.index_file).await?;
 
         self.add_index_page(splitted_page, new_page_id).await?;
@@ -437,7 +437,7 @@ where
                         self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
                     };
                     self.table_of_contents
-                        .insert((max_value.key.clone(), max_value.value), page_id);
+                        .insert((max_value.key.clone(), max_value.value), page_id)?;
 
                     let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
                     let mut page = IndexPage::new(max_value.clone().into(), size);
@@ -451,8 +451,6 @@ where
                     let header = GeneralHeader::new(page_id, PageType::Index, self.space_id);
                     let general_page = GeneralPage { inner: page, header };
                     pages.insert(page_id, general_page);
-                    self.table_of_contents
-                        .insert((max_value.key.clone(), max_value.value), page_id)
                 }
                 ChangeEvent::RemoveNode { event_id: _, max_value } => {
                     self.table_of_contents.remove(&(max_value.key.clone(), max_value.value));
@@ -494,7 +492,7 @@ where
                     self.table_of_contents.insert(
                         (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
                         new_page_id,
-                    );
+                    )?;
                     let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
                     let general_page = GeneralPage {
                         inner: splitted_page,

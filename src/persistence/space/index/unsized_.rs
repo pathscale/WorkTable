@@ -135,7 +135,7 @@ where
             self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
         };
         self.table_of_contents
-            .insert((node_id.key.clone(), node_id.value), page_id);
+            .insert((node_id.key.clone(), node_id.value), page_id)?;
         self.table_of_contents.persist(&mut self.index_file).await?;
         self.add_new_index_page(node_id, page_id).await?;
 
@@ -307,7 +307,7 @@ where
         self.table_of_contents.insert(
             (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
             new_page_id,
-        );
+        )?;
         self.table_of_contents.persist(&mut self.index_file).await?;
 
         self.add_index_page(splitted_page, new_page_id).await?;
@@ -489,14 +489,12 @@ where
                         self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
                     };
                     self.table_of_contents
-                        .insert((max_value.key.clone(), max_value.value), page_id);
+                        .insert((max_value.key.clone(), max_value.value), page_id)?;
 
                     let page = UnsizedIndexPage::<T, INNER_PAGE_SIZE>::new(max_value.clone().into())?;
                     let header = GeneralHeader::new(page_id, PageType::IndexUnsized, self.space_id);
                     let general_page = GeneralPage { inner: page, header };
                     pages.insert(page_id, general_page);
-                    self.table_of_contents
-                        .insert((max_value.key.clone(), max_value.value), page_id)
                 }
                 ChangeEvent::RemoveNode { event_id: _, max_value } => {
                     self.table_of_contents.remove(&(max_value.key.clone(), max_value.value));
@@ -561,7 +559,7 @@ where
                         ));
                     }
                     let right_page_key = (splitted_page.node_id.key.clone(), splitted_page.node_id.link);
-                    self.table_of_contents.insert(right_page_key.clone(), new_page_id);
+                    self.table_of_contents.insert(right_page_key.clone(), new_page_id)?;
                     if self.table_of_contents.get(&right_page_key) != Some(new_page_id) {
                         return Err(eyre!(
                             "unsized index split identity did not become canonical (page={new_page_id:?})"

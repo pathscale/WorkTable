@@ -11,7 +11,7 @@ async fn test_persist_index_table_of_contents() {
     remove_file_if_exists("tests/data/persist_index_table_of_contents.wt.idx".to_string()).await;
 
     let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::new(0.into(), Arc::new(AtomicU32::new(1)));
-    toc.insert(13, 1.into());
+    toc.insert(13, 1.into()).unwrap();
     let mut file = File::create("tests/data/persist_index_table_of_contents.wt.idx")
         .await
         .unwrap();
