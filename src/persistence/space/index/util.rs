@@ -21,8 +21,7 @@ where
     let mut toc = IndexTableOfContents::new(0.into(), next_page_id.clone());
     for page in pages {
         let page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
-        toc.insert((page.node_id.key.clone(), page.node_id.link), page_id.into())
-            .expect("new in-memory TOC chain should remain internally consistent");
+        toc.insert((page.node_id.key.clone(), page.node_id.link), page_id.into());
         let header = GeneralHeader::new(page_id.into(), PageType::Index, 0.into());
         let index_page = GeneralPage { inner: page, header };
         general_index_pages.push(index_page)
@@ -46,8 +45,7 @@ where
     let mut toc = IndexTableOfContents::new(0.into(), next_page_id.clone());
     for page in pages {
         let page_id = next_page_id.fetch_add(1, Ordering::Relaxed);
-        toc.insert((page.node_id.key.clone(), page.node_id.link), page_id.into())
-            .expect("new in-memory TOC chain should remain internally consistent");
+        toc.insert((page.node_id.key.clone(), page.node_id.link), page_id.into());
         let header = GeneralHeader::new(page_id.into(), PageType::IndexUnsized, 0.into());
         let index_page = GeneralPage { inner: page, header };
         general_index_pages.push(index_page)
