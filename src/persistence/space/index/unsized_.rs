@@ -398,7 +398,7 @@ where
         // page maximum consumes its prior aliases; a split may retain both the
         // event's identity and the page's actual pre-split identity for the
         // new right page. Memory is therefore bounded by pages, not operations.
-        let mut page_aliases: HashMap<(T, Link), PageId> = HashMap::new();
+        let mut page_aliases = PageAliases::default();
         for ev in events {
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. } | ChangeEvent::RemoveAt { max_value, .. } => {
@@ -407,7 +407,7 @@ where
                     let page_index = self
                         .table_of_contents
                         .get(&event_page_key)
-                        .or_else(|| page_aliases.get(&event_page_key).copied())
+                        .or_else(|| page_aliases.get(&event_page_key))
                         .ok_or_else(|| {
                             eyre!(
                                 "unsized index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
@@ -442,8 +442,8 @@ where
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
                         );
-                        replace_page_aliases(&mut page_aliases, page_index, [current_page_key.clone()]);
                         self.table_of_contents.update_key(&current_page_key, updated_page_key);
+                        page_aliases.replace(page_index, [current_page_key]);
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -475,7 +475,7 @@ where
                     let page_index = self
                         .table_of_contents
                         .get(&event_page_key)
-                        .or_else(|| page_aliases.get(&event_page_key).copied())
+                        .or_else(|| page_aliases.get(&event_page_key))
                         .ok_or_else(|| {
                             eyre!(
                                 "unsized index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
@@ -530,8 +530,8 @@ where
                     // The pre-split maximum remains the right page's identity.
                     // A following remove/insert pair can still name it even
                     // after the remove temporarily lowers that maximum.
-                    page_aliases.retain(|_, target| *target != page_index);
-                    replace_page_aliases(&mut page_aliases, new_page_id, [event_page_key, current_page_key]);
+                    page_aliases.remove_page(page_index);
+                    page_aliases.replace(new_page_id, [event_page_key, current_page_key]);
                 }
             }
         }
@@ -549,14 +549,86 @@ where
     }
 }
 
-fn replace_page_aliases<T: Hash + Eq>(
-    aliases: &mut HashMap<(T, Link), PageId>,
-    page_id: PageId,
-    keys: impl IntoIterator<Item = (T, Link)>,
-) {
-    aliases.retain(|_, target| *target != page_id);
-    for key in keys {
-        aliases.insert(key, page_id);
+struct PageAliases<T> {
+    by_key: HashMap<Arc<(T, Link)>, PageId>,
+    by_page: HashMap<PageId, Vec<Arc<(T, Link)>>>,
+}
+
+impl<T> Default for PageAliases<T> {
+    fn default() -> Self {
+        Self {
+            by_key: HashMap::new(),
+            by_page: HashMap::new(),
+        }
+    }
+}
+
+impl<T: Hash + Eq> PageAliases<T> {
+    fn get(&self, key: &(T, Link)) -> Option<PageId> {
+        self.by_key.get(key).copied()
+    }
+
+    fn len(&self) -> usize {
+        self.by_key.len()
+    }
+
+    fn remove_page(&mut self, page_id: PageId) {
+        let Some(keys) = self.by_page.remove(&page_id) else {
+            return;
+        };
+        for key in keys {
+            if self.by_key.get(key.as_ref()) == Some(&page_id) {
+                self.by_key.remove(key.as_ref());
+            }
+        }
+    }
+
+    fn replace(&mut self, page_id: PageId, keys: impl IntoIterator<Item = (T, Link)>) {
+        self.remove_page(page_id);
+        let mut page_keys = Vec::with_capacity(2);
+        for key in keys {
+            if page_keys
+                .iter()
+                .any(|existing: &Arc<(T, Link)>| existing.as_ref() == &key)
+            {
+                continue;
+            }
+
+            let key = Arc::new(key);
+            let existing = self
+                .by_key
+                .get_key_value(key.as_ref())
+                .map(|(stored, previous_page)| (stored.clone(), *previous_page));
+            let shared_key = if let Some((stored, previous_page)) = existing {
+                *self
+                    .by_key
+                    .get_mut(stored.as_ref())
+                    .expect("alias found immediately before update") = page_id;
+                if previous_page != page_id {
+                    self.remove_key_from_page(previous_page, stored.as_ref());
+                }
+                stored
+            } else {
+                self.by_key.insert(key.clone(), page_id);
+                key
+            };
+            page_keys.push(shared_key);
+        }
+        if !page_keys.is_empty() {
+            self.by_page.insert(page_id, page_keys);
+        }
+    }
+
+    fn remove_key_from_page(&mut self, page_id: PageId, key: &(T, Link)) {
+        let remove_page = if let Some(keys) = self.by_page.get_mut(&page_id) {
+            keys.retain(|existing| existing.as_ref() != key);
+            keys.is_empty()
+        } else {
+            false
+        };
+        if remove_page {
+            self.by_page.remove(&page_id);
+        }
     }
 }
 
@@ -575,28 +647,48 @@ mod alias_tests {
     #[test]
     fn repeated_maximum_changes_keep_one_alias_per_page() {
         let page_id = PageId::from(7);
-        let mut aliases = HashMap::new();
+        let mut aliases = PageAliases::default();
         for revision in 0..1_000 {
-            replace_page_aliases(&mut aliases, page_id, [(format!("key-{revision}"), link(revision))]);
+            aliases.replace(page_id, [(format!("key-{revision}"), link(revision))]);
         }
 
         assert_eq!(aliases.len(), 1);
-        assert_eq!(aliases.get(&("key-999".into(), link(999))).copied(), Some(page_id));
+        assert_eq!(aliases.get(&("key-999".into(), link(999))), Some(page_id));
     }
 
     #[test]
     fn split_keeps_only_the_two_live_transitional_identities() {
         let old_page = PageId::from(3);
         let right_page = PageId::from(4);
-        let mut aliases = HashMap::from([(("older".to_string(), link(1)), old_page)]);
-        aliases.retain(|_, target| *target != old_page);
-        replace_page_aliases(
-            &mut aliases,
+        let mut aliases = PageAliases::default();
+        aliases.replace(old_page, [("older".to_string(), link(1))]);
+        aliases.remove_page(old_page);
+        aliases.replace(
             right_page,
             [("event".to_string(), link(2)), ("current".to_string(), link(3))],
         );
 
         assert_eq!(aliases.len(), 2);
-        assert!(aliases.values().all(|target| *target == right_page));
+        assert_eq!(aliases.by_page.get(&right_page).map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn replacing_many_pages_preserves_constant_work_per_page() {
+        let mut aliases = PageAliases::default();
+        for page in 1..=1_000 {
+            aliases.replace(PageId::from(page), [(format!("old-{page}"), link(page))]);
+        }
+        for page in 1..=1_000 {
+            aliases.replace(PageId::from(page), [(format!("new-{page}"), link(page + 1_000))]);
+        }
+
+        assert_eq!(aliases.len(), 1_000);
+        assert_eq!(aliases.by_page.len(), 1_000);
+        for page in 1..=1_000 {
+            assert_eq!(
+                aliases.get(&(format!("new-{page}"), link(page + 1_000))),
+                Some(PageId::from(page))
+            );
+        }
     }
 }
