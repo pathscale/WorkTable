@@ -28,6 +28,10 @@ use crate::persistence::space::BatchChangeEvent;
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
 
+// Persistence batches are limited to 16 source pages. Allow one additional
+// split page per source page while keeping alias bookkeeping entirely inline.
+const MAX_BATCH_ALIASED_PAGES: usize = 32;
+
 #[derive(Debug)]
 pub struct SpaceIndexUnsized<T: Ord + Eq, const DATA_LENGTH: u32> {
     space_id: SpaceId,
@@ -403,19 +407,25 @@ where
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. } | ChangeEvent::RemoveAt { max_value, .. } => {
                     let event_page_key = (max_value.key.clone(), max_value.value);
-
-                    let page_index = self
-                        .table_of_contents
-                        .get(&event_page_key)
-                        .or_else(|| page_aliases.get(&event_page_key))
-                        .ok_or_else(|| {
-                            eyre!(
-                                "unsized index event for {event_page_key:?} references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
-                                self.table_of_contents.pages.len(),
-                                pages.len(),
-                                page_aliases.len()
-                            )
-                        })?;
+                    // A direct TOC hit means the event key is the page's
+                    // canonical pre-event identity. An alias hit carries the
+                    // current canonical identity captured when the alias was
+                    // installed. This lets us compare the actual post-apply
+                    // identity without predicting DataBucket's mutation rules.
+                    let (page_index, aliased_page_key) = if let Some(page_index) =
+                        self.table_of_contents.get(&event_page_key)
+                    {
+                        (page_index, None)
+                    } else if let Some((page_index, current_key)) = page_aliases.resolve(&event_page_key) {
+                        (page_index, Some(current_key.clone()))
+                    } else {
+                        return Err(eyre!(
+                            "unsized index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                            self.table_of_contents.pages.len(),
+                            pages.len(),
+                            page_aliases.len()
+                        ));
+                    };
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
@@ -430,50 +440,12 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
-                    // `apply_change_event` can only rewrite `node_id` in these
-                    // exact cases. Avoid cloning an unsized maximum for the
-                    // overwhelmingly common interior insert/remove path.
-                    let can_change_max = match &ev {
-                        ChangeEvent::InsertAt { value, index, .. } => {
-                            value.key > page_to_update.inner.node_id.key
-                                || *index == page_to_update.inner.slots_size as usize
-                        }
-                        ChangeEvent::RemoveAt {
-                            max_value,
-                            value,
-                            index,
-                            ..
-                        } => {
-                            value == max_value
-                                && *index != 0
-                                && page_to_update.inner.slots_size != 0
-                                && *index == page_to_update.inner.slots_size as usize - 1
-                        }
-                        _ => false,
-                    };
-                    #[cfg(debug_assertions)]
-                    let debug_pre_event_page_key = (
-                        page_to_update.inner.node_id.key.clone(),
-                        page_to_update.inner.node_id.link,
-                    );
-                    let pre_event_page_key = can_change_max.then(|| {
-                        (
-                            page_to_update.inner.node_id.key.clone(),
-                            page_to_update.inner.node_id.link,
-                        )
-                    });
+                    let canonical_page_key = aliased_page_key.as_ref().unwrap_or(&event_page_key);
                     page_to_update.inner.apply_change_event(ev.clone())?;
-                    #[cfg(debug_assertions)]
-                    debug_assert!(
-                        can_change_max
-                            || (page_to_update.inner.node_id.key == debug_pre_event_page_key.0
-                                && page_to_update.inner.node_id.link == debug_pre_event_page_key.1),
-                        "data_bucket changed an unsized page identity outside WorkTable's can_change_max predicate"
-                    );
-                    if let Some(pre_event_page_key) = pre_event_page_key
-                        && (page_to_update.inner.node_id.key != pre_event_page_key.0
-                            || page_to_update.inner.node_id.link != pre_event_page_key.1)
+                    if page_to_update.inner.node_id.key != canonical_page_key.0
+                        || page_to_update.inner.node_id.link != canonical_page_key.1
                     {
+                        let pre_event_page_key = aliased_page_key.unwrap_or_else(|| event_page_key.clone());
                         let updated_page_key = (
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
@@ -482,8 +454,16 @@ where
                         // `event_page_key` may be a historical alias, so using
                         // it as the canonical update target can remove or
                         // rewrite the wrong segment.
-                        self.table_of_contents.update_key(&pre_event_page_key, updated_page_key);
-                        page_aliases.replace(page_index, [event_page_key, pre_event_page_key])?;
+                        if !self
+                            .table_of_contents
+                            .try_update_key(&pre_event_page_key, updated_page_key.clone())
+                        {
+                            return Err(eyre!(
+                                "unsized index page identity is absent from the table of contents (page={page_index:?}, toc_segments={})",
+                                self.table_of_contents.pages.len()
+                            ));
+                        }
+                        page_aliases.replace(page_index, updated_page_key, event_page_key, pre_event_page_key)?;
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -512,18 +492,20 @@ where
                 } => {
                     let event_page_key = (max_value.key.clone(), max_value.value);
 
-                    let page_index = self
-                        .table_of_contents
-                        .get(&event_page_key)
-                        .or_else(|| page_aliases.get(&event_page_key))
-                        .ok_or_else(|| {
-                            eyre!(
-                                "unsized index split for {event_page_key:?} references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
-                                self.table_of_contents.pages.len(),
-                                pages.len(),
-                                page_aliases.len()
-                            )
-                        })?;
+                    let (page_index, aliased_page_key) = if let Some(page_index) =
+                        self.table_of_contents.get(&event_page_key)
+                    {
+                        (page_index, None)
+                    } else if let Some((page_index, current_key)) = page_aliases.resolve(&event_page_key) {
+                        (page_index, Some(current_key.clone()))
+                    } else {
+                        return Err(eyre!(
+                            "unsized index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                            self.table_of_contents.pages.len(),
+                            pages.len(),
+                            page_aliases.len()
+                        ));
+                    };
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
@@ -538,10 +520,15 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
-                    let pre_split_page_key = (
-                        page_to_update.inner.node_id.key.clone(),
-                        page_to_update.inner.node_id.link,
-                    );
+                    let canonical_page_key = aliased_page_key.as_ref().unwrap_or(&event_page_key);
+                    if page_to_update.inner.node_id.key != canonical_page_key.0
+                        || page_to_update.inner.node_id.link != canonical_page_key.1
+                    {
+                        return Err(eyre!(
+                            "unsized index split found a buffered page with a mismatched identity (page={page_index:?})"
+                        ));
+                    }
+                    let pre_split_page_key = aliased_page_key.unwrap_or_else(|| event_page_key.clone());
                     let splitted_page = page_to_update.inner.split(*split_index);
 
                     let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
@@ -550,17 +537,20 @@ where
                         self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
                     };
 
-                    self.table_of_contents.update_key(
-                        &pre_split_page_key,
-                        (
-                            page_to_update.inner.node_id.key.clone(),
-                            page_to_update.inner.node_id.link,
-                        ),
+                    let left_page_key = (
+                        page_to_update.inner.node_id.key.clone(),
+                        page_to_update.inner.node_id.link,
                     );
-                    self.table_of_contents.insert(
-                        (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
-                        new_page_id,
-                    );
+                    if !self
+                        .table_of_contents
+                        .try_update_key(&pre_split_page_key, left_page_key)
+                    {
+                        return Err(eyre!(
+                            "unsized index split identity is absent from the table of contents (page={page_index:?})"
+                        ));
+                    }
+                    let right_page_key = (splitted_page.node_id.key.clone(), splitted_page.node_id.link);
+                    self.table_of_contents.insert(right_page_key.clone(), new_page_id);
                     let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
                     let general_page = GeneralPage {
                         inner: splitted_page,
@@ -571,7 +561,7 @@ where
                     // A following remove/insert pair can still name it even
                     // after the remove temporarily lowers that maximum.
                     page_aliases.remove_page(page_index);
-                    page_aliases.replace(new_page_id, [event_page_key, pre_split_page_key])?;
+                    page_aliases.replace(new_page_id, right_page_key, event_page_key, pre_split_page_key)?;
                 }
             }
         }
@@ -590,101 +580,98 @@ where
 }
 
 struct PageAliases<T> {
-    by_key: HashMap<(T, Link), PageId>,
-    by_page: HashMap<PageId, PageAliasKeys<T>>,
+    entries: [Option<PageAliasEntry<T>>; MAX_BATCH_ALIASED_PAGES],
 }
 
-struct PageAliasKeys<T> {
-    slots: [Option<(T, Link)>; 2],
-}
-
-impl<T> Default for PageAliasKeys<T> {
-    fn default() -> Self {
-        Self { slots: [None, None] }
-    }
-}
-
-impl<T: Eq> PageAliasKeys<T> {
-    fn contains(&self, key: &(T, Link)) -> bool {
-        self.slots.iter().flatten().any(|stored| stored == key)
-    }
-
-    fn push(&mut self, key: (T, Link)) -> bool {
-        let Some(slot) = self.slots.iter_mut().find(|slot| slot.is_none()) else {
-            return false;
-        };
-        *slot = Some(key);
-        true
-    }
-
-    fn len(&self) -> usize {
-        self.slots.iter().flatten().count()
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &(T, Link)> {
-        self.slots.iter().flatten()
-    }
+struct PageAliasEntry<T> {
+    page_id: PageId,
+    current_key: (T, Link),
+    aliases: [Option<(T, Link)>; 2],
 }
 
 impl<T> Default for PageAliases<T> {
     fn default() -> Self {
         Self {
-            by_key: HashMap::new(),
-            by_page: HashMap::new(),
+            entries: std::array::from_fn(|_| None),
         }
     }
 }
 
-impl<T: Hash + Eq + Clone> PageAliases<T> {
+impl<T: Eq> PageAliases<T> {
+    fn resolve(&self, key: &(T, Link)) -> Option<(PageId, &(T, Link))> {
+        self.entries.iter().flatten().find_map(|entry| {
+            entry
+                .aliases
+                .iter()
+                .flatten()
+                .any(|alias| alias == key)
+                .then_some((entry.page_id, &entry.current_key))
+        })
+    }
+
+    #[cfg(test)]
     fn get(&self, key: &(T, Link)) -> Option<PageId> {
-        self.by_key.get(key).copied()
+        self.resolve(key).map(|(page_id, _)| page_id)
     }
 
     fn len(&self) -> usize {
-        self.by_key.len()
+        self.entries
+            .iter()
+            .flatten()
+            .map(|entry| entry.aliases.iter().flatten().count())
+            .sum()
+    }
+
+    #[cfg(test)]
+    fn page_len(&self) -> usize {
+        self.entries.iter().flatten().count()
     }
 
     fn remove_page(&mut self, page_id: PageId) {
-        let Some(keys) = self.by_page.remove(&page_id) else {
-            return;
-        };
-        for key in keys.slots.into_iter().flatten() {
-            self.by_key.remove(&key);
+        if let Some(slot) = self
+            .entries
+            .iter_mut()
+            .find(|slot| slot.as_ref().is_some_and(|entry| entry.page_id == page_id))
+        {
+            *slot = None;
         }
     }
 
-    fn replace(&mut self, page_id: PageId, keys: impl IntoIterator<Item = (T, Link)>) -> eyre::Result<()> {
-        let mut page_keys = PageAliasKeys::default();
-        for key in keys {
-            if page_keys.contains(&key) {
-                continue;
-            }
-            if !page_keys.push(key) {
-                return Err(eyre!("page {page_id:?} exceeded the two transitional alias invariant"));
-            }
-        }
+    fn replace(
+        &mut self,
+        page_id: PageId,
+        current_key: (T, Link),
+        event_key: (T, Link),
+        pre_event_key: (T, Link),
+    ) -> eyre::Result<()> {
+        let first_alias = (event_key != current_key).then_some(event_key);
+        let second_alias =
+            (pre_event_key != current_key && first_alias.as_ref() != Some(&pre_event_key)).then_some(pre_event_key);
 
-        // `(value, Link)` identifies one physical index entry, so it cannot be
-        // owned by another page. Enforce that invariant in release builds
-        // before changing either direction, rather than leaving the maps
-        // inconsistent if a future event-shape regression violates it.
-        for key in page_keys.iter() {
-            if let Some(previous_page) = self.by_key.get(key)
-                && *previous_page != page_id
+        for alias in [first_alias.as_ref(), second_alias.as_ref()].into_iter().flatten() {
+            if let Some(owner) =
+                self.entries.iter().flatten().find(|entry| {
+                    entry.page_id != page_id && entry.aliases.iter().flatten().any(|stored| stored == alias)
+                })
             {
                 return Err(eyre!(
-                    "page alias ownership collision between {previous_page:?} and {page_id:?}"
+                    "page alias ownership collision between {:?} and {page_id:?}",
+                    owner.page_id
                 ));
             }
         }
 
-        self.remove_page(page_id);
-        for key in page_keys.iter() {
-            self.by_key.insert(key.clone(), page_id);
-        }
-        if page_keys.len() != 0 {
-            self.by_page.insert(page_id, page_keys);
-        }
+        let slot_index = self
+            .entries
+            .iter()
+            .position(|slot| slot.as_ref().is_some_and(|entry| entry.page_id == page_id))
+            .or_else(|| self.entries.iter().position(Option::is_none))
+            .ok_or_else(|| eyre!("unsized index batch exceeded its inline alias-page capacity"))?;
+        self.entries[slot_index] = Some(PageAliasEntry {
+            page_id,
+            current_key,
+            aliases: [first_alias, second_alias],
+        });
         Ok(())
     }
 }
@@ -706,13 +693,20 @@ mod alias_tests {
         let page_id = PageId::from(7);
         let mut aliases = PageAliases::default();
         for revision in 0..1_000 {
+            let current = (format!("current-{revision}"), link(revision + 1_000));
             aliases
-                .replace(page_id, [(format!("key-{revision}"), link(revision))])
+                .replace(
+                    page_id,
+                    current,
+                    (format!("key-{revision}"), link(revision)),
+                    (format!("key-{revision}"), link(revision)),
+                )
                 .unwrap();
         }
 
         assert_eq!(aliases.len(), 1);
         assert_eq!(aliases.get(&("key-999".into(), link(999))), Some(page_id));
+        assert_eq!(aliases.page_len(), 1);
     }
 
     #[test]
@@ -720,17 +714,26 @@ mod alias_tests {
         let old_page = PageId::from(3);
         let right_page = PageId::from(4);
         let mut aliases = PageAliases::default();
-        aliases.replace(old_page, [("older".to_string(), link(1))]).unwrap();
+        aliases
+            .replace(
+                old_page,
+                ("old-current".to_string(), link(9)),
+                ("older".to_string(), link(1)),
+                ("older".to_string(), link(1)),
+            )
+            .unwrap();
         aliases.remove_page(old_page);
         aliases
             .replace(
                 right_page,
-                [("event".to_string(), link(2)), ("current".to_string(), link(3))],
+                ("right-current".to_string(), link(4)),
+                ("event".to_string(), link(2)),
+                ("pre-split".to_string(), link(3)),
             )
             .unwrap();
 
         assert_eq!(aliases.len(), 2);
-        assert_eq!(aliases.by_page.get(&right_page).map(PageAliasKeys::len), Some(2));
+        assert_eq!(aliases.page_len(), 1);
     }
 
     #[test]
@@ -742,36 +745,45 @@ mod alias_tests {
         let mut aliases = PageAliases::default();
 
         aliases
-            .replace(right_page, [pre_split.clone(), post_split.clone()])
+            .replace(right_page, post_split.clone(), pre_split.clone(), pre_split.clone())
             .unwrap();
-        aliases.replace(right_page, [pre_split.clone(), after_remove]).unwrap();
+        aliases
+            .replace(right_page, after_remove.clone(), pre_split.clone(), post_split.clone())
+            .unwrap();
 
         assert_eq!(aliases.get(&pre_split), Some(right_page));
-        assert_eq!(aliases.get(&post_split), None);
+        assert_eq!(aliases.get(&post_split), Some(right_page));
+        assert_eq!(
+            aliases.resolve(&pre_split).map(|(_, current)| current),
+            Some(&after_remove)
+        );
     }
 
     #[test]
-    fn replacing_many_pages_preserves_constant_work_per_page() {
+    fn inline_capacity_fails_without_overwriting_existing_pages() {
         let mut aliases = PageAliases::default();
-        for page in 1..=1_000 {
+        for page in 1..=MAX_BATCH_ALIASED_PAGES as u32 {
             aliases
-                .replace(PageId::from(page), [(format!("old-{page}"), link(page))])
+                .replace(
+                    PageId::from(page),
+                    (format!("current-{page}"), link(page + 1_000)),
+                    (format!("old-{page}"), link(page)),
+                    (format!("old-{page}"), link(page)),
+                )
                 .unwrap();
         }
-        for page in 1..=1_000 {
+        assert_eq!(aliases.page_len(), MAX_BATCH_ALIASED_PAGES);
+        assert!(
             aliases
-                .replace(PageId::from(page), [(format!("new-{page}"), link(page + 1_000))])
-                .unwrap();
-        }
-
-        assert_eq!(aliases.len(), 1_000);
-        assert_eq!(aliases.by_page.len(), 1_000);
-        for page in 1..=1_000 {
-            assert_eq!(
-                aliases.get(&(format!("new-{page}"), link(page + 1_000))),
-                Some(PageId::from(page))
-            );
-        }
+                .replace(
+                    PageId::from(MAX_BATCH_ALIASED_PAGES as u32 + 1),
+                    ("overflow-current".to_string(), link(10_000)),
+                    ("overflow-old".to_string(), link(10_001)),
+                    ("overflow-old".to_string(), link(10_001)),
+                )
+                .is_err()
+        );
+        assert_eq!(aliases.get(&("old-1".into(), link(1))), Some(PageId::from(1)));
     }
 
     #[test]
@@ -780,23 +792,26 @@ mod alias_tests {
         let second_page = PageId::from(2);
         let shared = ("shared".to_string(), link(1));
         let mut aliases = PageAliases::default();
-        aliases.replace(first_page, [shared.clone()]).unwrap();
+        aliases
+            .replace(
+                first_page,
+                ("first-current".to_string(), link(9)),
+                shared.clone(),
+                shared.clone(),
+            )
+            .unwrap();
 
-        assert!(aliases.replace(second_page, [shared.clone()]).is_err());
-        assert_eq!(aliases.get(&shared), Some(first_page));
         assert!(
             aliases
                 .replace(
                     second_page,
-                    [
-                        ("one".to_string(), link(2)),
-                        ("two".to_string(), link(3)),
-                        ("three".to_string(), link(4)),
-                    ],
+                    ("second-current".to_string(), link(10)),
+                    shared.clone(),
+                    shared.clone(),
                 )
                 .is_err()
         );
         assert_eq!(aliases.get(&shared), Some(first_page));
-        assert!(!aliases.by_page.contains_key(&second_page));
+        assert_eq!(aliases.page_len(), 1);
     }
 }
