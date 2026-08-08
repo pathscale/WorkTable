@@ -66,8 +66,9 @@ impl Generator {
             }
         } else {
             quote! {
-                /// Waits for this table's persistence worker to fail.
+                /// Waits for this table's persistence worker to fail or close.
                 /// An idle healthy worker does not complete this future.
+                /// A graceful close returns `Ok(())`.
                 pub async fn wait_for_persistence_failure(&self) -> PersistenceResult {
                     self.1.wait_for_failure().await
                 }

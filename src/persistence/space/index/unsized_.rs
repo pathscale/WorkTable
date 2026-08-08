@@ -406,9 +406,10 @@ where
                         .or_else(|| page_aliases.get(&event_page_key).copied())
                         .ok_or_else(|| {
                             eyre!(
-                                "unsized index event references missing page {event_page_key:?}: event={ev:?}; table_of_contents={:?}; buffered_pages={:?}",
-                                self.table_of_contents.iter().collect::<Vec<_>>(),
-                                pages.keys().collect::<Vec<_>>()
+                                "unsized index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                                self.table_of_contents.pages.len(),
+                                pages.len(),
+                                page_aliases.len()
                             )
                         })?;
                     let page = pages.get_mut(&page_index);
@@ -430,13 +431,14 @@ where
                         page_to_update.inner.node_id.link,
                     );
                     page_to_update.inner.apply_change_event(ev.clone())?;
-                    let updated_page_key = (
-                        page_to_update.inner.node_id.key.clone(),
-                        page_to_update.inner.node_id.link,
-                    );
-                    page_aliases.insert(event_page_key, page_index);
-                    page_aliases.insert(current_page_key.clone(), page_index);
-                    if updated_page_key != current_page_key {
+                    if page_to_update.inner.node_id.key != current_page_key.0
+                        || page_to_update.inner.node_id.link != current_page_key.1
+                    {
+                        let updated_page_key = (
+                            page_to_update.inner.node_id.key.clone(),
+                            page_to_update.inner.node_id.link,
+                        );
+                        page_aliases.insert(current_page_key.clone(), page_index);
                         self.table_of_contents.update_key(&current_page_key, updated_page_key);
                     }
                 }
@@ -472,9 +474,10 @@ where
                         .or_else(|| page_aliases.get(&event_page_key).copied())
                         .ok_or_else(|| {
                             eyre!(
-                                "unsized index split references missing page {event_page_key:?}: event={ev:?}; table_of_contents={:?}; buffered_pages={:?}",
-                                self.table_of_contents.iter().collect::<Vec<_>>(),
-                                pages.keys().collect::<Vec<_>>()
+                                "unsized index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                                self.table_of_contents.pages.len(),
+                                pages.len(),
+                                page_aliases.len()
                             )
                         })?;
                     let page = pages.get_mut(&page_index);
@@ -524,6 +527,7 @@ where
                     // A following remove/insert pair can still name it even
                     // after the remove temporarily lowers that maximum.
                     page_aliases.insert(event_page_key, new_page_id);
+                    page_aliases.insert(current_page_key, new_page_id);
                 }
             }
         }

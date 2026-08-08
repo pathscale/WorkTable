@@ -582,7 +582,10 @@ mod lifecycle_tests {
 
         task.apply_operation(insert_operation(1)).unwrap();
         let wait_error = task.wait_for_failure().await.unwrap_err();
-        assert!(wait_error.to_string().contains("injected persistence worker panic"));
+        assert_eq!(
+            wait_error.to_string(),
+            "persistence engine failed: persistence worker panicked"
+        );
 
         let intake_error = task.apply_operation(insert_operation(2)).unwrap_err();
         assert!(Arc::ptr_eq(&wait_error, &intake_error));
@@ -975,12 +978,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         let supervisor_lifecycle = lifecycle.clone();
         let task = async move {
             if let Err(payload) = AssertUnwindSafe(worker).catch_unwind().await {
-                let reason = payload
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                    .unwrap_or("persistence worker panicked without a message");
-                supervisor_lifecycle.fail(eyre::eyre!("persistence worker panicked: {reason}"));
+                // The process panic hook already records the local diagnostic.
+                // Do not propagate arbitrary panic payloads to API consumers:
+                // engines can panic with paths or row-derived strings.
+                drop(payload);
+                supervisor_lifecycle.fail(eyre::eyre!("persistence worker panicked"));
             }
         };
         let engine_task_handle = tokio::spawn(task);
@@ -1043,8 +1045,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     /// Waits until the worker fails or closes.
     ///
     /// Unlike [`Self::wait_for_ops`], an idle healthy worker does not satisfy
-    /// this future. Applications can keep it alive as a failure notification
-    /// without forcing persistence queues to drain or polling their state.
+    /// this future. Applications can keep it alive as a terminal-state
+    /// notification without forcing persistence queues to drain or polling
+    /// their state. A graceful close returns `Ok(())`; a failure returns the
+    /// shared terminal error.
     pub async fn wait_for_failure(&self) -> PersistenceResult {
         loop {
             let notified = self.lifecycle.notify.notified();
