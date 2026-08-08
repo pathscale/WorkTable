@@ -78,6 +78,10 @@ mod tests {
             output.contains("fn into_worktable_with_mode"),
             "read_only should generate explicit recovery-mode conversion"
         );
+        assert!(
+            output.contains("async fn wait_for_persistence_failure (& self) -> PersistenceResult { Ok (()) }"),
+            "read_only failure monitoring should resolve immediately because it has no worker"
+        );
         assert!(output.contains("LoadMode :: Strict"));
     }
 
