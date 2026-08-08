@@ -12,6 +12,7 @@ use quote::quote;
 impl InMemoryGenerator {
     /// Generates index type and it's impls.
     pub fn gen_index_def(&mut self) -> syn::Result<TokenStream> {
+        let columnar_def = crate::generators::columnar::definitions(&self.name, &self.columns);
         let type_def = self.gen_type_def()?;
         let impl_def = self.gen_secondary_index_impl_def();
         let info_def = self.gen_secondary_index_info_impl_def();
@@ -24,6 +25,7 @@ impl InMemoryGenerator {
         let available_indexes = self.gen_available_indexes();
 
         Ok(quote! {
+            #columnar_def
             #type_def
             #impl_def
             #info_def
@@ -94,11 +96,13 @@ impl InMemoryGenerator {
                 #[derive(Debug, MemStat)]
             }
         };
+        let columnar_field = crate::generators::columnar::index_struct_field(&self.name, &self.columns, false);
 
         Ok(quote! {
             #derive
             pub struct #ident {
-                #(#index_rows),*
+                #(#index_rows,)*
+                #columnar_field
             }
         })
     }
@@ -161,12 +165,14 @@ impl InMemoryGenerator {
                 Ok::<_, syn::Error>(res)
             })
             .collect::<Result<Vec<_>, syn::Error>>()?;
+        let columnar_field = crate::generators::columnar::index_default_field(&self.columns);
 
         Ok(quote! {
             impl Default for #index_type_ident {
                 fn default() -> Self {
                     Self {
                         #(#index_rows)*
+                        #columnar_field
                     }
                 }
             }

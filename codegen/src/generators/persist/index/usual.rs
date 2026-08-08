@@ -69,11 +69,13 @@ impl PersistGenerator {
                 }
             })
             .collect::<Vec<_>>();
+        let columnar_save = crate::generators::columnar::save_row(&self.columns);
 
         quote! {
             fn save_row(&self, row: #row_type_ident, link: Link) -> core::result::Result<(), IndexError<#available_index_ident>> {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
                 #(#save_rows)*
+                #columnar_save
                 core::result::Result::Ok(())
             }
         }
@@ -147,6 +149,7 @@ impl PersistGenerator {
                 (insert, remove)
             })
             .unzip();
+        let columnar_reinsert = crate::generators::columnar::reinsert_row(&self.columns);
 
         quote! {
             fn reinsert_row(&self,
@@ -159,6 +162,7 @@ impl PersistGenerator {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
                 #(#insert_rows)*
                 #(#remove_rows)*
+                #columnar_reinsert
                 core::result::Result::Ok(())
             }
         }
@@ -189,10 +193,12 @@ impl PersistGenerator {
                 }
             })
             .collect::<Vec<_>>();
+        let columnar_delete = crate::generators::columnar::delete_row(&self.columns);
 
         quote! {
             fn delete_row(&self, row: #row_type_ident, link: Link) -> core::result::Result<(), IndexError<#available_index_ident>> {
                 #(#delete_rows)*
+                #columnar_delete
                 core::result::Result::Ok(())
             }
         }
@@ -231,6 +237,7 @@ impl PersistGenerator {
                 quote! {}
             }
         });
+        let columnar_dirty = crate::generators::columnar::mark_dirty(&self.columns);
 
         quote! {
             fn process_difference_remove(
@@ -239,6 +246,7 @@ impl PersistGenerator {
                 difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
             ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
                 #(#process_difference_remove_rows)*
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -288,6 +296,7 @@ impl PersistGenerator {
                 quote! {}
             }
         });
+        let columnar_dirty = crate::generators::columnar::mark_dirty(&self.columns);
 
         quote! {
             fn process_difference_insert(
@@ -297,6 +306,7 @@ impl PersistGenerator {
             ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
                 let mut inserted_indexes: Vec<#avt_index_ident> = vec![];
                 #(#process_difference_insert_rows)*
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
