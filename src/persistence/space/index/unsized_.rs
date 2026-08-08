@@ -394,10 +394,10 @@ where
         // contents key while later events in the same CDC batch still refer
         // to the pre-split maximum. Keep those historical identities scoped
         // to this batch so the event reaches the page it was generated from.
-        // At most two transitional identities per buffered page. Replacing a
-        // page maximum consumes its prior aliases; a split may retain both the
-        // event's identity and the page's actual pre-split identity for the
-        // new right page. Memory is therefore bounded by pages, not operations.
+        // At most two transitional identities per buffered page: the event's
+        // identity and the page's actual pre-apply identity. Keeping both is
+        // required when a split is followed by a remove/insert pair that still
+        // names the pre-split maximum. Memory is bounded by pages, not events.
         let mut page_aliases = PageAliases::default();
         for ev in events {
             match &ev {
@@ -443,7 +443,7 @@ where
                             page_to_update.inner.node_id.link,
                         );
                         self.table_of_contents.update_key(&current_page_key, updated_page_key);
-                        page_aliases.replace(page_index, [current_page_key]);
+                        page_aliases.replace(page_index, [event_page_key, current_page_key]);
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -551,7 +551,36 @@ where
 
 struct PageAliases<T> {
     by_key: HashMap<(T, Link), PageId>,
-    by_page: HashMap<PageId, Vec<(T, Link)>>,
+    by_page: HashMap<PageId, PageAliasKeys<T>>,
+}
+
+struct PageAliasKeys<T> {
+    slots: [Option<(T, Link)>; 2],
+}
+
+impl<T> Default for PageAliasKeys<T> {
+    fn default() -> Self {
+        Self { slots: [None, None] }
+    }
+}
+
+impl<T: Eq> PageAliasKeys<T> {
+    fn contains(&self, key: &(T, Link)) -> bool {
+        self.slots.iter().flatten().any(|stored| stored == key)
+    }
+
+    fn push(&mut self, key: (T, Link)) {
+        let slot = self
+            .slots
+            .iter_mut()
+            .find(|slot| slot.is_none())
+            .expect("a page has at most two transitional aliases");
+        *slot = Some(key);
+    }
+
+    fn len(&self) -> usize {
+        self.slots.iter().flatten().count()
+    }
 }
 
 impl<T> Default for PageAliases<T> {
@@ -576,14 +605,14 @@ impl<T: Hash + Eq + Clone> PageAliases<T> {
         let Some(keys) = self.by_page.remove(&page_id) else {
             return;
         };
-        for key in keys {
+        for key in keys.slots.into_iter().flatten() {
             self.by_key.remove(&key);
         }
     }
 
     fn replace(&mut self, page_id: PageId, keys: impl IntoIterator<Item = (T, Link)>) {
         self.remove_page(page_id);
-        let mut page_keys = Vec::with_capacity(2);
+        let mut page_keys = PageAliasKeys::default();
         for key in keys {
             if page_keys.contains(&key) {
                 continue;
@@ -596,7 +625,7 @@ impl<T: Hash + Eq + Clone> PageAliases<T> {
             debug_assert!(previous.is_none(), "an alias cannot belong to two pages");
             page_keys.push(key);
         }
-        if !page_keys.is_empty() {
+        if page_keys.len() != 0 {
             self.by_page.insert(page_id, page_keys);
         }
     }
@@ -639,7 +668,22 @@ mod alias_tests {
         );
 
         assert_eq!(aliases.len(), 2);
-        assert_eq!(aliases.by_page.get(&right_page).map(Vec::len), Some(2));
+        assert_eq!(aliases.by_page.get(&right_page).map(PageAliasKeys::len), Some(2));
+    }
+
+    #[test]
+    fn split_remove_insert_preserves_the_event_identity() {
+        let right_page = PageId::from(4);
+        let pre_split = ("pre-split".to_string(), link(1));
+        let post_split = ("post-split".to_string(), link(2));
+        let after_remove = ("after-remove".to_string(), link(3));
+        let mut aliases = PageAliases::default();
+
+        aliases.replace(right_page, [pre_split.clone(), post_split.clone()]);
+        aliases.replace(right_page, [pre_split.clone(), after_remove]);
+
+        assert_eq!(aliases.get(&pre_split), Some(right_page));
+        assert_eq!(aliases.get(&post_split), None);
     }
 
     #[test]

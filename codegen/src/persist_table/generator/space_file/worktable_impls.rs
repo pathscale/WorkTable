@@ -59,13 +59,7 @@ impl Generator {
 
     fn gen_worktable_wait_for_failure_fn(&self) -> TokenStream {
         if self.attributes.read_only {
-            quote! {
-                /// Read-only tables have no persistence worker to monitor, so
-                /// they are already terminal from this API's perspective.
-                pub async fn wait_for_persistence_failure(&self) -> PersistenceResult {
-                    Ok(())
-                }
-            }
+            quote! {}
         } else {
             quote! {
                 /// Waits for this table's persistence worker to fail or close.

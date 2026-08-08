@@ -79,8 +79,8 @@ mod tests {
             "read_only should generate explicit recovery-mode conversion"
         );
         assert!(
-            output.contains("async fn wait_for_persistence_failure (& self) -> PersistenceResult { Ok (()) }"),
-            "read_only failure monitoring should resolve immediately because it has no worker"
+            !output.contains("wait_for_persistence_failure"),
+            "read_only should not expose monitoring for a worker it does not have"
         );
         assert!(output.contains("LoadMode :: Strict"));
     }
