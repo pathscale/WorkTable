@@ -6,6 +6,7 @@ use std::ops::{Bound, RangeBounds};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use arctic::{ConcurrentMap, Key, Order};
+use parking_lot::RwLock;
 
 use super::UniqueIndex;
 
@@ -71,6 +72,10 @@ impl_arctic_key!(u16, u32, u64, u128);
 /// satisfy WorkTable's double-ended query interface.
 pub struct ArcticIndex<K: ArcticKey, V> {
     inner: ConcurrentMap<K::Raw, Box<V>>,
+    // arctic-wt 0.1.4 can trip its raw-cursor structural assertion when
+    // mutations overlap and can expose a transient structural rewrite to a
+    // point read. Reads share access; structural mutations take it exclusively.
+    access: RwLock<()>,
     len: AtomicUsize,
 }
 
@@ -89,6 +94,7 @@ where
     fn default() -> Self {
         Self {
             inner: ConcurrentMap::default(),
+            access: RwLock::new(()),
             len: AtomicUsize::new(0),
         }
     }
@@ -115,6 +121,7 @@ where
         let len = inner.all().entries(Order::Ascend).count();
         Ok(Self {
             inner,
+            access: RwLock::new(()),
             len: AtomicUsize::new(len),
         })
     }
@@ -127,23 +134,27 @@ where
 {
     #[inline]
     fn get_value(&self, key: &K) -> Option<V> {
-        self.with_value(key, Clone::clone)
+        let _access = self.access.read();
+        let key = key.to_arctic();
+        self.inner.get(key.borrow()).map(|value| value.clone())
     }
 
     #[inline]
     fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
-        let key = key.to_arctic();
-        self.inner.get(key.borrow()).map(|value| read(&value))
+        let value = self.get_value(key)?;
+        Some(read(&value))
     }
 
     #[inline]
     fn contains_key(&self, key: &K) -> bool {
+        let _access = self.access.read();
         let key = key.to_arctic();
         self.inner.get(key.borrow()).is_some()
     }
 
     #[inline]
     fn insert_value(&self, key: K, value: V) -> Option<V> {
+        let _access = self.access.write();
         let key = key.to_arctic();
         let updated = self.inner.upsert(key.as_insert(), Box::new(value));
         let old = updated.old().cloned();
@@ -155,6 +166,7 @@ where
 
     #[inline]
     fn insert_value_checked(&self, key: K, value: V) -> Option<()> {
+        let _access = self.access.write();
         let key = key.to_arctic();
         match self.inner.insert(key.as_insert(), Box::new(value)) {
             Ok(_) => {
@@ -170,6 +182,7 @@ where
 
     #[inline]
     fn remove_value(&self, key: &K) -> Option<(K, V)> {
+        let _access = self.access.write();
         let raw_key = key.to_arctic();
         let old = self.inner.remove(raw_key.borrow())?;
         self.len.fetch_sub(1, Ordering::Relaxed);
@@ -182,6 +195,7 @@ where
     }
 
     fn iter_values(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {
+        let _access = self.access.read();
         let shard = self.inner.all();
         shard
             .entries(Order::Ascend)
@@ -198,6 +212,7 @@ where
     where
         R: RangeBounds<K> + 'a,
     {
+        let _access = self.access.read();
         let lower = match range.start_bound() {
             Bound::Included(key) => Some(key.to_arctic()),
             Bound::Excluded(key) => key.to_arctic().next(),

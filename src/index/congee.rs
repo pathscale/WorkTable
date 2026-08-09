@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use congee::{CongeeRaw, DefaultAllocator};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 use super::UniqueIndex;
 
@@ -48,10 +48,10 @@ impl_congee_key!(u64);
 /// reclamation pattern used by Congee's own `CongeeArc` implementation.
 pub struct CongeeIndex<K, V> {
     inner: CongeeRaw<usize, usize>,
-    // congee-wt 0.4.1 can lose disjoint insert/remove mutations when their
-    // structural updates overlap. Keep point reads native and concurrent, but
-    // serialize mutations until the backend offers the required visibility.
-    mutation: Mutex<()>,
+    // congee-wt 0.4.1 can lose disjoint structural mutations and let point
+    // reads miss while another mutation rewrites the tree. Reads remain
+    // concurrent with reads; structural mutations take exclusive access.
+    access: RwLock<()>,
     len: AtomicUsize,
     marker: std::marker::PhantomData<(K, V)>,
 }
@@ -77,7 +77,7 @@ where
         };
         Self {
             inner: CongeeRaw::new_with_drainer(DefaultAllocator {}, drainer),
-            mutation: Mutex::new(()),
+            access: RwLock::new(()),
             len: AtomicUsize::new(0),
             marker: std::marker::PhantomData,
         }
@@ -116,6 +116,7 @@ where
     where
         R: RangeBounds<K>,
     {
+        let _access = self.access.read();
         let start = match range.start_bound() {
             Bound::Included(key) => key.into_congee(),
             Bound::Excluded(key) => match key.into_congee().checked_add(1) {
@@ -196,7 +197,7 @@ where
         let len = inner.keys().len();
         Ok(Self {
             inner,
-            mutation: Mutex::new(()),
+            access: RwLock::new(()),
             len: AtomicUsize::new(len),
             marker: std::marker::PhantomData,
         })
@@ -210,28 +211,30 @@ where
 {
     #[inline]
     fn get_value(&self, key: &K) -> Option<V> {
-        self.with_value(key, Clone::clone)
+        let _access = self.access.read();
+        let guard = self.inner.pin();
+        let pointer = self.inner.get(&key.into_congee(), &guard)?;
+        // SAFETY: the read lock prevents removal and the epoch guard retains
+        // the tree-owned allocation while its value is cloned.
+        Some(unsafe { &*std::ptr::with_exposed_provenance::<V>(pointer) }.clone())
     }
 
     #[inline]
     fn with_value<R>(&self, key: &K, read: impl FnOnce(&V) -> R) -> Option<R> {
-        let guard = self.inner.pin();
-        let pointer = self.inner.get(&key.into_congee(), &guard)?;
-        // SAFETY: the epoch guard keeps the tree-owned `Arc<V>` alive for the
-        // duration of `read`, and the pointer originated from `Arc::into_raw`.
-        let value = unsafe { &*std::ptr::with_exposed_provenance::<V>(pointer) };
-        Some(read(value))
+        let value = self.get_value(key)?;
+        Some(read(&value))
     }
 
     #[inline]
     fn contains_key(&self, key: &K) -> bool {
+        let _access = self.access.read();
         let guard = self.inner.pin();
         self.inner.get(&key.into_congee(), &guard).is_some()
     }
 
     #[inline]
     fn insert_value(&self, key: K, value: V) -> Option<V> {
-        let _mutation = self.mutation.lock();
+        let _access = self.access.write();
         let guard = self.inner.pin();
         let pointer = Arc::into_raw(Arc::new(value)).expose_provenance();
         match self.inner.insert(key.into_congee(), pointer, &guard) {
@@ -250,7 +253,7 @@ where
 
     #[inline]
     fn insert_value_checked(&self, key: K, value: V) -> Option<()> {
-        let _mutation = self.mutation.lock();
+        let _access = self.access.write();
         let guard = self.inner.pin();
         let pointer = Arc::into_raw(Arc::new(value)).expose_provenance();
         let result = self
@@ -278,7 +281,7 @@ where
 
     #[inline]
     fn remove_value(&self, key: &K) -> Option<(K, V)> {
-        let _mutation = self.mutation.lock();
+        let _access = self.access.write();
         let guard = self.inner.pin();
         let pointer = self.inner.remove(&key.into_congee(), &guard)?;
         self.len.fetch_sub(1, Ordering::Relaxed);

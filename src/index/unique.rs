@@ -206,7 +206,7 @@ pub type UpstreamIndexPair<K, V> = VanillaPair<K, V>;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Barrier};
 
     use super::{UniqueIndex, UpstreamIndexMap};
     use crate::{ArcticIndex, CongeeIndex, IndexMap};
@@ -317,6 +317,32 @@ mod tests {
         assert!(index.is_empty());
     }
 
+    fn assert_separate_instances_do_not_interfere<I>()
+    where
+        I: UniqueIndex<u64, u64> + Send + Sync + 'static,
+    {
+        let barrier = Arc::new(Barrier::new(9));
+        let mut threads = Vec::new();
+        for worker in 0..8_u64 {
+            let barrier = Arc::clone(&barrier);
+            threads.push(std::thread::spawn(move || {
+                let index = I::default();
+                barrier.wait();
+                for sequence in 0..10_000_u64 {
+                    let key = worker * 10_000 + sequence;
+                    assert_eq!(index.insert_value_checked(key, key + 1), Some(()));
+                    assert_eq!(index.get_value(&key), Some(key + 1));
+                    assert_eq!(index.remove_value(&key), Some((key, key + 1)));
+                }
+                assert!(index.is_empty());
+            }));
+        }
+        barrier.wait();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    }
+
     #[test]
     fn worktables_index_implements_contract() {
         assert_unique_index_contract::<IndexMap<u64, u64>>();
@@ -336,8 +362,28 @@ mod tests {
     }
 
     #[test]
+    fn worktables_index_preserves_disjoint_concurrent_mutations() {
+        assert_disjoint_concurrent_insert_then_remove::<IndexMap<u64, u64>>();
+    }
+
+    #[test]
+    fn upstream_indexset_preserves_disjoint_concurrent_mutations() {
+        assert_disjoint_concurrent_insert_then_remove::<UpstreamIndexMap<u64, u64>>();
+    }
+
+    #[test]
     fn art_backends_make_disjoint_mutations_immediately_visible() {
         assert_immediate_disjoint_crud::<CongeeIndex<u64, u64>>();
         assert_immediate_disjoint_crud::<ArcticIndex<u64, u64>>();
+    }
+
+    #[test]
+    fn congee_instances_do_not_share_mutation_state() {
+        assert_separate_instances_do_not_interfere::<CongeeIndex<u64, u64>>();
+    }
+
+    #[test]
+    fn arctic_instances_do_not_share_mutation_state() {
+        assert_separate_instances_do_not_interfere::<ArcticIndex<u64, u64>>();
     }
 }
