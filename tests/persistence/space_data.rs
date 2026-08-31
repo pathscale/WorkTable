@@ -54,6 +54,51 @@ async fn rewriting_one_link_does_not_inflate_the_persisted_data_length() {
 }
 
 #[tokio::test]
+async fn reclaiming_thousands_of_pages_bounds_the_info_page_instead_of_corrupting_page_one() {
+    use data_bucket::{GENERAL_HEADER_SIZE, PageType, Persistable};
+
+    let dir = test_dir("free-list-bound");
+    let mut space = TestSpaceData::from_table_files_path(&dir, 1).await.unwrap();
+
+    // A live row on page 1: exactly what an overflowing info page destroys,
+    // since the serialized info is written unchecked from the start of page 0.
+    let row = vec![7u8; 24];
+    let far_row = vec![8u8; 24];
+    let batch = HashMap::from([
+        (1.into(), vec![(link(1, 0, 24), row)]),
+        (2_000.into(), vec![(link(2_000, 0, 24), far_row)]),
+    ]);
+    space.save_batch_data(batch).await.unwrap();
+
+    // Reclaim ~2000 pages: unbounded, the resulting empty_links_list
+    // serializes to roughly twice the info slot and overwrites page 1.
+    let page_ids = (1..=2_000u32).map(Into::into).collect::<Vec<_>>();
+    space.reclaim_data_pages(page_ids).await.unwrap();
+
+    let budget = PAGE_SIZE - GENERAL_HEADER_SIZE;
+    let serialized = space.info.inner.as_bytes().as_ref().len();
+    assert!(
+        serialized <= budget,
+        "info page must stay inside page 0's slot: {serialized} > {budget}"
+    );
+    let kept = space.info.inner.empty_links_list.len();
+    assert!(kept > 0, "bounding must keep as many ranges as fit");
+    assert!(kept < 2_000, "the overflow condition was not constructed");
+
+    // Page 1 must be untouched by the info persist.
+    let header = parse_general_header_by_index(&mut space.data_file, 1).await.unwrap();
+    assert_eq!(header.page_type, PageType::Data);
+    drop(space);
+
+    // And the table still reopens.
+    let space = TestSpaceData::from_table_files_path(&dir, 1).await.unwrap();
+    assert_eq!(space.info.inner.empty_links_list.len(), kept);
+
+    drop(space);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test]
 async fn creating_a_page_past_the_next_id_advances_to_the_links_page() {
     let dir = test_dir("page-jump");
     let mut space = TestSpaceData::from_table_files_path(&dir, 1).await.unwrap();

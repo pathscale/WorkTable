@@ -159,6 +159,47 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
         Ok(())
     }
 
+    /// Keeps the serialized info page inside page 0's fixed slot.
+    ///
+    /// `empty_links_list` is the only unbounded part of [`SpaceInfoPage`], and
+    /// `persist_page` writes the serialized info unchecked from the start of
+    /// page 0: once it outgrows the slot (around 1350 reclaimed ranges) the
+    /// overflow bytes land on data page 1 and corrupt live rows. Dropping the
+    /// excess tail ranges leaks reusable space until those pages are
+    /// reclaimed again, but never corrupts.
+    fn bound_empty_links_list(&mut self)
+    where
+        SpaceInfoPage<PkGenState>: Persistable,
+    {
+        // Seeks inside data_bucket use its own PAGE_SIZE constant, so the slot
+        // is bounded by whichever of the two page sizes is smaller.
+        let budget = (PAGE_SIZE as usize).min(data_bucket::PAGE_SIZE) - data_bucket::GENERAL_HEADER_SIZE;
+        let mut serialized = self.info.inner.as_bytes().as_ref().len();
+        if serialized <= budget {
+            return;
+        }
+
+        static TRUNCATION_WARNING: std::sync::Once = std::sync::Once::new();
+        TRUNCATION_WARNING.call_once(|| {
+            tracing::warn!(
+                budget,
+                "empty_links_list no longer fits the info page; dropping excess free ranges (space leak, not corruption)"
+            );
+        });
+
+        let per_link = Link::default().aligned_size().max(1);
+        while serialized > budget && !self.info.inner.empty_links_list.is_empty() {
+            let keep = self
+                .info
+                .inner
+                .empty_links_list
+                .len()
+                .saturating_sub((serialized - budget) / per_link + 1);
+            self.info.inner.empty_links_list.truncate(keep);
+            serialized = self.info.inner.as_bytes().as_ref().len();
+        }
+    }
+
     /// Removes written byte ranges from the durable free-range list.
     ///
     /// This is persisted before the corresponding row bytes. A crash between
@@ -403,6 +444,9 @@ where
     }
 
     async fn save_info(&mut self) -> eyre::Result<()> {
+        // Single choke point for the info page reaching disk: enforce the
+        // page-0 slot budget however the free-range list was mutated.
+        self.bound_empty_links_list();
         persist_page(&mut self.info, &mut self.data_file).await?;
         // A generated table may immediately reopen this file through a
         // separate handle. Make the updated metadata visible before reporting
