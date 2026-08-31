@@ -65,10 +65,19 @@ The generated API follows these publication rules:
    admitting write traffic. Subsequent generated reads use the published
    version map.
 
-The grace period is quiescent-state reclamation: an atomic counter
-tracks generated reads, and retirement queues are drained when that counter is
-zero. `Arc` ownership independently keeps a version alive after a reader has
-acquired it.
+The grace period is epoch-based reclamation. Each table owns an epoch domain;
+a generated read pins it (a thread-local operation — readers share no counter
+cache line) for the read window. Retired links, pages, and publications enter
+one FIFO queue in retirement order, and each retirement defers an epoch marker
+that executes once every reader pinned at retirement time has unpinned. The
+count of executed markers releases a safe front-of-queue prefix, which
+mutating calls recycle in bounded batches: links return to the empty-link
+allocator, pages to the empty-page allocator, publications leave their shard.
+Reclamation therefore progresses under continuously overlapping readers — no
+global zero-reader instant is required, only that each individual read
+finishes — and no unbounded retirement backlog can form, nor is one ever
+drained inline in a single mutating call. `Arc` ownership independently keeps
+a version alive after a reader has acquired it.
 
 Creating a lazy `SelectQueryBuilder` does not enter the grace period. The guard
 is acquired when iteration first starts, before the backend can yield its first
@@ -80,9 +89,10 @@ observable.
 
 Retirement follows a strict unlink-before-retire rule. Delete and vacuum remove
 or replace every index reference before queueing the old physical link. A
-reader that could still resolve the old reference therefore entered the grace
-period before reclamation observed quiescence; a later reader cannot acquire
-that retired reference.
+reader that could still resolve the old reference therefore pinned before the
+retirement and blocks that item's grace marker; a reader pinning later cannot
+acquire the retired reference at all, which is why it does not need to block
+recycling.
 
 ## Guarantees and non-guarantees
 
@@ -107,8 +117,9 @@ mutation APIs.
 ## Cost model
 
 The protocol adds one owned row copy plus slot/map metadata per live physical
-link, an atomic increment/decrement per generated read, a sharded publication
-map lookup, and writer-side page serialization. `page_access` is currently one
+link, a thread-local epoch pin/unpin per generated read (no shared
+read-modify-write on the read path), a sharded publication map lookup, and
+writer-side page serialization. `page_access` is currently one
 `RwLock<()>` per table, not one lock per row or page: insert, update, delete,
 hydration, reset/reuse, and vacuum operations that take its exclusive side form
 a table-wide writer barrier. Immutable published reads do not take that

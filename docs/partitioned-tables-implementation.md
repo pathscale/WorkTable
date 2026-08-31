@@ -227,7 +227,8 @@ worktable!(
 ```
 
 generates `PricePartitions` with `partition`, `partition_or_create`,
-`partition_or_insert_with`, `contains`, `remove`, `gc`, `retired_len`, `keys`,
+`partition_or_insert_with`, `contains`, `remove`, `collect`, `gc`,
+`retired_len`, `keys`,
 `iter`, `len`, `is_empty`,
 `memory_by_key`, `memory_total` and `rows_by_key`, all typed on `u16` rather
 than a raw `u64`.
@@ -282,13 +283,17 @@ reader that had read the pointer but not yet incremented the strong count could
 have the allocation freed under it: a genuine use-after-free, not a formality.
 
 The fix keeps the read path lock-free. A slot holds one owned strong reference
-as a raw pointer, and `remove` moves that reference to a retire list instead of
-dropping it, so the strong count of anything ever published cannot reach zero
-while the set lives. `gc` drains the list and takes `&mut self`, because
-exclusive access is the proof that no reader is in flight. The cost is that
-removed partitions are held until a `gc`, which is the right trade while there
-is no eviction: removal is rare, and correctness under concurrent reads is not
-negotiable.
+as a raw pointer, and `remove` moves that reference to a retire queue instead
+of dropping it, deferring an epoch marker in the set's own domain. Every read
+of a slot pointer happens under an epoch pin (thread-local, no shared
+read-modify-write), so the marker executes only after every reader that could
+have loaded the pointer has finished. `collect` then frees the expired prefix
+through `&self`: reclamation works through the production `Arc`-shared router,
+and `remove`/`get_or_create` collect opportunistically, so a delist-and-relist
+loop no longer accumulates removed tables. `gc(&mut self)` remains as the
+exhaustive variant for callers that do hold exclusive access. `retired_len`
+and `retired_bytes` now report partitions still inside their grace period
+rather than a list that only exclusive access could drain.
 
 **The key is restricted to `u8`, `u16`, `u32`, `u64`, `usize`.** A `String` key
 is rejected at macro expansion with a message pointing at a registry table,
@@ -334,9 +339,9 @@ secondary index bytes. It excludes the table's fixed floor (14,536 B
 irreducible, 30,920 B with the default page), reserved-but-unused page
 capacity, the router spine, and `Arc` overhead. Do not size a process from it.
 
-It also counts only live partitions, so a total *falls* after a `remove` that
-freed nothing. `retired_bytes` reports what removal left behind, and should be
-read next to it.
+It also counts only live partitions, so a total *falls* after a `remove`
+whose grace period has not expired yet. `retired_bytes` reports what removal
+has not freed yet, and should be read next to it.
 
 **Creation takes one global lock, and `make` runs under it.** So constructing a
 partition blocks every other creation and removal for its duration: 25.7 µs for
