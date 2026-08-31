@@ -829,6 +829,13 @@ where
         let raw_data = from_page
             .get_raw_row(from_link)
             .map_err(ExecutionError::DataPageError)?;
+        // Copy to the destination BEFORE flagging the source. The vacuumed
+        // flag used to be set first, so a failing destination save returned
+        // with the flag durably set in the source page image: after a restart
+        // the row would load as vacuumed with no copy anywhere (row loss).
+        // The whole method holds the page_access write lock, so the order is
+        // invisible to concurrent readers.
+        let new_link = to_page.save_raw_row(&raw_data).map_err(ExecutionError::DataPageError)?;
         let archived = unsafe {
             from_page
                 .get_mut_row_ref(from_link)
@@ -836,7 +843,6 @@ where
                 .unseal_unchecked()
         };
         archived.set_in_vacuum_process();
-        let new_link = to_page.save_raw_row(&raw_data).map_err(ExecutionError::DataPageError)?;
 
         {
             let old_wrapped = from_page.get_row(from_link).map_err(ExecutionError::DataPageError)?;
@@ -1257,6 +1263,37 @@ mod tests {
                 .all(|link| link.page_id != old_link.page_id),
             "whole-page and inner-link allocators must not receive overlapping storage"
         );
+    }
+
+    #[test]
+    fn failed_vacuum_move_leaves_source_row_unflagged() {
+        let pages = DataPages::<TestRow>::from_data(vec![Arc::new(Data::new(1.into())), Arc::new(Data::new(2.into()))]);
+        pages.current_page_id.store(1, Ordering::Release);
+
+        let row = TestRow { a: 10, b: 20 };
+        let link = pages.insert(row).unwrap();
+        unsafe {
+            pages.with_mut_ref(link, |r| r.unghost()).unwrap();
+        }
+
+        // Fill the destination so save_raw_row must fail there.
+        let to_page = pages.get_page(2.into()).unwrap();
+        to_page.free_offset.store(DATA_INNER_LENGTH as u32, Ordering::Release);
+
+        let result = unsafe { pages.move_row_for_vacuum(link, 2.into()) };
+        assert!(matches!(
+            result,
+            Err(ExecutionError::DataPageError(
+                crate::in_memory::DataExecutionError::PageIsFull { .. }
+            ))
+        ));
+
+        // The source row must NOT be left flagged as in-vacuum-process: that
+        // flag is written into the persisted page image, and with no copy on
+        // the destination it would mean durable row loss after a restart.
+        let vacuumed = pages.with_ref(link, |r| r.is_vacuumed).unwrap();
+        assert!(!vacuumed, "failed move must not leave the source marked vacuumed");
+        assert_eq!(pages.select_non_vacuumed(link), Ok(row));
     }
 
     #[test]
