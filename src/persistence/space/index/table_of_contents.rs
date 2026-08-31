@@ -205,7 +205,25 @@ where
             + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
     {
         let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1).await;
-        if let Ok(page) = first_page {
+        let page = match first_page {
+            Ok(page) => page,
+            Err(error) => {
+                // Only a genuinely fresh space may fall back to an empty table
+                // of contents: right after bootstrap the file holds nothing
+                // beyond page 0, so page 1 simply does not exist yet. If the
+                // file extends into page 1's slot, the parse failure means a
+                // torn or truncated table of contents, and silently starting
+                // empty would discard the whole index.
+                let file_length = file.metadata().await?.len();
+                if file_length <= data_bucket::PAGE_SIZE as u64 {
+                    return Ok(Self::new(space_id, next_page_id));
+                }
+                return Err(error.wrap_err(format!(
+                    "table of contents page 1 failed to parse in a {file_length}-byte index file that should contain it"
+                )));
+            }
+        };
+        {
             if page.header.next_id.is_empty() {
                 Ok(Self {
                     current_page: 0,
@@ -230,8 +248,6 @@ where
                     pages: table_of_contents_pages,
                 })
             }
-        } else {
-            Ok(Self::new(space_id, next_page_id))
         }
     }
 }
