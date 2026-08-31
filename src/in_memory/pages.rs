@@ -1456,7 +1456,11 @@ mod tests {
         let link = pages.insert(row).unwrap();
         assert_eq!(pages.row_count.load(Ordering::Relaxed), 1);
         pages.delete(link).unwrap();
-        assert_eq!(pages.row_count.load(Ordering::Relaxed), 0, "delete must decrement row_count");
+        assert_eq!(
+            pages.row_count.load(Ordering::Relaxed),
+            0,
+            "delete must decrement row_count"
+        );
 
         assert_eq!(pages.empty_links.pop_max().map(|(l, _)| l), Some(link));
         pages.empty_links.push(link);

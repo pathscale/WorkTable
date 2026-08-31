@@ -1000,7 +1000,9 @@ mod tests {
 
         // A leftover temporary from a crashed checkpoint must be cleaned up
         // when the index opens.
-        tokio::fs::write(&temporary, b"crashed checkpoint leftovers").await.unwrap();
+        tokio::fs::write(&temporary, b"crashed checkpoint leftovers")
+            .await
+            .unwrap();
         let mut space = SpaceArcticIndex::<u64, 4096>::new(path.clone(), 1).await.unwrap();
         assert!(!temporary.exists(), "stale temporary should be removed on open");
 

@@ -128,7 +128,10 @@ where
 
     /// Defuses the cancellation cleanup and converts into a [`LockGuard`].
     pub fn into_guard(mut self) -> LockGuard<LockType, PrimaryKey> {
-        let lock = self.lock.take().expect("pending lock is intact until conversion or drop");
+        let lock = self
+            .lock
+            .take()
+            .expect("pending lock is intact until conversion or drop");
         LockGuard::new(lock, self.lock_map.clone(), self.primary_key.clone())
     }
 
@@ -140,7 +143,10 @@ where
     /// wait completed: the stripe gate is a synchronous spin lock and must
     /// never be held across an `.await` (see [`LockMap::mutation_guard`]).
     pub fn into_guard_with_mutation(mut self) -> LockGuard<LockType, PrimaryKey> {
-        let lock = self.lock.take().expect("pending lock is intact until conversion or drop");
+        let lock = self
+            .lock
+            .take()
+            .expect("pending lock is intact until conversion or drop");
         LockGuard::new_with_mutation(lock, self.lock_map.clone(), self.primary_key.clone())
     }
 }

@@ -650,12 +650,7 @@ mod tests {
         }
     }
 
-    fn event_insert(
-        id: u128,
-        link: Link,
-        bytes: Vec<u8>,
-        event_ids: Vec<u64>,
-    ) -> Operation<(), u64, TestEvents> {
+    fn event_insert(id: u128, link: Link, bytes: Vec<u8>, event_ids: Vec<u64>) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
             id: OperationId::Single(Uuid::from_u128(id)),
             primary_key_events: event_ids.into_iter().map(primary_event).collect(),
