@@ -302,8 +302,13 @@ where
                 }
                 OperationId::Multi(_) => {
                     let mut ops_set_to_extend = HashSet::new();
-                    used_page_ids.extend(ops_rows.iter().map(|r| r.page_id));
-                    for page_id in ops_rows.iter().map(|r| r.page_id) {
+                    // Deduplicate before querying: a large multi-row operation
+                    // has many rows per page, and issuing the page query per
+                    // row instead of per page made batch collection quadratic
+                    // in rows per page.
+                    let multi_page_ids = ops_rows.iter().map(|r| r.page_id).collect::<HashSet<_>>();
+                    used_page_ids.extend(multi_page_ids.iter().copied());
+                    for page_id in multi_page_ids {
                         let page_ops = self.queue_inner_wt.select_by_page_id(page_id).execute()?;
                         ops_set_to_extend.extend(page_ops.into_iter().map(|r| r.operation_id));
                     }
