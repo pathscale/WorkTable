@@ -268,8 +268,14 @@ where
         };
         self.table_of_contents
             .try_insert((node_id.key.clone(), node_id.value), page_id)?;
-        self.table_of_contents.persist(&mut self.index_file).await?;
+        // Index pages are written before the table of contents that
+        // references them: a crash between the two writes then leaves only an
+        // orphan page, which reload ignores because the TOC is the sole page
+        // authority (`parse_indexset` and the strict load audit iterate TOC
+        // entries only). The reverse order left a durable TOC entry pointing
+        // at absent or stale bytes.
         self.add_new_index_page(node_id, page_id).await?;
+        self.table_of_contents.persist(&mut self.index_file).await?;
 
         Ok(())
     }
@@ -301,10 +307,16 @@ where
             (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
             new_page_id,
         )?;
-        self.table_of_contents.persist(&mut self.index_file).await?;
 
+        // Index pages are written before the table of contents that
+        // references them: a crash between the two writes then leaves only an
+        // orphan page, which reload ignores because the TOC is the sole page
+        // authority (`parse_indexset` and the strict load audit iterate TOC
+        // entries only). The reverse order left a durable TOC entry pointing
+        // at absent or stale bytes.
         self.add_index_page(splitted_page, new_page_id).await?;
         persist_page(&mut page, &mut self.index_file).await?;
+        self.table_of_contents.persist(&mut self.index_file).await?;
 
         Ok(())
     }
@@ -587,10 +599,16 @@ where
             }
         }
 
-        self.table_of_contents.persist(&mut self.index_file).await?;
+        // Index pages are written before the table of contents that
+        // references them: a crash between the two writes then leaves only an
+        // orphan page, which reload ignores because the TOC is the sole page
+        // authority (`parse_indexset` and the strict load audit iterate TOC
+        // entries only). The reverse order left a durable TOC entry pointing
+        // at absent or stale bytes.
         persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
-        // The batch's last page write is a buffered `write_all`; flush so the
-        // batch is visible to other handles once it reports done.
+        self.table_of_contents.persist(&mut self.index_file).await?;
+        // The batch's last write is buffered; flush so the batch is visible
+        // to other handles once it reports done.
         self.index_file.flush().await?;
         Ok(())
     }
@@ -599,6 +617,79 @@ where
 #[cfg(test)]
 mod test {
     use data_bucket::{INNER_PAGE_SIZE, IndexPage, IndexValue, Persistable, get_index_page_size_from_data_length};
+
+    use super::*;
+
+    /// Simulates the crash window every durable-write site now leaves behind:
+    /// an index page reached the file but the table of contents referencing
+    /// it did not. The reload must come up in the pre-change state (the TOC
+    /// is the sole page authority; the orphan page is ignored) and keep
+    /// accepting new nodes afterwards.
+    #[tokio::test]
+    async fn orphan_page_from_crash_between_page_and_toc_write_is_ignored_on_reload() {
+        use indexset::cdc::change::ChangeEvent;
+        use tokio::io::AsyncWriteExt;
+
+        let dir = std::env::temp_dir().join(format!("wt_orphan_crash_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("orphan.wt.idx");
+        let path = path.to_str().unwrap().to_string();
+        let _ = std::fs::remove_file(&path);
+
+        let pair = |key: u32| Pair {
+            key,
+            value: Link {
+                page_id: 0.into(),
+                offset: key,
+                length: 24,
+            },
+        };
+
+        {
+            let mut index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(&path, 0.into(), 1)
+                .await
+                .unwrap();
+            index
+                .process_change_event(ChangeEvent::CreateNode {
+                    event_id: 0.into(),
+                    max_value: pair(10),
+                })
+                .await
+                .unwrap();
+
+            // Crash point of `process_create_node`: the page write completed,
+            // the TOC persist never ran.
+            let orphan_page_id = index.next_page_id.fetch_add(1, Ordering::Relaxed).into();
+            index.add_new_index_page(pair(99), orphan_page_id).await.unwrap();
+            index.index_file.flush().await.unwrap();
+        }
+
+        let mut reloaded = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(&path, 0.into(), 1)
+            .await
+            .unwrap();
+        let restored = reloaded.parse_indexset().await.unwrap();
+        assert!(restored.contains_key(&10), "pre-crash state must load");
+        assert!(
+            !restored.contains_key(&99),
+            "the orphan page must not resurface: the TOC is the page authority"
+        );
+
+        // The index keeps working after the orphan: new nodes land on fresh
+        // page ids past it.
+        reloaded
+            .process_change_event(ChangeEvent::CreateNode {
+                event_id: 0.into(),
+                max_value: pair(200),
+            })
+            .await
+            .unwrap();
+        let restored = reloaded.parse_indexset().await.unwrap();
+        assert!(restored.contains_key(&10));
+        assert!(restored.contains_key(&200));
+
+        drop(reloaded);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn test_size_measure() {

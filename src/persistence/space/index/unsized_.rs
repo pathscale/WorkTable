@@ -139,8 +139,14 @@ where
         };
         self.table_of_contents
             .try_insert((node_id.key.clone(), node_id.value), page_id)?;
-        self.table_of_contents.persist(&mut self.index_file).await?;
+        // Index pages are written before the table of contents that
+        // references them: a crash between the two writes then leaves only an
+        // orphan page, which reload ignores because the TOC is the sole page
+        // authority (`parse_indexset` and the strict load audit iterate TOC
+        // entries only). The reverse order left a durable TOC entry pointing
+        // at absent or stale bytes.
         self.add_new_index_page(node_id, page_id).await?;
+        self.table_of_contents.persist(&mut self.index_file).await?;
 
         Ok(())
     }
@@ -311,10 +317,16 @@ where
             (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
             new_page_id,
         )?;
-        self.table_of_contents.persist(&mut self.index_file).await?;
 
+        // Index pages are written before the table of contents that
+        // references them: a crash between the two writes then leaves only an
+        // orphan page, which reload ignores because the TOC is the sole page
+        // authority (`parse_indexset` and the strict load audit iterate TOC
+        // entries only). The reverse order left a durable TOC entry pointing
+        // at absent or stale bytes.
         self.add_index_page(splitted_page, new_page_id).await?;
         persist_page(&mut page, &mut self.index_file).await?;
+        self.table_of_contents.persist(&mut self.index_file).await?;
 
         Ok(())
     }
@@ -587,10 +599,16 @@ where
             Self::compact_page_if_needed(&mut page.inner)?;
         }
 
-        self.table_of_contents.persist(&mut self.index_file).await?;
+        // Index pages are written before the table of contents that
+        // references them: a crash between the two writes then leaves only an
+        // orphan page, which reload ignores because the TOC is the sole page
+        // authority (`parse_indexset` and the strict load audit iterate TOC
+        // entries only). The reverse order left a durable TOC entry pointing
+        // at absent or stale bytes.
         persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
-        // The batch's last page write is a buffered `write_all`; flush so the
-        // batch is visible to other handles once it reports done.
+        self.table_of_contents.persist(&mut self.index_file).await?;
+        // The batch's last write is buffered; flush so the batch is visible
+        // to other handles once it reports done.
         self.index_file.flush().await?;
         Ok(())
     }

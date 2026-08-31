@@ -14,18 +14,16 @@ transitional-identity machinery with the unsized path
 historical page maximum (after a mid-batch split or max-remove re-key)
 resolve through the aliases, and every former panic is a typed error.
 
-## 2. Table of contents persisted before the index pages it references
+## 2. Table of contents persisted before the index pages it references (fixed)
 
-`process_create_node` and `process_split_node` (both sized and unsized paths)
-persist the table of contents first and only then write the new index page;
-the batch paths likewise call `table_of_contents.persist(..)` before
-`persist_pages_batch(..)`. A crash between the two writes leaves a durable TOC
-entry pointing at a page slot that holds zeroes or a previous generation's
-bytes. On the next load the TOC is trusted, so the load either fails parsing
-the phantom page or (for a stale prior page) attaches wrong node content.
-Reversing the order alone does not fully close the window (the two writes are
-still not atomic), but writing pages before the TOC that references them would
-shrink the failure to "orphaned page bytes", which a reload ignores.
+Fixed: `process_create_node`, `process_split_node`, and both batch flush
+paths (sized and unsized) now write index pages first and persist the table
+of contents last. A crash between the two writes leaves only an orphan page,
+which reload ignores because the TOC is the sole page authority
+(`parse_indexset` and the strict load audit iterate TOC entries only). The
+two writes are still not atomic and still not fsynced (see issue 3): the
+whole change can be lost, but a durable TOC entry can no longer point at
+absent or stale page bytes.
 
 ## 3. No fsync discipline layer-wide
 
