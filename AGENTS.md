@@ -9,7 +9,7 @@ natively, and Claude Code loads it through the `@AGENTS.md` import in
 
 ## Invariants (don't break these)
 
-- **Keep `cargo fmt` and `cargo clippy --all-targets` clean.** Lint failures are part of the build here, not advisory.
+- **Keep `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` clean.** Lint failures are part of the build here, not advisory. Note `--workspace`: without it `worktable_codegen` is never linted, and note `-D warnings`, because CI denies what your terminal merely prints.
 - **Publishing to crates.io is irreversible.** A version number can never be reused, and yanking does not delete. Run `cargo publish --dry-run` first, publish from the merged default branch, and tag the release.
 - **A pre-release version (`-alpha`, `-beta`) needs an exact dependency pin.** A plain `"2.0"` requirement will not match `2.0.0-alpha.1`, so consumers must be bumped deliberately.
 - **Docs describe what is true now.** If you change behaviour, update the README and any affected doc in the same change.
@@ -19,7 +19,9 @@ natively, and Claude Code loads it through the `@AGENTS.md` import in
 ```bash
 cargo build
 cargo test
-cargo fmt && cargo clippy --all-targets    # run after every change
+cargo fmt && cargo clippy --workspace --all-targets -- -D warnings
+
+./scripts/ci-local.sh    # everything CI runs, same args, before you push
 ```
 
 ## Verification
