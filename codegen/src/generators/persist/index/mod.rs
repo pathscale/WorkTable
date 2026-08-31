@@ -60,10 +60,17 @@ impl PersistGenerator {
                     let index_type = persistent_unique_index_type(idx.backend, &t, &value_type, worktables_node)?;
                     quote! { #i: #index_type }
                 } else {
-                    if is_unsized(&t.to_string()) {
-                        quote! {#i: IndexMultiMap<#t, OffsetEqLink, UnsizedNode<IndexMultiPair<#t, OffsetEqLink>>>}
-                    } else {
-                        quote! {#i: IndexMultiMap<#t, OffsetEqLink>}
+                    match idx.backend {
+                        crate::common::model::IndexBackend::Arctic => {
+                            quote! { #i: PersistentArcticMultiIndex<#t, OffsetEqLink> }
+                        }
+                        _ => {
+                            if is_unsized(&t.to_string()) {
+                                quote! {#i: IndexMultiMap<#t, OffsetEqLink, UnsizedNode<IndexMultiPair<#t, OffsetEqLink>>>}
+                            } else {
+                                quote! {#i: IndexMultiMap<#t, OffsetEqLink>}
+                            }
+                        }
                     }
                 };
                 Ok::<_, syn::Error>(res)
@@ -135,6 +142,9 @@ impl PersistGenerator {
                         }
                     }
                 } else {
+                    if idx.backend == crate::common::model::IndexBackend::Arctic {
+                        return Ok(quote! { #i: Default::default(), });
+                    }
                     if is_unsized(&t.to_string()) {
                         quote! {#i: IndexMultiMap::with_maximum_node_size(#const_name), }
                     } else {

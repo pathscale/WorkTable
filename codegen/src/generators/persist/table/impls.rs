@@ -163,6 +163,13 @@ impl PersistGenerator {
                         }
                     }
                 } else {
+                    // WorkTablesIndex multimap iteration lends borrowed keys;
+                    // the arctic multimap yields owned snapshot pairs.
+                    let key_mismatch = if index.backend == crate::common::model::IndexBackend::Arctic {
+                        quote! { indexed_key != expected_key }
+                    } else {
+                        quote! { indexed_key != &expected_key }
+                    };
                     quote! {
                         for (indexed_key, offset_link) in self.0.indexes.#index_field.iter() {
                             let row = self.0.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {
@@ -172,7 +179,7 @@ impl PersistGenerator {
                                 )
                             })?;
                             let expected_key = #expected_key;
-                            if indexed_key != &expected_key {
+                            if #key_mismatch {
                                 return Err(PersistenceLoadError::corrupt(
                                     path,
                                     format!("secondary index {} key does not match its referenced row", #index_name),

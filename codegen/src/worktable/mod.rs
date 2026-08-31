@@ -174,22 +174,7 @@ fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::
 
     for index in columns.indexes.values().filter(|index| !index.is_unique) {
         match index.backend {
-            IndexBackend::WorktablesIndex => {}
-            IndexBackend::Arctic => {
-                if persistence.is_persisted() {
-                    return Err(syn::Error::new(
-                        index.name.span(),
-                        format!(
-                            "non-unique index `{}` cannot combine `arctic` with `persist: true`: the \
-                             on-disk space layer and CDC event model only cover `worktables_index` \
-                             non-unique indexes so far (see \
-                             docs/nonunique-arctic-persistence-design.md). Use `worktables_index` \
-                             for this index, or `persist: false` for the table",
-                            index.name
-                        ),
-                    ));
-                }
-            }
+            IndexBackend::WorktablesIndex | IndexBackend::Arctic => {}
             IndexBackend::Indexset | IndexBackend::Congee => {
                 return Err(syn::Error::new(
                     index.name.span(),
@@ -480,8 +465,8 @@ mod tests {
     }
 
     #[test]
-    fn persisted_tables_reject_non_unique_arctic_indexes() {
-        let error = expand(quote! {
+    fn persisted_tables_accept_non_unique_arctic_indexes() {
+        let output = expand(quote! {
             name: PersistedNonUniqueArctic,
             persist: true,
             columns: {
@@ -491,10 +476,10 @@ mod tests {
             indexes: {
                 value_idx: value using arctic,
             },
-        })
-        .unwrap_err();
+        });
 
-        assert!(error.to_string().contains("cannot combine `arctic` with `persist: true`"));
+        assert!(output.is_ok(), "{:?}", output.err());
+        assert!(output.unwrap().to_string().contains("PersistentArcticMultiIndex"));
     }
 
     #[test]
