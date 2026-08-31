@@ -350,7 +350,11 @@ where
 
         self.reclaim_retired();
 
-        if let Some(link) = self.empty_links.pop_max() {
+        if let Some((link, vacuum_guard)) = self.empty_links.pop_max() {
+            // `vacuum_guard` keeps vacuum from reclaiming the link's page
+            // until the write through the link below has completed. Hold it
+            // for the whole block.
+            let _vacuum_guard = vacuum_guard;
             let _page_access = self.page_access.write();
             let pages = self.pages.read();
             let current_page: usize = page_id_mapper(link.page_id.into());
@@ -1359,7 +1363,7 @@ mod tests {
         let link = pages.insert(row).unwrap();
         pages.delete(link).unwrap();
 
-        assert_eq!(pages.empty_links.pop_max(), Some(link));
+        assert_eq!(pages.empty_links.pop_max().map(|(l, _)| l), Some(link));
         pages.empty_links.push(link);
 
         let row = TestRow { a: 20, b: 20 };

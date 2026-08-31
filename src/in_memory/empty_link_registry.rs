@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use data_bucket::Link;
@@ -6,6 +7,7 @@ use derive_more::Into;
 use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::concurrent::set::BTreeSet;
 use parking_lot::FairMutex;
+use tokio::sync::OwnedRwLockReadGuard;
 
 use crate::in_memory::DATA_INNER_LENGTH;
 
@@ -84,8 +86,19 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     sum_links_len: AtomicU32,
 
     pub(crate) op_lock: FairMutex<()>,
-    vacuum_lock: tokio::sync::Mutex<()>,
+
+    /// Reader/writer exclusion between link consumers and vacuum. An insert
+    /// that pops a link holds a read guard until its write through that link
+    /// completes; vacuum takes the write side, so it cannot start reclaiming
+    /// while any popped link is still being written through, and no new link
+    /// can be popped while vacuum runs.
+    vacuum_lock: Arc<tokio::sync::RwLock<()>>,
 }
+
+/// A [`Link`] popped from the registry, together with the read guard that
+/// keeps vacuum out until the caller finished writing through the link.
+/// Keep the guard alive for the full duration of that write.
+pub type PoppedLink = (Link, OwnedRwLockReadGuard<()>);
 
 impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
     fn default() -> Self {
@@ -164,10 +177,13 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.insert_link(index_ord_link);
     }
 
-    pub fn pop_max(&self) -> Option<Link> {
-        if self.vacuum_lock.try_lock().is_err() {
-            return None;
-        }
+    /// Pops the largest empty link. Returns it with a vacuum read guard: the
+    /// old `try_lock().is_err()` probe dropped its guard immediately, so
+    /// vacuum could start (and reclaim the link's page) while the caller was
+    /// still writing through the link. The caller must hold the returned
+    /// guard until that write completes.
+    pub fn pop_max(&self) -> Option<PoppedLink> {
+        let guard = self.vacuum_lock.clone().try_read_owned().ok()?;
 
         let _g = self.op_lock.lock();
 
@@ -178,7 +194,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 
         self.remove_link(max_length_link);
 
-        Some(max_length_link)
+        Some((max_length_link, guard))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Link> + '_ {
@@ -189,8 +205,10 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.sum_links_len.load(Ordering::Acquire)
     }
 
-    pub async fn lock_vacuum(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.vacuum_lock.lock().await
+    /// Takes the vacuum (write) side of the exclusion: waits until every
+    /// popped link's read guard is dropped, and blocks new pops while held.
+    pub async fn lock_vacuum(&self) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+        self.vacuum_lock.write().await
     }
 }
 
@@ -327,7 +345,7 @@ mod tests {
         registry.push(right);
         registry.push(middle);
 
-        let result = registry.pop_max().unwrap();
+        let (result, _guard) = registry.pop_max().unwrap();
         assert_eq!(result.page_id, 1.into());
         assert_eq!(result.offset, 0);
         assert_eq!(result.length, 225);
@@ -352,8 +370,8 @@ mod tests {
         registry.push(link1);
         registry.push(link2);
 
-        let pop1 = registry.pop_max().unwrap();
-        let pop2 = registry.pop_max().unwrap();
+        let (pop1, _guard1) = registry.pop_max().unwrap();
+        let (pop2, _guard2) = registry.pop_max().unwrap();
 
         assert_eq!(pop1.length, 100);
         assert_eq!(pop2.length, 50);
@@ -385,8 +403,8 @@ mod tests {
         registry.push(large);
         registry.push(medium);
 
-        assert_eq!(registry.pop_max().unwrap().length, 300); // two links were united
-        assert_eq!(registry.pop_max().unwrap().length, 50);
+        assert_eq!(registry.pop_max().unwrap().0.length, 300); // two links were united
+        assert_eq!(registry.pop_max().unwrap().0.length, 50);
     }
 
     #[test]
@@ -400,7 +418,7 @@ mod tests {
                 length: page_id % 1_024 + 1,
             };
             registry.push(link);
-            assert_eq!(registry.pop_max(), Some(link));
+            assert_eq!(registry.pop_max().map(|(l, _)| l), Some(link));
         }
 
         assert!(registry.pop_max().is_none());
@@ -440,7 +458,7 @@ mod tests {
     fn test_empty_registry() {
         let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
 
-        assert_eq!(registry.pop_max(), None);
+        assert!(registry.pop_max().is_none());
         assert_eq!(registry.iter().count(), 0);
     }
 
@@ -484,7 +502,7 @@ mod tests {
 
         let popped = registry.pop_max();
         assert!(popped.is_some());
-        assert_eq!(popped.unwrap().length, 100);
+        assert_eq!(popped.unwrap().0.length, 100);
 
         registry.push(Link {
             page_id: 1.into(),
@@ -505,6 +523,56 @@ mod tests {
             popped_after_unlock.is_some(),
             "pop_max should return link after vacuum lock is released"
         );
-        assert_eq!(popped_after_unlock.unwrap().length, 100);
+        assert_eq!(popped_after_unlock.unwrap().0.length, 100);
+    }
+
+    #[tokio::test]
+    async fn test_popped_link_guard_blocks_vacuum() {
+        use futures::FutureExt;
+
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+        registry.push(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+
+        let (link, guard) = registry.pop_max().unwrap();
+        assert_eq!(link.length, 100);
+
+        // The popped link is still being written through while its guard is
+        // alive: vacuum must not be able to take its lock in that window.
+        assert!(
+            registry.lock_vacuum().now_or_never().is_none(),
+            "vacuum must wait for the popped link's write to complete"
+        );
+
+        drop(guard);
+        assert!(
+            registry.lock_vacuum().now_or_never().is_some(),
+            "vacuum should proceed once the popped link's guard is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_pops_share_the_vacuum_read_side() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+        registry.push(Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        });
+        registry.push(Link {
+            page_id: 2.into(),
+            offset: 0,
+            length: 50,
+        });
+
+        // Two inserts may write through popped links at the same time; the
+        // exclusion is only against vacuum, not between inserts.
+        let first = registry.pop_max().unwrap();
+        let second = registry.pop_max().unwrap();
+        assert_eq!(first.0.length, 100);
+        assert_eq!(second.0.length, 50);
     }
 }
