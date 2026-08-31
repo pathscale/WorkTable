@@ -143,3 +143,388 @@ fn concurrent_readers_see_a_partition_created_under_them() {
     reader.join().unwrap();
     assert_eq!(set.len(), 256);
 }
+
+// ---------------------------------------------------------------------------
+// Reclamation. A slot hands out `Arc`s to readers that hold no lock, so the
+// question these answer is when the allocation behind one is allowed to die.
+// ---------------------------------------------------------------------------
+
+/// Counts its own drops, so a test can assert that a removed partition is
+/// retired rather than freed.
+#[derive(Debug)]
+struct Tracked {
+    key: u64,
+    drops: Arc<AtomicU32>,
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn a_removed_partition_is_retired_not_freed() {
+    let drops = Arc::new(AtomicU32::new(0));
+    let mut set: PartitionSet<Tracked> = PartitionSet::new();
+    for k in 0..4u64 {
+        let drops = drops.clone();
+        set.get_or_create(k, || Tracked { key: k, drops }).unwrap();
+    }
+
+    // Drop every handle the test holds. The set still owns all four.
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+
+    let taken = set.remove(2).expect("was present");
+    assert_eq!(taken.key, 2);
+    drop(taken);
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        0,
+        "a removed partition must outlive the removal: a reader may have \
+         loaded its pointer and not yet incremented the strong count"
+    );
+    assert_eq!(set.retired_len(), 1);
+    assert_eq!(set.len(), 3);
+
+    assert_eq!(set.gc(), 1, "gc must report what it reclaimed");
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert_eq!(set.retired_len(), 0);
+    assert_eq!(set.len(), 3, "gc must not disturb live partitions");
+}
+
+#[test]
+fn dropping_the_set_frees_live_and_retired_partitions_alike() {
+    let drops = Arc::new(AtomicU32::new(0));
+    {
+        let set: PartitionSet<Tracked> = PartitionSet::new();
+        for k in 0..8u64 {
+            let drops = drops.clone();
+            set.get_or_create(k, || Tracked { key: k, drops }).unwrap();
+        }
+        // Three retired, five still live, and one key well past the first
+        // chunk so more than one chunk has to be walked.
+        let drops2 = drops.clone();
+        set.get_or_create(5000, || Tracked {
+            key: 5000,
+            drops: drops2,
+        })
+        .unwrap();
+        set.remove(0);
+        set.remove(1);
+        set.remove(2);
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+    }
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        9,
+        "dropping the set must free every partition exactly once"
+    );
+}
+
+#[test]
+fn gc_on_an_untouched_set_is_a_no_op() {
+    let mut set: PartitionSet<Counted> = PartitionSet::new();
+    assert_eq!(set.gc(), 0);
+    set.get_or_create(1, || Counted(1)).unwrap();
+    assert_eq!(set.gc(), 0, "a live partition is not garbage");
+    assert_eq!(set.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Bounds. Every entry point has to agree on what a routable key is.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_first_and_last_keys_are_both_routable() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    let last = MAX_PARTITIONS as u64 - 1;
+    set.get_or_create(0, || Counted(0)).unwrap();
+    set.get_or_create(last, || Counted(last)).unwrap();
+    assert_eq!(set.partition(0).unwrap().0, 0);
+    assert_eq!(set.partition(last).unwrap().0, last);
+    assert_eq!(set.keys(), vec![0, last]);
+}
+
+#[test]
+fn every_entry_point_agrees_on_the_bound() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    for key in [MAX_PARTITIONS as u64, MAX_PARTITIONS as u64 + 1, u64::MAX, u64::MAX / 2] {
+        assert!(set.partition(key).is_none(), "partition({key})");
+        assert!(!set.contains(key), "contains({key})");
+        assert!(set.remove(key).is_none(), "remove({key})");
+        assert_eq!(
+            set.get_or_create(key, || Counted(key)),
+            Err(PartitionError::OutOfRange { key }),
+            "get_or_create({key})"
+        );
+    }
+    assert!(set.is_empty(), "a refused key must not have allocated");
+}
+
+#[test]
+fn contains_agrees_with_partition_across_a_removal() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    assert!(!set.contains(9));
+    set.get_or_create(9, || Counted(9)).unwrap();
+    assert!(set.contains(9));
+    assert!(set.partition(9).is_some());
+    set.remove(9);
+    assert!(!set.contains(9));
+    assert!(set.partition(9).is_none());
+}
+
+#[test]
+fn recreating_a_removed_key_yields_a_fresh_table() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    let first = set.get_or_create(4, || Counted(1)).unwrap();
+    set.remove(4);
+    let second = set.get_or_create(4, || Counted(2)).unwrap();
+    assert!(
+        !Arc::ptr_eq(&first, &second),
+        "recreation must not resurrect the old table"
+    );
+    assert_eq!(second.0, 2);
+    assert_eq!(set.len(), 1);
+}
+
+#[test]
+fn len_tracks_a_create_and_remove_cycle() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    for round in 0..3 {
+        for k in 0..10u64 {
+            set.get_or_create(k, || Counted(k)).unwrap();
+        }
+        assert_eq!(set.len(), 10, "round {round}");
+        // Creating an existing key must not double-count.
+        for k in 0..10u64 {
+            set.get_or_create(k, || Counted(k)).unwrap();
+        }
+        assert_eq!(set.len(), 10, "round {round}: recreate inflated len");
+        for k in 0..10u64 {
+            set.remove(k);
+            // Removing twice must not underflow.
+            assert!(set.remove(k).is_none());
+        }
+        assert_eq!(set.len(), 0, "round {round}");
+    }
+}
+
+#[test]
+fn iter_agrees_with_keys() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    for k in [0u64, 1, 1023, 1024, 1025, 5000, 65535] {
+        set.get_or_create(k, || Counted(k)).unwrap();
+    }
+    let keys = set.keys();
+    let pairs = set.iter();
+    assert_eq!(pairs.len(), keys.len());
+    assert_eq!(pairs.iter().map(|(k, _)| *k).collect::<Vec<_>>(), keys);
+    for (k, t) in pairs {
+        assert_eq!(t.0, k, "iter paired key {k} with the wrong table");
+    }
+}
+
+#[test]
+fn every_chunk_in_the_spine_can_be_populated() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    // One key in each chunk, at a different offset each time so an off-by-one
+    // in the chunk/offset split shows up as a wrong key rather than a hit.
+    let expected: Vec<u64> = (0..MAX_CHUNKS).map(|c| (c * CHUNK + c % CHUNK) as u64).collect();
+    for &k in &expected {
+        set.get_or_create(k, || Counted(k)).unwrap();
+    }
+    assert_eq!(set.len(), MAX_CHUNKS);
+    assert_eq!(set.keys(), expected);
+    for &k in &expected {
+        assert_eq!(set.partition(k).unwrap().0, k);
+    }
+}
+
+#[test]
+fn debug_is_shallow() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    set.get_or_create(1, || Counted(1)).unwrap();
+    let s = format!("{set:?}");
+    assert!(s.contains("live: 1"), "{s}");
+    assert!(s.contains("Counted"), "{s}");
+    assert!(!s.contains("Counted(1)"), "must not print partitions: {s}");
+}
+
+// ---------------------------------------------------------------------------
+// Concurrency. These are the tests the storage exists for.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_reader_racing_a_remove_never_touches_freed_memory() {
+    // The reader loads a slot pointer and then revives an `Arc` from it. If
+    // `remove` dropped the reference the slot owned, this is the window in
+    // which the allocation could be freed between those two steps. Readers
+    // hammer the same keys a churn thread is creating and removing.
+    #[cfg(miri)]
+    const KEYS: u64 = 4;
+    #[cfg(miri)]
+    const ROUNDS: u32 = 3;
+    #[cfg(not(miri))]
+    const KEYS: u64 = 32;
+    #[cfg(not(miri))]
+    const ROUNDS: u32 = 400;
+
+    let drops = Arc::new(AtomicU32::new(0));
+    let set: Arc<PartitionSet<Tracked>> = Arc::new(PartitionSet::new());
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let readers: Vec<_> = (0..if cfg!(miri) { 2 } else { 6 })
+        .map(|_| {
+            let set = set.clone();
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut observed = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    for k in 0..KEYS {
+                        if let Some(t) = set.partition(k) {
+                            // Reading through the handle is what would fault
+                            // on a use-after-free.
+                            assert_eq!(t.key, k, "key {k} revived as {}", t.key);
+                            observed += 1;
+                        }
+                    }
+                }
+                observed
+            })
+        })
+        .collect();
+
+    for _ in 0..ROUNDS {
+        for k in 0..KEYS {
+            let drops = drops.clone();
+            set.get_or_create(k, || Tracked { key: k, drops }).unwrap();
+        }
+        for k in 0..KEYS {
+            set.remove(k);
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+
+    let observed: u64 = readers.into_iter().map(|h| h.join().unwrap()).sum();
+    assert_eq!(set.len(), 0);
+    assert_eq!(
+        set.retired_len(),
+        (ROUNDS as usize) * (KEYS as usize),
+        "every removal must have been retired"
+    );
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        0,
+        "nothing may be freed while readers are running"
+    );
+    // Readers are joined, so exclusive access is real and reclamation is safe.
+    let mut set = Arc::try_unwrap(set).expect("readers have exited");
+    assert_eq!(set.gc(), (ROUNDS as usize) * (KEYS as usize));
+    assert_eq!(drops.load(Ordering::SeqCst), (ROUNDS * KEYS as u32));
+    // Not an assertion about a number, just that the readers did run.
+    assert!(observed > 0, "readers never saw a live partition");
+}
+
+#[test]
+fn concurrent_creation_and_removal_keeps_len_honest() {
+    const THREADS: u64 = if cfg!(miri) { 3 } else { 8 };
+    const PER_THREAD: u64 = if cfg!(miri) { 8 } else { 64 };
+
+    let set: Arc<PartitionSet<Counted>> = Arc::new(PartitionSet::new());
+    let handles: Vec<_> = (0..THREADS)
+        .map(|t| {
+            let set = set.clone();
+            std::thread::spawn(move || {
+                // Disjoint key ranges, so the final count is exact rather than
+                // a race between threads over the same keys.
+                let base = t * PER_THREAD;
+                for k in base..base + PER_THREAD {
+                    set.get_or_create(k, || Counted(k)).unwrap();
+                }
+                // Remove the odd half back out.
+                for k in (base..base + PER_THREAD).step_by(2) {
+                    assert!(set.remove(k).is_some(), "key {k} vanished");
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let expected = (THREADS * PER_THREAD / 2) as usize;
+    assert_eq!(set.len(), expected);
+    assert_eq!(set.keys().len(), expected, "keys disagrees with len");
+    assert_eq!(set.iter().len(), expected, "iter disagrees with len");
+    for (k, t) in set.iter() {
+        assert_eq!(t.0, k);
+        assert_eq!(k % 2, 1, "an evicted key came back");
+    }
+}
+
+#[test]
+fn concurrent_creation_across_chunk_boundaries_is_sound() {
+    // Every thread walks the same keys, and the keys straddle chunk
+    // boundaries, so threads race on chunk allocation as well as on slots.
+    let keys: Vec<u64> = (0..if cfg!(miri) { 3u64 } else { 8 })
+        .flat_map(|c: u64| {
+            let base = c * CHUNK as u64;
+            [base.saturating_sub(1), base, base + 1, base + CHUNK as u64 - 1]
+        })
+        .collect();
+
+    let set: Arc<PartitionSet<Counted>> = Arc::new(PartitionSet::new());
+    let calls = Arc::new(AtomicU32::new(0));
+    let handles: Vec<_> = (0..if cfg!(miri) { 3 } else { 12 })
+        .map(|_| {
+            let set = set.clone();
+            let calls = calls.clone();
+            let keys = keys.clone();
+            std::thread::spawn(move || {
+                for k in keys {
+                    let c = calls.clone();
+                    let t = set
+                        .get_or_create(k, move || {
+                            c.fetch_add(1, Ordering::SeqCst);
+                            Counted(k)
+                        })
+                        .unwrap();
+                    assert_eq!(t.0, k);
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let mut unique = keys.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        calls.load(Ordering::SeqCst) as usize,
+        unique.len(),
+        "a key was created more than once"
+    );
+    assert_eq!(set.len(), unique.len());
+    assert_eq!(set.keys(), unique);
+}
+
+#[test]
+fn a_panicking_initialiser_poisons_rather_than_corrupts() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    set.get_or_create(1, || Counted(1)).unwrap();
+
+    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        set.get_or_create(2, || panic!("initialiser blew up"))
+    }));
+    assert!(poisoned.is_err(), "the panic must propagate to the caller");
+
+    // The set is now poisoned. Reads still work, because they never take the
+    // mutex; writes report it rather than proceeding on unknown state.
+    assert_eq!(set.partition(1).unwrap().0, 1);
+    assert!(set.partition(2).is_none(), "the failed key must not exist");
+    assert_eq!(set.len(), 1, "a failed creation must not be counted");
+    assert_eq!(set.get_or_create(3, || Counted(3)), Err(PartitionError::Poisoned));
+}

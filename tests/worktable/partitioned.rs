@@ -186,3 +186,295 @@ fn concurrent_creation_and_reading_is_sound() {
     }
     assert_eq!(prices.len(), 128);
 }
+
+// ---------------------------------------------------------------------------
+// Isolation. Partitioning only pays for itself if a write in one partition is
+// invisible to every other, so each mutating path is asserted rather than
+// assumed to inherit isolation from the storage.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn updates_are_scoped_to_one_partition() {
+    let prices = PricePartitions::new();
+    let a = prices.partition_or_create(1).unwrap();
+    let b = prices.partition_or_create(2).unwrap();
+    a.insert(row(7, 100.0)).unwrap();
+    b.insert(row(7, 200.0)).unwrap();
+
+    a.update(PriceRow {
+        exchange_id: 7,
+        bid: 999.0,
+        ask: 1000.0,
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(a.select(7).unwrap().bid, 999.0);
+    assert_eq!(
+        b.select(7).unwrap().bid,
+        200.0,
+        "an update in partition 1 reached partition 2"
+    );
+}
+
+#[tokio::test]
+async fn deletes_are_scoped_to_one_partition() {
+    let prices = PricePartitions::new();
+    let a = prices.partition_or_create(1).unwrap();
+    let b = prices.partition_or_create(2).unwrap();
+    let pk = a.insert(row(7, 100.0)).unwrap();
+    b.insert(row(7, 200.0)).unwrap();
+
+    a.delete(pk).await.unwrap();
+
+    assert!(a.select(7).is_none());
+    assert_eq!(
+        b.select(7).unwrap().bid,
+        200.0,
+        "a delete in partition 1 reached partition 2"
+    );
+    assert_eq!(prices.rows_by_key(), vec![(1u16, 0), (2, 1)]);
+}
+
+#[tokio::test]
+async fn a_unique_index_collides_only_inside_its_own_partition() {
+    let quotes = QuotePartitions::new();
+    let a = quotes.partition_or_create(1).unwrap();
+    let b = quotes.partition_or_create(2).unwrap();
+
+    a.insert(QuoteRow {
+        id: a.get_next_pk().0,
+        tag: 42,
+        px: 1.0,
+    })
+    .unwrap();
+    // The same tag in a sibling partition is fine.
+    b.insert(QuoteRow {
+        id: b.get_next_pk().0,
+        tag: 42,
+        px: 2.0,
+    })
+    .unwrap();
+    // The same tag again in the same partition is not.
+    let dup = a.insert(QuoteRow {
+        id: a.get_next_pk().0,
+        tag: 42,
+        px: 3.0,
+    });
+    assert!(dup.is_err(), "a unique index must still be unique within its partition");
+
+    assert_eq!(a.select_by_tag(42).unwrap().px, 1.0);
+    assert_eq!(b.select_by_tag(42).unwrap().px, 2.0);
+}
+
+#[test]
+fn autoincrement_counts_independently_in_each_partition() {
+    let quotes = QuotePartitions::new();
+    let a = quotes.partition_or_create(1).unwrap();
+    let b = quotes.partition_or_create(2).unwrap();
+
+    for i in 0..5u32 {
+        a.insert(QuoteRow {
+            id: a.get_next_pk().0,
+            tag: i,
+            px: 1.0,
+        })
+        .unwrap();
+    }
+    // `b` has had no inserts, so its counter has not moved.
+    let first_in_b = b.get_next_pk().0;
+    b.insert(QuoteRow {
+        id: first_in_b,
+        tag: 100,
+        px: 2.0,
+    })
+    .unwrap();
+
+    assert_eq!(
+        first_in_b, 0,
+        "autoincrement leaked across partitions: b started at {first_in_b}"
+    );
+    assert_eq!(a.select_by_tag(4).unwrap().id, 4);
+    assert_eq!(quotes.rows_by_key(), vec![(1u32, 5), (2, 1)]);
+}
+
+// ---------------------------------------------------------------------------
+// Reclamation through the generated facade.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_removed_partition_is_reclaimed_only_by_gc() {
+    let mut prices = PricePartitions::new();
+    let held = prices.partition_or_create(4).unwrap();
+    held.insert(row(2, 9.0)).unwrap();
+
+    let taken = prices.remove(4).expect("was present");
+    assert_eq!(prices.len(), 0);
+    assert_eq!(prices.retired_len(), 1, "removal must retire, not free");
+
+    // Both handles still work: this is the reader-mid-query case.
+    assert_eq!(held.select(2).unwrap().bid, 9.0);
+    assert_eq!(taken.select(2).unwrap().bid, 9.0);
+    drop(taken);
+    drop(held);
+
+    assert_eq!(prices.gc(), 1);
+    assert_eq!(prices.retired_len(), 0);
+    assert_eq!(prices.gc(), 0, "gc must be idempotent");
+}
+
+#[test]
+fn removing_every_partition_empties_the_set() {
+    let prices = PricePartitions::new();
+    for k in 0..16u16 {
+        prices.partition_or_create(k).unwrap();
+    }
+    assert_eq!(prices.len(), 16);
+    for k in 0..16u16 {
+        assert!(prices.remove(k).is_some());
+    }
+    assert!(prices.is_empty());
+    assert_eq!(prices.keys(), Vec::<u16>::new());
+    assert_eq!(prices.iter().len(), 0);
+    assert_eq!(prices.memory_total(), 0);
+    assert_eq!(prices.rows_by_key(), Vec::<(u16, usize)>::new());
+}
+
+// ---------------------------------------------------------------------------
+// Key range. A key type wider than the spine can address has to fail as an
+// error rather than wrap onto some other partition.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_key_beyond_the_spine_is_an_error_not_a_wrap() {
+    let quotes = QuotePartitions::new();
+    let inside = worktable::partition::MAX_PARTITIONS as u32 - 1;
+    let outside = worktable::partition::MAX_PARTITIONS as u32;
+
+    quotes.partition_or_create(inside).unwrap();
+    assert!(quotes.partition(inside).is_some());
+
+    assert!(
+        quotes.partition_or_create(outside).is_err(),
+        "an unroutable key must be refused"
+    );
+    assert!(quotes.partition(outside).is_none());
+    assert!(!quotes.contains(outside));
+    assert!(quotes.remove(outside).is_none());
+    assert!(quotes.partition_or_create(u32::MAX).is_err());
+
+    // The refusals must not have disturbed the one real partition.
+    assert_eq!(quotes.len(), 1);
+    assert_eq!(quotes.keys(), vec![inside]);
+}
+
+#[test]
+fn the_full_range_of_a_u16_key_is_routable() {
+    // A u16 key can address 65,536 partitions and the spine holds exactly
+    // that, so both ends of the type must work.
+    let prices = PricePartitions::new();
+    for k in [0u16, 1, u16::MAX - 1, u16::MAX] {
+        prices.partition_or_create(k).unwrap();
+        assert!(prices.contains(k), "key {k} did not stick");
+    }
+    assert_eq!(prices.keys(), vec![0, 1, u16::MAX - 1, u16::MAX]);
+}
+
+// ---------------------------------------------------------------------------
+// Concurrency through the generated facade, with real tables rather than the
+// unit tests' trivial payload.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn concurrent_writers_on_disjoint_partitions_do_not_interfere() {
+    use std::sync::Arc;
+    const THREADS: u16 = 8;
+    const ROWS: u8 = 32;
+
+    let prices = Arc::new(PricePartitions::new());
+    let handles: Vec<_> = (0..THREADS)
+        .map(|t| {
+            let prices = prices.clone();
+            std::thread::spawn(move || {
+                let table = prices.partition_or_create(t).unwrap();
+                for e in 0..ROWS {
+                    table.insert(row(e, t as f64 * 1000.0 + e as f64)).unwrap();
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    assert_eq!(prices.len(), THREADS as usize);
+    for t in 0..THREADS {
+        let table = prices.partition(t).expect("partition {t} vanished");
+        for e in 0..ROWS {
+            assert_eq!(
+                table.select(e).unwrap().bid,
+                t as f64 * 1000.0 + e as f64,
+                "partition {t} row {e} was written by the wrong thread"
+            );
+        }
+    }
+    assert_eq!(
+        prices.rows_by_key(),
+        (0..THREADS).map(|t| (t, ROWS as usize)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn readers_survive_partitions_being_removed_under_them() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    const KEYS: u16 = 24;
+    const ROUNDS: u32 = 150;
+
+    let prices = Arc::new(PricePartitions::new());
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let prices = prices.clone();
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    for k in 0..KEYS {
+                        // Reading through a handle that a churn thread may be
+                        // removing right now is the case that would fault on a
+                        // use-after-free.
+                        if let Some(r) = prices.partition(k).and_then(|t| t.select(0)) {
+                            assert_eq!(r.bid, k as f64, "partition {k} was torn");
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    for _ in 0..ROUNDS {
+        for k in 0..KEYS {
+            let t = prices
+                .partition_or_insert_with(k, || {
+                    let t = PriceWorkTable::default();
+                    t.insert(row(0, k as f64)).unwrap();
+                    t
+                })
+                .unwrap();
+            let _ = t;
+        }
+        for k in 0..KEYS {
+            prices.remove(k);
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    for h in readers {
+        h.join().unwrap();
+    }
+
+    assert!(prices.is_empty());
+    assert_eq!(prices.retired_len(), ROUNDS as usize * KEYS as usize);
+    let mut prices = Arc::try_unwrap(prices).expect("readers have exited");
+    assert_eq!(prices.gc(), ROUNDS as usize * KEYS as usize);
+}
