@@ -56,6 +56,16 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     #[rkyv(with = AtomicLoad<Relaxed>)]
     pub free_offset: AtomicU32,
 
+    /// Per-page access barrier for the mutable byte image.
+    ///
+    /// The exclusive side serializes mutations of this page's bytes (row
+    /// writes, in-place updates, reset on reuse); the shared side protects
+    /// low-level readers of those bytes (publication hydration, `with_ref`,
+    /// CDC byte capture). Runtime-only: skipped by rkyv, reconstructed
+    /// unlocked on load.
+    #[rkyv(with = Skip)]
+    pub(crate) access: parking_lot::RwLock<()>,
+
     /// Inner array of bytes where deserialized `Row`s will be stored.
     #[rkyv(with = Unsafe)]
     inner_data: UnsafeCell<AlignedBytes<DATA_LENGTH>>,
@@ -72,6 +82,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Self {
             id,
             free_offset: AtomicU32::default(),
+            access: parking_lot::RwLock::new(()),
             inner_data: UnsafeCell::new(AlignedBytes::<DATA_LENGTH>([0; DATA_LENGTH])),
             _phantom: PhantomData,
         }
@@ -81,6 +92,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Self {
             id: page.header.page_id,
             free_offset: AtomicU32::from(page.header.data_length),
+            access: parking_lot::RwLock::new(()),
             inner_data: UnsafeCell::new(AlignedBytes::<DATA_LENGTH>(page.inner.data)),
             _phantom: PhantomData,
         }

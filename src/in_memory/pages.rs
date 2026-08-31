@@ -160,12 +160,25 @@ enum Retired<const DATA_LENGTH: usize> {
 /// purges any of P's links from the empty-link registry, so the whole-page
 /// and inner-link allocators never hold overlapping storage.
 ///
-/// Locks are acquired in this order when more than one is needed:
-/// `page_access` -> `pages` -> one `published_rows` shard. Reclamation holds
-/// the retirement queue, then briefly acquires individual publication shards
-/// and the empty-link/page registries; nothing acquires the retirement queue
-/// while holding any of those, so the order is acyclic. Callers must not
-/// invoke reclamation while retaining the retirement-queue guard.
+/// # Lock order
+///
+/// Each page carries its own access barrier (`Data::access`); there is no
+/// table-wide page lock. Locks are acquired in this order when more than one
+/// is needed:
+///
+/// 1. generated row/lock-manager locks (outside this type, always first);
+/// 2. `empty_pages` (only the insert page-switch path holds it into 3/4);
+/// 3. `pages` (the vector lock; its write side is only taken for growth,
+///    with no page lock held);
+/// 4. one or two per-page `Data::access` locks — two only in the vacuum row
+///    move, always in ascending page-id order;
+/// 5. one `published_rows` shard, or the empty-link registry's `op_lock`.
+///
+/// Reclamation holds the retirement queue, then briefly acquires individual
+/// publication shards and the empty-link/page registries; nothing acquires
+/// the retirement queue while holding any of those (or any page lock), so
+/// the order is acyclic. Callers must not invoke reclamation while retaining
+/// the retirement-queue guard.
 #[derive(Debug)]
 pub struct DataPages<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
 where
@@ -174,10 +187,6 @@ where
     /// Immutable application-visible row versions. Published readers never
     /// borrow the mutable archived page image.
     published_rows: PublicationShards<Row, DATA_LENGTH>,
-
-    /// Protects the mutable page image used by writers, vacuum, and
-    /// persistence. Application reads use `published_rows` after hydration.
-    page_access: RwLock<()>,
 
     /// Read-side grace periods protecting the interval from index lookup
     /// until an immutable row version has been acquired. Owned by this table:
@@ -274,15 +283,17 @@ where
             return Ok(slot);
         }
 
-        let _page_access = self.page_access.read();
-        if let Some(slot) = self.published_slot(link) {
-            return Ok(slot);
-        }
-
         let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let _page_guard = page.access.read();
+        // Re-check under the page barrier: a writer publishing this row holds
+        // the exclusive side, so once we hold the shared side the publication
+        // map is current for this page's rows.
+        if let Some(slot) = self.published_slot(link) {
+            return Ok(slot);
+        }
         let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
         let flags = Self::publication_flags(&wrapped);
         let slot = Arc::new(PublishedRow::new(wrapped.get_inner(), flags));
@@ -396,7 +407,6 @@ where
     pub fn new() -> Self {
         Self {
             published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
-            page_access: RwLock::new(()),
             epoch: EpochDomain::new(),
             retired: Mutex::new(VecDeque::new()),
             reclaimable: Arc::new(AtomicUsize::new(0)),
@@ -419,7 +429,6 @@ where
             let last_page_id = vec.len();
             Self {
                 published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
-                page_access: RwLock::new(()),
                 epoch: EpochDomain::new(),
                 retired: Mutex::new(VecDeque::new()),
                 reclaimable: Arc::new(AtomicUsize::new(0)),
@@ -451,10 +460,10 @@ where
             // until the write through the link below has completed. Hold it
             // for the whole block.
             let _vacuum_guard = vacuum_guard;
-            let _page_access = self.page_access.write();
             let pages = self.pages.read();
             let current_page: usize = page_id_mapper(link.page_id.into());
             let page = &pages[current_page];
+            let _page_guard = page.access.write();
 
             match unsafe { page.try_save_row_by_link(&general_row, link) } {
                 Ok((link, left_link)) => {
@@ -479,10 +488,23 @@ where
 
         loop {
             let (link, tried_page) = {
-                let _page_access = self.page_access.write();
                 let pages = self.pages.read();
                 let current_page = page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
                 let page = &pages[current_page];
+                let _page_guard = page.access.write();
+                // Re-check under the page barrier. A switch may have completed
+                // between the load above and the lock; in the worst case the
+                // stale page has since been vacuumed, queued as empty, and
+                // reset, and a save into it would be silently destroyed by the
+                // next reuse. A page never becomes current again once switched
+                // away (switch targets come from empty_pages or fresh
+                // allocation, and vacuum never empties the current page), so
+                // current still naming this page here proves it cannot be in
+                // (or headed for) the empty-page pool while the barrier is
+                // held.
+                if current_page != page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
+                    continue;
+                }
 
                 (page.save_row(&general_row), current_page)
             };
@@ -501,7 +523,7 @@ where
                         // empty page; the loser's store gets overwritten and
                         // its popped page is orphaned (permanent capacity
                         // leak). No other path acquires empty_pages while
-                        // holding page_access, so the order here is safe.
+                        // holding a page barrier, so the order here is safe.
                         let mut empty_pages = self.empty_pages.write();
                         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
                             if let Some(page_id) = empty_pages.pop_front() {
@@ -509,9 +531,10 @@ where
                                 // the read-side grace period completes. Reset
                                 // only after reclamation made the page
                                 // available for reuse.
-                                let _page_access = self.page_access.write();
                                 let pages = self.pages.read();
-                                pages[page_id_mapper(page_id.into())].reset();
+                                let page = &pages[page_id_mapper(page_id.into())];
+                                let _page_guard = page.access.write();
+                                page.reset();
                                 self.current_page_id.store(page_id.into(), Ordering::Release);
                             } else {
                                 drop(empty_pages);
@@ -568,11 +591,13 @@ where
         };
 
         if let Some(page_id) = page_id {
-            let _page_access = self.page_access.write();
             let pages = self.pages.read();
             let index = page_id_mapper(page_id.into());
             let page = pages[index].clone();
-            page.reset();
+            {
+                let _page_guard = page.access.write();
+                page.reset();
+            }
 
             return page;
         }
@@ -674,11 +699,11 @@ where
         Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let _page_access = self.page_access.read();
         let pages = self.pages.read();
         let page = pages
             .get::<usize>(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let _page_guard = page.access.read();
         let gen_row = page.get_row_ref(link).map_err(ExecutionError::DataPageError)?;
         let res = op(gen_row);
         Ok(res)
@@ -694,11 +719,11 @@ where
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let _page_guard = page.access.write();
         let res = {
             let gen_row = unsafe {
                 page.get_mut_row_ref(link)
@@ -728,11 +753,11 @@ where
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
-        let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let _page_guard = page.access.write();
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
         let result = unsafe {
             page.save_row_by_link(&gen_row, link)
@@ -759,8 +784,8 @@ where
     /// this reason.
     ///
     /// Serialization and the exact-length check finish before any page byte is
-    /// changed. `page_access` excludes low-level archived-page readers during
-    /// the copy, while generated reads continue from the old immutable
+    /// changed. The page's write barrier excludes low-level archived-page
+    /// readers during the copy, while generated reads continue from the old immutable
     /// publication until [`Self::publish_wrapped_row`] replaces the complete
     /// owned row and flags together.
     ///
@@ -776,11 +801,11 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let _page_guard = page.access.write();
         // Write the new bytes into the slot. `save_row_by_link` requires the
         // serialized wrapped row to be EXACTLY the slot length; the caller only
         // guaranteed equal *field* sizes, which need not imply equal total
@@ -824,11 +849,11 @@ where
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
-        let _page_access = self.page_access.read();
         let pages = self.pages.read();
         let page = pages
             .get(page_id_mapper(link.page_id.into()))
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
+        let _page_guard = page.access.read();
         page.get_raw_row(link).map_err(ExecutionError::DataPageError)
     }
 
@@ -887,8 +912,9 @@ where
     /// value in order to read one `u32` alongside each, so a periodic metrics
     /// poll memcpy'd the whole table and streamed it through cache. This reads
     /// the counters and nothing else.
+    /// Approximate under concurrency: a failing `save_row`'s transient
+    /// reservation may be counted before its rollback. Metrics only.
     pub fn used_bytes(&self) -> u64 {
-        let _page_access = self.page_access.read();
         let pages = self.pages.read();
         pages
             .iter()
@@ -918,7 +944,6 @@ where
             + Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let _page_access = self.page_access.write();
         let pages = self.pages.read();
         let from_page = pages
             .get(page_id_mapper(from_link.page_id.into()))
@@ -926,6 +951,18 @@ where
         let to_page = pages
             .get(page_id_mapper(to_page_id.into()))
             .ok_or(ExecutionError::PageNotFound(to_page_id))?;
+        // The one genuinely multi-page mutation: both barriers are needed,
+        // taken in ascending page-id order so no lock cycle can form with a
+        // concurrent pair.
+        let _page_guards = if from_link.page_id == to_page_id {
+            (from_page.access.write(), None)
+        } else if u32::from(from_link.page_id) < u32::from(to_page_id) {
+            let first = from_page.access.write();
+            (first, Some(to_page.access.write()))
+        } else {
+            let first = to_page.access.write();
+            (first, Some(from_page.access.write()))
+        };
 
         let raw_data = from_page
             .get_raw_row(from_link)
@@ -934,7 +971,7 @@ where
         // flag used to be set first, so a failing destination save returned
         // with the flag durably set in the source page image: after a restart
         // the row would load as vacuumed with no copy anywhere (row loss).
-        // The whole method holds the page_access write lock, so the order is
+        // The whole method holds both pages' write barriers, so the order is
         // invisible to concurrent readers.
         let new_link = to_page.save_raw_row(&raw_data).map_err(ExecutionError::DataPageError)?;
         let archived = unsafe {
