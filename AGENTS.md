@@ -10,6 +10,7 @@ natively, and Claude Code loads it through the `@AGENTS.md` import in
 ## Invariants (don't break these)
 
 - **Keep `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` clean.** Lint failures are part of the build here, not advisory. Note `--workspace`: without it `worktable_codegen` is never linted, and note `-D warnings`, because CI denies what your terminal merely prints.
+- **Shell scripts are POSIX `sh`.** `#!/bin/sh`, and none of `[[ ]]`, arrays, `echo -e`, process substitution or `pipefail`. Check with `sh -n` before committing. Bash is not guaranteed to be the system shell, and a script that only runs on one machine is not a check.
 - **Publishing to crates.io is irreversible.** A version number can never be reused, and yanking does not delete. Run `cargo publish --dry-run` first, publish from the merged default branch, and tag the release.
 - **A pre-release version (`-alpha`, `-beta`) needs an exact dependency pin.** A plain `"2.0"` requirement will not match `2.0.0-alpha.1`, so consumers must be bumped deliberately.
 - **Docs describe what is true now.** If you change behaviour, update the README and any affected doc in the same change.
