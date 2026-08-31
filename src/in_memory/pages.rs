@@ -442,8 +442,11 @@ where
     {
         let link = self.insert(row.clone())?;
         let general_row = <Row as StorableRow>::WrappedRow::from_inner(row);
+        // The first serialization succeeding inside insert() does not make
+        // this one infallible: the serializer arena can still fail here.
+        // Propagate instead of panicking the caller.
         let bytes = rkyv::to_bytes(&general_row)
-            .expect("should be ok as insert not failed")
+            .map_err(|_| DataExecutionError::SerializeError)?
             .into_vec();
         Ok((link, bytes))
     }
