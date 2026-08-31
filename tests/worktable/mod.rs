@@ -11,6 +11,7 @@ mod float;
 mod in_place;
 mod index;
 mod index_backends;
+mod insert_many;
 mod leak_probe;
 mod lock_order;
 mod multi_row_deadlock;
