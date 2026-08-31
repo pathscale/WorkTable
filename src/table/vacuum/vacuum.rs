@@ -28,6 +28,19 @@ use async_trait::async_trait;
 use ordered_float::OrderedFloat;
 use rkyv::api::high::HighDeserializer;
 
+/// Outcome of a single vacuum candidate move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateMove {
+    /// The row was moved to the destination page.
+    Moved,
+    /// The candidate was stale (its key moved or the row was deleted); nothing
+    /// live remains in the source slot.
+    Stale,
+    /// The physical move failed; the live row remains on the source page, so
+    /// the page must not be reclaimed.
+    Failed,
+}
+
 #[derive(derive_more::Debug)]
 pub struct EmptyDataVacuum<
     Row,
@@ -154,6 +167,7 @@ where
                 // don't touch current page or else inserts will be broken
                 continue;
             }
+            let mut source_fully_moved = false;
             loop {
                 let page_to = if let Some(id) = defragmented_pages.pop_front() {
                     id
@@ -178,11 +192,13 @@ where
                     (true, true) => {
                         // from moved fully and on to no more space
                         self.data_pages.mark_page_full(page_to);
+                        source_fully_moved = true;
                         break;
                     }
                     (true, false) => {
                         // from moved fully but to has space
                         defragmented_pages.push_back(page_to);
+                        source_fully_moved = true;
                         break;
                     }
                     (false, true) => {
@@ -191,9 +207,17 @@ where
                         continue;
                     }
                     (false, false) => {
-                        unreachable!("at least one of two situations should appear to break from while cycle")
+                        // A row failed to move even though the destination
+                        // still has space. Keep the destination for later
+                        // sources and leave this source page alone: reclaiming
+                        // it would drop the live row that stayed behind.
+                        defragmented_pages.push_back(page_to);
+                        break;
                     }
                 }
+            }
+            if !source_fully_moved {
+                continue;
             }
             // Remove the page's empty-link fragments before reclamation can
             // expose the whole page for reuse. Otherwise a concurrent insert
@@ -277,8 +301,16 @@ where
 
         drop(range);
 
+        let mut any_move_failed = false;
         for (from_link, pk) in links {
-            self.move_candidate_if_current(from_link.0, pk, to).await?;
+            if self.move_candidate_if_current(from_link.0, pk, to).await? == CandidateMove::Failed {
+                any_move_failed = true;
+            }
+        }
+        if any_move_failed {
+            // A live row stayed behind on the source page; it must not be
+            // reported fully moved, or `defragment` would reclaim it.
+            from_page_will_be_moved = false;
         }
 
         Ok((from_page_will_be_moved, to_page_will_be_filled))
@@ -292,13 +324,18 @@ where
     /// slot for a different row in that interval. Revalidating under the row
     /// lock prevents vacuum from publishing that replacement row under the
     /// stale candidate's primary key.
-    async fn move_candidate_if_current(&self, from_link: Link, pk: PrimaryKey, to: PageId) -> eyre::Result<bool> {
+    async fn move_candidate_if_current(
+        &self,
+        from_link: Link,
+        pk: PrimaryKey,
+        to: PageId,
+    ) -> eyre::Result<CandidateMove> {
         let lock = self.full_row_lock(&pk).await;
         let _guard = LockGuard::new_with_mutation(lock, self.lock_manager.clone(), pk.clone());
 
         let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
         if current_link != Some(from_link) {
-            return Ok(false);
+            return Ok(CandidateMove::Stale);
         }
 
         if self
@@ -306,18 +343,30 @@ where
             .with_ref(from_link, |r| r.is_deleted())
             .expect("a current primary-index link should be valid")
         {
-            return Ok(false);
+            return Ok(CandidateMove::Stale);
         }
 
-        let (raw_data, new_link) = unsafe {
-            self.data_pages
-                .move_row_for_vacuum(from_link, to)
-                .expect("links and destination capacity were checked")
+        let (raw_data, new_link) = match unsafe { self.data_pages.move_row_for_vacuum(from_link, to) } {
+            Ok(moved) => moved,
+            Err(error) => {
+                // Leave the row in place and let the sweep continue; the
+                // source page is then reported as not fully moved so it is
+                // not reclaimed with this live row on it.
+                tracing::warn!(
+                    table = self.table_name,
+                    ?pk,
+                    ?from_link,
+                    to_page = ?to,
+                    %error,
+                    "vacuum failed to move a row; skipping it"
+                );
+                return Ok(CandidateMove::Failed);
+            }
         };
         self.update_index_after_move(pk, from_link, new_link, raw_data)?;
         self.data_pages.retire_published_link(from_link);
 
-        Ok(true)
+        Ok(CandidateMove::Moved)
     }
 
     async fn full_row_lock(&self, pk: &PrimaryKey) -> Arc<Lock> {
@@ -439,7 +488,7 @@ mod tests {
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;
-    use crate::vacuum::vacuum::EmptyDataVacuum;
+    use crate::vacuum::vacuum::{CandidateMove, EmptyDataVacuum};
 
     worktable!(
         name: Test,
@@ -1011,6 +1060,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_row_move_is_skipped_and_leaves_the_row_in_place() {
+        let table = TestWorkTable::default();
+
+        // Two large rows fit on each page.
+        let mut rows = Vec::new();
+        for i in 0..4u64 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i as i64,
+                another: i,
+                exchange: format!("{i:02}-{}", "x".repeat(6_000)),
+            };
+            table.insert(row.clone()).unwrap();
+            rows.push(row);
+        }
+
+        let link_of = |id: u64| {
+            table
+                .0
+                .primary_index
+                .pk_map
+                .get_value(&TestPrimaryKey::from(id))
+                .unwrap()
+                .0
+        };
+        let source_link = link_of(rows[0].id);
+        let dest_page = link_of(rows[2].id).page_id;
+        assert_ne!(source_link.page_id, dest_page, "test setup needs two distinct pages");
+
+        // The destination holds two large rows and cannot fit another one, so
+        // the physical move must fail. The failure has to be reported (not
+        // panic) and the row must stay in place, still selectable.
+        let outcome = create_vacuum(&table)
+            .move_candidate_if_current(source_link, TestPrimaryKey::from(rows[0].id), dest_page)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, CandidateMove::Failed);
+        assert_eq!(table.select(rows[0].id), Some(rows[0].clone()));
+        assert_eq!(link_of(rows[0].id), source_link, "a failed move must leave the row in place");
+    }
+
+    #[tokio::test]
     async fn vacuum_skips_a_stale_candidate_after_its_link_is_reused() {
         let table = TestWorkTable::default();
         let target = TestRow {
@@ -1075,7 +1167,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!moved, "vacuum must reject a candidate whose key moved");
+        assert_eq!(
+            moved,
+            CandidateMove::Stale,
+            "vacuum must reject a candidate whose key moved"
+        );
         assert_eq!(table.select(target_id), Some(updated_target));
         assert_eq!(table.select(replacement_id), Some(replacement));
     }
