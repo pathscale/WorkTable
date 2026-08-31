@@ -16,6 +16,7 @@ mod lock_order;
 mod multi_row_deadlock;
 mod mutation_gate_deadlock;
 mod nid;
+mod nonunique_arctic;
 mod option;
 mod partitioned;
 mod reinsert_visibility;
