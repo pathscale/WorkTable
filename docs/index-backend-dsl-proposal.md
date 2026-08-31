@@ -104,14 +104,14 @@ The macro accepts the same schema with `persist: true` and selects native ART pe
 |---|---:|---:|---:|---:|
 | Primary index | Yes | Yes | Yes | Yes |
 | Unique secondary index | Yes | Yes | Yes | Yes |
-| Non-unique secondary index | Yes | No | No | No |
+| Non-unique secondary index | Yes | No | No | Yes |
 | Persisted local disk | Yes | Yes | Experimental | Experimental |
 | Existing S3 persistence path | Yes | Yes | Files compatible; validation pending | Files compatible; validation pending |
 | Variable-sized keys | Yes | Not in this change | No | No |
 | Ordered point/range API | Yes | Yes | Adapter snapshot for scans | Adapter snapshot for scans |
 | Default when `using` is absent | Yes | No | No | No |
 
-Alternative backends currently require `unique`. A non-unique declaration such as `value_idx: value using arctic` fails at macro expansion and tells the author to use `worktables_index`.
+Arctic additionally supports non-unique secondary indexes: `value_idx: value using arctic` maps each key to a boxed link collection with multiset semantics, for memory-only and persisted tables alike (persisted through a pair-list checkpoint plus logical `(key, link)` WAL). Non-unique declarations on Congee or vanilla IndexSet still fail at macro expansion and tell the author to use `worktables_index` or `arctic`.
 
 ### Key constraints
 
