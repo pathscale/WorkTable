@@ -266,10 +266,12 @@ where
             }
 
             if sum_links_len + next.length > to_free_space as u32 {
+                // This candidate stays on the source page, so the page must
+                // never be reported fully moved in this pass — even when the
+                // skipped row was the last one in the range. Reporting it as
+                // moved would let `defragment` reclaim the source page with a
+                // live, still-indexed row on it.
                 to_page_will_be_filled = true;
-                if range.next().is_none() {
-                    from_page_will_be_moved = true;
-                }
                 break;
             }
             sum_links_len += next.length;
@@ -957,6 +959,58 @@ mod tests {
         assert!(moved >= 3, "test setup did not exercise enough vacuum moves");
 
         drop(read_guard);
+    }
+
+    #[tokio::test]
+    async fn move_data_from_keeps_source_unmoved_when_its_last_row_is_skipped_for_space() {
+        let table = TestWorkTable::default();
+
+        // Two large rows fit on each page.
+        let mut rows = Vec::new();
+        for i in 0..4u64 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i as i64,
+                another: i,
+                exchange: format!("{i:02}-{}", "x".repeat(6_000)),
+            };
+            table.insert(row.clone()).unwrap();
+            rows.push(row);
+        }
+
+        let link_of = |id: u64| {
+            table
+                .0
+                .primary_index
+                .pk_map
+                .get_value(&TestPrimaryKey::from(id))
+                .unwrap()
+                .0
+        };
+        let source_page = link_of(rows[0].id).page_id;
+        let dest_page = link_of(rows[2].id).page_id;
+        assert_ne!(source_page, dest_page, "test setup needs two distinct pages");
+
+        // Leave exactly one live row on the source page. The destination still
+        // holds two large rows, so its remaining free space cannot fit that
+        // survivor: the last (and only) candidate fails the free-space check.
+        table.delete(rows[1].id).await.unwrap();
+
+        let vacuum = create_vacuum(&table);
+        let (from_moved, to_filled) = vacuum.move_data_from(source_page, dest_page).await.unwrap();
+
+        assert!(to_filled, "destination must be reported out of space");
+        assert!(
+            !from_moved,
+            "a source page whose live row was skipped for space must not be reported fully moved, \
+             or defragment would reclaim it with the row still indexed"
+        );
+        assert_eq!(table.select(rows[0].id), Some(rows[0].clone()));
+        assert_eq!(
+            link_of(rows[0].id).page_id,
+            source_page,
+            "the skipped row must stay in place"
+        );
     }
 
     #[tokio::test]
