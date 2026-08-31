@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -83,7 +83,9 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 
     pub(crate) page_links_map: BTreeMultiMap<PageId, Link>,
 
-    sum_links_len: AtomicU32,
+    /// Aggregate bytes across all registered empty links. u64: a u32 wraps
+    /// once the aggregate passes 4 GiB of reclaimable space.
+    sum_links_len: AtomicU64,
 
     pub(crate) op_lock: FairMutex<()>,
 
@@ -120,7 +122,13 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.length_ord_links.remove(&link.length, &link);
         self.page_links_map.remove(&link.page_id, &link);
 
-        self.sum_links_len.fetch_sub(link.length, Ordering::AcqRel);
+        // Saturating: a remove for a link that is not accounted any more
+        // (e.g. a double remove) must not underflow the aggregate.
+        let _ = self
+            .sum_links_len
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                Some(v.saturating_sub(u64::from(link.length)))
+            });
     }
 
     fn insert_link<L: Into<Link>>(&self, link: L) {
@@ -129,7 +137,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.length_ord_links.insert(link.length, link);
         self.page_links_map.insert(link.page_id, link);
 
-        self.sum_links_len.fetch_add(link.length, Ordering::AcqRel);
+        self.sum_links_len.fetch_add(u64::from(link.length), Ordering::AcqRel);
     }
 
     pub fn remove_link_for_page(&self, page_id: PageId) {
@@ -201,7 +209,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.index_ord_links.iter().map(|l| l.0)
     }
 
-    pub fn get_empty_links_size_bytes(&self) -> u32 {
+    pub fn get_empty_links_size_bytes(&self) -> u64 {
         self.sum_links_len.load(Ordering::Acquire)
     }
 
@@ -486,6 +494,25 @@ mod tests {
 
         registry.pop_max();
         assert_eq!(registry.sum_links_len.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn test_sum_links_counter_saturates_on_double_remove() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        let link = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 100,
+        };
+
+        registry.push(link);
+        registry.remove_link(link);
+        assert_eq!(registry.get_empty_links_size_bytes(), 0);
+
+        // A second remove of the same link must not underflow the aggregate.
+        registry.remove_link(link);
+        assert_eq!(registry.get_empty_links_size_bytes(), 0);
     }
 
     #[tokio::test]
