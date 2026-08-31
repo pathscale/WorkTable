@@ -82,9 +82,15 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
             /// `partition` costs two atomic read-modify-writes per call, which
             /// contend when several threads route to the same key. This costs
             /// none. Prefer it per tick; prefer `partition` when the handle has
-            /// to outlive the borrow or be sent elsewhere.
+            /// to outlive the borrow or be sent elsewhere. The borrow carries
+            /// an epoch pin, so hold it for the access, not for a tick loop:
+            /// while it lives, nothing removed after it was taken can be
+            /// reclaimed.
             #[inline]
-            pub fn partition_ref(&self, #key_name: #key_ty) -> Option<&#table> {
+            pub fn partition_ref(
+                &self,
+                #key_name: #key_ty,
+            ) -> Option<worktable::partition::PartRef<'_, #table>> {
                 self.inner.partition_ref(#key_name as u64)
             }
 
@@ -95,10 +101,11 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
 
             /// Drop a partition. Callers already holding it keep their handle.
             ///
-            /// The partition is retired, not freed, and only `gc` frees it.
-            /// `gc` needs `&mut self`, so a router shared behind an `Arc`
-            /// never reclaims: treat it as append-only and watch
-            /// `retired_len`.
+            /// The partition is retired and freed once every reader that
+            /// could have been touching it mid-query has finished (an epoch
+            /// grace period). Removal and creation reclaim opportunistically,
+            /// so a router shared behind an `Arc` does not accumulate removed
+            /// partitions; `collect` is available for removal-only phases.
             pub fn remove(&self, #key_name: #key_ty) -> Option<std::sync::Arc<#table>> {
                 self.inner.remove(#key_name as u64)
             }
@@ -126,16 +133,23 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
                 self.inner.is_empty()
             }
 
-            /// Free partitions removed earlier.
+            /// Free removed partitions whose reader grace period has expired.
             ///
-            /// Returns how many were reclaimed. Takes `&mut self`, so a router
-            /// shared behind an `Arc` can never call it: treat such a router as
-            /// append-only and watch `retired_len` and `retired_bytes`.
+            /// Returns how many were freed. Works through `&self`, so it is
+            /// callable on a router shared behind an `Arc`; `remove` and the
+            /// creation paths already call it opportunistically.
+            pub fn collect(&self) -> usize {
+                self.inner.collect()
+            }
+
+            /// Exhaustively free every removed partition, driving the grace
+            /// period as needed. Needs `&mut self`; the shared-router path
+            /// reclaims through `collect` instead.
             pub fn gc(&mut self) -> usize {
                 self.inner.gc()
             }
 
-            /// How many removed partitions are still awaiting `gc`.
+            /// How many removed partitions are still awaiting reclamation.
             pub fn retired_len(&self) -> usize {
                 self.inner.retired_len()
             }
@@ -161,11 +175,10 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
                 total
             }
 
-            /// Bytes held by partitions that were removed but not reclaimed.
-            ///
-            /// `remove` retires rather than frees, and `gc` needs `&mut self`,
-            /// so through a shared router this only grows. Without it a total
-            /// falls after a removal that freed nothing.
+            /// Bytes held by partitions that were removed but not yet
+            /// reclaimed (readers may still be inside their grace period).
+            /// Without it a total falls after a removal that has not freed
+            /// anything yet.
             pub fn retired_bytes(&self) -> u64 {
                 let mut total = 0u64;
                 self.inner.for_each_retired(|table| total += table.used_bytes());

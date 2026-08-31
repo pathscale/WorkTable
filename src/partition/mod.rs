@@ -31,10 +31,21 @@
 //!
 //! So a slot holds one owned strong reference as a raw pointer, and `remove`
 //! does not drop the reference it takes out of the slot. It moves it to a
-//! retire list that keeps the allocation alive for the whole life of the set,
-//! which closes the window without putting anything on the read path.
-//! [`PartitionSet::gc`] reclaims the list, and takes `&mut self` because that
-//! is the proof that no reader is in flight.
+//! retire queue and defers an epoch marker in the set's own [`EpochDomain`];
+//! every read-path access to a slot pointer happens under an epoch pin, so
+//! the marker executes only once every reader that could have loaded the
+//! pointer has finished. The count of executed markers releases a
+//! front-of-queue prefix that [`PartitionSet::collect`] frees through
+//! `&self` — reclamation works through the production `Arc`-shared router,
+//! and `remove` and `get_or_create` collect opportunistically so a router
+//! that keeps mutating never accumulates removed partitions.
+//! [`PartitionSet::gc`] remains as the exhaustive variant for callers that do
+//! hold `&mut self`.
+//!
+//! Under `--cfg wt_loom` the epoch machinery is compiled out (crossbeam-epoch
+//! cannot run under loom) and the retire queue is only drained by `gc`, which
+//! is the pre-epoch behaviour: the loom models check the slot publication
+//! protocol, which is identical in both builds.
 //!
 //! # What this does not do yet
 //!
@@ -56,11 +67,18 @@ use loom::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use loom::sync::{Mutex, MutexGuard};
 #[cfg(not(wt_loom))]
 use parking_lot::{Mutex, MutexGuard};
+use std::collections::VecDeque;
 use std::sync::Arc;
 #[cfg(not(wt_loom))]
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
+#[cfg(not(wt_loom))]
+use crate::util::epoch::EpochDomain;
 use crate::mem_stat::MemStat;
+
+/// Most retired partitions one opportunistic collect frees inline.
+#[cfg(not(wt_loom))]
+const COLLECT_BATCH_LIMIT: usize = 64;
 
 /// Slots per chunk. A chunk of 1024 pointers is 8 KB, so an empty partition
 /// set costs one spine and nothing else until a partition is created.
@@ -101,9 +119,11 @@ impl<T> Chunk<T> {
 ///
 /// # Safety
 ///
-/// `p` must be non-null and must point at a live `Arc` allocation, which the
-/// retire-list discipline in [`PartitionSet::remove`] guarantees for any
-/// pointer ever published into a slot.
+/// `p` must be non-null and must point at a live `Arc` allocation. The caller
+/// must hold an epoch pin taken before the slot was loaded (or otherwise
+/// exclude reclamation): the retire discipline in [`PartitionSet::remove`]
+/// keeps any pointer published into a slot alive for as long as a pin from
+/// before its retirement exists.
 #[inline]
 unsafe fn revive<T>(p: *mut T) -> Arc<T> {
     unsafe {
@@ -112,13 +132,43 @@ unsafe fn revive<T>(p: *mut T) -> Arc<T> {
     }
 }
 
+/// A borrowed view of one partition, valid while it is held.
+///
+/// Holds an epoch pin alongside the borrow, so a concurrent `remove` of this
+/// partition cannot have its grace period expire (and therefore cannot free
+/// the table) while the reference is alive. Costs no atomic read-modify-write
+/// on the table's strong count; see [`PartitionSet::partition_ref`].
+pub struct PartRef<'a, T> {
+    #[cfg(not(wt_loom))]
+    _pin: crossbeam_epoch::Guard,
+    value: &'a T,
+}
+
+impl<T> std::ops::Deref for PartRef<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.value
+    }
+}
+
 /// A set of table instances routed by an unsigned integer key.
 pub struct PartitionSet<T> {
     spine: Vec<AtomicPtr<Chunk<T>>>,
     live: AtomicUsize,
     /// Serialises chunk allocation, creation and removal, and owns the retire
-    /// list of removed partitions. Never taken on a read path.
-    grow: Mutex<Vec<Arc<T>>>,
+    /// queue of removed partitions (in removal order). Never taken on a read
+    /// path.
+    grow: Mutex<VecDeque<Arc<T>>>,
+    /// Grace periods for slot readers. Owned by this set: pins here never
+    /// interact with any table's own read guards.
+    #[cfg(not(wt_loom))]
+    epoch: EpochDomain,
+    /// How many queued removals' grace periods have expired; consumed
+    /// front-of-queue by [`PartitionSet::collect`]. Shared with the deferred
+    /// markers through an `Arc` so a marker outliving the set stays sound.
+    #[cfg(not(wt_loom))]
+    reclaimable: Arc<AtomicUsize>,
 }
 
 impl<T> Default for PartitionSet<T> {
@@ -132,9 +182,27 @@ impl<T> PartitionSet<T> {
         Self {
             spine: (0..MAX_CHUNKS).map(|_| AtomicPtr::new(std::ptr::null_mut())).collect(),
             live: AtomicUsize::new(0),
-            grow: Mutex::new(Vec::new()),
+            grow: Mutex::new(VecDeque::new()),
+            #[cfg(not(wt_loom))]
+            epoch: EpochDomain::new(),
+            #[cfg(not(wt_loom))]
+            reclaimable: Arc::new(AtomicUsize::new(0)),
         }
     }
+
+    /// Pin this set's epoch domain for the duration of one raw slot access.
+    #[cfg(not(wt_loom))]
+    #[inline]
+    fn read_pin(&self) -> crossbeam_epoch::Guard {
+        self.epoch.pin()
+    }
+
+    /// Loom builds compile the epoch machinery out; retired partitions are
+    /// then freed only by [`PartitionSet::gc`], whose `&mut self` is the
+    /// grace proof, exactly as before the epoch scheme.
+    #[cfg(wt_loom)]
+    #[inline]
+    fn read_pin(&self) {}
 
     /// Number of partitions that currently hold a table.
     pub fn len(&self) -> usize {
@@ -165,15 +233,17 @@ impl<T> PartitionSet<T> {
 
     /// The table routed to by `key`, if that partition exists.
     ///
-    /// This is the hot path: a bounds check, two atomic loads and a strong
-    /// count increment.
+    /// This is the hot path: a bounds check, an epoch pin (thread-local), two
+    /// atomic loads and a strong count increment.
     #[inline]
     pub fn partition(&self, key: u64) -> Option<Arc<T>> {
         let idx = Self::index(key)?;
+        let _pin = self.read_pin();
         let p = self.chunk(idx)?.slots[idx % CHUNK].load(Ordering::Acquire);
-        // Safety: a published slot pointer refers to an allocation that the
-        // retire list keeps alive for as long as the set lives, so the strong
-        // count cannot have reached zero between the load and the increment.
+        // Safety: the pin was taken before the slot load, so a concurrent
+        // removal's grace period cannot expire (and the retire queue cannot
+        // drop its strong reference) until after `_pin` is released; the
+        // strong count cannot reach zero between the load and the increment.
         (!p.is_null()).then(|| unsafe { revive(p) })
     }
 
@@ -182,20 +252,29 @@ impl<T> PartitionSet<T> {
     /// [`Self::partition`] costs two atomic read-modify-writes per call: one to
     /// revive the `Arc` and one to drop it. On a shared key those contend, so a
     /// per-tick lookup pays coherence traffic on the table's strong count. This
-    /// returns a borrow instead and costs three dependent loads and no atomics
-    /// beyond the acquire on the slot.
+    /// returns a pinned borrow instead: no atomics beyond the acquire on the
+    /// slot are shared with other readers of the same partition.
     ///
     /// Prefer this on a hot path. Prefer [`Self::partition`] when the handle
     /// has to outlive the borrow, be sent to another thread, or be stored.
+    /// Holding a [`PartRef`] delays reclamation of everything retired after
+    /// it was taken (in this set's domain), so bound its lifetime to the
+    /// access, not to a tick loop.
     #[inline]
-    pub fn partition_ref(&self, key: u64) -> Option<&T> {
+    pub fn partition_ref(&self, key: u64) -> Option<PartRef<'_, T>> {
         let idx = Self::index(key)?;
+        #[cfg(not(wt_loom))]
+        let pin = self.read_pin();
         let p = self.chunk(idx)?.slots[idx % CHUNK].load(Ordering::Acquire);
-        // Safety: a published slot pointer refers to an allocation that is
-        // freed only by `gc` or `Drop`, both of which take `&mut self`. The
-        // returned borrow is tied to `&self`, so neither can run while it is
-        // alive and the allocation cannot be reclaimed under it.
-        (!p.is_null()).then(|| unsafe { &*p })
+        // Safety: the pin taken above (held inside the returned `PartRef`)
+        // blocks grace expiry for any removal of this partition that the
+        // slot load could have raced with, and `Drop` takes `&mut self`, so
+        // the allocation outlives the borrow.
+        (!p.is_null()).then(|| PartRef {
+            #[cfg(not(wt_loom))]
+            _pin: pin,
+            value: unsafe { &*p },
+        })
     }
 
     /// Whether `key` currently holds a partition.
@@ -238,6 +317,10 @@ impl<T> PartitionSet<T> {
     where
         F: FnMut(u64, &T),
     {
+        // One pin for the whole walk: deferred work in this domain is only
+        // grace markers, so nothing heavy runs inside the pin, and no
+        // partition observed below can be freed until the walk ends.
+        let _pin = self.read_pin();
         for c in 0..MAX_CHUNKS {
             let Some(chunk) = self.chunk(c * CHUNK) else {
                 continue;
@@ -245,8 +328,7 @@ impl<T> PartitionSet<T> {
             for (i, slot) in chunk.slots.iter().enumerate() {
                 let p = slot.load(Ordering::Acquire);
                 if !p.is_null() {
-                    // Safety: as `partition_ref`. The borrow cannot outlive
-                    // `&self`, and reclamation needs `&mut self`.
+                    // Safety: as `partition_ref`: `_pin` predates the load.
                     f((c * CHUNK + i) as u64, unsafe { &*p });
                 }
             }
@@ -281,12 +363,12 @@ impl<T> PartitionSet<T> {
     /// in a caller-supplied `make` unwinds and releases the lock instead of
     /// disabling every later creation and removal for the life of the process.
     #[cfg(not(wt_loom))]
-    fn lock(&self) -> MutexGuard<'_, Vec<Arc<T>>> {
+    fn lock(&self) -> MutexGuard<'_, VecDeque<Arc<T>>> {
         self.grow.lock()
     }
 
     #[cfg(wt_loom)]
-    fn lock(&self) -> MutexGuard<'_, Vec<Arc<T>>> {
+    fn lock(&self) -> MutexGuard<'_, VecDeque<Arc<T>>> {
         self.grow.lock().expect("loom mutexes do not poison in these models")
     }
 
@@ -301,6 +383,9 @@ impl<T> PartitionSet<T> {
         if let Some(t) = self.partition(key) {
             return Ok(t);
         }
+        // A mutation is the natural place to catch up on reclamation.
+        #[cfg(not(wt_loom))]
+        self.collect();
         let idx = Self::index(key).ok_or(PartitionError::OutOfRange { key })?;
 
         let _guard = self.lock();
@@ -328,45 +413,110 @@ impl<T> PartitionSet<T> {
 
     /// Remove the partition at `key`, returning it if it was present.
     ///
-    /// The reference the slot owned is moved to the retire list rather than
+    /// The reference the slot owned is moved to the retire queue rather than
     /// dropped, so a reader that loaded the pointer a moment before cannot
-    /// find the allocation freed under it. [`Self::gc`] reclaims it, and `gc`
-    /// needs `&mut self`, so through a shared `Arc` router this never frees
-    /// anything. See [`Self::gc`] before removing on a long-lived set.
+    /// find the allocation freed under it. A deferred epoch marker records
+    /// when every such reader has finished; [`Self::collect`] (called here
+    /// and from [`Self::get_or_create`]) then frees the expired prefix, so
+    /// removal through the shared production router reclaims memory instead
+    /// of leaking every removed table.
     pub fn remove(&self, key: u64) -> Option<Arc<T>> {
         let idx = Self::index(key)?;
-        let mut retired = self.lock();
-        let chunk = self.chunk(idx)?;
-        let p = chunk.slots[idx % CHUNK].swap(std::ptr::null_mut(), Ordering::AcqRel);
-        if p.is_null() {
-            return None;
-        }
-        self.live.fetch_sub(1, Ordering::AcqRel);
-        // Safety: the slot owned exactly one strong reference, and we hold the
-        // mutex so no other writer can have taken it.
-        let table = unsafe { Arc::from_raw(p as *const T) };
-        retired.push(Arc::clone(&table));
+        let table = {
+            let mut retired = self.lock();
+            let chunk = self.chunk(idx)?;
+            let p = chunk.slots[idx % CHUNK].swap(std::ptr::null_mut(), Ordering::AcqRel);
+            if p.is_null() {
+                return None;
+            }
+            self.live.fetch_sub(1, Ordering::AcqRel);
+            // Safety: the slot owned exactly one strong reference, and we
+            // hold the mutex so no other writer can have taken it.
+            let table = unsafe { Arc::from_raw(p as *const T) };
+            retired.push_back(Arc::clone(&table));
+            // Defer the grace marker while still holding the lock, so marker
+            // order matches queue order and the executed-marker count always
+            // releases a correct prefix.
+            #[cfg(not(wt_loom))]
+            {
+                let reclaimable = Arc::clone(&self.reclaimable);
+                let guard = self.epoch.pin();
+                guard.defer(move || {
+                    reclaimable.fetch_add(1, Ordering::Release);
+                });
+                guard.flush();
+            }
+            table
+        };
+        #[cfg(not(wt_loom))]
+        self.collect();
         Some(table)
     }
 
-    /// Drop the retire list, freeing partitions removed earlier.
+    /// Free retired partitions whose grace period has expired, through
+    /// `&self`.
     ///
-    /// Returns how many were reclaimed. Takes `&mut self`: exclusive access is
-    /// the proof that no reader holds a pointer this could invalidate.
+    /// Returns how many were freed. Never waits for readers: a partition
+    /// whose removal a still-pinned reader could have raced simply stays
+    /// queued for a later call. Bounded per call, so no mutating caller
+    /// absorbs an unbounded backlog inline. Called opportunistically by
+    /// [`Self::remove`] and [`Self::get_or_create`]; long-lived routers that
+    /// only remove may call it directly.
+    #[cfg(not(wt_loom))]
+    pub fn collect(&self) -> usize {
+        for _ in 0..4 {
+            if self.reclaimable.load(Ordering::Acquire) != 0 {
+                break;
+            }
+            self.epoch.advance();
+        }
+        let claimed = self.reclaimable.swap(0, Ordering::AcqRel);
+        if claimed == 0 {
+            return 0;
+        }
+        let freed: Vec<Arc<T>> = {
+            let mut retired = self.lock();
+            let take = claimed.min(COLLECT_BATCH_LIMIT).min(retired.len());
+            if claimed > take {
+                self.reclaimable.fetch_add(claimed - take, Ordering::Release);
+            }
+            retired.drain(..take).collect()
+        };
+        // Dropping whole tables can be arbitrarily heavy; do it outside the
+        // growth lock.
+        let n = freed.len();
+        drop(freed);
+        n
+    }
+
+    /// Exhaustively free the retire queue, driving the epoch as needed.
     ///
-    /// # This is unreachable through a shared router
-    ///
-    /// The production shape is `Arc<PartitionSet<T>>` shared across threads,
-    /// and an `Arc` never yields `&mut`. So in that shape **nothing removed is
-    /// ever freed**: every `remove` retires a whole table, measured at 15 to
-    /// 110 KB, and the set grows for the life of the process. A symbol that is
-    /// delisted and relisted repeatedly, or any evict-and-recreate loop, leaks
-    /// at that rate.
-    ///
-    /// Until reclamation works through a shared handle, treat a long-lived
-    /// shared router as append-only and watch [`Self::retired_len`]. Eviction
-    /// is blocked on the same gap: a policy that cannot free through the shared
-    /// handle does not evict.
+    /// Returns how many were reclaimed. `&mut self` guarantees no reader of
+    /// this set is pinned (every pin lives inside a `&self` call or a
+    /// [`PartRef`] borrow), so every queued removal's grace can expire; this
+    /// call drives the epoch until the queue is empty. Kept for callers that
+    /// do hold exclusive access and want deterministic, complete
+    /// reclamation; the shared-router path reclaims through
+    /// [`Self::collect`] and does not need this.
+    #[cfg(not(wt_loom))]
+    pub fn gc(&mut self) -> usize {
+        let mut total = 0;
+        // Each round advances the epoch at least one step when nothing is
+        // claimable yet; a marker needs three steps from defer to execution,
+        // and the batch limit needs queue_len / COLLECT_BATCH_LIMIT rounds.
+        for _ in 0..64 {
+            total += self.collect();
+            if self.lock().is_empty() {
+                break;
+            }
+            self.epoch.advance();
+        }
+        total
+    }
+
+    /// Loom builds have no epoch machinery: exclusive access alone is the
+    /// grace proof, exactly as before the epoch scheme.
+    #[cfg(wt_loom)]
     pub fn gc(&mut self) -> usize {
         let mut retired = self.lock();
         let n = retired.len();

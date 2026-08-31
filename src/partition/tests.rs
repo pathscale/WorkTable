@@ -164,33 +164,44 @@ impl Drop for Tracked {
 }
 
 #[test]
-fn a_removed_partition_is_retired_not_freed() {
+fn a_removed_partition_outlives_every_overlapping_reader() {
     let drops = Arc::new(AtomicU32::new(0));
-    let mut set: PartitionSet<Tracked> = PartitionSet::new();
+    let set: PartitionSet<Tracked> = PartitionSet::new();
     for k in 0..4u64 {
         let drops = drops.clone();
         set.get_or_create(k, || Tracked { key: k, drops }).unwrap();
     }
-
-    // Drop every handle the test holds. The set still owns all four.
     assert_eq!(drops.load(Ordering::SeqCst), 0);
 
+    // A pinned borrow models the reader that loaded the slot pointer before
+    // the removal: while it lives, the removal's grace period cannot expire.
+    let reader = set.partition_ref(2).expect("present");
     let taken = set.remove(2).expect("was present");
     assert_eq!(taken.key, 2);
     drop(taken);
     assert_eq!(
         drops.load(Ordering::SeqCst),
         0,
-        "a removed partition must outlive the removal: a reader may have \
-         loaded its pointer and not yet incremented the strong count"
+        "a removed partition must outlive a reader pinned before the removal"
     );
+    assert_eq!(reader.key, 2, "the pinned borrow must stay valid across the removal");
     assert_eq!(set.retired_len(), 1);
     assert_eq!(set.len(), 3);
 
-    assert_eq!(set.gc(), 1, "gc must report what it reclaimed");
+    // Once the reader leaves, reclamation works through `&self`: no `&mut`,
+    // no `Arc::try_unwrap` gymnastics.
+    drop(reader);
+    let mut freed = 0;
+    for _ in 0..16 {
+        freed += set.collect();
+        if freed > 0 {
+            break;
+        }
+    }
+    assert_eq!(freed, 1, "collect must report what it reclaimed");
     assert_eq!(drops.load(Ordering::SeqCst), 1);
     assert_eq!(set.retired_len(), 0);
-    assert_eq!(set.len(), 3, "gc must not disturb live partitions");
+    assert_eq!(set.len(), 3, "collect must not disturb live partitions");
 }
 
 #[test]
@@ -210,10 +221,16 @@ fn dropping_the_set_frees_live_and_retired_partitions_alike() {
             drops: drops2,
         })
         .unwrap();
+        // The pinned borrow keeps every one of the following removals'
+        // grace periods open, so all three are still retired (not freed)
+        // when the set is dropped.
+        let reader = set.partition_ref(0).expect("present");
         set.remove(0);
         set.remove(1);
         set.remove(2);
         assert_eq!(drops.load(Ordering::SeqCst), 0);
+        assert_eq!(set.retired_len(), 3);
+        drop(reader);
     }
     assert_eq!(
         drops.load(Ordering::SeqCst),
@@ -424,6 +441,23 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
     for k in 0..KEYS {
         set.remove(k);
     }
+
+    // Reclamation must have progressed while the readers were (and still
+    // are) hammering the same keys: the epoch scheme needs each overlapping
+    // read to finish, never a zero-reader instant. The pre-epoch retire list
+    // could only assert the opposite here (everything retired, nothing
+    // freed, unbounded growth through the shared router).
+    let reclaim_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while drops.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < reclaim_deadline {
+        set.collect();
+        std::thread::yield_now();
+    }
+    assert!(
+        drops.load(Ordering::SeqCst) > 0,
+        "no removed partition was freed while readers were running: \
+         reclamation through the shared router made no progress"
+    );
+
     stop.store(true, Ordering::Relaxed);
     for reader in readers {
         reader.join().unwrap();
@@ -436,16 +470,19 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
          this test exists for was never exercised"
     );
     assert_eq!(set.len(), 0);
-    assert_eq!(set.retired_len(), created, "every removal must have been retired");
+
+    // Drain the remainder through the shared handle: no `&mut`, no
+    // `Arc::try_unwrap` gymnastics needed for reclamation any more.
+    let drain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while set.retired_len() > 0 && std::time::Instant::now() < drain_deadline {
+        set.collect();
+    }
+    assert_eq!(set.retired_len(), 0, "collect must drain the retire queue completely");
     assert_eq!(
-        drops.load(Ordering::SeqCst),
-        0,
-        "nothing may be freed while readers are running"
+        drops.load(Ordering::SeqCst) as usize,
+        created,
+        "every created partition must be freed exactly once"
     );
-    // Readers are joined, so exclusive access is real and reclamation is safe.
-    let mut set = Arc::try_unwrap(set).expect("readers have exited");
-    assert_eq!(set.gc(), created);
-    assert_eq!(drops.load(Ordering::SeqCst) as usize, created);
 }
 
 #[test]

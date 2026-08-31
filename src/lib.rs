@@ -34,7 +34,7 @@ pub mod prelude {
     pub use crate::lock::{Lock, RowLock};
     pub use crate::lock::{LockAcquirer, LockGuard, LockMap, PendingLock};
     pub use crate::mem_stat::MemStat;
-    pub use crate::partition::{MAX_PARTITIONS, PartitionError, PartitionSet};
+    pub use crate::partition::{MAX_PARTITIONS, PartRef, PartitionError, PartitionSet};
     pub use crate::persistence::{
         AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
         IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,

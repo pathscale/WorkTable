@@ -303,24 +303,40 @@ fn autoincrement_counts_independently_in_each_partition() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_removed_partition_is_reclaimed_only_by_gc() {
-    let mut prices = PricePartitions::new();
+fn a_removed_partition_waits_out_its_readers_then_frees_through_a_shared_handle() {
+    let prices = PricePartitions::new();
     let held = prices.partition_or_create(4).unwrap();
     held.insert(row(2, 9.0)).unwrap();
 
+    // A pinned borrow models the reader that resolved the partition before
+    // the removal; its grace period keeps the removal retired.
+    let reader = prices.partition_ref(4).expect("present");
     let taken = prices.remove(4).expect("was present");
     assert_eq!(prices.len(), 0);
-    assert_eq!(prices.retired_len(), 1, "removal must retire, not free");
+    assert_eq!(prices.retired_len(), 1, "removal must wait out the reader's grace period");
 
-    // Both handles still work: this is the reader-mid-query case.
+    // All three handles still work: this is the reader-mid-query case.
+    assert_eq!(reader.select(2).unwrap().bid, 9.0);
     assert_eq!(held.select(2).unwrap().bid, 9.0);
     assert_eq!(taken.select(2).unwrap().bid, 9.0);
     drop(taken);
-    drop(held);
+    drop(reader);
 
-    assert_eq!(prices.gc(), 1);
+    // Reclamation works through `&self` once the reader has left: no `&mut`,
+    // which a router shared behind an `Arc` could never produce.
+    let mut freed = 0;
+    for _ in 0..16 {
+        freed += prices.collect();
+        if freed > 0 {
+            break;
+        }
+    }
+    assert_eq!(freed, 1, "collect must report what it reclaimed");
     assert_eq!(prices.retired_len(), 0);
-    assert_eq!(prices.gc(), 0, "gc must be idempotent");
+    assert_eq!(prices.collect(), 0, "collect must be idempotent");
+
+    // The strong handle keeps the table alive independently of the router.
+    assert_eq!(held.select(2).unwrap().bid, 9.0);
 }
 
 #[test]
@@ -478,9 +494,18 @@ fn readers_survive_partitions_being_removed_under_them() {
     }
 
     assert!(prices.is_empty());
-    assert_eq!(prices.retired_len(), ROUNDS as usize * KEYS as usize);
-    let mut prices = Arc::try_unwrap(prices).expect("readers have exited");
-    assert_eq!(prices.gc(), ROUNDS as usize * KEYS as usize);
+
+    // Reclamation happened through the shared `Arc` while readers were
+    // running; drain whatever grace period is still open the same way.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while prices.retired_len() > 0 && std::time::Instant::now() < deadline {
+        prices.collect();
+    }
+    assert_eq!(
+        prices.retired_len(),
+        0,
+        "a shared router must reclaim every removed partition"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -490,8 +515,8 @@ fn readers_survive_partitions_being_removed_under_them() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn retired_bytes_accounts_for_what_removal_did_not_free() {
-    let mut prices = PricePartitions::new();
+fn retired_bytes_accounts_for_what_removal_has_not_freed_yet() {
+    let prices = PricePartitions::new();
     for k in 0..4u16 {
         let t = prices.partition_or_create(k).unwrap();
         for e in 0..(k as u8 + 1) {
@@ -504,6 +529,9 @@ fn retired_bytes_accounts_for_what_removal_did_not_free() {
     assert_eq!(prices.retired_len(), 0);
 
     let removed_rows = prices.rows_by_key().iter().find(|(k, _)| *k == 2).unwrap().1;
+    // The pinned borrow holds the removal's grace period open, modelling the
+    // reader that is still mid-query on the partition being removed.
+    let reader = prices.partition_ref(2).expect("present");
     prices.remove(2);
 
     // The live total drops, because the partition is no longer live.
@@ -511,7 +539,7 @@ fn retired_bytes_accounts_for_what_removal_did_not_free() {
         prices.memory_total() < live_before,
         "memory_total must count only live partitions"
     );
-    // But nothing was freed, and this is the number that says so.
+    // But nothing was freed yet, and this is the number that says so.
     assert!(
         prices.retired_bytes() > 0,
         "a retired partition still occupies memory and must be reported"
@@ -519,8 +547,16 @@ fn retired_bytes_accounts_for_what_removal_did_not_free() {
     assert_eq!(prices.retired_len(), 1);
     assert_eq!(removed_rows, 3);
 
-    // gc is the only thing that makes the retired bytes real.
-    assert_eq!(prices.gc(), 1);
+    // Once the reader leaves, collect makes the retired bytes real.
+    drop(reader);
+    let mut freed = 0;
+    for _ in 0..16 {
+        freed += prices.collect();
+        if freed > 0 {
+            break;
+        }
+    }
+    assert_eq!(freed, 1);
     assert_eq!(prices.retired_bytes(), 0);
     assert_eq!(prices.retired_len(), 0);
 }
