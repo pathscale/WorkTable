@@ -324,6 +324,74 @@ mod persisted {
         remove_dir_if_exists(ROOT.to_string()).await;
     }
 
+    mod rollback {
+        use worktable::prelude::*;
+        use worktable::worktable;
+
+        use crate::remove_dir_if_exists;
+
+        worktable! {
+            name: PersistedEdges,
+            persist: true,
+            columns: {
+                id: u64 primary_key autoincrement,
+                source_hash: u128,
+                edge_hash: u128,
+            },
+            indexes: {
+                source_idx: source_hash using arctic,
+                edge_idx: edge_hash unique using arctic,
+            },
+        }
+
+        /// The non-unique entry is inserted before the unique index rejects
+        /// the duplicate edge, so the failed insert must unwind it — both in
+        /// memory and in the durable event stream a reload replays.
+        #[tokio::test]
+        async fn unique_collision_unwind_survives_reload() {
+            const ROOT: &str = "tests/data/nonunique_arctic_rollback";
+            remove_dir_if_exists(ROOT.to_string()).await;
+
+            let config = DiskConfig::new_with_table_name(
+                ROOT,
+                PersistedEdgesWorkTable::name_snake_case(),
+                PersistedEdgesWorkTable::version(),
+            );
+            let engine = PersistedEdgesPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = PersistedEdgesWorkTable::load(engine).await.unwrap();
+
+            table
+                .insert(PersistedEdgesRow {
+                    id: table.get_next_pk().into(),
+                    source_hash: 1,
+                    edge_hash: 42,
+                })
+                .unwrap();
+            let err = table
+                .insert(PersistedEdgesRow {
+                    id: table.get_next_pk().into(),
+                    source_hash: 2,
+                    edge_hash: 42,
+                })
+                .unwrap_err();
+            assert!(matches!(err, WorkTableError::AlreadyExists(_)));
+            assert!(table.select_by_source_hash(2).execute().unwrap().is_empty());
+
+            table.wait_for_ops().await.unwrap();
+            drop(table);
+
+            let engine = PersistedEdgesPersistenceEngine::new(config).await.unwrap();
+            let table = PersistedEdgesWorkTable::load(engine).await.unwrap();
+            assert!(table.select_by_source_hash(2).execute().unwrap().is_empty());
+            assert_eq!(table.select_by_source_hash(1).execute().unwrap().len(), 1);
+            assert_eq!(table.count(), 1);
+            table.wait_for_ops().await.unwrap();
+            drop(table);
+
+            remove_dir_if_exists(ROOT.to_string()).await;
+        }
+    }
+
     #[tokio::test]
     async fn non_unique_arctic_recovers_concurrent_shared_key_writes() {
         use tokio::sync::Barrier;
