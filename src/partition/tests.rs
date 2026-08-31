@@ -373,49 +373,70 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
     let drops = Arc::new(AtomicU32::new(0));
     let set: Arc<PartitionSet<Tracked>> = Arc::new(PartitionSet::new());
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = Arc::new(AtomicU32::new(0));
 
     let readers: Vec<_> = (0..if cfg!(miri) { 2 } else { 3 })
         .map(|_| {
             let set = set.clone();
             let stop = stop.clone();
+            let seen = seen.clone();
             std::thread::spawn(move || {
-                let mut observed = 0u64;
                 while !stop.load(Ordering::Relaxed) {
                     for k in 0..KEYS {
                         if let Some(t) = set.partition(k) {
                             // Reading through the handle is what would fault
                             // on a use-after-free.
                             assert_eq!(t.key, k, "key {k} revived as {}", t.key);
-                            observed += 1;
+                            seen.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                     // Yield rather than spin: a reader pinning a core for the
                     // whole churn slows every other test in this binary.
                     std::thread::yield_now();
                 }
-                observed
             })
         })
         .collect();
 
+    let make = |k: u64, drops: &Arc<AtomicU32>| Tracked {
+        key: k,
+        drops: drops.clone(),
+    };
     for _ in 0..ROUNDS {
         for k in 0..KEYS {
-            let drops = drops.clone();
-            set.get_or_create(k, || Tracked { key: k, drops }).unwrap();
+            set.get_or_create(k, || make(k, &drops)).unwrap();
         }
         for k in 0..KEYS {
             set.remove(k);
         }
     }
-    stop.store(true, Ordering::Relaxed);
 
-    let observed: u64 = readers.into_iter().map(|h| h.join().unwrap()).sum();
-    assert_eq!(set.len(), 0);
-    assert_eq!(
-        set.retired_len(),
-        (ROUNDS as usize) * (KEYS as usize),
-        "every removal must have been retired"
+    // One last round held open until a reader has actually caught a live
+    // partition. Asserting that they saw one without waiting for it is a race
+    // against the scheduler, and under heavy load the readers lose it.
+    for k in 0..KEYS {
+        set.get_or_create(k, || make(k, &drops)).unwrap();
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while seen.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    for k in 0..KEYS {
+        set.remove(k);
+    }
+    stop.store(true, Ordering::Relaxed);
+    for reader in readers {
+        reader.join().unwrap();
+    }
+
+    let created = (ROUNDS + 1) as usize * KEYS as usize;
+    assert!(
+        seen.load(Ordering::Relaxed) > 0,
+        "no reader observed a live partition within the deadline, so the race \
+         this test exists for was never exercised"
     );
+    assert_eq!(set.len(), 0);
+    assert_eq!(set.retired_len(), created, "every removal must have been retired");
     assert_eq!(
         drops.load(Ordering::SeqCst),
         0,
@@ -423,10 +444,8 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
     );
     // Readers are joined, so exclusive access is real and reclamation is safe.
     let mut set = Arc::try_unwrap(set).expect("readers have exited");
-    assert_eq!(set.gc(), (ROUNDS as usize) * (KEYS as usize));
-    assert_eq!(drops.load(Ordering::SeqCst), (ROUNDS * KEYS as u32));
-    // Not an assertion about a number, just that the readers did run.
-    assert!(observed > 0, "readers never saw a live partition");
+    assert_eq!(set.gc(), created);
+    assert_eq!(drops.load(Ordering::SeqCst) as usize, created);
 }
 
 #[test]
