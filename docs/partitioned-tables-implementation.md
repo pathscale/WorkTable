@@ -269,6 +269,40 @@ is rejected at macro expansion with a message pointing at a registry table,
 because hashing a string costs more than every other part of the lookup
 combined.
 
+**How the storage is verified.** Native tests alone cannot establish this code.
+A racy pointer-sized store is atomic in practice on aarch64, so the
+use-after-free above passed all 725 tests. Three tools, each answering a
+different question:
+
+```bash
+cargo test                                                          # behaviour
+cargo +nightly miri test --lib partition                            # UB
+RUSTFLAGS="--cfg wt_loom" cargo test --release --lib partition::loom_tests
+cargo mutants --file src/partition/mod.rs                           # test quality
+```
+
+Miri reports undefined behaviour on schedules it happens to run, and caught the
+original race at once. Loom explores *every* interleaving of the atomics and the
+mutex, which is what makes the `Ordering` choices a checked claim rather than an
+assertion; the models fail if either the release store or the acquire load on a
+slot is weakened. The cfg is `wt_loom` rather than the conventional `loom`
+because `RUSTFLAGS` reaches every crate in the graph and tokio gates
+`tokio::fs` on `cfg(not(loom))` for its own loom builds.
+
+Two traps worth writing down. Loom only tracks accesses it owns, so a model
+whose payload is an ordinary `Arc<u64>` proves nothing about publication and
+stays green when the store is weakened to `Relaxed`; the payload has to sit
+behind `loom::cell::UnsafeCell`. And Miri interprets rather than executes, so
+the concurrency tests carry `cfg(miri)` shapes: what matters there is the
+interleavings explored, not the iteration count.
+
+Mutation testing found nine surviving mutants on the first run, all real gaps:
+nothing asserted `is_empty` was ever false, the `MemStat` reporting was not
+covered at all, and `Display for PartitionError` was never read. `mem_stat`
+charges `size_of::<T>()` per partition on top of the payload, because
+`MemStat for Arc<T>` counts what the allocation actually holds. All 59 viable
+mutants are now caught.
+
 **Memory reporting uses `system_info()`, not `MemStat`.** The generated table
 does not implement `MemStat`; `system_info()` carries `memory_usage_bytes`,
 `idx_size` and `row_count`, which is what a residency budget would weigh on

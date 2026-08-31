@@ -528,3 +528,77 @@ fn a_panicking_initialiser_poisons_rather_than_corrupts() {
     assert_eq!(set.len(), 1, "a failed creation must not be counted");
     assert_eq!(set.get_or_create(3, || Counted(3)), Err(PartitionError::Poisoned));
 }
+
+// ---------------------------------------------------------------------------
+// Gaps found by mutation testing: `cargo mutants --file src/partition/mod.rs`.
+// Each of these was a mutant that survived, meaning nothing asserted the
+// behaviour at all.
+// ---------------------------------------------------------------------------
+
+/// A payload with a footprint, so the `MemStat` reporting has something to
+/// report. Sizes are distinct and non-round to make a wrong sum obvious.
+#[derive(Debug)]
+struct Sized_(usize);
+
+impl MemStat for Sized_ {
+    fn heap_size(&self) -> usize {
+        self.0 * 2
+    }
+    fn used_size(&self) -> usize {
+        self.0
+    }
+}
+
+#[test]
+fn is_empty_is_false_while_a_partition_is_live() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    assert!(set.is_empty());
+    set.get_or_create(0, || Counted(0)).unwrap();
+    assert!(!set.is_empty(), "a set holding a partition is not empty");
+    set.remove(0);
+    assert!(set.is_empty(), "a set is empty again once emptied");
+}
+
+#[test]
+fn mem_stat_reports_each_partition_and_their_sum() {
+    let set: PartitionSet<Sized_> = PartitionSet::new();
+    assert_eq!(set.mem_stat_total(), 0);
+    assert_eq!(set.mem_stat_by_key(), Vec::new());
+
+    // A partition is held as an `Arc`, and `MemStat for Arc<T>` charges
+    // `size_of::<T>()` on top of the payload, because that is what the
+    // allocation actually holds. Derived rather than hard coded so the
+    // expectation is the rule, not one machine's numbers.
+    let overhead = std::mem::size_of::<Sized_>();
+    for (k, size) in [(3u64, 17usize), (1, 5), (2048, 300)] {
+        set.get_or_create(k, || Sized_(size)).unwrap();
+    }
+
+    // Ascending by key, not by insertion order or by size.
+    assert_eq!(
+        set.mem_stat_by_key(),
+        vec![(1, 5 + overhead), (3, 17 + overhead), (2048, 300 + overhead)]
+    );
+    assert_eq!(set.mem_stat_total(), 322 + 3 * overhead);
+
+    // Removing a partition removes its contribution.
+    set.remove(3);
+    assert_eq!(set.mem_stat_by_key(), vec![(1, 5 + overhead), (2048, 300 + overhead)]);
+    assert_eq!(set.mem_stat_total(), 305 + 2 * overhead);
+}
+
+#[test]
+fn partition_error_says_which_key_and_which_bound() {
+    let out_of_range = PartitionError::OutOfRange { key: 70_000 };
+    let text = out_of_range.to_string();
+    assert!(text.contains("70000"), "the offending key must appear: {text}");
+    assert!(
+        text.contains(&MAX_PARTITIONS.to_string()),
+        "the bound must appear so the caller knows why: {text}"
+    );
+    assert_eq!(PartitionError::Poisoned.to_string(), "partition set is poisoned");
+
+    // The `Error` impl is what a caller using `?` and `eyre` will format.
+    let as_error: &dyn std::error::Error = &out_of_range;
+    assert_eq!(as_error.to_string(), text);
+}
