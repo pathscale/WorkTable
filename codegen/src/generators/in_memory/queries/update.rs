@@ -56,6 +56,7 @@ impl InMemoryGenerator {
         let idx_idents = if idents.is_empty() { None } else { Some(&idents) };
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents.as_slice(), idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
+        let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
@@ -82,14 +83,7 @@ impl InMemoryGenerator {
                 #diff_process_insert
                 #persist_op
 
-                unsafe {
-                    self.0
-                        .data
-                        .with_mut_ref(link, move |archived| {
-                            #(#row_updates)*
-                        })
-                        .map_err(WorkTableError::PagesError)?
-                };
+                #data_write
 
                 #diff_process_remove
 
@@ -257,6 +251,42 @@ impl InMemoryGenerator {
             }
         } else {
             quote! {}
+        }
+    }
+
+    /// Emits the archived-field data write with compensation: when the update
+    /// touches indexed columns, `process_difference_insert` has already
+    /// published the new-value index entries, and a failing write would leave
+    /// them pointing permanently at a row that never got the new values.
+    /// The failure path unwinds exactly the inserted diff subset - reversed
+    /// diffs make `process_difference_remove` target the NEW keys - the same
+    /// unwind the unique-constraint failure path performs.
+    fn gen_data_write_with_unwind(&self, row_updates: &[TokenStream], idx_idents: Option<&Vec<Ident>>) -> TokenStream {
+        let write = quote! {
+            unsafe {
+                self.0.data.with_mut_ref(link, |archived| {
+                    #(#row_updates)*
+                })
+            }
+        };
+        if idx_idents.is_some() {
+            let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+            let avt_type_ident = name_generator.get_available_type_ident();
+            quote! {
+                if let core::result::Result::Err(e) = #write {
+                    let mut reversed_diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> =
+                        std::collections::HashMap::new();
+                    for (key, diff) in diffs {
+                        reversed_diffs.insert(key, Difference { old: diff.new, new: diff.old });
+                    }
+                    self.0.indexes.process_difference_remove(link, reversed_diffs)?;
+                    return Err(WorkTableError::PagesError(e));
+                }
+            }
+        } else {
+            quote! {
+                #write.map_err(WorkTableError::PagesError)?;
+            }
         }
     }
 
@@ -588,15 +618,14 @@ impl InMemoryGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
 
         let finish_update = if archived_swap_is_safe {
             quote! {
                 #diff_process_insert
                 #persist_op
 
-                unsafe { self.0.data.with_mut_ref(link, |archived| {
-                    #(#row_updates)*
-                }).map_err(WorkTableError::PagesError)? };
+                #data_write
 
                 #diff_process_remove
 
@@ -751,6 +780,7 @@ impl InMemoryGenerator {
             }
         };
         let full_row_lock = self.gen_full_lock_for_update();
+        let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
 
         let loop_tail = if has_unsized {
             quote! {}
@@ -759,11 +789,7 @@ impl InMemoryGenerator {
                     #diff_process_insert
                     #persist_op
 
-                    unsafe {
-                        self.0.data.with_mut_ref(link, |archived| {
-                            #(#row_updates)*
-                        }).map_err(WorkTableError::PagesError)?;
-                    }
+                    #data_write
 
                     #diff_process_remove
 
@@ -888,6 +914,7 @@ impl InMemoryGenerator {
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
+        let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
         let by = if by_is_float {
             quote! {
                 &OrderedFloat(by)
@@ -920,11 +947,7 @@ impl InMemoryGenerator {
                 #diff_process_insert
                 #persist_op
 
-                unsafe {
-                    self.0.data.with_mut_ref(link, |archived| {
-                        #(#row_updates)*
-                    }).map_err(WorkTableError::PagesError)?;
-                }
+                #data_write
 
                 #diff_process_remove
 
@@ -991,5 +1014,83 @@ impl InMemoryGenerator {
                 #finish_update
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use proc_macro2::{Ident, Span};
+    use quote::quote;
+
+    use crate::common::Parser;
+    use crate::common::model::{Operation, Queries};
+    use crate::generators::in_memory::InMemoryGenerator;
+
+    /// The write failure is not forcible through the public API (no fail
+    /// point exists in DataPages and the link was just validated under the
+    /// held row lock), so the unwind wiring is pinned on the generated
+    /// tokens: a failed data write after process_difference_insert must
+    /// remove exactly the inserted diff subset (reversed diffs target the
+    /// NEW keys), the same unwind the unique-constraint failure path has.
+    #[test]
+    fn indexed_update_write_failure_unwinds_inserted_keys() {
+        let mut parser = Parser::new(quote! {
+            columns: {
+                id: u64 primary_key,
+                code: u64,
+            }
+        });
+        let mut columns = parser.parse_columns().unwrap();
+        let mut parser = Parser::new(quote! {
+            indexes: {
+                code_idx: code,
+            }
+        });
+        columns.indexes = parser.parse_indexes().unwrap();
+
+        let mut generator = InMemoryGenerator {
+            name: Ident::new("UnwindProbe", Span::call_site()),
+            pk: None,
+            columns,
+            queries: None,
+            config: None,
+        };
+        let mut updates = HashMap::new();
+        let name = Ident::new("CodeById", Span::call_site());
+        updates.insert(
+            name.clone(),
+            Operation {
+                name,
+                columns: vec![Ident::new("code", Span::call_site())],
+                by: Ident::new("id", Span::call_site()),
+            },
+        );
+        generator.queries = Some(Queries {
+            updates,
+            deletes: HashMap::new(),
+            in_place: HashMap::new(),
+        });
+        generator.gen_primary_key_def().unwrap();
+
+        let emitted = generator.gen_query_update_impl().unwrap().to_string();
+
+        assert!(
+            emitted.contains("Difference { old : diff . new , new : diff . old }"),
+            "reversed-diff construction missing:\n{emitted}"
+        );
+        assert!(
+            emitted.contains("process_difference_remove (link , reversed_diffs)"),
+            "reversed-diff unwind missing:\n{emitted}"
+        );
+        // The unwind belongs to the write's failure branch: the write comes
+        // after the diff insert and before the old-key removal.
+        let insert = emitted.find("process_difference_insert").expect("diff insert emitted");
+        let write = emitted.find("with_mut_ref").expect("data write emitted");
+        let old_removal = emitted
+            .find("process_difference_remove (link , diffs)")
+            .expect("old-key removal emitted");
+        assert!(insert < write && write < old_removal, "emission order broken:\n{emitted}");
     }
 }
