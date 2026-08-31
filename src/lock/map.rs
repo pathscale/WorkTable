@@ -238,9 +238,38 @@ where
     /// operations acquire this only after their async predecessor wait has
     /// completed, and the synchronous `insert` path never awaits.
     pub fn mutation_guard(&self, key: &PrimaryKey) -> MutationGuard {
+        self.mutation_guard_for_stripe(Self::stripe_of(key))
+    }
+
+    /// Serializes the synchronous mutation phase for every key in `keys` at
+    /// once, for all-or-nothing batch mutations.
+    ///
+    /// Stripes are deduplicated and acquired in ascending order, so two
+    /// concurrent batch acquisitions cannot deadlock against each other, a
+    /// batch cannot deadlock against itself when two keys share a stripe, and
+    /// single-key holders (which never nest stripe acquisitions) cannot form a
+    /// cycle with a batch. The same no-`.await` rule as
+    /// [`Self::mutation_guard`] applies for the whole guard set's lifetime.
+    pub fn mutation_guards<'a>(&self, keys: impl Iterator<Item = &'a PrimaryKey>) -> Vec<MutationGuard>
+    where
+        PrimaryKey: 'a,
+    {
+        let mut stripes: Vec<usize> = keys.map(Self::stripe_of).collect();
+        stripes.sort_unstable();
+        stripes.dedup();
+        stripes
+            .into_iter()
+            .map(|stripe| self.mutation_guard_for_stripe(stripe))
+            .collect()
+    }
+
+    fn stripe_of(key: &PrimaryKey) -> usize {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
-        let stripe = (hasher.finish() as usize) % MUTATION_STRIPE_COUNT;
+        (hasher.finish() as usize) % MUTATION_STRIPE_COUNT
+    }
+
+    fn mutation_guard_for_stripe(&self, stripe: usize) -> MutationGuard {
         let gate = &self.mutation_stripes[stripe];
         let ticket = gate.next_ticket.fetch_add(1, Ordering::Relaxed);
         let mut spins = 0u32;
@@ -265,6 +294,46 @@ where
 mod tests {
     use super::*;
     use crate::lock::FullRowLock;
+
+    /// A batch over more keys than stripes necessarily maps several keys to
+    /// one stripe; acquisition must dedupe instead of deadlocking on the
+    /// second ticket for the same stripe, and everything must be released on
+    /// drop so later single-key guards proceed.
+    #[test]
+    fn batch_mutation_guards_dedupe_stripes_and_release() {
+        let lock_map: LockMap<FullRowLock, u64> = LockMap::default();
+        let keys: Vec<u64> = (0..1000).collect();
+
+        let guards = lock_map.mutation_guards(keys.iter());
+        assert!(guards.len() <= MUTATION_STRIPE_COUNT);
+        drop(guards);
+
+        for key in 0..1000u64 {
+            let _guard = lock_map.mutation_guard(&key);
+        }
+    }
+
+    /// Two threads acquiring overlapping key sets in opposite caller order
+    /// must not deadlock: stripe ordering, not caller ordering, decides
+    /// acquisition order.
+    #[test]
+    fn concurrent_batch_mutation_guards_do_not_deadlock() {
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let forward: Vec<u64> = (0..256).collect();
+        let mut backward = forward.clone();
+        backward.reverse();
+
+        let other_map = lock_map.clone();
+        let handle = std::thread::spawn(move || {
+            for _ in 0..100 {
+                let _guards = other_map.mutation_guards(backward.iter());
+            }
+        });
+        for _ in 0..100 {
+            let _guards = lock_map.mutation_guards(forward.iter());
+        }
+        handle.join().unwrap();
+    }
 
     /// Regression for issue #33: cleanup can run while a task owns the value
     /// returned by `get_or_insert_with`, then that task can be cancelled before
