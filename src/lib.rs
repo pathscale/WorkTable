@@ -41,7 +41,7 @@ pub mod prelude {
         PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceMonitor,
         PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex,
         SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex,
-        SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps, UpdateOperation, load_persisted_state,
+        SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, UpdateOperation, load_persisted_state,
         map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
         validate_events,
     };

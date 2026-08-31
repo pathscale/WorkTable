@@ -35,7 +35,7 @@ use crate::persistence::space::{BatchChangeEvent, open_or_create_file};
 use crate::prelude::WT_INDEX_EXTENSION;
 
 pub use reconstruct::reconstruct_multi_index_nodes;
-pub use table_of_contents::IndexTableOfContents;
+pub use table_of_contents::{IndexTableOfContents, TocEntryOversizedError};
 pub use unsized_::SpaceIndexUnsized;
 pub use util::{map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general};
 
@@ -213,7 +213,7 @@ where
             .await?
         {
             self.table_of_contents
-                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value));
+                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value))?;
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -234,7 +234,7 @@ where
             .await?
         {
             self.table_of_contents
-                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value));
+                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value))?;
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -275,7 +275,7 @@ where
         self.table_of_contents.update_key(
             &(node_id.key.clone(), node_id.value),
             (page.inner.node_id.key.clone(), page.inner.node_id.link),
-        );
+        )?;
         self.table_of_contents.try_insert(
             (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
             new_page_id,
@@ -427,7 +427,7 @@ where
                                 page_to_update.inner.node_id.key.clone(),
                                 page_to_update.inner.node_id.link,
                             ),
-                        );
+                        )?;
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -488,7 +488,7 @@ where
                             page_to_update.inner.node_id.key.clone(),
                             page_to_update.inner.node_id.link,
                         ),
-                    );
+                    )?;
                     self.table_of_contents.try_insert(
                         (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
                         new_page_id,

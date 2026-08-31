@@ -168,7 +168,7 @@ where
             .await?
         {
             self.table_of_contents
-                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value));
+                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value))?;
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -254,7 +254,7 @@ where
             .await?
         {
             self.table_of_contents
-                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value));
+                .update_key(&(node_id.key, node_id.value), (new_node_id.key, new_node_id.value))?;
             self.table_of_contents.persist(&mut self.index_file).await?;
         }
         Ok(())
@@ -308,7 +308,7 @@ where
         self.table_of_contents.update_key(
             &(node_id.key, node_id.value),
             (page.inner.node_id.key.clone(), page.inner.node_id.link),
-        );
+        )?;
         self.table_of_contents.try_insert(
             (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
             new_page_id,
@@ -472,7 +472,7 @@ where
                         // rewrite the wrong segment.
                         if !self
                             .table_of_contents
-                            .try_update_key(&pre_event_page_key, updated_page_key.clone())
+                            .try_update_key(&pre_event_page_key, updated_page_key.clone())?
                         {
                             return Err(eyre!(
                                 "unsized index page identity is absent from the table of contents (page={page_index:?}, toc_segments={})",
@@ -557,7 +557,7 @@ where
                     );
                     if !self
                         .table_of_contents
-                        .try_update_key(&pre_split_page_key, left_page_key)
+                        .try_update_key(&pre_split_page_key, left_page_key)?
                     {
                         return Err(eyre!(
                             "unsized index split identity is absent from the table of contents (page={page_index:?})"

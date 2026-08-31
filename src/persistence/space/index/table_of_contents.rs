@@ -15,6 +15,29 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize, rancor};
 use tokio::fs::File;
 
+/// A table-of-contents entry whose serialized size can never fit a segment.
+///
+/// Surfaced instead of letting `persist_page` write past the segment's fixed
+/// page slot and over the next page. `data_bucket`'s `update_key` performs no
+/// capacity or size accounting, so the guard lives on the WorkTable side.
+#[derive(Debug)]
+pub struct TocEntryOversizedError {
+    pub entry_size: usize,
+    pub segment_capacity: usize,
+}
+
+impl std::fmt::Display for TocEntryOversizedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "table-of-contents entry needs {} bytes but a whole empty segment holds only {}",
+            self.entry_size, self.segment_capacity
+        )
+    }
+}
+
+impl std::error::Error for TocEntryOversizedError {}
+
 #[derive(Debug)]
 pub struct IndexTableOfContents<T: Ord + Eq, const DATA_LENGTH: u32> {
     current_page: usize,
@@ -138,34 +161,72 @@ where
         self.pages.iter().flat_map(|v| v.inner.iter())
     }
 
-    pub fn update_key(&mut self, old_key: &T, new_key: T)
+    pub fn update_key(&mut self, old_key: &T, new_key: T) -> eyre::Result<()>
     where
         T: Clone + Debug,
     {
-        assert!(
-            self.try_update_key(old_key, new_key),
-            "Page with key {old_key:?} not found"
-        );
+        let updated = self.try_update_key(old_key, new_key)?;
+        assert!(updated, "Page with key {old_key:?} not found");
+        Ok(())
     }
 
     /// Updates a page identity without panicking when the old identity is
     /// absent. Batch replay uses this checked form because an absent key is a
     /// persistence invariant failure that must surface through `Result`.
-    pub fn try_update_key(&mut self, old_key: &T, new_key: T) -> bool
+    ///
+    /// `data_bucket`'s `TableOfContentsPage::update_key` re-keys the map with
+    /// no capacity or `estimated_size` accounting, so a growing key (string
+    /// identities grow with their node maximum) could silently push the
+    /// segment's serialized form past its fixed page slot; the persist would
+    /// then overwrite the beginning of the NEXT page. Only a same-size re-key
+    /// goes through it. A size-changing update is performed as remove+insert,
+    /// which keeps `estimated_size` maintained and can move the entry to a
+    /// segment with room. An entry that cannot fit even an empty segment is a
+    /// typed [`TocEntryOversizedError`] instead of corruption.
+    pub fn try_update_key(&mut self, old_key: &T, new_key: T) -> eyre::Result<bool>
     where
         T: Clone,
     {
-        let page = self.get_current_page_mut();
-        if page.inner.update_key(old_key, new_key.clone()).is_none() {
-            for page in self.pages.iter_mut() {
-                if page.inner.update_key(old_key, new_key.clone()).is_some() {
-                    return true;
-                }
-            }
-            false
-        } else {
-            true
+        let Some(segment) = self.pages.iter().position(|page| page.inner.contains(old_key)) else {
+            return Ok(false);
+        };
+        let page_id = self.pages[segment]
+            .inner
+            .get(old_key)
+            .expect("checked by `contains` above");
+
+        let old_entry_size = (old_key.clone(), page_id).aligned_size();
+        let new_entry_size = (new_key.clone(), page_id).aligned_size();
+        if new_entry_size == old_entry_size {
+            self.pages[segment]
+                .inner
+                .update_key(old_key, new_key)
+                .expect("checked by `contains` above");
+            return Ok(true);
         }
+
+        let segment_size = self.pages[segment].inner.estimated_size();
+        if segment_size.saturating_sub(old_entry_size) + new_entry_size <= DATA_LENGTH as usize {
+            self.pages[segment].inner.remove_without_record(old_key);
+            self.pages[segment].inner.insert(new_key, page_id);
+            return Ok(true);
+        }
+
+        // The grown entry no longer fits its segment. Refuse before mutating
+        // anything if no segment could ever hold it; otherwise move it through
+        // the regular insert machinery, which finds or appends a segment with
+        // room.
+        let empty_segment_size = TableOfContentsPage::<T>::default().estimated_size();
+        if empty_segment_size + new_entry_size > DATA_LENGTH as usize {
+            return Err(TocEntryOversizedError {
+                entry_size: new_entry_size,
+                segment_capacity: (DATA_LENGTH as usize).saturating_sub(empty_segment_size),
+            }
+            .into());
+        }
+        self.pages[segment].inner.remove_without_record(old_key);
+        self.try_insert(new_key, page_id)?;
+        Ok(true)
     }
 
     pub fn pop_empty_page_id(&mut self) -> Option<PageId> {
@@ -294,9 +355,60 @@ mod tests {
         let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(1)));
         toc.insert(7, 2.into());
 
-        assert!(!toc.try_update_key(&8, 9));
+        assert!(!toc.try_update_key(&8, 9).unwrap());
         assert_eq!(toc.get(&7), Some(2.into()));
         assert_eq!(toc.get(&9), None);
+    }
+
+    #[test]
+    fn growing_key_update_moves_the_entry_instead_of_overflowing_the_segment() {
+        const DATA_LENGTH: u32 = 128;
+        let mut toc = IndexTableOfContents::<String, DATA_LENGTH>::new(0.into(), Arc::new(AtomicU32::new(1)));
+
+        // Fill the first segment close to capacity with short keys.
+        let mut key = 0;
+        while toc.pages.len() == 1 {
+            toc.insert(format!("k{key:02}"), PageId::from(key));
+            key += 1;
+        }
+        let victim = "k00".to_string();
+        let victim_page = toc.get(&victim).unwrap();
+
+        // Grow the key well past the room left in its segment, but small
+        // enough to fit an empty one: the update must relocate the entry, not
+        // let data_bucket's unaccounted update_key overflow the page slot.
+        let grown = "k00-".repeat(16);
+        assert!(toc.try_update_key(&victim, grown.clone()).unwrap());
+        assert_eq!(toc.get(&grown), Some(victim_page));
+        assert_eq!(toc.get(&victim), None);
+        for page in &toc.pages {
+            assert!(
+                page.inner.estimated_size() <= DATA_LENGTH as usize,
+                "segment size {} exceeds the page slot",
+                page.inner.estimated_size()
+            );
+        }
+    }
+
+    #[test]
+    fn key_update_too_large_for_any_segment_is_a_typed_error_not_corruption() {
+        use crate::persistence::TocEntryOversizedError;
+
+        const DATA_LENGTH: u32 = 128;
+        let mut toc = IndexTableOfContents::<String, DATA_LENGTH>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        toc.insert("small".to_string(), PageId::from(9));
+
+        let oversized = "x".repeat(4 * DATA_LENGTH as usize);
+        let error = toc
+            .try_update_key(&"small".to_string(), oversized.clone())
+            .unwrap_err();
+        assert!(
+            error.downcast_ref::<TocEntryOversizedError>().is_some(),
+            "expected TocEntryOversizedError, got: {error:#}"
+        );
+        // Nothing was mutated: the old identity is still resolvable.
+        assert_eq!(toc.get(&"small".to_string()), Some(PageId::from(9)));
+        assert_eq!(toc.get(&oversized), None);
     }
 
     #[test]
