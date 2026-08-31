@@ -49,6 +49,19 @@ where
         }
     }
 
+    /// Swap the node-id term inside `length` when the removed element was the
+    /// max. The max is counted twice in `length` (once as an element, once as
+    /// the node id); leaving the stale copy behind inflated `length` until the
+    /// next rebuild, and an inflated `length` made `halve`'s midpoint estimate
+    /// exceed the live payload, walking the split index off the end of the
+    /// node and panicking in `from_inner` on the empty half.
+    fn swap_node_id_term_if_max_removed(&mut self, removed_index: usize, removed: &T) {
+        if removed_index == self.inner.len() {
+            self.length -= removed.aligned_size();
+            self.length += self.inner.last().map(SizeMeasurable::aligned_size).unwrap_or(0);
+        }
+    }
+
     pub fn rebuild(&mut self) {
         self.length = self.inner.last().map(|v| v.aligned_size()).unwrap_or(0);
         self.length += UNSIZED_HEADER_LENGTH as usize;
@@ -105,6 +118,14 @@ where
             i += 1;
         }
 
+        // Both halves must be non-empty: `split_off(0)` would empty this node
+        // and `split_off(len)` would build the new node from an empty vec,
+        // which `from_inner` cannot represent (and the callers assume a real
+        // split). The variance walk can land on either end when the
+        // `middle_length` estimate drifts from the live payload, so the
+        // midpoint is clamped rather than trusted.
+        debug_assert!(self.inner.len() >= 2, "halve requires at least two elements");
+        let middle_idx = middle_idx.clamp(1, self.inner.len() - 1);
         let new_inner = self.inner.split_off(middle_idx);
         let split = Self::from_inner(new_inner, self.length_capacity);
         self.rebuild();
@@ -192,6 +213,7 @@ where
         // TODO: Refactor this when empty links logic will be added to the page
         if let Some((val, i)) = NodeLike::delete(&mut self.inner, value) {
             self.removed_length += val.aligned_size() + UnsizedIndexPageUtility::<T>::slots_value_size();
+            self.swap_node_id_term_if_max_removed(i, &val);
 
             if self.removed_length > self.length_capacity / 2 {
                 self.rebuild()
@@ -205,6 +227,7 @@ where
     fn delete_at(&mut self, index: usize) -> Option<T> {
         let val = NodeLike::delete_at(&mut self.inner, index)?;
         self.removed_length += val.aligned_size() + UnsizedIndexPageUtility::<T>::slots_value_size();
+        self.swap_node_id_term_if_max_removed(index, &val);
 
         if self.removed_length > self.length_capacity / 2 {
             self.rebuild()
@@ -218,6 +241,12 @@ where
             let old = std::mem::replace(old, value);
             self.length += value_size;
             self.removed_length += old.aligned_size();
+            if idx + 1 == self.inner.len() {
+                // The max carries a second copy of itself in `length` (the
+                // node id); replacing the max must swap that copy too.
+                self.length -= old.aligned_size();
+                self.length += value_size;
+            }
             return Some(old);
         }
 
@@ -285,7 +314,11 @@ mod test {
         assert_eq!(node.length, 120);
         assert_eq!(node.removed_length, 0);
         node.delete(&String::from_utf8(vec![b'1'; 16]).unwrap());
-        assert_eq!(node.length, 120);
+        // The deleted element's own bytes stay in `length` until a rebuild,
+        // but its node-id copy must be swapped out (the node is now empty, so
+        // the swap removes 24 and adds nothing). Asserting 120 here was
+        // asserting the stale-term bug that made `halve` walk off the node.
+        assert_eq!(node.length, 96);
         assert_eq!(node.removed_length, 32);
     }
 
@@ -297,7 +330,10 @@ mod test {
         assert_eq!(node.length, 168);
         assert_eq!(node.removed_length, 0);
         node.delete(&String::from_utf8(vec![b'2'; 24]).unwrap());
-        assert_eq!(node.length, 168);
+        // Deleting the max swaps the node-id copy from the old max (32) to
+        // the new max (24): 168 - 32 + 24. The old assertion of an unchanged
+        // 168 encoded the stale-term bug this test's name promises to check.
+        assert_eq!(node.length, 160);
         assert_eq!(node.removed_length, 40);
     }
 
@@ -334,5 +370,79 @@ mod test {
             let range = map.get(&format!("ValueNum{i}")).collect::<Vec<_>>();
             assert_eq!(range.len(), 10)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for the audited halve panic: a large max inserted and then
+    /// deleted left its size inside `length` as a stale node-id term, so
+    /// `halve`'s midpoint estimate exceeded the live payload, the variance
+    /// walk ran off the end, and `from_inner` panicked on an empty half.
+    #[test]
+    fn halve_survives_a_deleted_large_max() {
+        let mut node: UnsizedNode<String> = NodeLike::with_capacity(4096);
+
+        // A ~1.9 KB key becomes the max, then is deleted while staying below
+        // the rebuild threshold (capacity / 2 = 2048).
+        let big = format!("zzz{}", "x".repeat(1900));
+        NodeLike::insert(&mut node, big.clone());
+        NodeLike::delete(&mut node, &big).expect("big key was present");
+
+        // Fill with small keys until the node wants to split, then split.
+        let mut split = None;
+        for i in 0..1000u32 {
+            let value = format!("k{i:05}");
+            if NodeLike::need_to_split(&node, 0, &value) {
+                split = Some(node.halve());
+                break;
+            }
+            NodeLike::insert(&mut node, value);
+        }
+        let split = split.expect("the node must eventually want to split");
+
+        assert!(!node.as_ref().is_empty(), "left half must not be empty");
+        assert!(!split.as_ref().is_empty(), "right half must not be empty");
+        assert!(
+            node.max().unwrap() < split.as_ref().first().unwrap(),
+            "halves must partition the order"
+        );
+    }
+
+    /// The same accounting hole through `delete_at` and a max `replace`:
+    /// repeated churn of the max must not inflate `length` and starve or
+    /// explode later splits.
+    #[test]
+    fn max_churn_keeps_split_estimates_sane() {
+        let mut node: UnsizedNode<String> = NodeLike::with_capacity(4096);
+        for i in 0..8u32 {
+            NodeLike::insert(&mut node, format!("k{i:02}"));
+        }
+        // Churn the max: replace it with a bigger one, delete it by index,
+        // reinsert, delete by value, several rounds.
+        for round in 0..20u32 {
+            let fat = format!("z{}{}", round, "y".repeat(400));
+            NodeLike::insert(&mut node, fat.clone());
+            let last = node.as_ref().len() - 1;
+            let replaced = format!("z{}{}", round, "y".repeat(600));
+            node.replace(last, replaced.clone());
+            NodeLike::delete(&mut node, &replaced).expect("replaced max present");
+        }
+        // After churn, filling with small keys must reach a splittable state
+        // and split into two non-empty halves without panicking.
+        let mut split = None;
+        for i in 0..2000u32 {
+            let value = format!("m{i:05}");
+            if NodeLike::need_to_split(&node, 0, &value) {
+                split = Some(node.halve());
+                break;
+            }
+            NodeLike::insert(&mut node, value);
+        }
+        let split = split.expect("churned node must still split");
+        assert!(!node.as_ref().is_empty());
+        assert!(!split.as_ref().is_empty());
     }
 }
