@@ -113,10 +113,7 @@ impl PersistGenerator {
                         .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
                     let row_old = self.0.data.select_non_ghosted(link)?;
-                    if let Err(e) = self.reinsert(row_old, row).await {
-
-                        return Err(e);
-                    }
+                    self.reinsert(row_old, row).await?;
 
                     return core::result::Result::Ok(());
                 }
@@ -319,9 +316,7 @@ impl PersistGenerator {
                     #(#row_updates)*
 
                     if need_to_reinsert {
-                        if let Err(e) = self.reinsert(row_old, row_new).await {
-                            return Err(e);
-                        }
+                        self.reinsert(row_old, row_new).await?;
                         return core::result::Result::Ok(());
                     }
 
@@ -357,9 +352,7 @@ impl PersistGenerator {
                         return core::result::Result::Ok(());
                     }
 
-                    if let Err(e) = self.reinsert(row_old, row_new).await {
-                        return Err(e);
-                    }
+                    self.reinsert(row_old, row_new).await?;
                     return core::result::Result::Ok(());
                 }
             }
@@ -383,9 +376,7 @@ impl PersistGenerator {
                     let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
-                    if let Err(e) = self.reinsert(row_old, row_new).await {
-                        return Err(e);
-                    }
+                    self.reinsert(row_old, row_new).await?;
                     return core::result::Result::Ok(());
                 }
             }
@@ -657,9 +648,7 @@ impl PersistGenerator {
                         let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                         let mut row_new = row_old.clone();
                         #(#row_updates)*
-                        if let Err(e) = self.reinsert(row_old, row_new).await {
-                            return Err(e);
-                        }
+                        self.reinsert(row_old, row_new).await?;
 
                         guards.remove(&pk);
                         continue;
@@ -709,9 +698,7 @@ impl PersistGenerator {
                                 continue;
                             }
                         }
-                        if let Err(e) = self.reinsert(row_old, row_new).await {
-                            return Err(e);
-                        }
+                        self.reinsert(row_old, row_new).await?;
 
                         guards.remove(&pk);
                         continue;

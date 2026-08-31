@@ -121,9 +121,7 @@ impl InMemoryGenerator {
                     .map(Into::into)
                     .ok_or(WorkTableError::NotFound)?;
                 let row_old = self.0.data.select_non_ghosted(link)?;
-                if let Err(e) = self.reinsert(row_old, row).await {
-                    return Err(e);
-                }
+                self.reinsert(row_old, row).await?;
                 core::result::Result::Ok(())
             }
         } else {
@@ -141,10 +139,7 @@ impl InMemoryGenerator {
                     .map(Into::into)
                     .ok_or(WorkTableError::NotFound)?;
                 let row_old = self.0.data.select_non_ghosted(link)?;
-                if let Err(e) = self.reinsert(row_old, row).await {
-
-                    return Err(e);
-                }
+                self.reinsert(row_old, row).await?;
 
                 core::result::Result::Ok(())
             }
@@ -327,10 +322,7 @@ impl InMemoryGenerator {
                     #(#row_updates)*
 
                     if need_to_reinsert {
-                        if let Err(e) = self.reinsert(row_old, row_new).await {
-
-                            return Err(e);
-                        }
+                        self.reinsert(row_old, row_new).await?;
                         return core::result::Result::Ok(());
                     }
 
@@ -369,9 +361,7 @@ impl InMemoryGenerator {
                     // `update_in_place` checks serialization and exact slot
                     // length before touching page bytes, so its error path
                     // leaves this locked snapshot authoritative for fallback.
-                    if let Err(e) = self.reinsert(row_old, row_new).await {
-                        return Err(e);
-                    }
+                    self.reinsert(row_old, row_new).await?;
                     return core::result::Result::Ok(());
                 }
             }
@@ -397,9 +387,7 @@ impl InMemoryGenerator {
                     let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
-                    if let Err(e) = self.reinsert(row_old, row_new).await {
-                        return Err(e);
-                    }
+                    self.reinsert(row_old, row_new).await?;
                     return core::result::Result::Ok(());
                 }
             }
@@ -705,9 +693,7 @@ impl InMemoryGenerator {
                         let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                         let mut row_new = row_old.clone();
                         #(#row_updates)*
-                        if let Err(e) = self.reinsert(row_old, row_new).await {
-                            return Err(e);
-                        }
+                        self.reinsert(row_old, row_new).await?;
 
                         guards.remove(&pk);
                         continue;
@@ -741,9 +727,7 @@ impl InMemoryGenerator {
                                 continue;
                             }
                         }
-                        if let Err(e) = self.reinsert(row_old, row_new).await {
-                            return Err(e);
-                        }
+                        self.reinsert(row_old, row_new).await?;
 
                         guards.remove(&pk);
                         continue;
