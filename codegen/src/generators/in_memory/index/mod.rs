@@ -68,10 +68,17 @@ impl InMemoryGenerator {
                     let index_type = unique_index_type(idx.backend, &t, &value_type, worktables_node)?;
                     quote! { #i: #index_type }
                 } else {
-                    if is_unsized(&t.to_string()) {
-                        quote! {#i: IndexMultiMap<#t, OffsetEqLink, UnsizedNode<IndexMultiPair<#t, OffsetEqLink>>>}
-                    } else {
-                        quote! {#i: IndexMultiMap<#t, OffsetEqLink>}
+                    match idx.backend {
+                        crate::common::model::IndexBackend::Arctic => {
+                            quote! { #i: ArcticMultiIndex<#t, OffsetEqLink> }
+                        }
+                        _ => {
+                            if is_unsized(&t.to_string()) {
+                                quote! {#i: IndexMultiMap<#t, OffsetEqLink, UnsizedNode<IndexMultiPair<#t, OffsetEqLink>>>}
+                            } else {
+                                quote! {#i: IndexMultiMap<#t, OffsetEqLink>}
+                            }
+                        }
                     }
                 };
                 Ok::<_, syn::Error>(res)
@@ -151,10 +158,17 @@ impl InMemoryGenerator {
                         }
                     }
                 } else {
-                    if is_unsized(&t.to_string()) {
-                        quote! {#i: IndexMultiMap::with_maximum_node_size(#const_name), }
-                    } else {
-                        quote! {#i: IndexMultiMap::with_maximum_node_size(get_index_page_size_from_data_length::<#t>(#const_name)),}
+                    match idx.backend {
+                        crate::common::model::IndexBackend::Arctic => {
+                            quote! { #i: Default::default(), }
+                        }
+                        _ => {
+                            if is_unsized(&t.to_string()) {
+                                quote! {#i: IndexMultiMap::with_maximum_node_size(#const_name), }
+                            } else {
+                                quote! {#i: IndexMultiMap::with_maximum_node_size(get_index_page_size_from_data_length::<#t>(#const_name)),}
+                            }
+                        }
                     }
                 };
 
