@@ -68,6 +68,7 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
+        let columnar_save = crate::generators::columnar::save_row_cdc(&self.columns);
 
         quote! {
             fn save_row_cdc(&self, row: #row_type_ident, link: Link) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
@@ -75,6 +76,7 @@ impl PersistGenerator {
                 let mut partial_events = #events_ident::default();
 
                 #(#save_rows)*
+                #columnar_save
                 (#events_ident {
                     #(#idents,)*
                 }, Ok(()))
@@ -148,6 +150,7 @@ impl PersistGenerator {
             })
             .unzip();
         let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
+        let columnar_reinsert = crate::generators::columnar::reinsert_row_cdc(&self.columns);
 
         quote! {
             fn reinsert_row_cdc(
@@ -162,6 +165,7 @@ impl PersistGenerator {
 
                 #(#insert_rows)*
                 #(#remove_rows)*
+                #columnar_reinsert
                 (#events_ident {
                     #(#idents,)*
                 }, Ok(()))
@@ -188,10 +192,12 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
+        let columnar_delete = crate::generators::columnar::delete_row(&self.columns);
 
         quote! {
             fn delete_row_cdc(&self, row: #row_type_ident, link: Link) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 #(#delete_rows)*
+                #columnar_delete
                 (#events_ident {
                     #(#idents,)*
                 }, Ok(()))
@@ -306,6 +312,7 @@ impl PersistGenerator {
             }
         });
         let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
+        let columnar_dirty = crate::generators::columnar::mark_dirty(&self.columns);
 
         quote! {
             fn process_difference_remove_cdc(
@@ -314,6 +321,7 @@ impl PersistGenerator {
                 difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
             ) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 #(#process_difference_rows)*
+                #columnar_dirty
                 (#events_ident {
                     #(#idents,)*
                 }, Ok(()))
@@ -376,6 +384,7 @@ impl PersistGenerator {
             }
         });
         let idents = self.columns.indexes.values().map(|idx| &idx.name).collect::<Vec<_>>();
+        let columnar_dirty = crate::generators::columnar::mark_dirty(&self.columns);
 
         quote! {
             fn process_difference_insert_cdc(
@@ -387,6 +396,7 @@ impl PersistGenerator {
                 let mut partial_events = #events_ident::default();
 
                 #(#process_difference_insert_rows)*
+                #columnar_dirty
                 (#events_ident {
                     #(#idents,)*
                 }, Ok(()))

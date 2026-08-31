@@ -55,6 +55,7 @@ impl PersistGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let size_check = if self.columns.is_sized {
             quote! {}
         } else {
@@ -126,6 +127,7 @@ impl PersistGenerator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
+                #columnar_dirty
 
                 self.0.update_state.remove(&pk);
 
@@ -356,6 +358,28 @@ impl PersistGenerator {
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
                             }
+                            IndexError::ColumnSlotIdExhausted {
+                                bits,
+                                inserted_already,
+                            } => {
+                                let (rollback_secondary_events, _): (#secondary_events_ident, _) = self.0.indexes.delete_from_indexes_cdc(
+                                    row_new.merge(row_old.clone()),
+                                    link,
+                                    inserted_already
+                                );
+
+                                let mut merged_events = secondary_events.clone();
+                                merged_events.extend(rollback_secondary_events);
+
+                                let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: merged_events,
+                                });
+                                self.1.apply_operation(ack_op)?;
+
+                                Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                            }
                             IndexError::NotFound => Err(WorkTableError::NotFound),
                         };
                     }
@@ -415,6 +439,7 @@ impl PersistGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -448,6 +473,7 @@ impl PersistGenerator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -544,6 +570,7 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -621,6 +648,7 @@ impl PersistGenerator {
 
                     guards.remove(&pk);
                 }
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -664,6 +692,7 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -718,6 +747,7 @@ impl PersistGenerator {
                 }
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 

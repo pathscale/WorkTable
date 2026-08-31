@@ -93,6 +93,10 @@ pub enum IndexError<IndexNameEnum> {
         at: IndexNameEnum,
         inserted_already: Vec<IndexNameEnum>,
     },
+    ColumnSlotIdExhausted {
+        bits: u8,
+        inserted_already: Vec<IndexNameEnum>,
+    },
     NotFound,
 }
 
@@ -106,6 +110,10 @@ where
                 at,
                 inserted_already: _,
             } => WorkTableError::AlreadyExists(at.to_string_value()),
+            IndexError::ColumnSlotIdExhausted {
+                bits,
+                inserted_already: _,
+            } => WorkTableError::ColumnSlotIdExhausted(bits),
             IndexError::NotFound => WorkTableError::NotFound,
         }
     }

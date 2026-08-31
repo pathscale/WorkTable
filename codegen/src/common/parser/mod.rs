@@ -1,4 +1,5 @@
 mod attribute;
+mod columnar;
 mod columns;
 mod config;
 mod index;
