@@ -21,6 +21,21 @@
 //! segmented lookup is within 0.2 ns of a flat `Vec` index, and both are
 //! roughly 7x faster than any hash of a string key.
 //!
+//! # Why a slot is an `AtomicPtr` and not an `Option<Arc<T>>`
+//!
+//! Readers run without the growth mutex, so a slot is written by one thread
+//! while another reads it. That has to be an atomic access or it is a data
+//! race, and `remove` makes it more than a formality: a reader that has read
+//! the pointer but not yet incremented the strong count would have the
+//! allocation freed under it by the removing thread.
+//!
+//! So a slot holds one owned strong reference as a raw pointer, and `remove`
+//! does not drop the reference it takes out of the slot. It moves it to a
+//! retire list that keeps the allocation alive for the whole life of the set,
+//! which closes the window without putting anything on the read path.
+//! [`PartitionSet::gc`] reclaims the list, and takes `&mut self` because that
+//! is the proof that no reader is in flight.
+//!
 //! # What this does not do yet
 //!
 //! No eviction, no lazy load, no per-partition persistence. Every partition
@@ -30,7 +45,7 @@
 //! inside `PersistenceEngine::new`.
 
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::mem_stat::MemStat;
 
@@ -46,17 +61,33 @@ pub const MAX_CHUNKS: usize = 64;
 /// Largest routable key.
 pub const MAX_PARTITIONS: usize = CHUNK * MAX_CHUNKS;
 
-type Slot<T> = Option<Arc<T>>;
-
+/// A chunk of slots. A null slot is empty; a non-null slot holds exactly one
+/// owned strong reference, as produced by `Arc::into_raw`.
 struct Chunk<T> {
-    slots: [Slot<T>; CHUNK],
+    slots: [AtomicPtr<T>; CHUNK],
 }
 
 impl<T> Chunk<T> {
     fn empty() -> Box<Self> {
         Box::new(Chunk {
-            slots: std::array::from_fn(|_| None),
+            slots: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
         })
+    }
+}
+
+/// Reconstruct an owned handle from a slot's pointer without ever letting the
+/// strong count reach zero.
+///
+/// # Safety
+///
+/// `p` must be non-null and must point at a live `Arc` allocation, which the
+/// retire-list discipline in [`PartitionSet::remove`] guarantees for any
+/// pointer ever published into a slot.
+#[inline]
+unsafe fn revive<T>(p: *mut T) -> Arc<T> {
+    unsafe {
+        Arc::increment_strong_count(p as *const T);
+        Arc::from_raw(p as *const T)
     }
 }
 
@@ -64,9 +95,9 @@ impl<T> Chunk<T> {
 pub struct PartitionSet<T> {
     spine: Vec<AtomicPtr<Chunk<T>>>,
     live: AtomicUsize,
-    /// Serialises chunk allocation and partition creation. Never taken on a
-    /// read path.
-    grow: Mutex<()>,
+    /// Serialises chunk allocation, creation and removal, and owns the retire
+    /// list of removed partitions. Never taken on a read path.
+    grow: Mutex<Vec<Arc<T>>>,
 }
 
 impl<T> Default for PartitionSet<T> {
@@ -80,7 +111,7 @@ impl<T> PartitionSet<T> {
         Self {
             spine: (0..MAX_CHUNKS).map(|_| AtomicPtr::new(std::ptr::null_mut())).collect(),
             live: AtomicUsize::new(0),
-            grow: Mutex::new(()),
+            grow: Mutex::new(Vec::new()),
         }
     }
 
@@ -93,9 +124,17 @@ impl<T> PartitionSet<T> {
         self.len() == 0
     }
 
+    /// A key that is in range, or `None`. Every entry point funnels through
+    /// this so the bound is stated once.
     #[inline]
-    fn chunk(&self, key: usize) -> Option<&Chunk<T>> {
-        let p = self.spine.get(key / CHUNK)?.load(Ordering::Acquire);
+    fn index(key: u64) -> Option<usize> {
+        let idx = usize::try_from(key).ok()?;
+        (idx < MAX_PARTITIONS).then_some(idx)
+    }
+
+    #[inline]
+    fn chunk(&self, idx: usize) -> Option<&Chunk<T>> {
+        let p = self.spine.get(idx / CHUNK)?.load(Ordering::Acquire);
         // Safety: a chunk pointer is published with Release after the chunk is
         // fully initialised, and is never freed or replaced while the set
         // lives, so an Acquire load yields a pointer that stays valid for as
@@ -105,20 +144,25 @@ impl<T> PartitionSet<T> {
 
     /// The table routed to by `key`, if that partition exists.
     ///
-    /// This is the hot path: a bounds check, two loads and a clone of an
-    /// `Arc`.
+    /// This is the hot path: a bounds check, two atomic loads and a strong
+    /// count increment.
     #[inline]
     pub fn partition(&self, key: u64) -> Option<Arc<T>> {
-        let key = usize::try_from(key).ok()?;
-        if key >= MAX_PARTITIONS {
-            return None;
-        }
-        self.chunk(key)?.slots[key % CHUNK].clone()
+        let idx = Self::index(key)?;
+        let p = self.chunk(idx)?.slots[idx % CHUNK].load(Ordering::Acquire);
+        // Safety: a published slot pointer refers to an allocation that the
+        // retire list keeps alive for as long as the set lives, so the strong
+        // count cannot have reached zero between the load and the increment.
+        (!p.is_null()).then(|| unsafe { revive(p) })
     }
 
     /// Whether `key` currently holds a partition.
     pub fn contains(&self, key: u64) -> bool {
-        self.partition(key).is_some()
+        let Some(idx) = Self::index(key) else {
+            return false;
+        };
+        self.chunk(idx)
+            .is_some_and(|c| !c.slots[idx % CHUNK].load(Ordering::Acquire).is_null())
     }
 
     /// Keys that currently hold a partition, ascending.
@@ -129,7 +173,7 @@ impl<T> PartitionSet<T> {
                 continue;
             };
             for (i, slot) in chunk.slots.iter().enumerate() {
-                if slot.is_some() {
+                if !slot.load(Ordering::Acquire).is_null() {
                     out.push((c * CHUNK + i) as u64);
                 }
             }
@@ -138,11 +182,18 @@ impl<T> PartitionSet<T> {
     }
 
     /// Every live partition, paired with its key.
+    ///
+    /// A snapshot, not a view: a key removed after its slot was scanned is
+    /// dropped from the result rather than reported as present.
     pub fn iter(&self) -> Vec<(u64, Arc<T>)> {
         self.keys()
             .into_iter()
             .filter_map(|k| self.partition(k).map(|t| (k, t)))
             .collect()
+    }
+
+    fn lock(&self) -> Result<MutexGuard<'_, Vec<Arc<T>>>, PartitionError> {
+        self.grow.lock().map_err(|_| PartitionError::Poisoned)
     }
 
     /// Get the partition at `key`, creating it with `make` if absent.
@@ -156,53 +207,69 @@ impl<T> PartitionSet<T> {
         if let Some(t) = self.partition(key) {
             return Ok(t);
         }
-        let idx = usize::try_from(key).map_err(|_| PartitionError::OutOfRange { key })?;
-        if idx >= MAX_PARTITIONS {
-            return Err(PartitionError::OutOfRange { key });
-        }
+        let idx = Self::index(key).ok_or(PartitionError::OutOfRange { key })?;
 
-        let _guard = self.grow.lock().map_err(|_| PartitionError::Poisoned)?;
+        let _guard = self.lock()?;
         // Re-check: another thread may have created it while we waited.
         if let Some(t) = self.partition(key) {
             return Ok(t);
         }
 
-        let chunk_idx = idx / CHUNK;
-        let cell = &self.spine[chunk_idx];
+        let cell = &self.spine[idx / CHUNK];
         if cell.load(Ordering::Acquire).is_null() {
             // Published only after the chunk is fully initialised.
             cell.store(Box::into_raw(Chunk::<T>::empty()), Ordering::Release);
         }
-        let chunk = cell.load(Ordering::Acquire);
-        // Safety: we hold the growth mutex, so no other writer touches this
-        // chunk, and readers only ever read slots.
-        let slots = unsafe { &mut (*chunk).slots };
+        // Safety: published above or on an earlier call, and never freed while
+        // the set lives.
+        let chunk = unsafe { &*cell.load(Ordering::Acquire) };
+
         let table = Arc::new(make());
-        slots[idx % CHUNK] = Some(table.clone());
+        // The slot takes ownership of one strong reference.
+        let raw = Arc::into_raw(Arc::clone(&table)) as *mut T;
+        chunk.slots[idx % CHUNK].store(raw, Ordering::Release);
         self.live.fetch_add(1, Ordering::AcqRel);
         Ok(table)
     }
 
     /// Remove the partition at `key`, returning it if it was present.
     ///
-    /// Existing holders keep their `Arc`, so a reader mid-query is unaffected.
+    /// The reference the slot owned is moved to the retire list rather than
+    /// dropped, so a reader that loaded the pointer a moment before cannot
+    /// find the allocation freed under it. [`Self::gc`] reclaims it.
     pub fn remove(&self, key: u64) -> Option<Arc<T>> {
-        let idx = usize::try_from(key).ok()?;
-        if idx >= MAX_PARTITIONS {
+        let idx = Self::index(key)?;
+        let mut retired = self.lock().ok()?;
+        let chunk = self.chunk(idx)?;
+        let p = chunk.slots[idx % CHUNK].swap(std::ptr::null_mut(), Ordering::AcqRel);
+        if p.is_null() {
             return None;
         }
-        let _guard = self.grow.lock().ok()?;
-        let chunk = self.spine[idx / CHUNK].load(Ordering::Acquire);
-        if chunk.is_null() {
-            return None;
-        }
-        // Safety: the growth mutex is held, so no other writer is present.
-        let slots = unsafe { &mut (*chunk).slots };
-        let taken = slots[idx % CHUNK].take();
-        if taken.is_some() {
-            self.live.fetch_sub(1, Ordering::AcqRel);
-        }
-        taken
+        self.live.fetch_sub(1, Ordering::AcqRel);
+        // Safety: the slot owned exactly one strong reference, and we hold the
+        // mutex so no other writer can have taken it.
+        let table = unsafe { Arc::from_raw(p as *const T) };
+        retired.push(Arc::clone(&table));
+        Some(table)
+    }
+
+    /// Drop the retire list, freeing partitions removed earlier.
+    ///
+    /// Returns how many were reclaimed. Takes `&mut self`: exclusive access is
+    /// the proof that no reader holds a pointer this could invalidate.
+    pub fn gc(&mut self) -> usize {
+        let mut retired = self.grow.lock().unwrap_or_else(|e| e.into_inner());
+        let n = retired.len();
+        retired.clear();
+        n
+    }
+
+    /// How many removed partitions are still held by the retire list.
+    pub fn retired_len(&self) -> usize {
+        self.grow
+            .lock()
+            .map(|r| r.len())
+            .unwrap_or_else(|e| e.into_inner().len())
     }
 }
 
@@ -221,30 +288,40 @@ impl<T> Drop for PartitionSet<T> {
     fn drop(&mut self) {
         for cell in &self.spine {
             let p = cell.swap(std::ptr::null_mut(), Ordering::AcqRel);
-            if !p.is_null() {
-                // Safety: each chunk was allocated by Box::into_raw here, is
-                // published exactly once, and nothing else frees it.
-                drop(unsafe { Box::from_raw(p) });
+            if p.is_null() {
+                continue;
+            }
+            // Safety: each chunk was allocated by Box::into_raw here, is
+            // published exactly once, and nothing else frees it.
+            let chunk = unsafe { Box::from_raw(p) };
+            for slot in chunk.slots.iter() {
+                let sp = slot.swap(std::ptr::null_mut(), Ordering::AcqRel);
+                if !sp.is_null() {
+                    // Safety: a live slot owns one strong reference.
+                    drop(unsafe { Arc::from_raw(sp as *const T) });
+                }
             }
         }
     }
 }
 
-// Safety: chunk contents are only mutated under `grow`, and slot reads are
-// plain shared reads of `Option<Arc<T>>` behind an Acquire-loaded pointer.
+// Safety: every slot access is atomic, chunk contents are only mutated under
+// `grow`, and a published chunk is never freed or replaced while the set is
+// alive. The bound is stated explicitly because `AtomicPtr<T>` is `Send` and
+// `Sync` for any `T`, which would otherwise be too permissive.
 unsafe impl<T: Send + Sync> Send for PartitionSet<T> {}
 unsafe impl<T: Send + Sync> Sync for PartitionSet<T> {}
 
 impl<T: MemStat> PartitionSet<T> {
     /// Memory held across every live partition.
     pub fn mem_stat_total(&self) -> usize {
-        self.iter().iter().map(|(_, t)| t.used_size()).sum()
+        self.iter().into_iter().map(|(_, t)| t.used_size()).sum()
     }
 
     /// Memory held per partition, so a caller can answer which key is costing
     /// them rather than only how much is held in total.
     pub fn mem_stat_by_key(&self) -> Vec<(u64, usize)> {
-        self.iter().iter().map(|(k, t)| (*k, t.used_size())).collect()
+        self.iter().into_iter().map(|(k, t)| (k, t.used_size())).collect()
     }
 }
 

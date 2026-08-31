@@ -121,6 +121,21 @@ pub fn expand(name: &Ident, key: &PartitionKey) -> TokenStream {
                 self.memory_by_key().into_iter().map(|(_, bytes)| bytes).sum()
             }
 
+            /// Free partitions removed earlier.
+            ///
+            /// [`Self::remove`] retires a partition rather than freeing it,
+            /// because a reader running without a lock may have loaded its
+            /// pointer a moment before. This takes `&mut self`: exclusive
+            /// access is the proof that no such reader is in flight.
+            pub fn gc(&mut self) -> usize {
+                self.inner.gc()
+            }
+
+            /// How many removed partitions are still awaiting [`Self::gc`].
+            pub fn retired_len(&self) -> usize {
+                self.inner.retired_len()
+            }
+
             /// Rows held per partition.
             pub fn rows_by_key(&self) -> Vec<(#key_ty, usize)> {
                 self.inner

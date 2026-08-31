@@ -227,7 +227,8 @@ worktable!(
 ```
 
 generates `PricePartitions` with `partition`, `partition_or_create`,
-`partition_or_insert_with`, `contains`, `remove`, `keys`, `iter`, `len`,
+`partition_or_insert_with`, `contains`, `remove`, `gc`, `retired_len`, `keys`,
+`iter`, `len`, `is_empty`,
 `memory_by_key`, `memory_total` and `rows_by_key`, all typed on `u16` rather
 than a raw `u64`.
 
@@ -245,6 +246,23 @@ Segmented lookup measured within 0.2 ns of a flat `Vec`, so no bound is
 declared and `partitions: N` was dropped entirely rather than kept as a limit.
 Ceiling is 65,536 partitions, and an out-of-range key is refused rather than
 wrapped.
+
+**A slot is an `AtomicPtr`, and removal retires rather than frees.** The first
+cut stored `Option<Arc<T>>` in a slot and relied on the creation mutex. That is
+wrong twice over. Readers never take that mutex, so a slot written by one
+thread while another reads it is a data race by the memory model, benign on
+aarch64 only by luck. Worse, `remove` dropped the reference the slot held, so a
+reader that had read the pointer but not yet incremented the strong count could
+have the allocation freed under it: a genuine use-after-free, not a formality.
+
+The fix keeps the read path lock-free. A slot holds one owned strong reference
+as a raw pointer, and `remove` moves that reference to a retire list instead of
+dropping it, so the strong count of anything ever published cannot reach zero
+while the set lives. `gc` drains the list and takes `&mut self`, because
+exclusive access is the proof that no reader is in flight. The cost is that
+removed partitions are held until a `gc`, which is the right trade while there
+is no eviction: removal is rare, and correctness under concurrent reads is not
+negotiable.
 
 **The key is restricted to `u8`, `u16`, `u32`, `u64`, `usize`.** A `String` key
 is rejected at macro expansion with a message pointing at a registry table,
