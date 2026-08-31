@@ -63,6 +63,15 @@ impl PersistGenerator {
                     drop(_guard);
                     let pending_lock = { #full_row_lock };
                     let _guard = pending_lock.into_guard_with_mutation();
+                    // Re-resolve under the re-acquired lock: the link captured
+                    // before the unlock window can be stale (a concurrent
+                    // reinsert moves the row; the slot may be reused).
+                    let link: Link = self.0
+                        .primary_index
+                        .pk_map
+                        .get_value(&pk)
+                        .map(Into::into)
+                        .ok_or(WorkTableError::NotFound)?;
                     let row_old = self.0.data.select_non_ghosted(link)?;
                     if let Err(e) = self.reinsert(row_old, row).await {
                         self.0.update_state.remove(&pk);
