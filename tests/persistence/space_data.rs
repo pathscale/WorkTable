@@ -54,6 +54,32 @@ async fn rewriting_one_link_does_not_inflate_the_persisted_data_length() {
 }
 
 #[tokio::test]
+async fn creating_a_page_past_the_next_id_advances_to_the_links_page() {
+    let dir = test_dir("page-jump");
+    let mut space = TestSpaceData::from_table_files_path(&dir, 1).await.unwrap();
+
+    // The link's page is more than one past the current last page. The old
+    // bare increment left last_page_id at 1, so this very page would be seen
+    // as "new" again by the next write and re-created zero-filled.
+    let row = [5u8; 16];
+    space.save_data(link(3, 0, 16), &row).await.unwrap();
+    assert_eq!(space.last_page_id, 3);
+    assert_eq!(space.current_data_length, 16);
+
+    space.save_data(link(3, 16, 16), &row).await.unwrap();
+    assert_eq!(space.last_page_id, 3);
+    assert_eq!(space.current_data_length, 32);
+
+    drop(space);
+    let space = TestSpaceData::from_table_files_path(&dir, 1).await.unwrap();
+    assert_eq!(space.last_page_id, 3);
+    assert_eq!(space.current_data_length, 32);
+
+    drop(space);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test]
 async fn a_data_file_ending_on_an_exact_page_boundary_reopens() {
     let dir = test_dir("exact-multiple");
     let mut space = TestSpaceData::from_table_files_path(&dir, 1).await.unwrap();

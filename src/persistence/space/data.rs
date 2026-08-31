@@ -255,7 +255,11 @@ where
             };
             persist_page(&mut page, &mut self.data_file).await?;
             self.current_data_length = 0;
-            self.last_page_id += 1;
+            // High-water mark, as in the batch path below: the new page is the
+            // one the link names, which can be more than one past the current
+            // last page. A bare increment left `last_page_id` behind it, so a
+            // later write to that page would re-create it zero-filled.
+            self.last_page_id = self.last_page_id.max(link.page_id.into());
         }
         // `current_data_length` mirrors the last page's persisted data_length:
         // the number of bytes occupied from the page start. Only a write that
