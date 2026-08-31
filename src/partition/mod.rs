@@ -44,19 +44,40 @@
 //! instance measures 110 KB and 6.1 ms to construct, of which 95 percent is
 //! inside `PersistenceEngine::new`.
 
+// Under `--cfg wt_loom` the atomics and the mutex come from loom, which explores
+// every interleaving of them rather than whichever one this machine happened
+// to produce. `Arc` stays `std`: loom's has no `into_raw` or
+// `increment_strong_count`, and std's own atomics are already model-checked
+// upstream. What loom is being asked about here is the slot protocol and the
+// double-checked lock in `get_or_create`, not reference counting.
+#[cfg(wt_loom)]
+use loom::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+#[cfg(wt_loom)]
+use loom::sync::{Mutex, MutexGuard};
+use std::sync::Arc;
+#[cfg(not(wt_loom))]
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(not(wt_loom))]
+use std::sync::{Mutex, MutexGuard};
 
 use crate::mem_stat::MemStat;
 
 /// Slots per chunk. A chunk of 1024 pointers is 8 KB, so an empty partition
 /// set costs one spine and nothing else until a partition is created.
+#[cfg(not(wt_loom))]
 pub const CHUNK: usize = 1024;
+/// Loom explores every interleaving, so the spine is shrunk to keep the state
+/// space tractable. The protocol under test is identical.
+#[cfg(wt_loom)]
+pub const CHUNK: usize = 2;
 
 /// Chunks in the spine. 65,536 partitions is well beyond what a resident
 /// partition set can afford: at the measured 15.7 KB floor for a small
 /// in-memory table that is already 1 GB.
+#[cfg(not(wt_loom))]
 pub const MAX_CHUNKS: usize = 64;
+#[cfg(wt_loom)]
+pub const MAX_CHUNKS: usize = 2;
 
 /// Largest routable key.
 pub const MAX_PARTITIONS: usize = CHUNK * MAX_CHUNKS;
@@ -346,5 +367,8 @@ impl std::fmt::Display for PartitionError {
 
 impl std::error::Error for PartitionError {}
 
-#[cfg(test)]
+#[cfg(all(test, not(wt_loom)))]
 mod tests;
+
+#[cfg(all(test, wt_loom))]
+mod loom_tests;

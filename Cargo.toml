@@ -74,6 +74,14 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 rand = "0.9.1"
 tracing-subscriber = "0.3.23"
 
+# Only under `--cfg loom`, so a normal build and a normal `cargo test` never
+# resolve it. See src/partition/loom_tests.rs for how to run the models.
+[target.'cfg(wt_loom)'.dev-dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(wt_loom)'] }
+
 [[bench]]
 name = "worktable_benchmarks"
 harness = false
