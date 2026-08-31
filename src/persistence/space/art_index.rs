@@ -19,8 +19,8 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::index::{
-    ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, PersistentArcticIndex, PersistentArtIndex, PersistentCongeeIndex,
-    UniqueIndex,
+    ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, PersistentArcticIndex,
+    PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex, UniqueIndex,
 };
 use crate::persistence::SpaceIndexOps;
 use crate::persistence::space::BatchChangeEvent;
@@ -38,6 +38,8 @@ const COMPACT_WAL_BYTES: u64 = 4 * 1024 * 1024;
 enum Backend {
     Arctic = 1,
     Congee = 2,
+    /// Non-unique Arctic: one record per `(key, link)` pair.
+    ArcticMulti = 3,
 }
 
 impl Backend {
@@ -45,6 +47,7 @@ impl Backend {
         match byte {
             1 => Ok(Self::Arctic),
             2 => Ok(Self::Congee),
+            3 => Ok(Self::ArcticMulti),
             _ => bail!("unknown ART backend tag {byte}"),
         }
     }
@@ -90,8 +93,13 @@ impl_art_persistence_key!(u8, u16, u32, u64, u128, usize);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WalOp {
+    /// Unique files: associate the key with this link. Multi files: add one
+    /// `(key, link)` pair.
     Set(Link),
+    /// Unique files only: drop the key.
     Remove,
+    /// Multi files only: drop one `(key, link)` pair.
+    RemovePair(Link),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -315,10 +323,11 @@ fn encode_wal_record<K: ArtPersistenceKey>(record: &WalRecord<K>) -> Vec<u8> {
     match record.op {
         WalOp::Set(_) => bytes.push(1),
         WalOp::Remove => bytes.push(2),
+        WalOp::RemovePair(_) => bytes.push(3),
     }
     record.key.encode_art_key(&mut bytes);
     let link = match record.op {
-        WalOp::Set(link) => link,
+        WalOp::Set(link) | WalOp::RemovePair(link) => link,
         WalOp::Remove => Link::default(),
     };
     let page_id: usize = link.page_id.into();
@@ -340,13 +349,15 @@ fn decode_wal_record<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<WalReco
     let page_id = u32::from_le_bytes(bytes[key_end..key_end + 4].try_into().unwrap());
     let offset = u32::from_le_bytes(bytes[key_end + 4..key_end + 8].try_into().unwrap());
     let length = u32::from_le_bytes(bytes[key_end + 8..key_end + 12].try_into().unwrap());
+    let link = Link {
+        page_id: PageId::from(page_id),
+        offset,
+        length,
+    };
     let op = match operation {
-        1 => WalOp::Set(Link {
-            page_id: PageId::from(page_id),
-            offset,
-            length,
-        }),
+        1 => WalOp::Set(link),
         2 => WalOp::Remove,
+        3 => WalOp::RemovePair(link),
         _ => bail!("invalid ART WAL operation {operation}"),
     };
     Ok(WalRecord { event_id, key, op })
@@ -378,7 +389,7 @@ fn logical_record<K: ArtPersistenceKey>(event: ChangeEvent<Pair<K, Link>>) -> ey
     }
 }
 
-fn apply_wal<K, V, I>(index: &I, wal: &[WalRecord<K>], wrap: impl Fn(Link) -> V)
+fn apply_wal<K, V, I>(index: &I, wal: &[WalRecord<K>], wrap: impl Fn(Link) -> V) -> eyre::Result<()>
 where
     K: ArtPersistenceKey,
     V: Clone + Send + 'static,
@@ -392,8 +403,89 @@ where
             WalOp::Remove => {
                 index.remove_value(&record.key);
             }
+            WalOp::RemovePair(_) => bail!("unique ART WAL contains a non-unique pair record"),
         }
     }
+    Ok(())
+}
+
+/// The multi variant of [`logical_record`]: `InsertAt` adds one `(key, link)`
+/// pair, `RemoveAt` drops the one pair it names.
+fn logical_multi_record<K: ArtPersistenceKey>(event: ChangeEvent<Pair<K, Link>>) -> eyre::Result<WalRecord<K>> {
+    match event {
+        ChangeEvent::InsertAt {
+            event_id,
+            max_value,
+            value,
+            index,
+        } if index == 0 && max_value == value => Ok(WalRecord {
+            event_id: event_id.inner(),
+            key: value.key,
+            op: WalOp::Set(value.value),
+        }),
+        ChangeEvent::RemoveAt {
+            event_id,
+            max_value,
+            value,
+            index,
+        } if index == 0 && max_value == value => Ok(WalRecord {
+            event_id: event_id.inner(),
+            key: value.key,
+            op: WalOp::RemovePair(value.value),
+        }),
+        _ => bail!("native ART persistence received a structural WorkTablesIndex event"),
+    }
+}
+
+fn apply_multi_wal<K, V>(
+    index: &ArcticMultiIndex<K, V>,
+    wal: &[WalRecord<K>],
+    wrap: impl Fn(Link) -> V,
+) -> eyre::Result<()>
+where
+    K: ArtPersistenceKey + ArcticKey,
+    V: Clone + Debug + PartialEq + Send + Sync + 'static,
+{
+    for record in wal {
+        match record.op {
+            WalOp::Set(link) => index.insert_pair(record.key.clone(), wrap(link)),
+            WalOp::RemovePair(link) => {
+                index.remove_pair(&record.key, &wrap(link));
+            }
+            WalOp::Remove => bail!("non-unique ART WAL contains a unique whole-key removal"),
+        }
+    }
+    Ok(())
+}
+
+/// Multi checkpoints are a flat pair list, not a preserved topology: replay
+/// rebuilds the tree by insertion, exactly like WAL recovery, so the snapshot
+/// format stays independent of the in-memory slot layout.
+fn encode_multi_pairs<K: ArtPersistenceKey>(pairs: impl Iterator<Item = (K, Link)>) -> Vec<u8> {
+    let mut body = Vec::new();
+    let mut count: u64 = 0;
+    for (key, link) in pairs {
+        key.encode_art_key(&mut body);
+        encode_link(link, &mut body);
+        count += 1;
+    }
+    let mut output = Vec::with_capacity(8 + body.len());
+    output.extend_from_slice(&count.to_le_bytes());
+    output.extend(body);
+    output
+}
+
+fn decode_multi_pairs<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<Vec<(K, Link)>> {
+    let mut decoder = Decoder::new(bytes);
+    let count = decoder.u64()?;
+    let mut pairs = Vec::with_capacity(usize::try_from(count).map_err(|_| eyre!("ART pair count overflow"))?);
+    for _ in 0..count {
+        let key = K::decode_art_key(decoder.take(K::WIDTH as usize)?)?;
+        let link = decoder.link()?;
+        pairs.push((key, link));
+    }
+    decoder.finish()?;
+    Ok(pairs)
 }
 
 /// Disk-side Arctic checkpoint and WAL state.
@@ -423,7 +515,7 @@ where
         let image = ArtFile::<K>::read_image(path.as_ref(), Backend::Arctic, table_version).await?;
         let topology = decode_arctic_topology(&image.snapshot)?;
         let index = ArcticIndex::from_topology(topology, OffsetEqLink)?;
-        apply_wal(&index, &image.wal, OffsetEqLink);
+        apply_wal(&index, &image.wal, OffsetEqLink)?;
         Ok(PersistentArtIndex::from_inner(index))
     }
 
@@ -445,7 +537,7 @@ where
         let image = ArtFile::<K>::read_image(&self.file.path, Backend::Arctic, self.file.table_version).await?;
         let topology = decode_arctic_topology(&image.snapshot)?;
         let mut index = ArcticIndex::from_topology(topology, |link| link)?;
-        apply_wal(&index, &image.wal, |link| link);
+        apply_wal(&index, &image.wal, |link| link)?;
         let snapshot = encode_arctic_topology(&index.export_topology(|link| *link)?)?;
         self.file.rewrite(&snapshot).await
     }
@@ -527,7 +619,7 @@ where
         let image = ArtFile::<K>::read_image(path.as_ref(), Backend::Congee, table_version).await?;
         let topology = decode_congee_topology(&image.snapshot)?;
         let index = CongeeIndex::from_topology(topology, OffsetEqLink)?;
-        apply_wal(&index, &image.wal, OffsetEqLink);
+        apply_wal(&index, &image.wal, OffsetEqLink)?;
         Ok(PersistentArtIndex::from_inner(index))
     }
 
@@ -547,7 +639,7 @@ where
         let image = ArtFile::<K>::read_image(&self.file.path, Backend::Congee, self.file.table_version).await?;
         let topology = decode_congee_topology(&image.snapshot)?;
         let mut index = CongeeIndex::from_topology(topology, |link| link)?;
-        apply_wal(&index, &image.wal, |link| link);
+        apply_wal(&index, &image.wal, |link| link)?;
         let snapshot = encode_congee_topology(&index.export_topology(|link| *link)?)?;
         self.file.rewrite(&snapshot).await
     }
@@ -593,6 +685,110 @@ where
         let records = events
             .into_iter()
             .map(logical_record)
+            .collect::<eyre::Result<Vec<_>>>()?;
+        self.file.append(&records).await?;
+        if self.file.should_compact() {
+            self.compact().await?;
+        }
+        Ok(())
+    }
+}
+
+/// Disk-side checkpoint and WAL state for a non-unique Arctic index.
+#[derive(Debug)]
+pub struct SpaceArcticMultiIndex<K: ArtPersistenceKey, const INNER_PAGE_SIZE: u32> {
+    file: ArtFile<K>,
+}
+
+impl<K, const INNER_PAGE_SIZE: u32> SpaceArcticMultiIndex<K, INNER_PAGE_SIZE>
+where
+    K: ArtPersistenceKey + ArcticKey,
+{
+    async fn new(path: PathBuf, table_version: u32) -> eyre::Result<Self> {
+        let snapshot = encode_multi_pairs(std::iter::empty::<(K, Link)>());
+        Ok(Self {
+            file: ArtFile::open(path, Backend::ArcticMulti, table_version, snapshot).await?,
+        })
+    }
+
+    /// Reconstructs a persisted non-unique Arctic index from its pair-list
+    /// checkpoint and WAL.
+    pub async fn load_index<const N: usize>(
+        path: impl AsRef<Path>,
+        table_version: u32,
+    ) -> eyre::Result<PersistentArcticMultiIndex<K, OffsetEqLink<N>>> {
+        let image = ArtFile::<K>::read_image(path.as_ref(), Backend::ArcticMulti, table_version).await?;
+        let index = ArcticMultiIndex::<K, OffsetEqLink<N>>::default();
+        for (key, link) in decode_multi_pairs::<K>(&image.snapshot)? {
+            index.insert_pair(key, OffsetEqLink(link));
+        }
+        apply_multi_wal(&index, &image.wal, OffsetEqLink)?;
+        Ok(PersistentArtIndex::from_inner(index))
+    }
+
+    /// Writes a complete pair-list checkpoint with an empty WAL.
+    pub async fn write_checkpoint<const N: usize>(
+        path: impl AsRef<Path>,
+        table_version: u32,
+        index: &mut PersistentArcticMultiIndex<K, OffsetEqLink<N>>,
+    ) -> eyre::Result<()> {
+        let snapshot = encode_multi_pairs(index.inner().iter().map(|(key, link)| (key, link.0)));
+        // Temp-file-plus-rename, mirroring the unique Arctic checkpoint.
+        ArtFile::<K>::write_file_atomically(path.as_ref(), Backend::ArcticMulti, table_version, &snapshot).await
+    }
+
+    async fn compact(&mut self) -> eyre::Result<()> {
+        let image = ArtFile::<K>::read_image(&self.file.path, Backend::ArcticMulti, self.file.table_version).await?;
+        let index = ArcticMultiIndex::<K, Link>::default();
+        for (key, link) in decode_multi_pairs::<K>(&image.snapshot)? {
+            index.insert_pair(key, link);
+        }
+        apply_multi_wal(&index, &image.wal, |link| link)?;
+        let snapshot = encode_multi_pairs(index.iter());
+        self.file.rewrite(&snapshot).await
+    }
+}
+
+impl<K, const INNER_PAGE_SIZE: u32> SpaceIndexOps<K> for SpaceArcticMultiIndex<K, INNER_PAGE_SIZE>
+where
+    K: ArtPersistenceKey + ArcticKey,
+{
+    async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
+        Self::new(
+            PathBuf::from(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION)),
+            version,
+        )
+        .await
+    }
+
+    async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
+        path: S1,
+        name: S2,
+        version: u32,
+    ) -> eyre::Result<Self> {
+        Self::new(
+            PathBuf::from(format!("{}/{}{}", path.as_ref(), name.as_ref(), WT_INDEX_EXTENSION)),
+            version,
+        )
+        .await
+    }
+
+    async fn bootstrap(_: &mut File, _: String, _: u32) -> eyre::Result<()> {
+        Ok(())
+    }
+
+    async fn process_change_event(&mut self, event: ChangeEvent<Pair<K, Link>>) -> eyre::Result<()> {
+        self.file.append(&[logical_multi_record(event)?]).await?;
+        if self.file.should_compact() {
+            self.compact().await?;
+        }
+        Ok(())
+    }
+
+    async fn process_change_event_batch(&mut self, events: BatchChangeEvent<K>) -> eyre::Result<()> {
+        let records = events
+            .into_iter()
+            .map(logical_multi_record)
             .collect::<eyre::Result<Vec<_>>>()?;
         self.file.append(&records).await?;
         if self.file.should_compact() {
