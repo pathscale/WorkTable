@@ -37,8 +37,23 @@ const LOCAL_CACHE_CAP: usize = 128;
 
 static NEXT_DOMAIN_ID: AtomicU64 = AtomicU64::new(0);
 
+/// One cached participant registration.
+///
+/// Field order is load-bearing: the handle must drop before the collector
+/// clone. If a `LocalHandle` holds the last reference to its collector,
+/// `Local::finalize` drops the whole `Global` from inside the `Local`'s own
+/// method frame, deallocating the `Local` while a protected reference to it
+/// is still on the stack (undefined behavior, caught by Miri). Keeping an
+/// explicit `Collector` clone that outlives the handle means the global is
+/// torn down from outside any `Local` frame instead.
+struct CachedLocal {
+    domain_id: u64,
+    handle: LocalHandle,
+    _collector: Collector,
+}
+
 thread_local! {
-    static LOCALS: RefCell<Vec<(u64, LocalHandle)>> = const { RefCell::new(Vec::new()) };
+    static LOCALS: RefCell<Vec<CachedLocal>> = const { RefCell::new(Vec::new()) };
 }
 
 /// An epoch grace-period domain owned by one table (or one partition set).
@@ -76,11 +91,11 @@ impl EpochDomain {
     pub(crate) fn pin(&self) -> Guard {
         LOCALS.with(|locals| {
             let mut locals = locals.borrow_mut();
-            if let Some(pos) = locals.iter().position(|(id, _)| *id == self.id) {
+            if let Some(pos) = locals.iter().position(|cached| cached.domain_id == self.id) {
                 if pos != 0 {
                     locals.swap(0, pos);
                 }
-                return locals[0].1.pin();
+                return locals[0].handle.pin();
             }
             let handle = self.collector.register();
             let guard = handle.pin();
@@ -90,7 +105,14 @@ impl EpochDomain {
                 // only when its guard count also reaches zero.
                 locals.pop();
             }
-            locals.insert(0, (self.id, handle));
+            locals.insert(
+                0,
+                CachedLocal {
+                    domain_id: self.id,
+                    handle,
+                    _collector: self.collector.clone(),
+                },
+            );
             guard
         })
     }
