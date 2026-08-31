@@ -25,7 +25,7 @@ cargo add worktable@1.0.0-beta.5
 | **Typed tables from a macro** | `worktable!` generates the table, row and primary-key types. No hand-written boilerplate per table. |
 | **Primary and secondary indexes** | Autoincrement or supplied primary keys; unique and non-unique secondary indexes, each adding a `select_by_<column>` method. |
 | **Per-index physical selection** | An optional `using` clause can statically select WorkTablesIndex, vanilla IndexSet, Congee, or Arctic where their capabilities fit. See [the backend guide](docs/index-backend-dsl-proposal.md). |
-| **Generated queries** | `select`, `insert`, `upsert`, `update`, `delete` and a `select_all` query builder on every table, plus the custom update/delete queries you declare. |
+| **Generated queries** | `select`, `insert`, `insert_many`, `upsert`, `update`, `delete` and a `select_all` query builder on every table, plus the custom update/delete queries you declare. |
 | **Paged in-memory storage** | Records live in `DataPages` with a free list for reuse. `rkyv` gives zero-copy access to archived rows. |
 | **Concurrency** | Lock-free concurrent indexes with change-data-capture, plus a row-level `LockMap` for ordered access. |
 | **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature syncs that to S3. Both opt-in, so a purely in-memory table pays for neither. |
@@ -362,6 +362,11 @@ There are some default query implementations that are available for all `WorkTab
 
 - `select(&self, pk: impl Into<<Name>PrimaryKey>) -> Option<<Name>Row>`; borrowed `String`, `str`, tuple, and generated primary-key forms are accepted;
 - `insert(&self, row: <Name>Row) -> Result<<Name>PrimaryKey, WorkTableError>`;
+- `insert_many(&self, rows: Vec<<Name>Row>) -> Result<Vec<<Name>PrimaryKey>, BatchInsertError>`; all or nothing: any
+  rejected row rejects the whole batch, the error names the offending row and the colliding index, and concurrent
+  readers never observe a rejected batch. After `Ok` every row is visible; on persisted tables the batch is coalesced
+  into grouped persistence operations, and durability follows the usual `wait_for_ops` contract. Autoincrement tables
+  additionally get `reserve_pks(&self, count: usize) -> Range<RawPk>` to pre-assign contiguous keys to a batch;
 - `upsert(&self, row: <Name>Row) -> Result<(), WorkTableError>`;
 - `update(&self, row: <Name>Row) -> Result<(), WorkTableError>`;
 - `delete(&self, pk: <Name>PrimaryKey) -> Result<(), WorkTableError>`;
