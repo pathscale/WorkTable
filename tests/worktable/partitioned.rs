@@ -482,3 +482,73 @@ fn readers_survive_partitions_being_removed_under_them() {
     let mut prices = Arc::try_unwrap(prices).expect("readers have exited");
     assert_eq!(prices.gc(), ROUNDS as usize * KEYS as usize);
 }
+
+// ---------------------------------------------------------------------------
+// Accounting. Raised in review: a total that counts only live partitions falls
+// after a removal that freed nothing, which is exactly backwards for a
+// residency budget.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn retired_bytes_accounts_for_what_removal_did_not_free() {
+    let mut prices = PricePartitions::new();
+    for k in 0..4u16 {
+        let t = prices.partition_or_create(k).unwrap();
+        for e in 0..(k as u8 + 1) {
+            t.insert(row(e, 1.0)).unwrap();
+        }
+    }
+    let live_before = prices.memory_total();
+    assert!(live_before > 0);
+    assert_eq!(prices.retired_bytes(), 0);
+    assert_eq!(prices.retired_len(), 0);
+
+    let removed_rows = prices.rows_by_key().iter().find(|(k, _)| *k == 2).unwrap().1;
+    prices.remove(2);
+
+    // The live total drops, because the partition is no longer live.
+    assert!(
+        prices.memory_total() < live_before,
+        "memory_total must count only live partitions"
+    );
+    // But nothing was freed, and this is the number that says so.
+    assert!(
+        prices.retired_bytes() > 0,
+        "a retired partition still occupies memory and must be reported"
+    );
+    assert_eq!(prices.retired_len(), 1);
+    assert_eq!(removed_rows, 3);
+
+    // gc is the only thing that makes the retired bytes real.
+    assert_eq!(prices.gc(), 1);
+    assert_eq!(prices.retired_bytes(), 0);
+    assert_eq!(prices.retired_len(), 0);
+}
+
+#[test]
+fn metrics_agree_with_each_other() {
+    let prices = PricePartitions::new();
+    for k in [1u16, 7, 2048] {
+        let t = prices.partition_or_create(k).unwrap();
+        for e in 0..(k as u8 % 5 + 1) {
+            t.insert(row(e, 1.0)).unwrap();
+        }
+    }
+
+    let by_key = prices.memory_by_key();
+    let rows = prices.rows_by_key();
+    let keys = prices.keys();
+
+    // All three walk the same slots and must report the same keys in the same
+    // ascending order: they no longer share a code path, so this is asserted.
+    assert_eq!(by_key.iter().map(|(k, _)| *k).collect::<Vec<_>>(), keys);
+    assert_eq!(rows.iter().map(|(k, _)| *k).collect::<Vec<_>>(), keys);
+    assert_eq!(
+        prices.memory_total(),
+        by_key.iter().map(|(_, b)| *b).sum::<u64>(),
+        "memory_total folds directly and must still match memory_by_key"
+    );
+    for (k, count) in rows {
+        assert_eq!(count, prices.partition_ref(k).unwrap().row_count());
+    }
+}

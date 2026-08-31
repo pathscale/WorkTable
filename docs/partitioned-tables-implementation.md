@@ -238,6 +238,32 @@ the library; codegen emits only a typed facade. That was deliberate: one
 generated inline would be paid for by every partitioned table. A table without
 `partition_by` generates nothing extra at all.
 
+**Measured routing cost, from `benches/cases/partition_routing.rs`.** The
+0.73 ns figure quoted below is a bare `Vec` index, not the public API, and
+review was right to reject it as a justification. What callers actually execute,
+M4 Max, release, criterion `--quick`:
+
+| call | 1 thread | 8 threads, same key |
+| --- | --- | --- |
+| cached handle, no routing | 0.64 ns | n/a |
+| `contains` | 0.77 ns | n/a |
+| `partition_ref` | 0.71 ns | **0.79 ns** |
+| `partition` plus handle drop | 3.77 ns | **488.9 ns** |
+
+`partition` revives an `Arc`, so it pays an atomic increment and, on drop, an
+atomic decrement. Both hit the same strong count, so readers routing to one hot
+symbol serialise on that cache line: 3.65 ns at one thread, 26.8 at two, 125.4
+at four, 488.9 at eight. That is a 134x degradation, and it is the traffic
+partitioning exists to remove.
+
+`partition_ref` returns a borrow, touches no refcount, and is flat across the
+same sweep. **Use it on the tick path.** `partition` is for handles that must
+outlive the borrow or move to another thread.
+
+Numbers are `--quick`, not core-pinned, and averages rather than percentiles, so
+they are directional. The shape is not in doubt: one call scales, the other
+inverts.
+
 **Storage.** A segmented vector: a fixed spine of 64 chunk pointers, each chunk
 1,024 slots, chunks allocated on demand and never moved. Readers index straight
 in with no lock and no reference counting on the spine; creation takes a mutex,
@@ -302,6 +328,26 @@ covered at all, and `Display for PartitionError` was never read. `mem_stat`
 charges `size_of::<T>()` per partition on top of the payload, because
 `MemStat for Arc<T>` counts what the allocation actually holds. All 59 viable
 mutants are now caught.
+
+**`memory_by_key` reports used bytes, not resident bytes.** Row bytes plus
+secondary index bytes. It excludes the table's fixed floor (14,536 B
+irreducible, 30,920 B with the default page), reserved-but-unused page
+capacity, the router spine, and `Arc` overhead. Do not size a process from it.
+
+It also counts only live partitions, so a total *falls* after a `remove` that
+freed nothing. `retired_bytes` reports what removal left behind, and should be
+read next to it.
+
+**Creation takes one global lock, and `make` runs under it.** So constructing a
+partition blocks every other creation and removal for its duration: 25.7 µs for
+an in-memory instance, 6.1 ms for a persisted one. A burst of first-touch
+routing serialises behind it.
+
+Not fixed, and sharding the lock per chunk would not help the case that
+matters: a chunk holds 1,024 keys, so ~500 symbols all land in chunk 0 and
+contend on the same shard regardless. A real fix is per-slot construction
+state. Until then, create every routable partition before serving
+latency-sensitive traffic and keep `partition_or_create` off the tick path.
 
 **Memory reporting uses `system_info()`, not `MemStat`.** The generated table
 does not implement `MemStat`; `system_info()` carries `memory_usage_bytes`,

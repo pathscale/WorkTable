@@ -9,4 +9,5 @@ criterion_main!(
     cases::non_unique_index::non_unique_index_benchmarks,
     cases::full_featured::full_featured_benchmarks,
     cases::update_contention::update_contention_benchmarks,
+    cases::partition_routing::partition_routing_benchmarks,
 );
