@@ -1132,9 +1132,13 @@ mod tests {
 
         // And the data write comes after the index insert (publication order
         // unchanged) but before the operation is built.
-        let insert = emitted.find("process_difference_insert_cdc").expect("diff insert emitted");
+        let insert = emitted
+            .find("process_difference_insert_cdc")
+            .expect("diff insert emitted");
         let write = emitted.find("with_mut_ref").expect("data write emitted");
-        let op_build = emitted.find("Operation :: Update (UpdateOperation").expect("update op emitted");
+        let op_build = emitted
+            .find("Operation :: Update (UpdateOperation")
+            .expect("update op emitted");
         assert!(insert < write && write < op_build, "emission order broken:\n{emitted}");
     }
 }

@@ -23,13 +23,11 @@ use rkyv::{Archive, Deserialize, Serialize, rancor};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+use super::page_aliases::PageAliases;
 use crate::UnsizedNode;
 use crate::persistence::space::BatchChangeEvent;
-use super::page_aliases::PageAliases;
 use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
 use crate::prelude::WT_INDEX_EXTENSION;
-
-
 
 #[derive(Debug)]
 pub struct SpaceIndexUnsized<T: Ord + Eq, const DATA_LENGTH: u32> {

@@ -29,7 +29,13 @@ worktable!(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unique_update_does_not_mutate_a_row_that_stole_the_value() {
     let table = Arc::new(WrongRowWorkTable::default());
-    table.insert(WrongRowRow { id: 1, code: 10, value: 0 }).unwrap();
+    table
+        .insert(WrongRowRow {
+            id: 1,
+            code: 10,
+            value: 0,
+        })
+        .unwrap();
     let pk = WrongRowPrimaryKey(1);
 
     // Park the update between "pk read from the unlocked link" and "row
@@ -72,7 +78,13 @@ async fn unique_update_does_not_mutate_a_row_that_stole_the_value() {
 
     // While the update is parked: code 10 moves to a different row.
     table.delete_without_lock(1).await.unwrap();
-    table.insert(WrongRowRow { id: 3, code: 10, value: 0 }).unwrap();
+    table
+        .insert(WrongRowRow {
+            id: 3,
+            code: 10,
+            value: 0,
+        })
+        .unwrap();
 
     blocker.unlock();
 

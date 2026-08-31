@@ -39,7 +39,13 @@ fn install_blocker(table: &CancelSafetyWorkTable, pk: &CancelSafetyPrimaryKey) -
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_full_row_update_releases_registered_lock() {
     let table = Arc::new(CancelSafetyWorkTable::default());
-    table.insert(CancelSafetyRow { id: 1, value: 0, other: 0 }).unwrap();
+    table
+        .insert(CancelSafetyRow {
+            id: 1,
+            value: 0,
+            other: 0,
+        })
+        .unwrap();
     let pk = CancelSafetyPrimaryKey(1);
 
     let blocker = install_blocker(&table, &pk);
@@ -48,10 +54,17 @@ async fn cancelled_full_row_update_releases_registered_lock() {
     // blocker; the timeout cancels it at exactly that await.
     let cancelled = tokio::time::timeout(
         Duration::from_millis(200),
-        table.update(CancelSafetyRow { id: 1, value: 7, other: 7 }),
+        table.update(CancelSafetyRow {
+            id: 1,
+            value: 7,
+            other: 7,
+        }),
     )
     .await;
-    assert!(cancelled.is_err(), "the update should still be blocked when the timeout fires");
+    assert!(
+        cancelled.is_err(),
+        "the update should still be blocked when the timeout fires"
+    );
 
     blocker.unlock();
 
@@ -59,7 +72,11 @@ async fn cancelled_full_row_update_releases_registered_lock() {
     // failure instead of a hang.
     tokio::time::timeout(
         Duration::from_secs(5),
-        table.update(CancelSafetyRow { id: 1, value: 9, other: 9 }),
+        table.update(CancelSafetyRow {
+            id: 1,
+            value: 9,
+            other: 9,
+        }),
     )
     .await
     .expect("update after a cancelled predecessor must not hang")
@@ -77,7 +94,13 @@ async fn cancelled_full_row_update_releases_registered_lock() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_custom_update_releases_registered_lock() {
     let table = Arc::new(CancelSafetyWorkTable::default());
-    table.insert(CancelSafetyRow { id: 3, value: 0, other: 0 }).unwrap();
+    table
+        .insert(CancelSafetyRow {
+            id: 3,
+            value: 0,
+            other: 0,
+        })
+        .unwrap();
     let pk = CancelSafetyPrimaryKey(3);
 
     let blocker = install_blocker(&table, &pk);
@@ -87,7 +110,10 @@ async fn cancelled_custom_update_releases_registered_lock() {
         table.update_value_by_id(ValueByIdQuery { value: 5 }, 3),
     )
     .await;
-    assert!(cancelled.is_err(), "the update should still be blocked when the timeout fires");
+    assert!(
+        cancelled.is_err(),
+        "the update should still be blocked when the timeout fires"
+    );
 
     blocker.unlock();
 

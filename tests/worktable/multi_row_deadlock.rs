@@ -56,7 +56,10 @@ async fn overlapping_multi_row_updates_do_not_deadlock() {
                 } else {
                     "a-much-longer-name-value".to_string()
                 };
-                table.update_name_by_group_a(NameByGroupAQuery { name }, 1).await.unwrap();
+                table
+                    .update_name_by_group_a(NameByGroupAQuery { name }, 1)
+                    .await
+                    .unwrap();
             }
         })
     };
@@ -69,7 +72,10 @@ async fn overlapping_multi_row_updates_do_not_deadlock() {
                 } else {
                     "b-much-longer-name-value".to_string()
                 };
-                table.update_name_by_group_b(NameByGroupBQuery { name }, 1).await.unwrap();
+                table
+                    .update_name_by_group_b(NameByGroupBQuery { name }, 1)
+                    .await
+                    .unwrap();
             }
         })
     };

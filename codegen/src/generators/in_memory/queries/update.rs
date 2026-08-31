@@ -1091,6 +1091,9 @@ mod tests {
         let old_removal = emitted
             .find("process_difference_remove (link , diffs)")
             .expect("old-key removal emitted");
-        assert!(insert < write && write < old_removal, "emission order broken:\n{emitted}");
+        assert!(
+            insert < write && write < old_removal,
+            "emission order broken:\n{emitted}"
+        );
     }
 }

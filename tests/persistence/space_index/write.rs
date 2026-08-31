@@ -573,10 +573,7 @@ async fn batch_split_then_max_remove_then_historical_identity_insert_applies() {
         }
     }
     fn pair(key: u32) -> Pair<u32, Link> {
-        Pair {
-            key,
-            value: link(key),
-        }
+        Pair { key, value: link(key) }
     }
 
     let events = vec![

@@ -1163,7 +1163,11 @@ mod tests {
 
         assert_eq!(outcome, CandidateMove::Failed);
         assert_eq!(table.select(rows[0].id), Some(rows[0].clone()));
-        assert_eq!(link_of(rows[0].id), source_link, "a failed move must leave the row in place");
+        assert_eq!(
+            link_of(rows[0].id),
+            source_link,
+            "a failed move must leave the row in place"
+        );
     }
 
     #[tokio::test]

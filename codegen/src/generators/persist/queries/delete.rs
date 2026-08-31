@@ -354,9 +354,14 @@ mod tests {
         // Teardown order is unchanged: secondary removal, primary removal,
         // then the data delete.
         let secondary = emitted.find("delete_row_cdc").expect("secondary removal emitted");
-        let primary = emitted.find("remove_cdc (pk . clone () , link)").expect("primary removal emitted");
+        let primary = emitted
+            .find("remove_cdc (pk . clone () , link)")
+            .expect("primary removal emitted");
         let data = emitted.find(". data . delete (link)").expect("data delete emitted");
-        assert!(secondary < primary && primary < data, "teardown order broken:\n{emitted}");
+        assert!(
+            secondary < primary && primary < data,
+            "teardown order broken:\n{emitted}"
+        );
 
         // The failure path republishes both index layers and acknowledges
         // everything that happened.
@@ -364,7 +369,10 @@ mod tests {
             emitted.contains("insert_cdc (pk . clone () , link)"),
             "primary-key restore missing:\n{emitted}"
         );
-        assert!(emitted.contains("save_row_cdc"), "secondary restore missing:\n{emitted}");
+        assert!(
+            emitted.contains("save_row_cdc"),
+            "secondary restore missing:\n{emitted}"
+        );
         assert!(
             emitted.contains("Operation :: Acknowledge"),
             "acknowledge op missing:\n{emitted}"

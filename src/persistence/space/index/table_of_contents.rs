@@ -399,9 +399,7 @@ mod tests {
         toc.insert("small".to_string(), PageId::from(9));
 
         let oversized = "x".repeat(4 * DATA_LENGTH as usize);
-        let error = toc
-            .try_update_key(&"small".to_string(), oversized.clone())
-            .unwrap_err();
+        let error = toc.try_update_key(&"small".to_string(), oversized.clone()).unwrap_err();
         assert!(
             error.downcast_ref::<TocEntryOversizedError>().is_some(),
             "expected TocEntryOversizedError, got: {error:#}"
