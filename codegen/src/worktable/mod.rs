@@ -98,7 +98,9 @@ const DATA_BUCKET_PAGE_SIZE: u32 = 16384;
 
 fn validate_page_size(config: Option<&crate::common::model::Config>, persistence: Persistence) -> syn::Result<()> {
     let Some(config) = config else { return Ok(()) };
-    let Some(page_size) = config.page_size else { return Ok(()) };
+    let Some(page_size) = config.page_size else {
+        return Ok(());
+    };
     if persistence.is_persisted() && page_size != DATA_BUCKET_PAGE_SIZE {
         let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
         return Err(syn::Error::new(
@@ -134,7 +136,6 @@ fn validate_in_place_queries(columns: &Columns, queries: &crate::common::model::
                 ));
             }
         }
-
     }
     Ok(())
 }
@@ -509,9 +510,7 @@ mod tests {
         .unwrap_err();
 
         assert!(
-            error
-                .to_string()
-                .contains("cannot be combined with `persist: true`"),
+            error.to_string().contains("cannot be combined with `persist: true`"),
             "unexpected error: {error}"
         );
     }
