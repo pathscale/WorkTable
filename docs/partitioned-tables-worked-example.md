@@ -2,9 +2,17 @@
 
 **Companion to:** [`partitioned-tables-proposal.md`](partitioned-tables-proposal.md).
 
-**Status:** Design proposal, 31 August 2026. Not implemented. Every "today"
-snippet below is real code from `web3.trading-backend`, quoted rather than
-invented.
+**Status: design record, written before the implementation. Do not copy the
+API from this page.** It uses `with_initializer`, `live_ids`, `mem_stat()` and
+`select_all()` fan-out, none of which exist. The shipped surface is
+`partition`, `partition_ref`, `partition_or_create`, `partition_or_insert_with`,
+`contains`, `remove`, `gc`, `retired_len`, `keys`, `iter`, `len`, `is_empty`,
+`memory_by_key`, `memory_total` and `rows_by_key`; see
+[`partitioned-tables-implementation.md`](partitioned-tables-implementation.md).
+This page is kept for the problem statement and the numbers.
+
+Every "today" snippet below is real code from `web3.trading-backend`, quoted
+rather than invented.
 
 ---
 

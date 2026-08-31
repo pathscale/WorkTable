@@ -1,6 +1,11 @@
 # `partition_by`: one table type, N routed instances
 
-**Status: design proposal for WorkTable, not implemented.** This page exists to
+**Status: design record. Stage 1 shipped; the API sketched below is the
+proposal, not the shipped surface.** `partitions: N`, `mem_stat()` and
+`select_all()` fan-out do not exist. For what is actually generated see
+[`partitioned-tables-implementation.md`](partitioned-tables-implementation.md),
+which is the only page kept current. This page is preserved for the reasoning
+and the measurements. It originally existed to
 find out whether more than one codebase wants it. If you recognise the shape in
 section 2, say so; if you don't, that is equally useful.
 
