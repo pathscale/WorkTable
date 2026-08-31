@@ -159,13 +159,11 @@ impl PersistGenerator {
 
                 let idents = &op.columns;
                 if let Some(index) = index {
-                    let index_name = &index.name;
-
                     if index.is_unique {
                         self.gen_unique_update(
                             snake_case_name,
                             name,
-                            index_name,
+                            index,
                             idents,
                             indexes_columns.as_ref(),
                             unsized_columns,
@@ -611,11 +609,21 @@ impl PersistGenerator {
         &self,
         snake_case_name: String,
         name: &Ident,
-        index: &Ident,
+        index: &Index,
         idents: &[Ident],
         idx_idents: Option<&Vec<Ident>>,
         unsized_fields: Option<Vec<&Ident>>,
     ) -> TokenStream {
+        let by_field = &index.field;
+        let by_is_float = is_float(
+            self.columns
+                .columns_map
+                .get(&index.field)
+                .expect("indexed column exists")
+                .to_string()
+                .as_str(),
+        );
+        let index = &index.name;
         let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
@@ -635,13 +643,29 @@ impl PersistGenerator {
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
-        let by = if is_float(by_ident.to_string().as_str()) {
+        let by = if by_is_float {
             quote! {
                 &OrderedFloat(by)
             }
         } else {
             quote! {
                 &by
+            }
+        };
+        // Verify, under the lock, that the row resolved BY PRIMARY KEY still
+        // carries the queried unique value, with the index key's equality
+        // semantics (OrderedFloat for floats, so NaN behaves like the index).
+        let by_match_check = if by_is_float {
+            quote! {
+                if OrderedFloat(self.0.data.select_non_ghosted(link)?.#by_field) != OrderedFloat(by) {
+                    return Err(WorkTableError::NotFound);
+                }
+            }
+        } else {
+            quote! {
+                if self.0.data.select_non_ghosted(link)?.#by_field != by {
+                    return Err(WorkTableError::NotFound);
+                }
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
@@ -667,21 +691,35 @@ impl PersistGenerator {
                 let pending_lock = { #custom_lock };
                 let _guard = pending_lock.into_guard_with_mutation();
 
-                let link = loop {
-                    let link = self.0.indexes.#index
-                        .get_value(#by)
-                        .map(Into::into)
-                        .ok_or(WorkTableError::NotFound)?;
-
-                    if let Err(e) = self.0.data.select_non_vacuumed(link) {
-                        if e.is_vacuumed() {
-                            continue;
+                // Re-resolve through pk_map BY THE LOCKED PK, not by value: the
+                // queried unique value can move to a different row between the
+                // unlocked read above and the lock acquisition, and a by-value
+                // lookup here would mutate whatever row now carries it.
+                let link = {
+                    let mut vacuum_retries = 0u32;
+                    loop {
+                        let link: Link = self.0
+                            .primary_index
+                            .pk_map
+                            .get_value(&pk)
+                            .map(Into::into)
+                            .ok_or(WorkTableError::NotFound)?;
+                        match self.0.data.select_non_vacuumed(link) {
+                            core::result::Result::Ok(_) => break link,
+                            core::result::Result::Err(e) if e.is_vacuumed() => {
+                                // Bounded cooperative retry, mirroring the
+                                // 64-attempt cap used by select.
+                                if vacuum_retries >= 64 {
+                                    return Err(WorkTableError::NotFound);
+                                }
+                                vacuum_retries += 1;
+                                tokio::task::yield_now().await;
+                            }
+                            core::result::Result::Err(e) => return Err(e.into()),
                         }
-                        return Err(e.into());
-                    } else  {
-                        break link;
                     }
                 };
+                #by_match_check
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check

@@ -28,3 +28,4 @@ mod uuid;
 mod vacuum;
 mod vacuum_no_row_loss;
 mod with_enum;
+mod wrong_row_update;
