@@ -259,7 +259,9 @@ where
             pages_freed += 1;
         }
 
-        pages_freed += free_pages.len();
+        // Leftover free pages were allocated (or popped from the free list) by
+        // vacuum itself as scratch destinations; handing them back is not
+        // freeing table pages, so they do not count towards `pages_freed`.
         self.finalize_staged_pages(free_pages, defragmented_pages)?;
 
         Ok(VacuumStats {
@@ -1045,6 +1047,28 @@ mod tests {
         assert!(moved >= 3, "test setup did not exercise enough vacuum moves");
 
         drop(read_guard);
+    }
+
+    #[tokio::test]
+    async fn vacuum_stats_do_not_count_vacuums_own_scratch_pages_as_freed() {
+        let table = TestWorkTable::default();
+        for i in 0..10 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            table.insert(row).unwrap();
+        }
+
+        // Nothing was deleted, so there is nothing to free: the page vacuum
+        // allocates for itself must not be reported as a freed page.
+        let stats = create_vacuum(&table).defragment().await.unwrap();
+        assert_eq!(
+            stats.pages_freed, 0,
+            "vacuum's own scratch allocation must not count as freed"
+        );
     }
 
     #[tokio::test]
