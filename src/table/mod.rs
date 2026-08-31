@@ -748,11 +748,22 @@ where
         }
 
         // Every check passed: the batch can no longer be rejected. Make the
-        // rows visible and emit their persistence operations under one Multi
-        // id so the analyzer applies them as a single engine batch.
-        let batch_id = Uuid::now_v7();
+        // rows visible and emit their persistence operations under shared
+        // Multi ids so the analyzer coalesces whole groups into single engine
+        // applications. Group size is capped: the analyzer's bookkeeping
+        // table indexes rows by operation id in a multimap whose removals
+        // scan all entries of an equal key, so an unbounded group makes the
+        // analyzer drain quadratic in batch size. Chunk ids come from
+        // `Uuid::now_v7`, whose shared process context keeps them
+        // creation-ordered, so cross-chunk event order survives the
+        // analyzer's operation-id sort.
+        const PERSIST_GROUP_ROWS: usize = 1024;
+        let mut batch_id = Uuid::now_v7();
         let mut ops = Vec::with_capacity(links.len());
         for (row_index, link) in links.iter().enumerate() {
+            if row_index != 0 && row_index % PERSIST_GROUP_ROWS == 0 {
+                batch_id = Uuid::now_v7();
+            }
             let published = unsafe { self.data.with_mut_ref(*link, |r| r.unghost()) };
             let bytes = match published
                 .map_err(WorkTableError::PagesError)
