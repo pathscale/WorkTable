@@ -248,8 +248,24 @@ where
             self.current_data_length = 0;
             self.last_page_id += 1;
         }
-        self.current_data_length += link.length;
-        self.update_data_length().await?;
+        // `current_data_length` mirrors the last page's persisted data_length:
+        // the number of bytes occupied from the page start. Only a write that
+        // lands on the last page AND ends past the currently occupied extent
+        // grows it. Rewrites of an existing link and writes into reused free
+        // ranges (which always sit inside previously occupied extents) must
+        // not touch it: unconditionally adding `link.length` inflated the
+        // persisted length on every hot-row update until it exceeded the page
+        // capacity and a later batch persist sliced out of range.
+        if u32::from(link.page_id) == self.last_page_id {
+            let link_end = link
+                .offset
+                .checked_add(link.length)
+                .ok_or_else(|| eyre::eyre!("link range {link:?} overflows u32"))?;
+            if link_end > self.current_data_length {
+                self.current_data_length = link_end;
+                self.update_data_length().await?;
+            }
+        }
         update_at::<{ PAGE_SIZE }>(&mut self.data_file, link, bytes).await?;
         // `update_at` ends with a buffered `write_all` that `tokio::fs::File`
         // completes on a background blocking task. Flush before reporting the
@@ -314,6 +330,18 @@ where
                 Ok::<_, eyre::Report>(page)
             })
             .collect::<Result<Vec<_>, _>>()?;
+
+        // The batch writes each touched page's occupied extent into its header
+        // (`persist_page_in_place` persists `inner.length` as data_length), so
+        // the in-memory mirror for the last page must follow it. Leaving it
+        // stale would make the next single-row save on the last page publish
+        // an outdated length over the freshly persisted one.
+        if let Some(page) = updated_pages
+            .iter()
+            .find(|page| u32::from(page.header.page_id) == self.last_page_id)
+        {
+            self.current_data_length = page.inner.length;
+        }
 
         persist_pages_batch(updated_pages, &mut self.data_file).await?;
         // The batch's last page write is a buffered `write_all`; flush so the

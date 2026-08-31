@@ -12,6 +12,7 @@ mod multi_row_backend_order;
 mod read;
 mod recovery_load;
 mod schema;
+mod space_data;
 mod space_index;
 mod sync;
 mod toc;
