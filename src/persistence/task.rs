@@ -1168,6 +1168,16 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         true
     }
 
+    /// Wait until the queue and the analyzer are both idle.
+    ///
+    /// Note the seam against a concurrent `close`: the worker clears its
+    /// in-progress flag and notifies waiters before it re-checks the queue, so
+    /// a `wait_for_ops` racing a close can observe idle-and-empty and return
+    /// while the operation the close is about to drain is still in flight.
+    /// `close` persists it regardless, so this is a reporting nuance rather
+    /// than a durability hole, but do not treat `wait_for_ops` returning during
+    /// a shutdown as proof that everything is on disk. `close` returning `Ok`
+    /// is that proof.
     pub async fn wait_for_ops(&self) -> PersistenceResult {
         loop {
             match self.lifecycle.state() {

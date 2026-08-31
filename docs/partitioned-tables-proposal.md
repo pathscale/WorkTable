@@ -1,6 +1,9 @@
 # Partitioned tables: a routing layer above the index
 
-**Status:** Design proposal, 31 August 2026. Not implemented.
+**Status:** Design record, 31 August 2026. Stage 1 has since shipped and the
+API below is the proposal rather than the shipped surface; see
+[`partitioned-tables-implementation.md`](partitioned-tables-implementation.md)
+for what is actually generated.
 
 **Motivation source:** `web3.trading-backend`, where the absence of this feature
 has produced two different workarounds, both of which cost something real.
