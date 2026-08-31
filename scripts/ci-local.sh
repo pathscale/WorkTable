@@ -1,45 +1,54 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Run what CI runs, with the same arguments, in the same order.
 #
 # This exists because "clippy is clean" locally once meant `cargo clippy
 # --all-targets`, which does not include `worktable_codegen` and does not deny
 # warnings. Master went red on two lints that had never been run. If you change
 # .github/workflows/rust.yml, change this too.
-set -uo pipefail
+#
+# POSIX sh: no arrays, no [[ ]], no pipefail. The matrix is written out rather
+# than looped so that each job's arguments are the literal ones CI passes.
+set -u
 
-FEATURES=("" "--features versioned-row-publication" "--all-features")
-CLIPPY_FEATURES=("" "--all-features")
-failed=()
+fail_count=0
+failed=""
 
 run() {
     echo "--- $* ---"
-    if ! "$@"; then
-        failed+=("$*")
+    if "$@"; then
+        return 0
     fi
+    fail_count=$((fail_count + 1))
+    failed="${failed}  $*
+"
 }
 
 echo "=== fmt ==="
 run cargo fmt --all --check
 
-for args in "${FEATURES[@]}"; do
-    echo "=== build and test ${args:-(default)} ==="
-    # shellcheck disable=SC2086
-    run cargo build --workspace --all-targets $args
-    # shellcheck disable=SC2086
-    run cargo test --workspace --all-targets $args
-done
+echo "=== build and test (default) ==="
+run cargo build --workspace --all-targets
+run cargo test --workspace --all-targets
 
-for args in "${CLIPPY_FEATURES[@]}"; do
-    echo "=== clippy ${args:-(default)} ==="
-    # shellcheck disable=SC2086
-    run cargo clippy --workspace --all-targets $args -- -D warnings
-done
+echo "=== build and test (versioned-row-publication) ==="
+run cargo build --workspace --all-targets --features versioned-row-publication
+run cargo test --workspace --all-targets --features versioned-row-publication
+
+echo "=== build and test (all-features) ==="
+run cargo build --workspace --all-targets --all-features
+run cargo test --workspace --all-targets --all-features
+
+echo "=== clippy (default) ==="
+run cargo clippy --workspace --all-targets -- -D warnings
+
+echo "=== clippy (all-features) ==="
+run cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 echo
-if [ ${#failed[@]} -eq 0 ]; then
+if [ "$fail_count" -eq 0 ]; then
     echo "all CI jobs passed"
     exit 0
 fi
-echo "FAILED (${#failed[@]}):"
-printf '  %s\n' "${failed[@]}"
+echo "FAILED ($fail_count):"
+printf '%s' "$failed"
 exit 1
