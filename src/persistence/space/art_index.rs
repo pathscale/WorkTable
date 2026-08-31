@@ -1181,6 +1181,122 @@ mod tests {
         tokio::fs::remove_file(path).await.unwrap();
     }
 
+    fn remove_event(id: u64, key: u64, value: Link) -> ChangeEvent<Pair<u64, Link>> {
+        let pair = Pair { key, value };
+        ChangeEvent::RemoveAt {
+            event_id: id.into(),
+            max_value: pair.clone(),
+            value: pair,
+            index: 0,
+        }
+    }
+
+    #[test]
+    fn multi_wal_records_round_trip() {
+        for record in [
+            WalRecord {
+                event_id: 21,
+                key: 42u64,
+                op: WalOp::Set(link(3)),
+            },
+            WalRecord {
+                event_id: 22,
+                key: 42u64,
+                op: WalOp::RemovePair(link(3)),
+            },
+        ] {
+            assert_eq!(decode_wal_record(&encode_wal_record(&record)).unwrap(), record);
+        }
+    }
+
+    #[test]
+    fn multi_pair_snapshot_round_trips() {
+        let pairs = (0..100u64).map(|n| (n / 4, link(n as u32 + 1))).collect::<Vec<_>>();
+        let bytes = encode_multi_pairs(pairs.iter().cloned());
+        assert_eq!(decode_multi_pairs::<u64>(&bytes).unwrap(), pairs);
+        assert!(decode_multi_pairs::<u64>(&bytes[..bytes.len() - 1]).is_err());
+        assert_eq!(decode_multi_pairs::<u64>(&encode_multi_pairs(std::iter::empty::<(u64, Link)>())).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn unique_replay_rejects_pair_records_and_vice_versa() {
+        let unique = ArcticIndex::<u64, Link>::default();
+        let pair_record = WalRecord {
+            event_id: 0,
+            key: 5u64,
+            op: WalOp::RemovePair(link(1)),
+        };
+        assert!(apply_wal(&unique, &[pair_record], |link| link).is_err());
+
+        let multi = ArcticMultiIndex::<u64, Link>::default();
+        let whole_key_record = WalRecord {
+            event_id: 0,
+            key: 5u64,
+            op: WalOp::Remove,
+        };
+        assert!(apply_multi_wal(&multi, &[whole_key_record], |link| link).is_err());
+    }
+
+    #[tokio::test]
+    async fn multi_space_replays_wal_and_compacts() {
+        let path = std::env::temp_dir().join(format!("worktable-art-multi-{}.wt.idx", uuid::Uuid::new_v4()));
+        let mut space = SpaceArcticMultiIndex::<u64, 4096>::new(path.clone(), 5).await.unwrap();
+        // Three links under key 7, one later removed; one link under key 9.
+        let events = vec![
+            set_event(0, 7, link(1)),
+            set_event(1, 7, link(2)),
+            set_event(2, 7, link(3)),
+            set_event(3, 9, link(4)),
+            remove_event(4, 7, link(2)),
+        ];
+        space.process_change_event_batch(events).await.unwrap();
+
+        let index = SpaceArcticMultiIndex::<u64, 4096>::load_index::<4096>(&path, 5)
+            .await
+            .unwrap();
+        let links = index.get(&7).map(|(_, link)| link.0).collect::<Vec<_>>();
+        assert_eq!(links, vec![link(1), link(3)]);
+        assert_eq!(index.get(&9).map(|(_, link)| link.0).collect::<Vec<_>>(), vec![link(4)]);
+
+        space.compact().await.unwrap();
+        let image = ArtFile::<u64>::read_image(&path, Backend::ArcticMulti, 5).await.unwrap();
+        assert!(image.wal.is_empty());
+        drop(space);
+
+        let index = SpaceArcticMultiIndex::<u64, 4096>::load_index::<4096>(&path, 5)
+            .await
+            .unwrap();
+        assert_eq!(index.len(), 3);
+        let links = index.get(&7).map(|(_, link)| link.0).collect::<Vec<_>>();
+        assert_eq!(links, vec![link(1), link(3)]);
+
+        // A unique reader must refuse the multi file outright.
+        assert!(ArtFile::<u64>::read_image(&path, Backend::Arctic, 5).await.is_err());
+        tokio::fs::remove_file(path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn multi_checkpoint_round_trips_through_write_and_load() {
+        let path = std::env::temp_dir().join(format!("worktable-art-multi-ckpt-{}.wt.idx", uuid::Uuid::new_v4()));
+        let mut index = SpaceArcticMultiIndex::<u128, 4096>::new(path.clone(), 1)
+            .await
+            .map(|_| PersistentArcticMultiIndex::<u128, OffsetEqLink<4096>>::default())
+            .unwrap();
+        for n in 0..50u32 {
+            index.insert_pair(u128::MAX - (n as u128 % 5), OffsetEqLink(link(n + 1)));
+        }
+        SpaceArcticMultiIndex::<u128, 4096>::write_checkpoint::<4096>(&path, 1, &mut index)
+            .await
+            .unwrap();
+
+        let reloaded = SpaceArcticMultiIndex::<u128, 4096>::load_index::<4096>(&path, 1)
+            .await
+            .unwrap();
+        assert_eq!(reloaded.len(), 50);
+        assert_eq!(reloaded.get(&(u128::MAX - 3)).len(), 10);
+        tokio::fs::remove_file(path).await.unwrap();
+    }
+
     #[test]
     fn temporary_path_appends_to_the_full_file_name() {
         assert_eq!(
