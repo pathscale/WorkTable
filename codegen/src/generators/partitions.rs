@@ -1,7 +1,7 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-use crate::common::model::PartitionKey;
+use crate::common::model::{PartitionKey, Persistence};
 
 /// Generate the router for a partitioned table.
 ///
@@ -9,7 +9,7 @@ use crate::common::model::PartitionKey;
 /// `worktable::partition::PartitionSet`, so the code emitted per partitioned
 /// table stays small: one `worktable!` already expands to roughly 1,940 lines,
 /// and a router that grew with it would be paid for by every table.
-pub fn expand(name: &Ident, key: &PartitionKey) -> TokenStream {
+pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> TokenStream {
     let table = format_ident!("{}WorkTable", name);
     let partitions = format_ident!("{}Partitions", name);
     let key_name = &key.name;
@@ -22,6 +22,26 @@ pub fn expand(name: &Ident, key: &PartitionKey) -> TokenStream {
          Note that the primary key, `autoincrement` and any `unique` index are \
          unique *within* a partition, not across the set."
     );
+
+    // A persisted table has no `Default`: it needs a `DatabaseManager`. The bound here
+    // names a concrete type rather than a generic parameter, so it is a trivial bound,
+    // and rustc rejects those outright instead of treating them as conditional. Emitting
+    // it for a persisted table failed the whole macro. Such callers use
+    // `partition_or_insert_with`, which is the right API for a table that needs one.
+    let or_create = if persistence.is_persisted() {
+        quote! {}
+    } else {
+        quote! {
+            /// The partition routed to by `#key_name`, creating an empty one
+            /// if absent. Racing callers on one key create a single table.
+            pub fn partition_or_create(
+                &self,
+                #key_name: #key_ty,
+            ) -> Result<std::sync::Arc<#table>, worktable::partition::PartitionError> {
+                self.inner.get_or_create(#key_name as u64, <#table as Default>::default)
+            }
+        }
+    };
 
     quote! {
         #[doc = #doc]
@@ -41,17 +61,7 @@ pub fn expand(name: &Ident, key: &PartitionKey) -> TokenStream {
                 self.inner.partition(#key_name as u64)
             }
 
-            /// The partition routed to by `#key_name`, creating an empty one
-            /// if absent. Racing callers on one key create a single table.
-            pub fn partition_or_create(
-                &self,
-                #key_name: #key_ty,
-            ) -> Result<std::sync::Arc<#table>, worktable::partition::PartitionError>
-            where
-                #table: Default,
-            {
-                self.inner.get_or_create(#key_name as u64, <#table as Default>::default)
-            }
+            #or_create
 
             /// The partition routed to by `#key_name`, creating one with
             /// `make` if absent. `make` runs at most once per key.

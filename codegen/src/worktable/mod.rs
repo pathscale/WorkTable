@@ -66,7 +66,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     };
 
     if let Some(key) = partition_by {
-        generated.extend(crate::generators::partitions::expand(&name, &key));
+        generated.extend(crate::generators::partitions::expand(&name, &key, persistence));
     }
 
     Ok(generated)
