@@ -309,7 +309,7 @@ impl InMemoryGenerator {
 
                     // Re-read the current row UNDER the full-row lock so the
                     // rebuilt row reflects any committed concurrent update.
-                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
+                    let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
 
@@ -387,7 +387,7 @@ impl InMemoryGenerator {
                     let pending_lock = { #full_row_lock };
                     let _guard = pending_lock.into_guard_with_mutation();
 
-                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
+                    let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
@@ -696,7 +696,7 @@ impl InMemoryGenerator {
 
                     let pending_lock = { #full_row_lock };
                     let _guard = pending_lock.into_guard_with_mutation();
-                    let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
+                    let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
