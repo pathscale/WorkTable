@@ -13,6 +13,8 @@ use crate::{
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
+use indexset::cdc::change::ChangeEvent;
+use indexset::core::pair::Pair;
 #[cfg(feature = "perf_measurements")]
 use performance_measurement_codegen::performance_measurement;
 use rkyv::api::high::HighDeserializer;
@@ -288,6 +290,153 @@ where
         Ok(pk)
     }
 
+    /// Inserts every row of `rows`, all or nothing.
+    ///
+    /// Rows are first staged ghosted (invisible to lock-free readers), every
+    /// primary and secondary index check runs while they are still invisible,
+    /// and only a fully validated batch is made visible. Any rejected row — a
+    /// primary key duplicate, a unique collision on any index (including with
+    /// another row of the same batch), or a page error — rejects the whole
+    /// batch and unwinds the staged rows, their index entries and the primary
+    /// key map without a value ever having been exposed.
+    ///
+    /// After `Ok`, every row is visible to reads.
+    pub fn insert_many(&self, rows: Vec<Row>) -> Result<Vec<PrimaryKey>, BatchInsertError>
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        AvailableIndexes: AvailableIndex,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+        LockType: 'static,
+    {
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
+        let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+
+        let mut links: Vec<Link> = Vec::with_capacity(rows.len());
+        for (row_index, row) in rows.iter().enumerate() {
+            let source = match self.stage_batch_row(row, &pks[row_index]) {
+                Ok(link) => {
+                    links.push(link);
+                    continue;
+                }
+                Err(source) => source,
+            };
+            return Err(match self.unwind_batch_rows(&rows, &pks, &links) {
+                Ok(()) => BatchInsertError::Row { row_index, source },
+                // An unwind failure leaves no single offending row to name.
+                Err(unwind_error) => BatchInsertError::Table(unwind_error),
+            });
+        }
+
+        for link in links.iter() {
+            let unghosted = unsafe { self.data.with_mut_ref(*link, |r| r.unghost()) };
+            if let Err(e) = unghosted {
+                // Practically unreachable: the link was created above. Rows
+                // before this one were already made visible, so unwinding
+                // everything deletes them again rather than leaving a torn
+                // batch behind.
+                let _ = self.unwind_batch_rows(&rows, &pks, &links);
+                return Err(BatchInsertError::Table(WorkTableError::PagesError(e)));
+            }
+        }
+
+        Ok(pks)
+    }
+
+    /// Stages one batch row ghosted: data slot, primary key mapping and every
+    /// secondary index entry. On rejection its own partial state is unwound
+    /// and the row-level error is returned.
+    fn stage_batch_row(&self, row: &Row, pk: &PrimaryKey) -> Result<Link, WorkTableError>
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        AvailableIndexes: AvailableIndex,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+    {
+        let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
+        if self.primary_index.insert_checked(pk.clone(), link).is_none() {
+            self.data.delete(link).map_err(WorkTableError::PagesError)?;
+            return Err(WorkTableError::PrimaryAlreadyExists);
+        }
+        if let Err(e) = self.indexes.save_row(row.clone(), link) {
+            return match e {
+                IndexError::AlreadyExists { at, inserted_already } => {
+                    self.primary_index.remove(pk, link);
+                    self.indexes.delete_from_indexes(row.clone(), link, inserted_already)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+                    Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                }
+                IndexError::NotFound => {
+                    self.primary_index.remove(pk, link);
+                    self.indexes.delete_row(row.clone(), link)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+                    Err(WorkTableError::NotFound)
+                }
+            };
+        }
+        Ok(link)
+    }
+
+    /// Unwinds fully staged batch rows, newest first, in the single-row
+    /// rollback order: index entries and primary key mapping before the data
+    /// slot, so a link is never reusable while an index entry can still
+    /// resolve to it. Keeps unwinding on error and reports the first one.
+    fn unwind_batch_rows(&self, rows: &[Row], pks: &[PrimaryKey], links: &[Link]) -> Result<(), WorkTableError>
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        AvailableIndexes: AvailableIndex,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+    {
+        let mut first_error: Option<WorkTableError> = None;
+        for index in (0..links.len()).rev() {
+            let link = links[index];
+            self.primary_index.remove(&pks[index], link);
+            if let Err(e) = self.indexes.delete_row(rows[index].clone(), link) {
+                if first_error.is_none() {
+                    first_error = Some(e.into());
+                }
+                continue;
+            }
+            if let Err(e) = self.data.delete(link)
+                && first_error.is_none()
+            {
+                first_error = Some(WorkTableError::PagesError(e));
+            }
+        }
+        match first_error {
+            None => Ok(()),
+            Some(error) => Err(error),
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn insert_cdc<SecondaryEvents>(
         &self,
@@ -424,6 +573,228 @@ where
         });
 
         (Some(op), Ok(pk))
+    }
+
+    /// CDC variant of [`Self::insert_many`], for persisted tables.
+    ///
+    /// On success it returns one `Insert` operation per row, all sharing a
+    /// single `OperationId::Multi`, so the persistence analyzer coalesces the
+    /// whole batch into one engine application while the CDC event-id stream
+    /// stays positional and gap-free. On rejection the in-memory state is
+    /// unwound exactly like `insert_many` and a single `Acknowledge`
+    /// operation is returned carrying every forward and rollback event, so
+    /// the persistence layer accounts for all consumed event ids without
+    /// applying any of them.
+    #[allow(clippy::type_complexity)]
+    pub fn insert_many_cdc<SecondaryEvents>(
+        &self,
+        rows: Vec<Row>,
+    ) -> (
+        Vec<Operation<<PkGen as PrimaryKeyGeneratorState>::State, PrimaryKey, SecondaryEvents>>,
+        Result<Vec<PrimaryKey>, BatchInsertError>,
+    )
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        PrimaryKey: Clone,
+        SecondaryEvents: Debug + Default + Clone + TableSecondaryIndexEventsOps<AvailableIndexes>,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>
+            + TableSecondaryIndexCdc<Row, AvailableTypes, SecondaryEvents, AvailableIndexes>,
+        PkGen: PrimaryKeyGeneratorState,
+        <PkGen as PrimaryKeyGeneratorState>::State: Debug,
+        AvailableIndexes: Debug + AvailableIndex,
+        PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
+    {
+        if rows.is_empty() {
+            return (Vec::new(), Ok(Vec::new()));
+        }
+        let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
+        let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+
+        let mut links: Vec<Link> = Vec::with_capacity(rows.len());
+        let mut forward_primary: Vec<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> = Vec::with_capacity(rows.len());
+        let mut forward_secondary: Vec<SecondaryEvents> = Vec::with_capacity(rows.len());
+
+        // Merges every event gathered so far — forward events of staged rows,
+        // the failing row's own merged events and the prefix rollback events —
+        // into one Acknowledge operation.
+        let fail = |this: &Self,
+                    links: &[Link],
+                    forward_primary: Vec<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>>,
+                    forward_secondary: Vec<SecondaryEvents>,
+                    own_primary: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
+                    own_secondary: Option<SecondaryEvents>,
+                    error: BatchInsertError| {
+            let mut merged_primary: Vec<ChangeEvent<Pair<PrimaryKey, Link>>> =
+                forward_primary.into_iter().flatten().collect();
+            let mut merged_secondary = SecondaryEvents::default();
+            for events in forward_secondary {
+                merged_secondary.extend(events);
+            }
+            merged_primary.extend(own_primary);
+            if let Some(own_secondary) = own_secondary {
+                merged_secondary.extend(own_secondary);
+            }
+
+            let mut unwind_error: Option<WorkTableError> = None;
+            for index in (0..links.len()).rev() {
+                let link = links[index];
+                let (_, rollback_primary) = this.primary_index.remove_cdc(pks[index].clone(), link);
+                merged_primary.extend(convert_change_events(rollback_primary));
+                let (rollback_secondary, _) = this.indexes.delete_row_cdc(rows[index].clone(), link);
+                merged_secondary.extend(rollback_secondary);
+                if let Err(e) = this.data.delete(link)
+                    && unwind_error.is_none()
+                {
+                    unwind_error = Some(WorkTableError::PagesError(e));
+                }
+            }
+
+            let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                id: OperationId::Single(Uuid::now_v7()),
+                primary_key_events: merged_primary,
+                secondary_keys_events: merged_secondary,
+            });
+            let error = match unwind_error {
+                // An unwind failure leaves no single offending row to name.
+                Some(unwind_error) => BatchInsertError::Table(unwind_error),
+                None => error,
+            };
+            (vec![ack_op], Err(error))
+        };
+
+        for (row_index, row) in rows.iter().enumerate() {
+            let link = match self.data.insert(row.clone()) {
+                Ok(link) => link,
+                Err(e) => {
+                    return fail(
+                        self,
+                        &links,
+                        forward_primary,
+                        forward_secondary,
+                        vec![],
+                        None,
+                        BatchInsertError::Row {
+                            row_index,
+                            source: WorkTableError::PagesError(e),
+                        },
+                    );
+                }
+            };
+
+            let Some(primary_key_events) = self.primary_index.insert_checked_cdc(pks[row_index].clone(), link) else {
+                let source = match self.data.delete(link) {
+                    Ok(()) => WorkTableError::PrimaryAlreadyExists,
+                    Err(e) => WorkTableError::PagesError(e),
+                };
+                return fail(
+                    self,
+                    &links,
+                    forward_primary,
+                    forward_secondary,
+                    vec![],
+                    None,
+                    BatchInsertError::Row { row_index, source },
+                );
+            };
+            let mut primary_key_events = convert_change_events(primary_key_events);
+
+            let (mut secondary_events, indexes_res) = self.indexes.save_row_cdc(row.clone(), link);
+            if let Err(e) = indexes_res {
+                let source = match e {
+                    IndexError::AlreadyExists { at, inserted_already } => {
+                        let (_, rollback_primary) = self.primary_index.remove_cdc(pks[row_index].clone(), link);
+                        primary_key_events.extend(convert_change_events(rollback_primary));
+                        let (rollback_secondary, _) =
+                            self.indexes
+                                .delete_from_indexes_cdc(row.clone(), link, inserted_already);
+                        secondary_events.extend(rollback_secondary);
+                        match self.data.delete(link) {
+                            Ok(()) => WorkTableError::AlreadyExists(at.to_string_value()),
+                            Err(e) => WorkTableError::PagesError(e),
+                        }
+                    }
+                    IndexError::NotFound => {
+                        let (_, rollback_primary) = self.primary_index.remove_cdc(pks[row_index].clone(), link);
+                        primary_key_events.extend(convert_change_events(rollback_primary));
+                        let (rollback_secondary, _) = self.indexes.delete_row_cdc(row.clone(), link);
+                        secondary_events.extend(rollback_secondary);
+                        match self.data.delete(link) {
+                            Ok(()) => WorkTableError::NotFound,
+                            Err(e) => WorkTableError::PagesError(e),
+                        }
+                    }
+                };
+                return fail(
+                    self,
+                    &links,
+                    forward_primary,
+                    forward_secondary,
+                    primary_key_events,
+                    Some(secondary_events),
+                    BatchInsertError::Row { row_index, source },
+                );
+            }
+
+            links.push(link);
+            forward_primary.push(primary_key_events);
+            forward_secondary.push(secondary_events);
+        }
+
+        // Every check passed: the batch can no longer be rejected. Make the
+        // rows visible and emit their persistence operations under one Multi
+        // id so the analyzer applies them as a single engine batch.
+        let batch_id = Uuid::now_v7();
+        let mut ops = Vec::with_capacity(links.len());
+        for (row_index, link) in links.iter().enumerate() {
+            let published = unsafe { self.data.with_mut_ref(*link, |r| r.unghost()) };
+            let bytes = match published
+                .map_err(WorkTableError::PagesError)
+                .and_then(|()| self.data.select_raw(*link).map_err(WorkTableError::PagesError))
+            {
+                Ok(bytes) => bytes,
+                Err(source) => {
+                    // Practically unreachable: the link was created above.
+                    // Rows before `row_index` were already made visible, so
+                    // unwind everything (deleting them again) rather than
+                    // leaving a torn batch behind, and hand back every event
+                    // consumed so far in one Acknowledge. Events already moved
+                    // into built operations are restored first so the
+                    // Acknowledge accounts for the complete event-id stream.
+                    for (built_index, op) in ops.into_iter().enumerate() {
+                        if let Operation::Insert(insert) = op {
+                            forward_primary[built_index] = insert.primary_key_events;
+                            forward_secondary[built_index] = insert.secondary_keys_events;
+                        }
+                    }
+                    return fail(
+                        self,
+                        &links,
+                        forward_primary,
+                        forward_secondary,
+                        vec![],
+                        None,
+                        BatchInsertError::Table(source),
+                    );
+                }
+            };
+            ops.push(Operation::Insert(InsertOperation {
+                id: OperationId::Multi(batch_id),
+                pk_gen_state: self.pk_gen.get_state(),
+                primary_key_events: std::mem::take(&mut forward_primary[row_index]),
+                secondary_keys_events: std::mem::take(&mut forward_secondary[row_index]),
+                bytes,
+                link: *link,
+            }));
+        }
+
+        (ops, Ok(pks))
     }
 
     /// Reinserts provided row with updating indexes and saving it's data in new
@@ -648,6 +1019,25 @@ where
 
         (Some(op), Ok(pk))
     }
+}
+
+/// Error returned by `insert_many`.
+///
+/// A rejected batch names the offending row, and `source` carries the reason,
+/// including which unique index collided for `AlreadyExists` rejections.
+#[derive(Debug, Display, Error)]
+pub enum BatchInsertError {
+    /// One row was rejected and the whole batch was rolled back.
+    #[display("batch insert rejected at row {row_index}: {source}")]
+    Row {
+        /// Position of the rejected row in the `rows` argument.
+        row_index: usize,
+        source: WorkTableError,
+    },
+    /// The batch failed for a reason not attributable to a single row, such
+    /// as a persistence shutdown or an error while unwinding.
+    #[display("{_0}")]
+    Table(WorkTableError),
 }
 
 #[derive(Debug, Display, Error, From)]

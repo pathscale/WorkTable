@@ -52,8 +52,9 @@ pub mod prelude {
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
-        ArcticIndex, ArcticKey, ArcticMultiIndex, AvailableIndex, CongeeIndex, CongeeKey, Difference, IndexError, IndexMap,
-        IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex,
+        ArcticIndex, ArcticKey, ArcticMultiIndex, AvailableIndex, BatchInsertError, CongeeIndex, CongeeKey, Difference,
+        IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArcticMultiIndex,
+        PersistentArtIndex, PersistentCongeeIndex,
         PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
         TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
         UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
