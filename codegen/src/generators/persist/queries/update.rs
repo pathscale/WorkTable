@@ -56,6 +56,7 @@ impl PersistGenerator {
         let idx_idents = if idents.is_empty() { None } else { Some(&idents) };
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents.as_slice(), idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
+        let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
@@ -131,11 +132,8 @@ impl PersistGenerator {
 
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #diff_process_insert
+                #data_write
                 #persist_op
-
-                unsafe { self.0.data.with_mut_ref(link, move |archived| {
-                    #(#row_updates)*
-                }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
 
@@ -250,13 +248,107 @@ impl PersistGenerator {
     }
 
     fn gen_persist_call(&self) -> TokenStream {
+        // The row bytes are captured by gen_data_write_and_fetch immediately
+        // after the data write (while the update is still revertible), so the
+        // operation only has to be enqueued here.
         quote! {
-            if let Operation::Update(op) = &mut op {
-                 op.bytes = self.0.data.select_raw(link)?;
-            } else {
-                unreachable!("")
-            };
             self.1.apply_operation(op)?;
+        }
+    }
+
+    /// Emits the data write plus the byte capture for the persistence
+    /// operation, with compensation: if the write (or the read-back of the
+    /// written bytes) fails after `process_difference_insert_cdc` already
+    /// published the new secondary keys, the inserted diff subset is unwound
+    /// (reversed diffs remove exactly the NEW keys) and an Acknowledge
+    /// operation carrying every CDC event that DID happen is enqueued,
+    /// mirroring the AlreadyExists compensation. Without this the in-memory
+    /// secondary indexes point at an un-updated row and the persisted index
+    /// stream never hears about the applied index mutations, so memory and
+    /// disk diverge until restart. Leaves `updated_bytes` bound on the
+    /// success path.
+    fn gen_data_write_and_fetch(&self, row_updates: &[TokenStream], idx_idents: Option<&Vec<Ident>>) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let avt_type_ident = name_generator.get_available_type_ident();
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
+        let write = quote! {
+            unsafe {
+                self.0.data.with_mut_ref(link, |archived| {
+                    #(#row_updates)*
+                })
+            }
+        };
+        if idx_idents.is_some() {
+            quote! {
+                let mut data_write_err: core::option::Option<WorkTableError> = core::option::Option::None;
+                let mut row_holds_old_values = true;
+                let mut updated_bytes: Vec<u8> = vec![];
+                match #write {
+                    core::result::Result::Ok(()) => match self.0.data.select_raw(link) {
+                        core::result::Result::Ok(bytes) => updated_bytes = bytes,
+                        core::result::Result::Err(e) => {
+                            // The write landed but its bytes cannot be read
+                            // back for persistence. The swap left the
+                            // serialized query holding the OLD values, so
+                            // swapping again restores the row; if even that
+                            // fails, the row keeps the new values and the
+                            // fresh index keys stay published so the row
+                            // remains reachable.
+                            row_holds_old_values = #write.is_ok();
+                            data_write_err = core::option::Option::Some(WorkTableError::PagesError(e));
+                        }
+                    },
+                    core::result::Result::Err(e) => {
+                        // The mutation closure never ran: the row still holds
+                        // its old values.
+                        data_write_err = core::option::Option::Some(WorkTableError::PagesError(e));
+                    }
+                }
+                if let core::option::Option::Some(data_write_err) = data_write_err {
+                    // Unwind the secondary keys published for the new values
+                    // and acknowledge every CDC event that DID happen, so the
+                    // persisted index stream keeps replaying the in-memory
+                    // churn faithfully (mirrors the AlreadyExists
+                    // compensation above).
+                    let mut merged_events = secondary_keys_events;
+                    if row_holds_old_values {
+                        let mut reversed_diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> =
+                            std::collections::HashMap::new();
+                        for (key, diff) in diffs {
+                            reversed_diffs.insert(key, Difference { old: diff.new, new: diff.old });
+                        }
+                        let (rollback_events, _): (#secondary_events_ident, _) =
+                            self.0.indexes.process_difference_remove_cdc(link, reversed_diffs);
+                        merged_events.extend(rollback_events);
+                    }
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(uuid::Uuid::now_v7()),
+                        primary_key_events: vec![],
+                        secondary_keys_events: merged_events,
+                    });
+                    self.1.apply_operation(ack_op)?;
+                    return Err(data_write_err);
+                }
+            }
+        } else {
+            quote! {
+                let mut updated_bytes: Vec<u8> = vec![];
+                match #write {
+                    core::result::Result::Ok(()) => match self.0.data.select_raw(link) {
+                        core::result::Result::Ok(bytes) => updated_bytes = bytes,
+                        core::result::Result::Err(e) => {
+                            // No index was touched, so restoring the old
+                            // bytes (the swap is involutive) is the whole
+                            // rollback; nothing needs acknowledging.
+                            let _ = #write;
+                            return Err(WorkTableError::PagesError(e));
+                        }
+                    },
+                    core::result::Result::Err(e) => {
+                        return Err(WorkTableError::PagesError(e));
+                    }
+                }
+            }
         }
     }
 
@@ -410,17 +502,16 @@ impl PersistGenerator {
     fn gen_process_diffs_insert_on_index(&self, idents: &[Ident], idx_idents: Option<&Vec<Ident>>) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();
+        // `updated_bytes` is bound by gen_data_write_and_fetch, which captures
+        // the real row bytes right after the data write.
         let diff_container = if idx_idents.is_some() {
             quote! {
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 let row_new = row.clone();
-                let updated_bytes: Vec<u8> = vec![];
                 let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
             }
         } else {
-            quote! {
-                let updated_bytes: Vec<u8> = vec![];
-            }
+            quote! {}
         };
 
         let diff = if let Some(idx_idents) = idx_idents {
@@ -541,15 +632,13 @@ impl PersistGenerator {
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
+        let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
         let finish_update = if archived_swap_is_safe {
             quote! {
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #diff_process_insert
+                #data_write
                 #persist_op
-
-                unsafe { self.0.data.with_mut_ref(link, |archived| {
-                    #(#row_updates)*
-                }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
 
@@ -722,19 +811,15 @@ impl PersistGenerator {
             }
         };
         let full_row_lock = self.gen_full_lock_for_update();
+        let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
 
         let loop_tail = if has_unsized {
             quote! {}
         } else {
             quote! {
                     #diff_process_insert
+                    #data_write
                     #persist_op
-
-                    unsafe {
-                        self.0.data.with_mut_ref(link, |archived| {
-                            #(#row_updates)*
-                        }).map_err(WorkTableError::PagesError)?;
-                    }
 
                     #diff_process_remove
 
@@ -885,17 +970,13 @@ impl PersistGenerator {
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
+        let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
         let finish_update = if archived_swap_is_safe {
             quote! {
                 let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #diff_process_insert
+                #data_write
                 #persist_op
-
-                unsafe {
-                    self.0.data.with_mut_ref(link, |archived| {
-                        #(#row_updates)*
-                    }).map_err(WorkTableError::PagesError)?;
-                }
 
                 #diff_process_remove
 
@@ -962,5 +1043,98 @@ impl PersistGenerator {
                 #finish_update
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use proc_macro2::{Ident, Span};
+    use quote::quote;
+
+    use crate::common::Parser;
+    use crate::common::model::{Operation, Queries};
+    use crate::generators::persist::PersistGenerator;
+
+    /// The write failure itself is not forcible through the public API (no
+    /// fail-point exists in DataPages), so the compensation wiring is pinned
+    /// on the generated tokens: the data write must be revertible (bytes
+    /// captured right after it), and its failure path must unwind the freshly
+    /// inserted index keys via reversed diffs and enqueue an Acknowledge
+    /// operation.
+    #[test]
+    fn indexed_update_write_failure_unwinds_and_acknowledges() {
+        let mut parser = Parser::new(quote! {
+            columns: {
+                id: u64 primary_key,
+                code: u64,
+            }
+        });
+        let mut columns = parser.parse_columns().unwrap();
+        let mut parser = Parser::new(quote! {
+            indexes: {
+                code_idx: code,
+            }
+        });
+        columns.indexes = parser.parse_indexes().unwrap();
+
+        let mut generator = PersistGenerator::new(Ident::new("RollbackProbe", Span::call_site()), columns, 1);
+        let mut updates = HashMap::new();
+        let name = Ident::new("CodeById", Span::call_site());
+        updates.insert(
+            name.clone(),
+            Operation {
+                name,
+                columns: vec![Ident::new("code", Span::call_site())],
+                by: Ident::new("id", Span::call_site()),
+            },
+        );
+        generator.set_queries(Queries {
+            updates,
+            deletes: HashMap::new(),
+            in_place: HashMap::new(),
+        });
+        generator.gen_primary_key_def().unwrap();
+
+        let emitted = generator.gen_query_update_impl().unwrap().to_string();
+
+        // Rollback mechanics: reversed diffs remove exactly the NEW keys, and
+        // the churn is acknowledged to the persistence stream.
+        assert!(
+            emitted.contains("Difference { old : diff . new , new : diff . old }"),
+            "reversed-diff construction missing:\n{emitted}"
+        );
+        assert!(
+            emitted.contains("process_difference_remove_cdc (link , reversed_diffs)"),
+            "reversed-diff unwind missing:\n{emitted}"
+        );
+        assert!(
+            emitted.contains("Operation :: Acknowledge"),
+            "acknowledge op missing:\n{emitted}"
+        );
+
+        // The bytes for the persistence operation are captured immediately
+        // after the data write, while the update is still revertible - not
+        // after the old index keys were already removed.
+        let fetch = emitted.find("select_raw (link)").expect("byte capture emitted");
+        let old_key_removal = emitted
+            .find("process_difference_remove_cdc (link , diffs)")
+            .expect("old-key removal emitted");
+        assert!(
+            fetch < old_key_removal,
+            "bytes must be captured before the old index keys are removed:\n{emitted}"
+        );
+        assert!(
+            !emitted.contains("op . bytes = self . 0 . data . select_raw"),
+            "the deferred byte fetch (unrollbackable failure point) is back:\n{emitted}"
+        );
+
+        // And the data write comes after the index insert (publication order
+        // unchanged) but before the operation is built.
+        let insert = emitted.find("process_difference_insert_cdc").expect("diff insert emitted");
+        let write = emitted.find("with_mut_ref").expect("data write emitted");
+        let op_build = emitted.find("Operation :: Update (UpdateOperation").expect("update op emitted");
+        assert!(insert < write && write < op_build, "emission order broken:\n{emitted}");
     }
 }
