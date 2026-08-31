@@ -422,18 +422,16 @@ where
             .map(Into::into)
             .ok_or(WorkTableError::NotFound)?;
         let new_link = self.data.insert(row_new.clone()).map_err(WorkTableError::PagesError)?;
-        unsafe {
-            self.data
-                .with_mut_ref(new_link, |r| r.unghost())
-                .map_err(WorkTableError::PagesError)?
-        }
-        self.primary_index.insert(pk.clone(), new_link);
 
+        // Match the plain `insert` path: keep the new row ghosted and the
+        // primary index on the old link until every index check has passed.
+        // Unghosting or swinging the primary index earlier exposes a
+        // never-committed update to lock-free readers when a secondary
+        // unique-index check then fails and the reinsert is rolled back.
         let indexes_res = self.indexes.reinsert_row(row_old, old_link, row_new.clone(), new_link);
         if let Err(e) = indexes_res {
             return match e {
                 IndexError::AlreadyExists { at, inserted_already } => {
-                    self.primary_index.insert(pk.clone(), old_link);
                     self.indexes.delete_from_indexes(row_new, new_link, inserted_already)?;
                     self.data.delete(new_link).map_err(WorkTableError::PagesError)?;
 
@@ -442,6 +440,12 @@ where
                 IndexError::NotFound => Err(WorkTableError::NotFound),
             };
         }
+        unsafe {
+            self.data
+                .with_mut_ref(new_link, |r| r.unghost())
+                .map_err(WorkTableError::PagesError)?
+        }
+        self.primary_index.insert(pk.clone(), new_link);
         self.data.delete(old_link).map_err(WorkTableError::PagesError)?;
         Ok(pk)
     }
@@ -489,18 +493,10 @@ where
             Err(e) => return (None, Err(WorkTableError::PagesError(e))),
         };
 
-        // Unghost the new data - if this fails, we have no events yet to acknowledge
-        unsafe {
-            if let Err(e) = self.data.with_mut_ref(new_link, |r| r.unghost()) {
-                return (None, Err(WorkTableError::PagesError(e)));
-            }
-        }
-
-        // Update primary index
-        let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
-        let primary_key_events = convert_change_events(primary_key_events);
-
-        // Update secondary indexes
+        // Update secondary indexes first. As in `insert_cdc`, the new row
+        // stays ghosted and the primary index keeps the old link until every
+        // index check has passed, so lock-free readers can never observe a
+        // reinsert that is then rolled back.
         let (secondary_events, indexes_res) =
             self.indexes
                 .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
@@ -508,25 +504,19 @@ where
         if let Err(e) = indexes_res {
             let (ack_op, error) = match e {
                 IndexError::AlreadyExists { at, inserted_already } => {
-                    // Rollback: generate CDC events for restoring old link in primary index
-                    let (_, rollback_pk_events) = self.primary_index.insert_cdc(pk.clone(), old_link);
-                    let rollback_pk_events = convert_change_events(rollback_pk_events);
-
-                    // Rollback: generate CDC events for cleaning up new secondary indexes
+                    // Rollback: generate CDC events for cleaning up new secondary indexes.
+                    // The primary index was never swung, so there are no
+                    // primary events to merge or to roll back.
                     let (rollback_secondary_events, _) =
                         self.indexes
                             .delete_from_indexes_cdc(row_new, new_link, inserted_already);
-
-                    // Merge original partial insert events with rollback events
-                    let mut merged_primary_events = primary_key_events.clone();
-                    merged_primary_events.extend(rollback_pk_events);
 
                     let mut merged_secondary_events = secondary_events.clone();
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
                         id: OperationId::Single(Uuid::now_v7()),
-                        primary_key_events: merged_primary_events,
+                        primary_key_events: vec![],
                         secondary_keys_events: merged_secondary_events,
                     });
 
@@ -539,7 +529,7 @@ where
                 IndexError::NotFound => {
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
                         id: OperationId::Single(Uuid::now_v7()),
-                        primary_key_events: primary_key_events.clone(),
+                        primary_key_events: vec![],
                         secondary_keys_events: secondary_events.clone(),
                     });
                     (ack_op, WorkTableError::NotFound)
@@ -547,6 +537,22 @@ where
             };
             return (Some(ack_op), Err(error));
         }
+
+        // All index checks passed: make the new row visible and swing the
+        // primary index to it.
+        unsafe {
+            if let Err(e) = self.data.with_mut_ref(new_link, |r| r.unghost()) {
+                let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                    id: OperationId::Single(Uuid::now_v7()),
+                    primary_key_events: vec![],
+                    secondary_keys_events: secondary_events.clone(),
+                });
+                return (Some(ack_op), Err(WorkTableError::PagesError(e)));
+            }
+        }
+
+        let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
+        let primary_key_events = convert_change_events(primary_key_events);
 
         // Delete old data
         if let Err(e) = self.data.delete(old_link) {
