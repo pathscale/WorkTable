@@ -25,6 +25,7 @@ use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::in_memory::publication::{DELETED, GHOSTED, PublishedRow, VACUUMED};
 use crate::prelude::ArchivedRowWrapper;
 use crate::util::OffsetEqLink;
+use crate::util::epoch::EpochDomain;
 use crate::{
     in_memory::{
         DATA_INNER_LENGTH, Data, DataExecutionError,
@@ -39,6 +40,11 @@ fn page_id_mapper(page_id: usize) -> usize {
 
 const PUBLICATION_SHARD_COUNT: usize = 64;
 const RETIREMENT_BACKLOG_WARN_AT: usize = 1_024;
+
+/// Most retired items one reclaim call may recycle inline. Bounds the latency
+/// a mutating call can absorb from reclamation; the remainder stays claimed
+/// for the next caller.
+const RECLAIM_BATCH_LIMIT: usize = 256;
 
 fn mix_publication_offset(mut value: u64) -> u64 {
     value ^= value >> 30;
@@ -89,46 +95,77 @@ fn publication_shard<const DATA_LENGTH: usize>(key: &OffsetEqLink<DATA_LENGTH>) 
     mix_publication_offset(key.absolute_index()) as usize & (PUBLICATION_SHARD_COUNT - 1)
 }
 
-fn queue_retirement<T>(queue: &Mutex<Vec<T>>, pending_retirements: &AtomicUsize, queue_name: &'static str, value: T) {
-    let mut queue = queue.lock();
-    queue.push(value);
-    let len = queue.len();
-    pending_retirements.fetch_add(1, Ordering::Release);
-    if len >= RETIREMENT_BACKLOG_WARN_AT && len.is_power_of_two() {
-        tracing::warn!(
-            queue = queue_name,
-            len,
-            "versioned publication retirement backlog is growing"
-        );
-    }
-}
-
+/// A read-side grace-period guard: an epoch pin in the table's own
+/// [`EpochDomain`].
+///
+/// Acquiring one is a thread-local operation (no shared read-modify-write, no
+/// cache line shared with other readers). While it is held, no item retired
+/// after the pin can be recycled; items retired entirely before the pin are
+/// not protected, which is sound because writers unlink every index reference
+/// before retiring (see the type-level docs on [`DataPages`]).
+///
+/// Not `Send`: the pin belongs to the acquiring thread. Hold it across the
+/// synchronous read window (index lookup through row-version acquisition),
+/// not across `.await` points.
 pub struct ReadGuard<'a> {
-    active_readers: &'a AtomicU64,
+    _guard: crossbeam_epoch::Guard,
     marker: PhantomData<&'a ()>,
 }
 
-impl Drop for ReadGuard<'_> {
-    fn drop(&mut self) {
-        self.active_readers.fetch_sub(1, Ordering::SeqCst);
-    }
+/// One unit of retired state waiting out its grace period. Reclamation is
+/// *recycling*, not just freeing: links return to `empty_links`, pages return
+/// to `empty_pages`, and publication slots leave their shard map.
+#[derive(Debug, Clone, Copy)]
+enum Retired<const DATA_LENGTH: usize> {
+    /// A freed row slot: remove its publication, then hand the slot back to
+    /// the empty-link allocator (unless a whole-page retirement supersedes
+    /// it).
+    Link(Link),
+    /// A wholly emptied page: purge any of its stale empty links, then hand
+    /// the page back to the empty-page allocator.
+    Page(PageId),
+    /// A publication whose row bytes moved elsewhere (vacuum): remove the
+    /// shard entry only, the physical slot stays owned by its page.
+    Publication(OffsetEqLink<DATA_LENGTH>),
 }
 
 /// Page storage with immutable row publication.
 ///
 /// # Versioned-publication synchronization
 ///
-/// Generated readers enter the grace period before resolving an index link.
-/// Writers must remove or replace every index reference before queueing the old
-/// link for retirement. That unlink-before-retire invariant is what makes a
-/// reader entering after the reclaimer observes zero unable to acquire the old
-/// link.
+/// Generated readers enter the grace period before resolving an index link by
+/// pinning the table's epoch domain. Writers must remove or replace every
+/// index reference before queueing the old link for retirement. That
+/// unlink-before-retire invariant is what makes a reader pinning after the
+/// retirement unable to acquire the old link, and it is why such late readers
+/// do not need to block recycling.
+///
+/// # Retirement and reclamation
+///
+/// Retired items enter one FIFO queue in retirement order, and each
+/// retirement defers an epoch marker. A marker executes only once every
+/// reader pinned at retirement time has unpinned; the number of executed
+/// markers therefore bounds a safe-to-recycle *prefix* of the queue (a later
+/// item's grace expiring implies every earlier item's grace expired, because
+/// the readers blocking an earlier item were still pinned when the later item
+/// was retired). Reclaimers drain a bounded batch of that prefix and run the
+/// recycle logic; they never wait for a global zero-reader instant, so
+/// reclamation progresses under continuously overlapping readers and no
+/// unbounded backlog can form.
+///
+/// FIFO order also preserves the whole-page subsumption invariant: a link
+/// retirement for page P precedes P's whole-page retirement in the queue
+/// (guaranteed by row-lock ordering: once vacuum has moved or observed every
+/// row of P, no later delete can resolve a link on P), and processing P
+/// purges any of P's links from the empty-link registry, so the whole-page
+/// and inner-link allocators never hold overlapping storage.
 ///
 /// Locks are acquired in this order when more than one is needed:
-/// `page_access` -> `pages` -> one `published_rows` shard. Reclamation holds the
-/// retirement queues, then briefly acquires individual publication shards and
-/// the empty-link/page registries. Callers must not invoke reclamation while
-/// retaining a retirement-queue guard.
+/// `page_access` -> `pages` -> one `published_rows` shard. Reclamation holds
+/// the retirement queue, then briefly acquires individual publication shards
+/// and the empty-link/page registries; nothing acquires the retirement queue
+/// while holding any of those, so the order is acyclic. Callers must not
+/// invoke reclamation while retaining the retirement-queue guard.
 #[derive(Debug)]
 pub struct DataPages<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
 where
@@ -142,18 +179,22 @@ where
     /// persistence. Application reads use `published_rows` after hydration.
     page_access: RwLock<()>,
 
-    /// Read-side grace period protecting the interval from index lookup until
-    /// an immutable row version has been acquired.
-    active_readers: AtomicU64,
+    /// Read-side grace periods protecting the interval from index lookup
+    /// until an immutable row version has been acquired. Owned by this table:
+    /// a reader of another table never delays reclamation here.
+    epoch: EpochDomain,
 
-    retired_links: Mutex<Vec<Link>>,
+    /// Retired items in retirement order, awaiting grace expiry.
+    retired: Mutex<VecDeque<Retired<DATA_LENGTH>>>,
 
-    retired_pages: Mutex<Vec<PageId>>,
+    /// How many queued retirements' grace periods have expired. Incremented
+    /// by deferred epoch markers; consumed (front-of-queue) by reclaimers.
+    /// Shared with the markers through an `Arc` so a marker outliving the
+    /// table stays sound.
+    reclaimable: Arc<AtomicUsize>,
 
-    retired_publications: Mutex<Vec<OffsetEqLink<DATA_LENGTH>>>,
-
-    /// Avoids taking all retirement-queue mutexes on mutations when there is
-    /// no reclamation work pending.
+    /// Queue length mirror, so mutations skip reclamation without locking
+    /// when there is no work pending.
     pending_retirements: AtomicUsize,
 
     /// Pages vector. Currently, not lock free.
@@ -251,58 +292,114 @@ where
     }
 
     pub fn read_guard(&self) -> ReadGuard<'_> {
-        self.active_readers.fetch_add(1, Ordering::SeqCst);
-
         ReadGuard {
-            active_readers: &self.active_readers,
+            _guard: self.epoch.pin(),
             marker: PhantomData,
         }
     }
 
+    /// Queue one retired item and defer its grace marker.
+    ///
+    /// The marker is flushed to the domain's global queue immediately so any
+    /// thread can later collect it; it executes only after every reader
+    /// pinned right now has unpinned.
+    fn retire(&self, item: Retired<DATA_LENGTH>) {
+        let len = {
+            let mut retired = self.retired.lock();
+            retired.push_back(item);
+            retired.len()
+        };
+        self.pending_retirements.fetch_add(1, Ordering::Release);
+        if len >= RETIREMENT_BACKLOG_WARN_AT && len.is_power_of_two() {
+            tracing::warn!(len, "versioned publication retirement backlog is growing");
+        }
+        let reclaimable = Arc::clone(&self.reclaimable);
+        let guard = self.epoch.pin();
+        guard.defer(move || {
+            reclaimable.fetch_add(1, Ordering::Release);
+        });
+        guard.flush();
+    }
+
+    /// Incrementally recycle retired items whose grace period has expired.
+    ///
+    /// Never waits for readers: if any reader pinned before a retirement is
+    /// still active, that item (and everything after it) simply stays queued.
+    /// Each call drains at most [`RECLAIM_BATCH_LIMIT`] items, so a mutation
+    /// never absorbs an unbounded backlog inline.
     fn reclaim_retired(&self) {
         if self.pending_retirements.load(Ordering::Acquire) == 0 {
             return;
         }
-        if self.active_readers.load(Ordering::SeqCst) != 0 {
+        // Help the epoch forward. Each step is bounded and thread-local-ish;
+        // three advances are what a marker needs from defer to execution in
+        // the quiet case, and under active readers these are cheap no-ops.
+        for _ in 0..4 {
+            if self.reclaimable.load(Ordering::Acquire) != 0 {
+                break;
+            }
+            self.epoch.advance();
+        }
+
+        let claimed = self.reclaimable.swap(0, Ordering::AcqRel);
+        if claimed == 0 {
             return;
         }
 
-        let mut retired_links = self.retired_links.lock();
-        let mut retired_pages = self.retired_pages.lock();
-        let mut retired_publications = self.retired_publications.lock();
-        if self.active_readers.load(Ordering::SeqCst) != 0 {
-            return;
+        let mut retired = self.retired.lock();
+        let take = claimed.min(RECLAIM_BATCH_LIMIT).min(retired.len());
+        if claimed > take {
+            // Batch limit hit: return the unused claims for the next caller.
+            self.reclaimable.fetch_add(claimed - take, Ordering::Release);
         }
 
         // A whole-page retirement subsumes every free link within that page.
         // Publishing both would let one allocator reset/reuse the page while
-        // another writes through an overlapping link from the same page.
-        let whole_pages: HashSet<_> = retired_pages.iter().copied().collect();
-        for link in retired_links.drain(..) {
-            let key = OffsetEqLink(link);
-            self.published_rows[publication_shard(&key)].write().remove(&key);
-            if !whole_pages.contains(&link.page_id) {
-                self.empty_links.push(link);
+        // another writes through an overlapping link from the same page. A
+        // link is skipped when its page's retirement is queued anywhere
+        // behind it, and a page purges its stale links on processing, so the
+        // invariant holds across batch boundaries in both directions.
+        let queued_pages: HashSet<PageId> = retired
+            .iter()
+            .filter_map(|item| match item {
+                Retired::Page(page_id) => Some(*page_id),
+                _ => None,
+            })
+            .collect();
+
+        for _ in 0..take {
+            let Some(item) = retired.pop_front() else {
+                break;
+            };
+            match item {
+                Retired::Link(link) => {
+                    let key = OffsetEqLink(link);
+                    self.published_rows[publication_shard(&key)].write().remove(&key);
+                    if !queued_pages.contains(&link.page_id) {
+                        self.empty_links.push(link);
+                    }
+                }
+                Retired::Publication(key) => {
+                    self.published_rows[publication_shard(&key)].write().remove(&key);
+                }
+                Retired::Page(page_id) => {
+                    // Purge stale fragments of this page from the link
+                    // allocator before exposing the whole page for reuse.
+                    self.empty_links.remove_link_for_page(page_id);
+                    self.empty_pages.write().push_back(page_id);
+                }
             }
+            self.pending_retirements.fetch_sub(1, Ordering::Release);
         }
-        for key in retired_publications.drain(..) {
-            self.published_rows[publication_shard(&key)].write().remove(&key);
-        }
-        if !retired_pages.is_empty() {
-            let mut empty_pages = self.empty_pages.write();
-            empty_pages.extend(retired_pages.drain(..));
-        }
-        self.pending_retirements.store(0, Ordering::Release);
     }
 
     pub fn new() -> Self {
         Self {
             published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
             page_access: RwLock::new(()),
-            active_readers: AtomicU64::new(0),
-            retired_links: Mutex::new(Vec::new()),
-            retired_pages: Mutex::new(Vec::new()),
-            retired_publications: Mutex::new(Vec::new()),
+            epoch: EpochDomain::new(),
+            retired: Mutex::new(VecDeque::new()),
+            reclaimable: Arc::new(AtomicUsize::new(0)),
             pending_retirements: AtomicUsize::new(0),
             // We are starting ID's from `1` because `0`'s page in file is info page.
             pages: RwLock::new(vec![Arc::new(Data::new(1.into()))]),
@@ -323,10 +420,9 @@ where
             Self {
                 published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
                 page_access: RwLock::new(()),
-                active_readers: AtomicU64::new(0),
-                retired_links: Mutex::new(Vec::new()),
-                retired_pages: Mutex::new(Vec::new()),
-                retired_publications: Mutex::new(Vec::new()),
+                epoch: EpochDomain::new(),
+                retired: Mutex::new(VecDeque::new()),
+                reclaimable: Arc::new(AtomicUsize::new(0)),
                 pending_retirements: AtomicUsize::new(0),
                 pages: RwLock::new(vec),
                 empty_links: EmptyLinkRegistry::default(),
@@ -722,7 +818,7 @@ where
         unsafe { self.with_mut_ref(link, |r| r.delete())? }
 
         self.row_count.fetch_sub(1, Ordering::Relaxed);
-        queue_retirement(&self.retired_links, &self.pending_retirements, "links", link);
+        self.retire(Retired::Link(link));
         self.reclaim_retired();
         Ok(())
     }
@@ -738,7 +834,7 @@ where
 
     pub fn mark_page_empty(&self, page_id: PageId) {
         if u32::from(page_id) != self.current_page_id.load(Ordering::Acquire) {
-            queue_retirement(&self.retired_pages, &self.pending_retirements, "pages", page_id);
+            self.retire(Retired::Page(page_id));
             self.reclaim_retired();
         }
     }
@@ -860,12 +956,7 @@ where
     }
 
     pub(crate) fn retire_published_link(&self, link: Link) {
-        queue_retirement(
-            &self.retired_publications,
-            &self.pending_retirements,
-            "publications",
-            OffsetEqLink(link),
-        );
+        self.retire(Retired::Publication(OffsetEqLink(link)));
         self.reclaim_retired();
     }
 
