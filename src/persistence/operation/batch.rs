@@ -380,7 +380,15 @@ where
                 .prepared_index_evs
                 .as_ref()
                 .expect("should be set before 0 iteration");
-            if prepared_evs.primary_evs.is_empty() && prepared_evs.secondary_evs.is_empty() {
+            if prepared_evs.primary_evs.is_empty() && prepared_evs.secondary_evs.is_empty() && self.ops.is_empty() {
+                // Every operation was removed as invalid: there is nothing to
+                // apply, so defer, handing the removed operations back through
+                // `ops()` for requeueing. When `self.ops` still holds
+                // survivors — data-only operations whose event vectors are
+                // empty, generated for updates touching no indexed column —
+                // the batch stays valid for them and falls through to
+                // `Ok(Some(..))` below: overwriting `self.ops` here would
+                // silently discard those accepted writes.
                 self.ops = ops_to_remove;
                 return Ok(None);
             }
@@ -459,11 +467,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use data_bucket::Link;
+    use indexset::core::pair::Pair;
     use uuid::Uuid;
 
-    use super::{BatchOperation, latest_data_writes};
+    use super::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, latest_data_writes};
+    use crate::persistence::OperationType;
     use crate::persistence::operation::{InsertOperation, Operation, OperationId};
+    use crate::persistence::task::LastEventIds;
+    use crate::prelude::{IndexChangeEvent, IndexChangeEventId, TableSecondaryIndexEventsOps};
 
     fn insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
         Operation::Insert(InsertOperation {
@@ -581,5 +595,135 @@ mod tests {
         let error = batch.remove_info_at_pos(0).await.unwrap_err();
 
         assert!(error.to_string().contains("batch metadata position 0 is missing"));
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    enum TestIndex {}
+
+    #[derive(Clone, Debug, Default)]
+    struct TestEvents;
+
+    impl TableSecondaryIndexEventsOps<TestIndex> for TestEvents {
+        fn extend(&mut self, _another: Self) {}
+
+        fn remove(&mut self, _another: &Self) {}
+
+        fn last_evs(&self) -> HashMap<TestIndex, Option<IndexChangeEventId>> {
+            HashMap::new()
+        }
+
+        fn first_evs(&self) -> HashMap<TestIndex, Option<IndexChangeEventId>> {
+            HashMap::new()
+        }
+
+        fn iter_event_ids(&self) -> impl Iterator<Item = (TestIndex, IndexChangeEventId)> {
+            std::iter::empty()
+        }
+
+        fn sort(&mut self) {}
+
+        fn validate(&mut self) -> Self {
+            Self
+        }
+
+        fn is_empty(&self) -> bool {
+            true
+        }
+
+        fn is_unit() -> bool {
+            true
+        }
+    }
+
+    fn primary_event(id: u64) -> IndexChangeEvent<Pair<u64, Link>> {
+        IndexChangeEvent::InsertAt {
+            event_id: id.into(),
+            max_value: Pair {
+                key: id,
+                value: Link::default(),
+            },
+            value: Pair {
+                key: id,
+                value: Link::default(),
+            },
+            index: 0,
+        }
+    }
+
+    fn event_insert(
+        id: u128,
+        link: Link,
+        bytes: Vec<u8>,
+        event_ids: Vec<u64>,
+    ) -> Operation<(), u64, TestEvents> {
+        Operation::Insert(InsertOperation {
+            id: OperationId::Single(Uuid::from_u128(id)),
+            primary_key_events: event_ids.into_iter().map(primary_event).collect(),
+            secondary_keys_events: TestEvents,
+            pk_gen_state: (),
+            bytes,
+            link,
+        })
+    }
+
+    /// Regression: removing the last event-carrying operation from a batch
+    /// discarded the surviving data-only operations.
+    ///
+    /// When invalid-event removal emptied the prepared event set, `validate`
+    /// unconditionally did `self.ops = ops_to_remove` and deferred. Any
+    /// operation still in `self.ops` — a data-only write with an empty event
+    /// vector, as generated for updates touching no indexed column — was
+    /// silently dropped: never applied, never requeued, though the caller had
+    /// been told the row was accepted.
+    #[tokio::test]
+    async fn removing_the_last_event_carrying_op_keeps_surviving_data_only_writes() {
+        let invalid_link = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 4,
+        };
+        let survivor_link = Link {
+            page_id: 1.into(),
+            offset: 64,
+            length: 4,
+        };
+        // Events 100 and 102 have an interior gap, so event validation removes
+        // the op carrying them and the prepared event set ends up empty.
+        let invalid_op = event_insert(1, invalid_link, vec![1; 4], vec![100, 102]);
+        // No events at all: a pure data write that must survive.
+        let survivor_op = event_insert(2, survivor_link, vec![7; 4], vec![]);
+
+        let info_wt = BatchInnerWorkTable::default();
+        for (pos, op) in [&invalid_op, &survivor_op].into_iter().enumerate() {
+            info_wt
+                .insert(BatchInnerRow {
+                    id: pos as u64,
+                    operation_id: op.operation_id(),
+                    page_id: op.link().page_id,
+                    link: op.link(),
+                    op_type: OperationType::Insert,
+                    pos,
+                })
+                .unwrap();
+        }
+
+        let mut batch: BatchOperation<(), u64, TestEvents, TestIndex> =
+            BatchOperation::new(vec![invalid_op, survivor_op], info_wt);
+
+        let removed = batch
+            .validate(&LastEventIds::default(), 0)
+            .await
+            .unwrap()
+            .expect("a batch with surviving data-only ops must be applied, not deferred");
+
+        assert_eq!(removed.len(), 1, "exactly the invalid op is requeued");
+        assert_eq!(removed[0].operation_id(), OperationId::Single(Uuid::from_u128(1)));
+
+        let data = batch.get_batch_data_op().unwrap();
+        assert_eq!(
+            data.get(&1.into()).unwrap(),
+            &vec![(survivor_link, vec![7; 4])],
+            "the surviving data-only write must stay in the applied batch"
+        );
     }
 }
