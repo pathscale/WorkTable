@@ -615,6 +615,49 @@ mod lifecycle_tests {
         assert_eq!(batches.load(Ordering::Relaxed), 1);
     }
 
+    #[tokio::test]
+    async fn batched_intake_drains_multi_id_operations_in_one_engine_batch() {
+        let batches = Arc::new(AtomicUsize::new(0));
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: batches.clone(),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::None,
+        });
+
+        task.apply_operations(vec![
+            multi_insert_operation(1, 128, 1),
+            multi_insert_operation(1, 136, 2),
+            multi_insert_operation(1, 144, 3),
+        ])
+        .unwrap();
+        task.close().await.unwrap();
+
+        assert_eq!(
+            batches.load(Ordering::Relaxed),
+            1,
+            "operations sharing one Multi id must reach the engine as one batch"
+        );
+    }
+
+    #[tokio::test]
+    async fn batched_intake_refuses_operations_after_failure() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::Engine,
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        let wait_error = task.wait_for_ops().await.unwrap_err();
+
+        let intake_error = task
+            .apply_operations(vec![insert_operation(2), insert_operation(3)])
+            .unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &intake_error));
+    }
+
     /// Regression: `close` reported success having written nothing.
     ///
     /// The worker polled the queue, found it empty, and only then read the
@@ -932,6 +975,33 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
         self.push_message(PersistenceMessage::Operation(value))
     }
 
+    /// Enqueues a whole batch of operations under one lifecycle check, one
+    /// queue lock acquisition and one worker wake-up, so callers producing
+    /// many operations at once (`insert_many`) pay the intake overhead once
+    /// instead of per row. All-or-nothing: either every operation is accepted
+    /// or none is.
+    pub fn push_many(
+        &self,
+        values: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+    ) -> PersistenceResult {
+        if values.is_empty() {
+            return Ok(());
+        }
+        let state = self.lifecycle.state.lock();
+        match &*state {
+            PersistenceState::Running => {}
+            PersistenceState::Closing => return Err(Arc::new(PersistenceError::Closing)),
+            PersistenceState::Closed => return Err(Arc::new(PersistenceError::Closed)),
+            PersistenceState::Failed(error) => return Err(error.clone()),
+        }
+        self.len.fetch_add(values.len(), Ordering::Release);
+        self.queue
+            .lock()
+            .extend(values.into_iter().map(PersistenceMessage::Operation));
+        self.notify.notify_one();
+        Ok(())
+    }
+
     fn push_message(
         &self,
         value: PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
@@ -1117,6 +1187,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
     pub fn apply_operation(&self, op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
         self.queue.push(op)
+    }
+
+    /// Enqueues a batch of operations atomically with a single worker
+    /// wake-up. See [`Queue::push_many`].
+    pub fn apply_operations(
+        &self,
+        ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+    ) -> PersistenceResult {
+        self.queue.push_many(ops)
     }
 
     pub fn ensure_running(&self) -> PersistenceResult {
