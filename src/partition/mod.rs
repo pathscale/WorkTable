@@ -54,11 +54,11 @@
 use loom::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 #[cfg(wt_loom)]
 use loom::sync::{Mutex, MutexGuard};
+#[cfg(not(wt_loom))]
+use parking_lot::{Mutex, MutexGuard};
 use std::sync::Arc;
 #[cfg(not(wt_loom))]
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-#[cfg(not(wt_loom))]
-use std::sync::{Mutex, MutexGuard};
 
 use crate::mem_stat::MemStat;
 
@@ -177,6 +177,27 @@ impl<T> PartitionSet<T> {
         (!p.is_null()).then(|| unsafe { revive(p) })
     }
 
+    /// The table routed to by `key`, borrowed rather than reference counted.
+    ///
+    /// [`Self::partition`] costs two atomic read-modify-writes per call: one to
+    /// revive the `Arc` and one to drop it. On a shared key those contend, so a
+    /// per-tick lookup pays coherence traffic on the table's strong count. This
+    /// returns a borrow instead and costs three dependent loads and no atomics
+    /// beyond the acquire on the slot.
+    ///
+    /// Prefer this on a hot path. Prefer [`Self::partition`] when the handle
+    /// has to outlive the borrow, be sent to another thread, or be stored.
+    #[inline]
+    pub fn partition_ref(&self, key: u64) -> Option<&T> {
+        let idx = Self::index(key)?;
+        let p = self.chunk(idx)?.slots[idx % CHUNK].load(Ordering::Acquire);
+        // Safety: a published slot pointer refers to an allocation that is
+        // freed only by `gc` or `Drop`, both of which take `&mut self`. The
+        // returned borrow is tied to `&self`, so neither can run while it is
+        // alive and the allocation cannot be reclaimed under it.
+        (!p.is_null()).then(|| unsafe { &*p })
+    }
+
     /// Whether `key` currently holds a partition.
     pub fn contains(&self, key: u64) -> bool {
         let Some(idx) = Self::index(key) else {
@@ -213,8 +234,17 @@ impl<T> PartitionSet<T> {
             .collect()
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, Vec<Arc<T>>>, PartitionError> {
-        self.grow.lock().map_err(|_| PartitionError::Poisoned)
+    /// The growth lock. Infallible: `parking_lot` does not poison, so a panic
+    /// in a caller-supplied `make` unwinds and releases the lock instead of
+    /// disabling every later creation and removal for the life of the process.
+    #[cfg(not(wt_loom))]
+    fn lock(&self) -> MutexGuard<'_, Vec<Arc<T>>> {
+        self.grow.lock()
+    }
+
+    #[cfg(wt_loom)]
+    fn lock(&self) -> MutexGuard<'_, Vec<Arc<T>>> {
+        self.grow.lock().expect("loom mutexes do not poison in these models")
     }
 
     /// Get the partition at `key`, creating it with `make` if absent.
@@ -230,7 +260,7 @@ impl<T> PartitionSet<T> {
         }
         let idx = Self::index(key).ok_or(PartitionError::OutOfRange { key })?;
 
-        let _guard = self.lock()?;
+        let _guard = self.lock();
         // Re-check: another thread may have created it while we waited.
         if let Some(t) = self.partition(key) {
             return Ok(t);
@@ -257,10 +287,12 @@ impl<T> PartitionSet<T> {
     ///
     /// The reference the slot owned is moved to the retire list rather than
     /// dropped, so a reader that loaded the pointer a moment before cannot
-    /// find the allocation freed under it. [`Self::gc`] reclaims it.
+    /// find the allocation freed under it. [`Self::gc`] reclaims it, and `gc`
+    /// needs `&mut self`, so through a shared `Arc` router this never frees
+    /// anything. See [`Self::gc`] before removing on a long-lived set.
     pub fn remove(&self, key: u64) -> Option<Arc<T>> {
         let idx = Self::index(key)?;
-        let mut retired = self.lock().ok()?;
+        let mut retired = self.lock();
         let chunk = self.chunk(idx)?;
         let p = chunk.slots[idx % CHUNK].swap(std::ptr::null_mut(), Ordering::AcqRel);
         if p.is_null() {
@@ -278,8 +310,22 @@ impl<T> PartitionSet<T> {
     ///
     /// Returns how many were reclaimed. Takes `&mut self`: exclusive access is
     /// the proof that no reader holds a pointer this could invalidate.
+    ///
+    /// # This is unreachable through a shared router
+    ///
+    /// The production shape is `Arc<PartitionSet<T>>` shared across threads,
+    /// and an `Arc` never yields `&mut`. So in that shape **nothing removed is
+    /// ever freed**: every `remove` retires a whole table, measured at 15 to
+    /// 110 KB, and the set grows for the life of the process. A symbol that is
+    /// delisted and relisted repeatedly, or any evict-and-recreate loop, leaks
+    /// at that rate.
+    ///
+    /// Until reclamation works through a shared handle, treat a long-lived
+    /// shared router as append-only and watch [`Self::retired_len`]. Eviction
+    /// is blocked on the same gap: a policy that cannot free through the shared
+    /// handle does not evict.
     pub fn gc(&mut self) -> usize {
-        let mut retired = self.grow.lock().unwrap_or_else(|e| e.into_inner());
+        let mut retired = self.lock();
         let n = retired.len();
         retired.clear();
         n
@@ -287,10 +333,7 @@ impl<T> PartitionSet<T> {
 
     /// How many removed partitions are still held by the retire list.
     pub fn retired_len(&self) -> usize {
-        self.grow
-            .lock()
-            .map(|r| r.len())
-            .unwrap_or_else(|e| e.into_inner().len())
+        self.lock().len()
     }
 }
 
@@ -350,8 +393,6 @@ impl<T: MemStat> PartitionSet<T> {
 pub enum PartitionError {
     /// The key exceeds [`MAX_PARTITIONS`].
     OutOfRange { key: u64 },
-    /// The growth mutex was poisoned by a panic in a previous `make`.
-    Poisoned,
 }
 
 impl std::fmt::Display for PartitionError {
@@ -360,7 +401,6 @@ impl std::fmt::Display for PartitionError {
             PartitionError::OutOfRange { key } => {
                 write!(f, "partition key {key} exceeds the maximum of {MAX_PARTITIONS}")
             }
-            PartitionError::Poisoned => write!(f, "partition set is poisoned"),
         }
     }
 }

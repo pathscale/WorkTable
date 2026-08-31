@@ -66,12 +66,29 @@ pub fn expand(name: &Ident, key: &PartitionKey) -> TokenStream {
                 self.inner.get_or_create(#key_name as u64, make)
             }
 
+            /// The partition routed to by `#key_name`, borrowed rather than
+            /// reference counted.
+            ///
+            /// `partition` costs two atomic read-modify-writes per call, which
+            /// contend when several threads route to the same key. This costs
+            /// none. Prefer it per tick; prefer `partition` when the handle has
+            /// to outlive the borrow or be sent elsewhere.
+            #[inline]
+            pub fn partition_ref(&self, #key_name: #key_ty) -> Option<&#table> {
+                self.inner.partition_ref(#key_name as u64)
+            }
+
             /// Whether a partition exists for `#key_name`.
             pub fn contains(&self, #key_name: #key_ty) -> bool {
                 self.inner.contains(#key_name as u64)
             }
 
             /// Drop a partition. Callers already holding it keep their handle.
+            ///
+            /// The partition is retired, not freed, and only `gc` frees it.
+            /// `gc` needs `&mut self`, so a router shared behind an `Arc`
+            /// never reclaims: treat it as append-only and watch
+            /// `retired_len`.
             pub fn remove(&self, #key_name: #key_ty) -> Option<std::sync::Arc<#table>> {
                 self.inner.remove(#key_name as u64)
             }

@@ -534,21 +534,62 @@ fn concurrent_creation_across_chunk_boundaries_is_sound() {
 }
 
 #[test]
-fn a_panicking_initialiser_poisons_rather_than_corrupts() {
+fn a_panicking_initialiser_leaves_the_set_usable() {
     let set: PartitionSet<Counted> = PartitionSet::new();
     set.get_or_create(1, || Counted(1)).unwrap();
 
-    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         set.get_or_create(2, || panic!("initialiser blew up"))
     }));
-    assert!(poisoned.is_err(), "the panic must propagate to the caller");
+    assert!(panicked.is_err(), "the panic must propagate to the caller");
 
-    // The set is now poisoned. Reads still work, because they never take the
-    // mutex; writes report it rather than proceeding on unknown state.
+    // The growth lock does not poison, so one bad initialiser cannot disable
+    // every later creation and removal. The earlier version of this held a
+    // `std::sync::Mutex` and returned `PartitionError::Poisoned` forever after,
+    // which in a long-lived process means no new key can ever be created again.
     assert_eq!(set.partition(1).unwrap().0, 1);
     assert!(set.partition(2).is_none(), "the failed key must not exist");
     assert_eq!(set.len(), 1, "a failed creation must not be counted");
-    assert_eq!(set.get_or_create(3, || Counted(3)), Err(PartitionError::Poisoned));
+
+    // Creation still works, including on the key that panicked.
+    assert_eq!(set.get_or_create(3, || Counted(3)).unwrap().0, 3);
+    assert_eq!(set.get_or_create(2, || Counted(2)).unwrap().0, 2);
+    assert_eq!(set.len(), 3);
+
+    // And so does removal, which previously reported every key as absent
+    // because it masked the poison as `None`.
+    assert!(set.remove(1).is_some(), "removal must not silently report absent");
+    assert_eq!(set.len(), 2);
+}
+
+#[test]
+fn partition_ref_borrows_without_touching_the_strong_count() {
+    let set: PartitionSet<Counted> = PartitionSet::new();
+    assert!(set.partition_ref(0).is_none(), "reading must not create");
+
+    let held = set.get_or_create(5, || Counted(5)).unwrap();
+    let before = Arc::strong_count(&held);
+
+    let borrowed = set.partition_ref(5).expect("present");
+    assert_eq!(borrowed.0, 5);
+    assert_eq!(
+        Arc::strong_count(&held),
+        before,
+        "partition_ref must not touch the strong count: that is the entire point"
+    );
+
+    // `partition` does, which is what makes it the wrong choice per tick.
+    let revived = set.partition(5).expect("present");
+    assert_eq!(Arc::strong_count(&held), before + 1);
+    drop(revived);
+    assert_eq!(Arc::strong_count(&held), before);
+
+    // Same bounds as every other entry point.
+    assert!(set.partition_ref(MAX_PARTITIONS as u64).is_none());
+    assert!(set.partition_ref(u64::MAX).is_none());
+    // And it agrees with `partition` across a removal.
+    set.remove(5);
+    assert!(set.partition_ref(5).is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -618,7 +659,6 @@ fn partition_error_says_which_key_and_which_bound() {
         text.contains(&MAX_PARTITIONS.to_string()),
         "the bound must appear so the caller knows why: {text}"
     );
-    assert_eq!(PartitionError::Poisoned.to_string(), "partition set is poisoned");
 
     // The `Error` impl is what a caller using `?` and `eyre` will format.
     let as_error: &dyn std::error::Error = &out_of_range;
