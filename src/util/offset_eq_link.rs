@@ -63,8 +63,11 @@ impl<const DATA_LENGTH: usize> AsRef<Link> for OffsetEqLink<DATA_LENGTH> {
 }
 
 impl<const DATA_LENGTH: usize> PartialEq<Link> for OffsetEqLink<DATA_LENGTH> {
+    /// Position-based, like `OffsetEqLink == OffsetEqLink`. Comparing the raw
+    /// `Link` here would make the two comparisons disagree about the same pair
+    /// whenever only `length` differs.
     fn eq(&self, other: &Link) -> bool {
-        self.0.eq(other)
+        self.absolute_index() == Self(*other).absolute_index()
     }
 }
 
@@ -186,6 +189,24 @@ mod tests {
 
         assert!(link1 < link2);
         assert!(link2 < link3);
+    }
+
+    #[test]
+    fn eq_against_raw_link_matches_eq_against_wrapped_link() {
+        let wrapped = OffsetEqLink::<TEST_DATA_LENGTH>(Link {
+            page_id: PageId::from(1),
+            offset: 100,
+            length: 50,
+        });
+        let same_position_other_length = Link {
+            page_id: PageId::from(1),
+            offset: 100,
+            length: 100,
+        };
+        // The two PartialEq impls must agree: same position is equal,
+        // regardless of length, through both comparison routes.
+        assert_eq!(wrapped, OffsetEqLink::<TEST_DATA_LENGTH>(same_position_other_length));
+        assert_eq!(wrapped, same_position_other_length);
     }
 
     #[test]
