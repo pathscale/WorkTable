@@ -238,9 +238,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     }
 
     pub fn get_raw_row(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
-        let inner_data = unsafe { &mut *self.inner_data.get() };
-        let bytes = &mut inner_data[link.offset as usize..(link.offset + link.length) as usize];
-        Ok(bytes.to_vec())
+        let inner_data = unsafe { &*self.inner_data.get() };
+        Ok(inner_data[link.offset as usize..(link.offset + link.length) as usize].to_vec())
     }
 
     /// Moves data within the page from one location to another.
@@ -547,6 +546,35 @@ mod tests {
         for link in links {
             let _ = shared.get_row(link).unwrap();
         }
+    }
+
+    /// `get_raw_row` is a pure read and runs under the shared `page_access`
+    /// read lock next to other readers of the same page bytes. It used to
+    /// create `&mut` over the page image, which aliased those shared readers
+    /// (UB Miri flags). Two threads reading the same link concurrently is the
+    /// exact shape that was undefined; this must stay valid.
+    #[test]
+    fn get_raw_row_is_a_shared_read() {
+        let page = Data::<TestRow>::new(1.into());
+        let row = TestRow { a: 10, b: 20 };
+        let link = page.save_row(&row).unwrap();
+
+        let shared = Arc::new(page);
+        let other = shared.clone();
+        let handle = thread::spawn(move || {
+            for _ in 0..100 {
+                let raw = other.get_raw_row(link).unwrap();
+                assert_eq!(raw.len(), link.length as usize);
+            }
+        });
+
+        for _ in 0..100 {
+            let archived = shared.get_row_ref(link).unwrap();
+            assert_eq!(archived, &row);
+            let raw = shared.get_raw_row(link).unwrap();
+            assert_eq!(raw.len(), link.length as usize);
+        }
+        handle.join().unwrap();
     }
 
     #[test]
