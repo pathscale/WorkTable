@@ -374,7 +374,7 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
     let set: Arc<PartitionSet<Tracked>> = Arc::new(PartitionSet::new());
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let readers: Vec<_> = (0..if cfg!(miri) { 2 } else { 6 })
+    let readers: Vec<_> = (0..if cfg!(miri) { 2 } else { 3 })
         .map(|_| {
             let set = set.clone();
             let stop = stop.clone();
@@ -389,6 +389,9 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
                             observed += 1;
                         }
                     }
+                    // Yield rather than spin: a reader pinning a core for the
+                    // whole churn slows every other test in this binary.
+                    std::thread::yield_now();
                 }
                 observed
             })

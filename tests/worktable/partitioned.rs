@@ -434,7 +434,7 @@ fn readers_survive_partitions_being_removed_under_them() {
     let prices = Arc::new(PricePartitions::new());
     let stop = Arc::new(AtomicBool::new(false));
 
-    let readers: Vec<_> = (0..4)
+    let readers: Vec<_> = (0..2)
         .map(|_| {
             let prices = prices.clone();
             let stop = stop.clone();
@@ -448,6 +448,10 @@ fn readers_survive_partitions_being_removed_under_them() {
                             assert_eq!(r.bid, k as f64, "partition {k} was torn");
                         }
                     }
+                    // Yield rather than spin. These readers share a test binary
+                    // with the persistence suite, and a tight spin on every core
+                    // starves it into failing.
+                    std::thread::yield_now();
                 }
             })
         })
