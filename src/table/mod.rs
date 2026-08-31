@@ -453,12 +453,18 @@ where
             .map(Into::into)
             .ok_or(WorkTableError::NotFound)?;
         let new_link = self.data.insert(row_new.clone()).map_err(WorkTableError::PagesError)?;
+        // The new row must be visible before reinsert_row runs: reinsert_row
+        // swings unchanged unique entries onto new_link, and pointing them at
+        // a ghosted row makes select-by-unique transiently return nothing for
+        // a row that exists. The primary index stays on the old link until
+        // every index check has passed, so a reader by primary key can never
+        // observe the values of a reinsert that is rolled back.
+        unsafe {
+            self.data
+                .with_mut_ref(new_link, |r| r.unghost())
+                .map_err(WorkTableError::PagesError)?
+        }
 
-        // Match the plain `insert` path: keep the new row ghosted and the
-        // primary index on the old link until every index check has passed.
-        // Unghosting or swinging the primary index earlier exposes a
-        // never-committed update to lock-free readers when a secondary
-        // unique-index check then fails and the reinsert is rolled back.
         let indexes_res = self.indexes.reinsert_row(row_old, old_link, row_new.clone(), new_link);
         if let Err(e) = indexes_res {
             return match e {
@@ -482,11 +488,6 @@ where
                     Err(WorkTableError::NotFound)
                 }
             };
-        }
-        unsafe {
-            self.data
-                .with_mut_ref(new_link, |r| r.unghost())
-                .map_err(WorkTableError::PagesError)?
         }
         self.primary_index.insert(pk.clone(), new_link);
         self.data.delete(old_link).map_err(WorkTableError::PagesError)?;
@@ -536,10 +537,18 @@ where
             Err(e) => return (None, Err(WorkTableError::PagesError(e))),
         };
 
-        // Update secondary indexes first. As in `insert_cdc`, the new row
-        // stays ghosted and the primary index keeps the old link until every
-        // index check has passed, so lock-free readers can never observe a
-        // reinsert that is then rolled back.
+        // The new row must be visible before reinsert_row_cdc runs: it swings
+        // unchanged unique entries onto new_link, and pointing them at a
+        // ghosted row makes select-by-unique transiently return nothing for a
+        // row that exists. The primary index keeps the old link until every
+        // index check has passed, so a reader by primary key can never observe
+        // a reinsert that is then rolled back.
+        unsafe {
+            if let Err(e) = self.data.with_mut_ref(new_link, |r| r.unghost()) {
+                return (None, Err(WorkTableError::PagesError(e)));
+            }
+        }
+
         let (secondary_events, indexes_res) =
             self.indexes
                 .reinsert_row_cdc(row_old, old_link, row_new.clone(), new_link);
@@ -591,19 +600,7 @@ where
             return (Some(ack_op), Err(error));
         }
 
-        // All index checks passed: make the new row visible and swing the
-        // primary index to it.
-        unsafe {
-            if let Err(e) = self.data.with_mut_ref(new_link, |r| r.unghost()) {
-                let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(Uuid::now_v7()),
-                    primary_key_events: vec![],
-                    secondary_keys_events: secondary_events.clone(),
-                });
-                return (Some(ack_op), Err(WorkTableError::PagesError(e)));
-            }
-        }
-
+        // All index checks passed: swing the primary index to the new row.
         let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
         let primary_key_events = convert_change_events(primary_key_events);
 
