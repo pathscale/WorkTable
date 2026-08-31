@@ -22,7 +22,7 @@ worktable! (
     },
 );
 
-fn row(id: u64, wallet: u128) -> BatchPersistRow {
+pub(crate) fn row(id: u64, wallet: u128) -> BatchPersistRow {
     BatchPersistRow {
         id,
         wallet,
