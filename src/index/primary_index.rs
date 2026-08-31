@@ -61,7 +61,13 @@ where
     fn insert_checked(&self, value: PrimaryKey, link: Link) -> Option<()> {
         let offset_link = OffsetEqLink(link);
         self.pk_map.insert_value_checked(value.clone(), offset_link)?;
-        self.reverse_pk_map.checked_insert(offset_link, value)?;
+        if self.reverse_pk_map.checked_insert(offset_link, value.clone()).is_none() {
+            // The link is already owned by another key. Roll the forward
+            // insert back, or pk_map keeps pointing at a link the caller is
+            // about to retire.
+            self.pk_map.remove_value(&value);
+            return None;
+        }
         Some(())
     }
 
@@ -91,13 +97,16 @@ where
 
     fn insert_checked_cdc(&self, value: PrimaryKey, link: Link) -> Option<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
         let offset_link = OffsetEqLink(link);
-        let events = TableIndexCdc::insert_checked_cdc(&self.pk_map, value.clone(), link);
-        if let Some(events) = events {
-            self.reverse_pk_map.insert(offset_link, value);
-            Some(events)
-        } else {
-            None
+        let events = TableIndexCdc::insert_checked_cdc(&self.pk_map, value.clone(), link)?;
+        if self.reverse_pk_map.checked_insert(offset_link, value.clone()).is_none() {
+            // Same invariant as `insert_checked`: a link owned by another key
+            // must fail the whole insert instead of silently rebinding the
+            // reverse entry. The forward insert is rolled back; its events are
+            // dropped together with the rollback's, cancelling each other out.
+            let _ = TableIndexCdc::remove_cdc(&self.pk_map, value, link);
+            return None;
         }
+        Some(events)
     }
 
     fn remove_cdc(
@@ -213,6 +222,55 @@ mod tests {
 
         assert_eq!(result, None);
         assert_eq!(index.pk_map.get(&42).map(|v| v.get().value.0), Some(link1));
+    }
+
+    #[test]
+    fn test_insert_checked_rolls_back_forward_entry_when_link_is_taken() {
+        let index = TestPrimaryIndex::default();
+        let link = Link {
+            page_id: PageId::from(1),
+            offset: 100,
+            length: 50,
+        };
+
+        index.insert_checked(1, link).unwrap();
+        // A second key claiming the same physical link must fail atomically.
+        let result = index.insert_checked(2, link);
+
+        assert_eq!(result, None);
+        assert!(
+            index.pk_map.get(&2).is_none(),
+            "forward entry must be rolled back when the reverse insert fails"
+        );
+        assert_eq!(
+            index.reverse_pk_map.get(&OffsetEqLink(link)).map(|v| v.get().value),
+            Some(1),
+            "reverse entry must keep its original owner"
+        );
+    }
+
+    #[test]
+    fn test_insert_checked_cdc_rolls_back_forward_entry_when_link_is_taken() {
+        let index = TestPrimaryIndex::default();
+        let link = Link {
+            page_id: PageId::from(1),
+            offset: 100,
+            length: 50,
+        };
+
+        index.insert_checked_cdc(1, link).unwrap();
+        let events = index.insert_checked_cdc(2, link);
+
+        assert!(events.is_none());
+        assert!(
+            index.pk_map.get(&2).is_none(),
+            "forward entry must be rolled back when the reverse insert fails"
+        );
+        assert_eq!(
+            index.reverse_pk_map.get(&OffsetEqLink(link)).map(|v| v.get().value),
+            Some(1),
+            "reverse entry must not be silently rebound"
+        );
     }
 
     #[test]
