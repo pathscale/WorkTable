@@ -21,8 +21,8 @@ use crate::persistence::OperationType;
 use crate::prelude::OperationId;
 use crate::util::OffsetEqLink;
 use crate::{
-    ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMultiMap, PersistentArtIndex, PersistentWtiIndex, UniqueIndex,
-    UpstreamIndexMap,
+    ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, IndexMultiMap, PersistentArtIndex,
+    PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
 };
 use crate::{IndexMap, impl_memstat_zero};
 
@@ -122,6 +122,20 @@ impl<K, V> MemStat for ArcticIndex<K, V>
 where
     K: ArcticKey,
     V: Clone + Debug + Send + Sync + 'static,
+{
+    fn heap_size(&self) -> usize {
+        self.len() * std::mem::size_of::<(K, V)>()
+    }
+
+    fn used_size(&self) -> usize {
+        self.len() * std::mem::size_of::<(K, V)>()
+    }
+}
+
+impl<K, V> MemStat for ArcticMultiIndex<K, V>
+where
+    K: ArcticKey,
+    V: Clone + Debug + PartialEq + Send + Sync + 'static,
 {
     fn heap_size(&self) -> usize {
         self.len() * std::mem::size_of::<(K, V)>()

@@ -10,8 +10,8 @@ use vanilla_indexset::core::pair::Pair as VanillaPair;
 
 use crate::util::OffsetEqLink;
 use crate::{
-    ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, PersistentArcticIndex,
-    PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
+    ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap,
+    PersistentArcticIndex, PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
 };
 
 mod cdc;
@@ -147,6 +147,30 @@ where
 
     fn remove(&self, value: &T, _: Link) -> Option<(T, Link)> {
         unique_remove(self, value)
+    }
+}
+
+/// Multiset semantics, mirroring the WorkTablesIndex multimap: inserting is
+/// always possible for a non-unique index, so `insert` reports no displaced
+/// link and `insert_checked` always succeeds. `remove` drops exactly the
+/// requested `(key, link)` pair.
+impl<T> TableIndex<T> for ArcticMultiIndex<T, OffsetEqLink>
+where
+    T: ArcticKey + Eq + Hash,
+{
+    fn insert(&self, value: T, link: Link) -> Option<Link> {
+        self.insert_pair(value, OffsetEqLink(link));
+        None
+    }
+
+    fn insert_checked(&self, value: T, link: Link) -> Option<()> {
+        self.insert_pair(value, OffsetEqLink(link));
+        Some(())
+    }
+
+    fn remove(&self, value: &T, link: Link) -> Option<(T, Link)> {
+        self.remove_pair(value, &OffsetEqLink(link))
+            .map(|removed| (value.clone(), removed.0))
     }
 }
 

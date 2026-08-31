@@ -1,4 +1,5 @@
 mod arctic;
+mod arctic_multi;
 mod available_index;
 mod congee;
 mod multipair;
@@ -11,6 +12,7 @@ mod unique;
 mod unsized_node;
 
 pub use arctic::{ArcticIndex, ArcticKey};
+pub use arctic_multi::ArcticMultiIndex;
 pub use available_index::AvailableIndex;
 pub use congee::{CongeeIndex, CongeeKey};
 pub use indexset::concurrent::map::BTreeMap as IndexMap;
