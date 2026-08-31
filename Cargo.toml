@@ -38,6 +38,9 @@ arctic = { package = "arctic-wt", version = "0.1.6" }
 congee = { package = "congee-wt", version = "0.4.3" }
 convert_case = "0.6.0"
 crc32fast = "1.5.0"
+# Already in the dependency graph transitively (indexset's concurrent
+# structures); used directly for read-side grace periods.
+crossbeam-epoch = "0.9.18"
 data_bucket = "=0.5.3"
 # data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
 # data_bucket = { path = "../DataBucket", version = "0.3.14" }

@@ -1,3 +1,4 @@
+pub(crate) mod epoch;
 mod offset_eq_link;
 mod optimized_vec;
 mod ordered_float;
