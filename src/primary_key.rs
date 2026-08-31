@@ -25,7 +25,15 @@ macro_rules! atomic_primary_key {
             T: From<$ty>,
         {
             fn next(&self) -> T {
-                self.fetch_add(1, Ordering::AcqRel).into()
+                let previous = self.fetch_add(1, Ordering::AcqRel);
+                // A wrapped counter would silently hand out duplicate primary
+                // keys; exhausting the key space must be loud instead.
+                assert!(
+                    previous != <$ty>::MAX,
+                    "autoincrement primary key space exhausted: {} overflowed",
+                    stringify!($ty),
+                );
+                previous.into()
             }
         }
 
@@ -59,4 +67,26 @@ impl PrimaryKeyGeneratorState for () {
     fn get_state(&self) -> Self::State {}
 
     fn from_state((): Self::State) -> Self {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generator_counts_up_from_its_state() {
+        let generator = AtomicU8::from_state(250);
+        let next: u8 = generator.next();
+        assert_eq!(next, 250);
+        assert_eq!(generator.get_state(), 251);
+    }
+
+    #[test]
+    #[should_panic(expected = "primary key space exhausted")]
+    fn an_exhausted_generator_panics_rather_than_wrapping() {
+        let generator = AtomicU8::from_state(u8::MAX);
+        // Wrapping here would silently restart at 0 and hand out duplicate
+        // primary keys; the contract is a loud failure instead.
+        let _: u8 = generator.next();
+    }
 }
