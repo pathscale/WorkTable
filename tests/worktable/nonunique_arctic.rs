@@ -233,3 +233,159 @@ fn system_info_reports_the_non_unique_arctic_index() {
     assert!(matches!(source.index_type, IndexKind::NonUnique));
     assert_eq!(source.key_count, 5);
 }
+
+mod persisted {
+    use std::sync::Arc;
+
+    use worktable::prelude::*;
+    use worktable::worktable;
+
+    use crate::remove_dir_if_exists;
+
+    worktable! {
+        name: PersistedAdjacency,
+        persist: true,
+        columns: {
+            id: u64 primary_key autoincrement,
+            source_hash: u128,
+            weight: u64,
+        },
+        indexes: {
+            source_idx: source_hash using arctic,
+        },
+    }
+
+    fn row(table: &PersistedAdjacencyWorkTable, source_hash: u128, weight: u64) -> PersistedAdjacencyRow {
+        PersistedAdjacencyRow {
+            id: table.get_next_pk().into(),
+            source_hash,
+            weight,
+        }
+    }
+
+    #[tokio::test]
+    async fn non_unique_arctic_survives_reload() {
+        const ROOT: &str = "tests/data/nonunique_arctic_reload";
+        remove_dir_if_exists(ROOT.to_string()).await;
+
+        let config = DiskConfig::new_with_table_name(
+            ROOT,
+            PersistedAdjacencyWorkTable::name_snake_case(),
+            PersistedAdjacencyWorkTable::version(),
+        );
+        let engine = PersistedAdjacencyPersistenceEngine::new(config.clone()).await.unwrap();
+        let table = PersistedAdjacencyWorkTable::load(engine).await.unwrap();
+
+        // Multiple links per key, including full-width u128 keys.
+        let hot = u128::MAX - 3;
+        let mut deleted_pk = None;
+        for n in 0..30u64 {
+            let pk = table.insert(row(&table, hot, n)).unwrap();
+            if n == 7 {
+                deleted_pk = Some(pk);
+            }
+        }
+        table.insert(row(&table, 5, 100)).unwrap();
+        let moved_pk = table.insert(row(&table, 5, 101)).unwrap();
+
+        // Delete one row under the hot key, and move one row between keys.
+        table.delete(deleted_pk.unwrap()).await.unwrap();
+        let moved = PersistedAdjacencyRow {
+            id: moved_pk.0,
+            source_hash: 6,
+            weight: 101,
+        };
+        table.update(moved.clone()).await.unwrap();
+
+        table.wait_for_ops().await.unwrap();
+        drop(table);
+
+        let engine = PersistedAdjacencyPersistenceEngine::new(config.clone()).await.unwrap();
+        let table = PersistedAdjacencyWorkTable::load(engine).await.unwrap();
+
+        let hot_rows = table.select_by_source_hash(hot).execute().unwrap();
+        assert_eq!(hot_rows.len(), 29);
+        assert!(hot_rows.iter().all(|r| r.source_hash == hot && r.weight != 7));
+        assert_eq!(table.select_by_source_hash(5).execute().unwrap().len(), 1);
+        let moved_rows = table.select_by_source_hash(6).execute().unwrap();
+        assert_eq!(moved_rows, vec![moved]);
+
+        // The reloaded index keeps accepting writes that survive another cycle.
+        table.insert(row(&table, hot, 500)).unwrap();
+        table.wait_for_ops().await.unwrap();
+        drop(table);
+
+        let engine = PersistedAdjacencyPersistenceEngine::new(config).await.unwrap();
+        let table = PersistedAdjacencyWorkTable::load(engine).await.unwrap();
+        assert_eq!(table.select_by_source_hash(hot).execute().unwrap().len(), 30);
+        table.wait_for_ops().await.unwrap();
+        drop(table);
+
+        remove_dir_if_exists(ROOT.to_string()).await;
+    }
+
+    #[tokio::test]
+    async fn non_unique_arctic_recovers_concurrent_shared_key_writes() {
+        use tokio::sync::Barrier;
+
+        const ROOT: &str = "tests/data/nonunique_arctic_concurrent";
+        const WORKERS: u64 = 8;
+        const ROWS_PER_WORKER: u64 = 50;
+        remove_dir_if_exists(ROOT.to_string()).await;
+
+        let config = DiskConfig::new_with_table_name(
+            ROOT,
+            PersistedAdjacencyWorkTable::name_snake_case(),
+            PersistedAdjacencyWorkTable::version(),
+        );
+        let engine = PersistedAdjacencyPersistenceEngine::new(config.clone()).await.unwrap();
+        let table = Arc::new(PersistedAdjacencyWorkTable::load(engine).await.unwrap());
+
+        let barrier = Arc::new(Barrier::new(WORKERS as usize + 1));
+        let mut workers = Vec::new();
+        for worker in 0..WORKERS {
+            let table = Arc::clone(&table);
+            let barrier = Arc::clone(&barrier);
+            workers.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for n in 0..ROWS_PER_WORKER {
+                    // Every worker hammers the same four keys.
+                    let key = (n % 4) as u128;
+                    let pk = table
+                        .insert(PersistedAdjacencyRow {
+                            id: table.get_next_pk().into(),
+                            source_hash: key,
+                            weight: worker * ROWS_PER_WORKER + n,
+                        })
+                        .unwrap();
+                    if n % 5 == 4 {
+                        table.delete(pk).await.unwrap();
+                    }
+                }
+            }));
+        }
+        barrier.wait().await;
+        for worker in workers {
+            worker.await.unwrap();
+        }
+
+        let mut expected: Vec<usize> = Vec::new();
+        for key in 0..4u128 {
+            expected.push(table.select_by_source_hash(key).execute().unwrap().len());
+        }
+        table.wait_for_ops().await.unwrap();
+        drop(table);
+
+        let engine = PersistedAdjacencyPersistenceEngine::new(config).await.unwrap();
+        let table = PersistedAdjacencyWorkTable::load(engine).await.unwrap();
+        for key in 0..4u128 {
+            let rows = table.select_by_source_hash(key).execute().unwrap();
+            assert_eq!(rows.len(), expected[key as usize]);
+            assert!(rows.iter().all(|r| r.source_hash == key));
+        }
+        table.wait_for_ops().await.unwrap();
+        drop(table);
+
+        remove_dir_if_exists(ROOT.to_string()).await;
+    }
+}
