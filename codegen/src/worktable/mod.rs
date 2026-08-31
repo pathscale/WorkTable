@@ -172,19 +172,36 @@ fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::
         }
     }
 
-    if let Some(index) = columns
-        .indexes
-        .values()
-        .find(|index| !index.is_unique && index.backend != IndexBackend::WorktablesIndex)
-    {
-        return Err(syn::Error::new(
-            index.name.span(),
-            format!(
-                "non-unique index `{}` cannot use `{}`; non-unique indexes currently require `worktables_index`",
-                index.name,
-                index.backend.name()
-            ),
-        ));
+    for index in columns.indexes.values().filter(|index| !index.is_unique) {
+        match index.backend {
+            IndexBackend::WorktablesIndex => {}
+            IndexBackend::Arctic => {
+                if persistence.is_persisted() {
+                    return Err(syn::Error::new(
+                        index.name.span(),
+                        format!(
+                            "non-unique index `{}` cannot combine `arctic` with `persist: true`: the \
+                             on-disk space layer and CDC event model only cover `worktables_index` \
+                             non-unique indexes so far (see \
+                             docs/nonunique-arctic-persistence-design.md). Use `worktables_index` \
+                             for this index, or `persist: false` for the table",
+                            index.name
+                        ),
+                    ));
+                }
+            }
+            IndexBackend::Indexset | IndexBackend::Congee => {
+                return Err(syn::Error::new(
+                    index.name.span(),
+                    format!(
+                        "non-unique index `{}` cannot use `{}`; non-unique indexes currently require \
+                         `worktables_index` or `arctic`",
+                        index.name,
+                        index.backend.name()
+                    ),
+                ));
+            }
+        }
     }
 
     for (column, index) in &columns.indexes {
@@ -442,10 +459,31 @@ mod tests {
     }
 
     #[test]
-    fn memory_backend_rejects_non_unique_indexes() {
+    fn memory_tables_accept_non_unique_arctic_indexes() {
+        for key_type in ["u16", "u32", "u64", "u128"] {
+            let key_type: proc_macro2::TokenStream = key_type.parse().unwrap();
+            let output = expand(quote! {
+                name: NonUniqueArctic,
+                persist: false,
+                columns: {
+                    id: u64 primary_key,
+                    value: #key_type,
+                },
+                indexes: {
+                    value_idx: value using arctic,
+                },
+            });
+
+            assert!(output.is_ok(), "{:?}", output.err());
+            assert!(output.unwrap().to_string().contains("ArcticMultiIndex"));
+        }
+    }
+
+    #[test]
+    fn persisted_tables_reject_non_unique_arctic_indexes() {
         let error = expand(quote! {
-            name: NonUniqueArctic,
-            persist: false,
+            name: PersistedNonUniqueArctic,
+            persist: true,
             columns: {
                 id: u64 primary_key,
                 value: u64,
@@ -456,7 +494,50 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains("non-unique indexes currently require"));
+        assert!(error.to_string().contains("cannot combine `arctic` with `persist: true`"));
+    }
+
+    #[test]
+    fn non_unique_arctic_rejects_unsupported_key_types() {
+        let error = expand(quote! {
+            name: StringNonUniqueArctic,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                name: String,
+            },
+            indexes: {
+                name_idx: name using arctic,
+            },
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("supported types: u16, u32, u64, u128"));
+    }
+
+    #[test]
+    fn non_unique_indexes_reject_other_explicit_backends() {
+        for backend in ["congee", "indexset"] {
+            let backend: proc_macro2::TokenStream = backend.parse().unwrap();
+            let error = expand(quote! {
+                name: NonUniqueOther,
+                persist: false,
+                columns: {
+                    id: u64 primary_key,
+                    value: u64,
+                },
+                indexes: {
+                    value_idx: value using #backend,
+                },
+            })
+            .unwrap_err();
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("non-unique indexes currently require `worktables_index` or `arctic`")
+            );
+        }
     }
 
     #[test]
