@@ -319,7 +319,7 @@ mod tests {
         }
         assert_eq!(index.remove_pair(&3, &2), Some(2));
         assert_eq!(
-            index.get(&3).into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
+            index.get(&3).map(|(_, v)| v).collect::<Vec<_>>(),
             vec![0, 1, 3, 4]
         );
     }
