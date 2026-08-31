@@ -97,9 +97,28 @@ impl InMemoryGenerator {
             }
         } else {
             quote! {
+                // Index removals deliberately run BEFORE the data delete:
+                // insert publishes data first and indexes second, so tearing
+                // down in the reverse order guarantees no index entry ever
+                // resolves to freed (or reused) row storage. A failed data
+                // delete is compensated by restoring the index entries.
                 self.0.indexes.delete_row(row, link)?;
                 self.0.primary_index.remove(&pk, link);
-                self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
+                if let core::result::Result::Err(e) = self.0.data.delete(link) {
+                    // The delete failed before the row was ghosted, so its
+                    // bytes are normally still readable: republish the index
+                    // entries instead of leaving a live row unreachable
+                    // through every index.
+                    if let core::result::Result::Ok(row) = self.0.data.select_non_ghosted(link) {
+                        self.0.primary_index.insert(pk.clone(), link);
+                        // A partially failed republish (a unique key claimed
+                        // concurrently in the removal window) cannot be
+                        // repaired here; the row stays reachable by primary
+                        // key either way.
+                        let _ = self.0.indexes.save_row(row, link);
+                    }
+                    return Err(WorkTableError::PagesError(e));
+                }
             }
         };
         if is_locked {

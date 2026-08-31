@@ -76,12 +76,71 @@ impl PersistGenerator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_ident = name_generator.get_primary_key_type_ident();
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
+        let row_ident = name_generator.get_row_type_ident();
+        let avt_type_ident = name_generator.get_available_type_ident();
+        let available_index_ident = name_generator.get_available_indexes_ident();
 
         let process = quote! {
-            let (secondary_keys_events, res) = self.0.indexes.delete_row_cdc(row, link);
+            // Index removals deliberately run BEFORE the data delete: insert
+            // publishes data first and indexes second, so tearing down in the
+            // reverse order guarantees no index entry ever resolves to freed
+            // (or reused) row storage. A failed data delete is therefore
+            // compensated by restoring the index entries, not avoided by
+            // reordering, which would expose that stale-entry window to every
+            // concurrent reader on every delete.
+            // Fully qualified: the CDC trait's AvailableTypes parameter is
+            // absent from delete_row_cdc's signature, and the error path below
+            // calls a method on `secondary_keys_events`, which needs the
+            // receiver type resolved immediately rather than through the later
+            // operation annotation.
+            let (secondary_keys_events, res) =
+                TableSecondaryIndexCdc::<#row_ident, #avt_type_ident, #secondary_events_ident, #available_index_ident>::delete_row_cdc(
+                    self.0.indexes.as_ref(),
+                    row,
+                    link,
+                );
             res?;
             let (_, primary_key_events) = self.0.primary_index.remove_cdc(pk.clone(), link);
-            self.0.data.delete(link).map_err(WorkTableError::PagesError)?;
+            if let core::result::Result::Err(e) = self.0.data.delete(link) {
+                let mut secondary_keys_events = secondary_keys_events;
+                let mut primary_key_events = primary_key_events;
+                // The delete failed before the row was ghosted, so its bytes
+                // are normally still readable: republish every index entry
+                // instead of leaving a live row unreachable through every
+                // index. If even the read-back fails the entries stay
+                // removed, which is exactly what the acknowledge below
+                // reports.
+                if let core::result::Result::Ok(row) = self.0.data.select_non_ghosted(link) {
+                    let (_, restore_pk_events) = self.0.primary_index.insert_cdc(pk.clone(), link);
+                    primary_key_events.extend(restore_pk_events);
+                    // Fully qualified call: save_row_cdc's signature never
+                    // mentions AvailableTypes, so next to the blanket
+                    // `()`-events impl plain method syntax cannot infer the
+                    // trait's type parameters.
+                    let (restore_secondary_events, _restore_res) =
+                        TableSecondaryIndexCdc::<#row_ident, #avt_type_ident, #secondary_events_ident, #available_index_ident>::save_row_cdc(
+                            self.0.indexes.as_ref(),
+                            row,
+                            link,
+                        );
+                    secondary_keys_events.extend(restore_secondary_events);
+                }
+                // Acknowledge every CDC event that DID happen (removals plus
+                // restores) so the persisted index stream keeps replaying the
+                // in-memory churn instead of silently diverging until
+                // restart.
+                let ack_op: Operation<
+                    <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                    #pk_ident,
+                    #secondary_events_ident
+                > = Operation::Acknowledge(AcknowledgeOperation {
+                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                    primary_key_events,
+                    secondary_keys_events,
+                });
+                self.1.apply_operation(ack_op)?;
+                return Err(WorkTableError::PagesError(e));
+            }
             let mut op: Operation<
                 <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                 #pk_ident,
@@ -256,5 +315,59 @@ impl PersistGenerator {
                 core::result::Result::Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::{Ident, Span};
+    use quote::quote;
+
+    use crate::common::Parser;
+    use crate::generators::persist::PersistGenerator;
+
+    /// A data-delete failure is not forcible through the public API (no fail
+    /// point exists in DataPages and the link was just resolved under the
+    /// held row lock), so the compensation wiring is pinned on the generated
+    /// tokens: index teardown stays BEFORE the data delete (the reverse of
+    /// insert's publication order), and the failure path must republish the
+    /// index entries and acknowledge the CDC churn.
+    #[test]
+    fn delete_data_failure_restores_indexes_and_acknowledges() {
+        let mut parser = Parser::new(quote! {
+            columns: {
+                id: u64 primary_key,
+                code: u64,
+            }
+        });
+        let mut columns = parser.parse_columns().unwrap();
+        let mut parser = Parser::new(quote! {
+            indexes: {
+                code_idx: code,
+            }
+        });
+        columns.indexes = parser.parse_indexes().unwrap();
+
+        let mut generator = PersistGenerator::new(Ident::new("DeleteProbe", Span::call_site()), columns, 1);
+        let emitted = generator.gen_query_delete_impl().unwrap().to_string();
+
+        // Teardown order is unchanged: secondary removal, primary removal,
+        // then the data delete.
+        let secondary = emitted.find("delete_row_cdc").expect("secondary removal emitted");
+        let primary = emitted.find("remove_cdc (pk . clone () , link)").expect("primary removal emitted");
+        let data = emitted.find(". data . delete (link)").expect("data delete emitted");
+        assert!(secondary < primary && primary < data, "teardown order broken:\n{emitted}");
+
+        // The failure path republishes both index layers and acknowledges
+        // everything that happened.
+        assert!(
+            emitted.contains("insert_cdc (pk . clone () , link)"),
+            "primary-key restore missing:\n{emitted}"
+        );
+        assert!(emitted.contains("save_row_cdc"), "secondary restore missing:\n{emitted}");
+        assert!(
+            emitted.contains("Operation :: Acknowledge"),
+            "acknowledge op missing:\n{emitted}"
+        );
     }
 }
