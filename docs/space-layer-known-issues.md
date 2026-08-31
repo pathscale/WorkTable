@@ -6,31 +6,13 @@ here rather than fixed. Durability semantics in general are covered by
 concrete space-layer mechanisms behind them plus issues pinned inside the
 external `data_bucket = "=0.5.2"` dependency.
 
-## 1. Sized batch path panics on transitional TOC identities
+## 1. Sized batch path panics on transitional TOC identities (fixed)
 
-`SpaceIndex::process_change_event_batch` (src/persistence/space/index/mod.rs)
-resolves every `InsertAt`/`RemoveAt`/`SplitNode` event's page through the table
-of contents by the event's `max_value` identity and panics when the lookup
-misses (`unwrap_or_else(|| panic!(...))`, `else { panic!(...) }`).
-
-Within one CDC batch a page's canonical identity can change before later
-events that still carry the older identity are applied:
-
-- a `SplitNode` re-keys the left page to its post-split maximum and registers
-  the right page under the pre-split maximum, while later events generated
-  before the TOC was re-keyed (or referring to the right page after a
-  subsequent remove temporarily lowered its maximum) still name a historical
-  maximum;
-- a `RemoveAt` of a node's maximum re-keys the page, and a following event in
-  the same batch can still name the pre-remove maximum.
-
-The unsized path grew the `PageAliases` transitional-identity machinery
-(src/persistence/space/index/unsized_.rs) precisely for this: it maps up to two
-historical identities per buffered page back to the buffered page and returns
-typed errors instead of panicking. The sized path has none of it, so a batch
-whose events straddle an identity change kills the persistence worker with a
-panic instead of applying the batch or surfacing an error. Fixing it means
-porting `PageAliases` (or extracting it) into the sized batch loop.
+Fixed: `SpaceIndex::process_change_event_batch` now shares the `PageAliases`
+transitional-identity machinery with the unsized path
+(src/persistence/space/index/page_aliases.rs). Batch events that name a
+historical page maximum (after a mid-batch split or max-remove re-key)
+resolve through the aliases, and every former panic is a typed error.
 
 ## 2. Table of contents persisted before the index pages it references
 

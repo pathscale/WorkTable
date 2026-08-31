@@ -1,3 +1,4 @@
+mod page_aliases;
 mod reconstruct;
 mod table_of_contents;
 mod unsized_;
@@ -69,6 +70,26 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    /// Resolves a batch event's page identity to a page id: first through the
+    /// table of contents (canonical identity), then through the batch-scoped
+    /// aliases (historical identities whose page was re-keyed earlier in the
+    /// same batch). An alias hit also returns the page's current canonical
+    /// identity so callers never have to predict page mutation semantics.
+    fn resolve_batch_page(
+        &self,
+        aliases: &page_aliases::PageAliases<T>,
+        event_page_key: &(T, Link),
+    ) -> Option<(PageId, Option<(T, Link)>)> {
+        self.table_of_contents
+            .get(event_page_key)
+            .map(|page_id| (page_id, None))
+            .or_else(|| {
+                aliases
+                    .resolve(event_page_key)
+                    .map(|(page_id, current_key)| (page_id, Some(current_key.clone())))
+            })
+    }
+
     pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId, version: u32) -> eyre::Result<Self> {
         let mut index_file = if !Path::new(index_file_path.as_ref()).exists() {
             let name = index_file_path
@@ -395,15 +416,33 @@ where
 
     async fn process_change_event_batch(&mut self, events: BatchChangeEvent<T>) -> eyre::Result<()> {
         let mut pages: HashMap<PageId, _> = HashMap::new();
-        for ev in &events {
+        // A split can change a page's maximum and therefore its table-of-
+        // contents key while later events in the same CDC batch still refer
+        // to the pre-split maximum. Keep those historical identities scoped
+        // to this batch so the event reaches the page it was generated from.
+        // At most two transitional identities per buffered page: the event's
+        // identity and the page's actual pre-apply identity. Keeping both is
+        // required when a split is followed by a remove/insert pair that still
+        // names the pre-split maximum. Memory is bounded by pages, not events.
+        let mut page_aliases = page_aliases::PageAliases::default();
+        for ev in events {
             match &ev {
                 ChangeEvent::InsertAt { max_value, .. } | ChangeEvent::RemoveAt { max_value, .. } => {
-                    let page_id = &(max_value.key.clone(), max_value.value);
-
-                    let page_index = self
-                        .table_of_contents
-                        .get(page_id)
-                        .unwrap_or_else(|| panic!("page {page_id:?} should be available in table of contents"));
+                    let event_page_key = (max_value.key.clone(), max_value.value);
+                    // A direct TOC hit means the event key is the page's
+                    // canonical pre-event identity. An alias hit carries the
+                    // current canonical identity captured when the alias was
+                    // installed. This lets us compare the actual post-apply
+                    // identity without predicting DataBucket's mutation rules.
+                    let Some((page_index, aliased_page_key)) = self.resolve_batch_page(&page_aliases, &event_page_key)
+                    else {
+                        return Err(eyre!(
+                            "index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                            self.table_of_contents.pages.len(),
+                            pages.len(),
+                            page_aliases.len()
+                        ));
+                    };
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
                         page
@@ -415,19 +454,35 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
+                    let canonical_page_key = aliased_page_key.as_ref().unwrap_or(&event_page_key);
                     page_to_update.inner.apply_change_event(ev.clone())?;
-                    if &(
-                        page_to_update.inner.node_id.key.clone(),
-                        page_to_update.inner.node_id.link,
-                    ) != page_id
+                    if page_to_update.inner.node_id.key != canonical_page_key.0
+                        || page_to_update.inner.node_id.link != canonical_page_key.1
                     {
-                        self.table_of_contents.update_key(
-                            page_id,
-                            (
-                                page_to_update.inner.node_id.key.clone(),
-                                page_to_update.inner.node_id.link,
-                            ),
-                        )?;
+                        let pre_event_page_key = aliased_page_key.unwrap_or_else(|| event_page_key.clone());
+                        let updated_page_key = (
+                            page_to_update.inner.node_id.key.clone(),
+                            page_to_update.inner.node_id.link,
+                        );
+                        // The TOC owns the buffered page's actual identity.
+                        // `event_page_key` may be a historical alias, so using
+                        // it as the canonical update target can remove or
+                        // rewrite the wrong segment.
+                        if !self
+                            .table_of_contents
+                            .try_update_key(&pre_event_page_key, updated_page_key.clone())?
+                        {
+                            return Err(eyre!(
+                                "index page identity is absent from the table of contents (page={page_index:?}, toc_segments={})",
+                                self.table_of_contents.pages.len()
+                            ));
+                        }
+                        if self.table_of_contents.get(&updated_page_key) != Some(page_index) {
+                            return Err(eyre!(
+                                "index page identity update did not become canonical (page={page_index:?})"
+                            ));
+                        }
+                        page_aliases.replace(page_index, updated_page_key, event_page_key, pre_event_page_key)?;
                     }
                 }
                 ChangeEvent::CreateNode { event_id: _, max_value } => {
@@ -460,9 +515,15 @@ where
                     max_value,
                     split_index,
                 } => {
-                    let page_id = &(max_value.key.clone(), max_value.value);
-                    let Some(page_index) = self.table_of_contents.get(page_id) else {
-                        panic!("page should be available in table of contents")
+                    let event_page_key = (max_value.key.clone(), max_value.value);
+                    let Some((page_index, aliased_page_key)) = self.resolve_batch_page(&page_aliases, &event_page_key)
+                    else {
+                        return Err(eyre!(
+                            "index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                            self.table_of_contents.pages.len(),
+                            pages.len(),
+                            page_aliases.len()
+                        ));
                     };
                     let page = pages.get_mut(&page_index);
                     let page_to_update = if let Some(page) = page {
@@ -475,30 +536,53 @@ where
                             .get_mut(&page_index)
                             .expect("should be available as was just inserted before")
                     };
+                    let canonical_page_key = aliased_page_key.as_ref().unwrap_or(&event_page_key);
+                    if page_to_update.inner.node_id.key != canonical_page_key.0
+                        || page_to_update.inner.node_id.link != canonical_page_key.1
+                    {
+                        return Err(eyre!(
+                            "index split found a buffered page with a mismatched identity (page={page_index:?})"
+                        ));
+                    }
+                    let pre_split_page_key = aliased_page_key.unwrap_or_else(|| event_page_key.clone());
                     let splitted_page = page_to_update.inner.split(*split_index);
+
                     let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
                         id
                     } else {
                         self.next_page_id.fetch_add(1, Ordering::Relaxed).into()
                     };
 
-                    self.table_of_contents.update_key(
-                        page_id,
-                        (
-                            page_to_update.inner.node_id.key.clone(),
-                            page_to_update.inner.node_id.link,
-                        ),
-                    )?;
-                    self.table_of_contents.try_insert(
-                        (splitted_page.node_id.key.clone(), splitted_page.node_id.link),
-                        new_page_id,
-                    )?;
+                    let left_page_key = (
+                        page_to_update.inner.node_id.key.clone(),
+                        page_to_update.inner.node_id.link,
+                    );
+                    if !self
+                        .table_of_contents
+                        .try_update_key(&pre_split_page_key, left_page_key)?
+                    {
+                        return Err(eyre!(
+                            "index split identity is absent from the table of contents (page={page_index:?})"
+                        ));
+                    }
+                    let right_page_key = (splitted_page.node_id.key.clone(), splitted_page.node_id.link);
+                    self.table_of_contents.try_insert(right_page_key.clone(), new_page_id)?;
+                    if self.table_of_contents.get(&right_page_key) != Some(new_page_id) {
+                        return Err(eyre!(
+                            "index split identity did not become canonical (page={new_page_id:?})"
+                        ));
+                    }
                     let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
                     let general_page = GeneralPage {
                         inner: splitted_page,
                         header,
                     };
                     pages.insert(new_page_id, general_page);
+                    // The pre-split maximum remains the right page's identity.
+                    // A following remove/insert pair can still name it even
+                    // after the remove temporarily lowers that maximum.
+                    page_aliases.remove_page(page_index);
+                    page_aliases.replace(new_page_id, right_page_key, event_page_key, pre_split_page_key)?;
                 }
             }
         }
