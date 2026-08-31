@@ -38,6 +38,21 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                     "version must be specified before columns/indexes/queries/config",
                 ));
             }
+            // Positional declarations that landed after the blocks began, or in
+            // the wrong relative order, would otherwise die as a bare
+            // "Unexpected identifier" and cost the next person a bisect.
+            "persist" => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "`persist` is positional and must come before `partition_by` and the blocks; the required order is: name, version, persist, partition_by, then columns/indexes/queries/config",
+                ));
+            }
+            "partition_by" => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "`partition_by` is positional and must come after `persist` and before the blocks; the required order is: name, version, persist, partition_by, then columns/indexes/queries/config",
+                ));
+            }
             "attributes" => {
                 return Err(syn::Error::new(
                     ident.span(),
@@ -546,6 +561,81 @@ mod tests {
             error
                 .to_string()
                 .contains("requires a directly named primitive primary-key type; found `String`")
+        );
+    }
+}
+
+#[cfg(test)]
+mod position_tests {
+    use quote::quote;
+
+    use super::expand;
+
+    #[test]
+    fn persisted_partitioned_table_expands() {
+        // Regression: the emitted `partition_or_create` carried a
+        // `where Table: Default` bound on a concrete type, which rustc rejects
+        // as a trivial bound, so `persist: true` + `partition_by` failed to
+        // expand at all. The persisted facade now omits that method.
+        let expanded = expand(quote! {
+            name: SymbolPosting,
+            persist: true,
+            partition_by: generation: u32,
+            columns: { id: u64 primary_key autoincrement, posting_hash: u64, records_blob: String },
+            indexes: { posting_idx: posting_hash unique }
+        })
+        .expect("persist + partition_by must expand")
+        .to_string();
+        assert!(
+            !expanded.contains("partition_or_create"),
+            "a persisted facade must not emit the Default-bound constructor"
+        );
+        assert!(
+            expanded.contains("partition_or_insert_with"),
+            "the closure-based constructor is the persisted entry point"
+        );
+    }
+
+    #[test]
+    fn in_memory_partitioned_table_keeps_partition_or_create() {
+        let expanded = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            columns: { exchange_id: u8 primary_key, bid: f64 }
+        })
+        .expect("in-memory partitioned table must expand")
+        .to_string();
+        assert!(expanded.contains("partition_or_create"));
+    }
+
+    #[test]
+    fn partition_by_before_persist_names_the_required_order() {
+        let error = expand(quote! {
+            name: Wrong,
+            partition_by: generation: u32,
+            persist: true,
+            columns: { id: u64 primary_key, v: u64 }
+        })
+        .expect_err("wrong order must be an error")
+        .to_string();
+        assert!(
+            error.contains("name, version, persist, partition_by"),
+            "the error must name the required order, got: {error}"
+        );
+    }
+
+    #[test]
+    fn partition_by_after_the_blocks_names_the_required_order() {
+        let error = expand(quote! {
+            name: Wrong,
+            columns: { id: u64 primary_key, v: u64 },
+            partition_by: generation: u32,
+        })
+        .expect_err("late partition_by must be an error")
+        .to_string();
+        assert!(
+            error.contains("name, version, persist, partition_by"),
+            "the error must name the required order, got: {error}"
         );
     }
 }
