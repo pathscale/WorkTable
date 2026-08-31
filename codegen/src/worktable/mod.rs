@@ -54,6 +54,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     }
 
     validate_index_backends(&columns, persistence)?;
+    validate_page_size(config.as_ref(), persistence)?;
 
     let mut generated = if persistence.is_persisted() {
         crate::generators::persist::expand(name.clone(), columns, queries, config, version)?
@@ -66,6 +67,35 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     }
 
     Ok(generated)
+}
+
+/// data_bucket's on-disk layer seeks with its own hardcoded `PAGE_SIZE` of
+/// 16384 bytes (`seek_to_page_start`, `seek_by_link`, `persist_page`), while
+/// the generated table threads the user's `page_size` through its page-id and
+/// length arithmetic. Any other value therefore reads and writes the wrong
+/// file offsets as soon as the table persists, silently corrupting it.
+/// In-memory tables never seek a file: for them `page_size` only sizes index
+/// nodes and stays configurable.
+const DATA_BUCKET_PAGE_SIZE: u32 = 16384;
+
+fn validate_page_size(config: Option<&crate::common::model::Config>, persistence: Persistence) -> syn::Result<()> {
+    let Some(config) = config else { return Ok(()) };
+    let Some(page_size) = config.page_size else { return Ok(()) };
+    if persistence.is_persisted() && page_size != DATA_BUCKET_PAGE_SIZE {
+        let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`page_size: {page_size}` cannot be combined with `persist: true`: the on-disk \
+                 layer (data_bucket) hardcodes {DATA_BUCKET_PAGE_SIZE}-byte pages in every file \
+                 seek, so a persisted table with any other page size reads and writes the wrong \
+                 pages and corrupts its files. Remove `page_size` (or set it to \
+                 {DATA_BUCKET_PAGE_SIZE}); custom page sizes remain available for in-memory \
+                 tables, where they only size index nodes"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::Result<()> {
@@ -421,6 +451,58 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("supported types: u16, u32, u64, u128"));
+    }
+
+    #[test]
+    fn persisted_tables_reject_non_default_page_size() {
+        let error = expand(quote! {
+            name: PersistedSmallPages,
+            persist: true,
+            columns: {
+                id: u64 primary_key,
+            },
+            config: {
+                page_size: 8192,
+            }
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot be combined with `persist: true`"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn persisted_tables_accept_the_default_page_size() {
+        expand(quote! {
+            name: PersistedDefaultPages,
+            persist: true,
+            columns: {
+                id: u64 primary_key,
+            },
+            config: {
+                page_size: 16384,
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn in_memory_tables_keep_custom_page_sizes() {
+        expand(quote! {
+            name: InMemorySmallPages,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+            },
+            config: {
+                page_size: 1024,
+            }
+        })
+        .unwrap();
     }
 
     #[test]

@@ -18,8 +18,9 @@ worktable!(
     name: Probe,
     persist: true,
     columns: { id: u64 primary_key autoincrement, v: u64, w: u64 },
-    indexes: { v_idx: v unique using arctic },
-    config: { page_size: 1024 }
+    // page_size is pinned to the default for persisted tables: data_bucket's
+    // on-disk seeks hardcode 16384-byte pages, so other values corrupt files.
+    indexes: { v_idx: v unique using arctic }
 );
 
 const N: usize = 200;

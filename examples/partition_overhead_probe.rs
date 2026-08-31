@@ -140,8 +140,9 @@ worktable!(
     name: V14Persisted,
     persist: true,
     columns: { id: u64 primary_key autoincrement, v: u64, w: u64 },
-    indexes: { v_idx: v unique using arctic },
-    config: { page_size: 1024 }
+    // page_size is pinned to the default for persisted tables: data_bucket's
+    // on-disk seeks hardcode 16384-byte pages, so other values corrupt files.
+    indexes: { v_idx: v unique using arctic }
 );
 
 fn row(label: &str, per: f64, ns: f64, base: Option<f64>) {
@@ -182,7 +183,7 @@ async fn persisted_cost() -> eyre::Result<f64> {
     let per = (live().saturating_sub(before).saturating_sub(vec_bytes)) as f64 / PN as f64
         + std::mem::size_of::<V14PersistedWorkTable>() as f64;
     drop(held);
-    println!("\n  persisted, arctic index, page_size 1024, {PN} instances");
+    println!("\n  persisted, arctic index, default page_size, {PN} instances");
     println!("  {}", "-".repeat(66));
     println!("  {:<28} {per:>9.0} B             {:>9.0} ns", "V14 persist: true", ns);
     std::fs::remove_dir_all(&root).ok();

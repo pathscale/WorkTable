@@ -81,6 +81,7 @@ impl Parser {
 
                     self.try_parse_comma()?;
 
+                    config.page_size_span = Some(value.span());
                     let value = value.to_string();
                     let value = value.replace("_", "");
 
