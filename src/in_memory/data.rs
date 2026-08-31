@@ -106,6 +106,11 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         let length = length as u32;
         let offset = self.free_offset.fetch_add(length, Ordering::AcqRel);
         if offset > DATA_LENGTH as u32 - length {
+            // Roll back this call's own reservation, or free_offset inflates
+            // permanently: it is persisted as the initialized-bytes bound and
+            // fed to used-bytes accounting. Subtracting exactly what was added
+            // is safe under concurrent adds.
+            self.free_offset.fetch_sub(length, Ordering::AcqRel);
             return Err(ExecutionError::PageIsFull {
                 need: length,
                 left: DATA_LENGTH as i64 - offset as i64,
@@ -286,6 +291,9 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         let length = length as u32;
         let offset = self.free_offset.fetch_add(length, Ordering::AcqRel);
         if offset > DATA_LENGTH as u32 - length {
+            // Same rollback as in save_row: undo this call's own reservation
+            // so the persisted initialized-bytes bound stays accurate.
+            self.free_offset.fetch_sub(length, Ordering::AcqRel);
             return Err(ExecutionError::PageIsFull {
                 need: length,
                 left: DATA_LENGTH as i64 - offset as i64,
@@ -411,9 +419,15 @@ mod tests {
         let _ = page.save_row(&row).unwrap();
 
         let new_row = TestRow { a: 20, b: 20 };
+        let offset_before = page.free_offset.load(Ordering::Acquire);
         let res = page.save_row(&new_row);
 
         assert!(matches!(res, Err(ExecutionError::PageIsFull { .. })));
+        assert_eq!(
+            page.free_offset.load(Ordering::Acquire),
+            offset_before,
+            "a failed save must roll back its free_offset reservation"
+        );
     }
 
     #[test]
@@ -654,8 +668,14 @@ mod tests {
         let _ = page.save_row(&row).unwrap();
 
         let data = vec![0u8; 16];
+        let offset_before = page.free_offset.load(Ordering::Acquire);
         let result = page.save_raw_row(&data);
         assert!(matches!(result, Err(ExecutionError::PageIsFull { .. })));
+        assert_eq!(
+            page.free_offset.load(Ordering::Acquire),
+            offset_before,
+            "a failed raw save must roll back its free_offset reservation"
+        );
     }
 
     #[test]
