@@ -1274,6 +1274,110 @@ mod tests {
         assert_eq!(pages.select_non_ghosted(reused_link), Ok(TestRow { a: 2, b: 2 }));
     }
 
+    /// A helper thread that holds (or releases) one `ReadGuard` on command,
+    /// so a test can interleave reader intervals across threads. One thread
+    /// cannot model overlapping readers: nested epoch pins keep the thread's
+    /// participant at its first epoch.
+    struct RemoteReader {
+        commands: mpsc::Sender<bool>,
+        done: mpsc::Receiver<()>,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl RemoteReader {
+        fn spawn(pages: Arc<DataPages<TestRow>>) -> Self {
+            let (commands, command_rx) = mpsc::channel::<bool>();
+            let (done_tx, done) = mpsc::channel();
+            let thread = thread::spawn(move || {
+                let mut guard = None;
+                while let Ok(pin) = command_rx.recv() {
+                    drop(guard.take());
+                    if pin {
+                        guard = Some(pages.read_guard());
+                    }
+                    done_tx.send(()).unwrap();
+                }
+                drop(guard);
+            });
+            Self {
+                commands,
+                done,
+                thread: Some(thread),
+            }
+        }
+
+        fn pin(&self) {
+            self.commands.send(true).unwrap();
+            self.done.recv().unwrap();
+        }
+
+        fn unpin(&self) {
+            self.commands.send(false).unwrap();
+            self.done.recv().unwrap();
+        }
+    }
+
+    impl Drop for RemoteReader {
+        fn drop(&mut self) {
+            let (disconnected, _rx) = mpsc::channel();
+            let _ = std::mem::replace(&mut self.commands, disconnected);
+            if let Some(thread) = self.thread.take() {
+                thread.join().unwrap();
+            }
+        }
+    }
+
+    /// The scenario the retired old scheme could never reclaim in: readers
+    /// keep overlapping hand-over-hand, so there is no instant with zero
+    /// active readers, yet every individual reader is short-lived. The old
+    /// global-counter scheme required a zero-reader instant and would leave
+    /// the retired link queued forever (this assertion fails against it);
+    /// epochs only need each reader that predates the retirement to finish.
+    #[test]
+    fn reclamation_progresses_under_continuous_reader_overlap() {
+        let pages = Arc::new(DataPages::<TestRow>::new());
+        let link = pages.insert(TestRow { a: 1, b: 1 }).unwrap();
+        unsafe {
+            pages.with_mut_ref(link, |row| row.unghost()).unwrap();
+        }
+
+        let first = RemoteReader::spawn(pages.clone());
+        let second = RemoteReader::spawn(pages.clone());
+
+        // Retire the link while `first` is mid-read.
+        first.pin();
+        pages.delete(link).unwrap();
+        assert!(
+            !pages.get_empty_links().contains(&link),
+            "the retired link must stay unrecyclable while a reader from before \
+             the retirement is active"
+        );
+
+        // Hand over twice; at every instant at least one reader is active.
+        second.pin();
+        first.unpin();
+        pages.reclaim_retired();
+        first.pin();
+        second.unpin();
+
+        for _ in 0..8 {
+            pages.reclaim_retired();
+            if pages.get_empty_links().contains(&link) {
+                break;
+            }
+        }
+        assert!(
+            pages.get_empty_links().contains(&link),
+            "reclamation must progress although readers never stopped overlapping"
+        );
+
+        // The recycled capacity is really usable mid-overlap: the next insert
+        // reuses the slot.
+        let reused = pages.insert(TestRow { a: 2, b: 2 }).unwrap();
+        assert_eq!(reused, link);
+        first.unpin();
+    }
+
     #[test]
     fn read_grace_period_prevents_link_aba() {
         let pages = DataPages::<TestRow>::new();
