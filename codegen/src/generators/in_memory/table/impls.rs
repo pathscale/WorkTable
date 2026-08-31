@@ -312,6 +312,16 @@ impl InMemoryGenerator {
             pub fn system_info(&self) -> SystemInfo {
                 self.0.system_info()
             }
+
+            /// Rows currently in the table, without building a `SystemInfo`.
+            pub fn row_count(&self) -> usize {
+                self.0.row_count()
+            }
+
+            /// Row bytes plus index bytes, without building a `SystemInfo`.
+            pub fn used_bytes(&self) -> u64 {
+                self.0.used_bytes()
+            }
         }
     }
 
