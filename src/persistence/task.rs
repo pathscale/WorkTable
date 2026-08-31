@@ -332,11 +332,19 @@ where
                             }
                         }
                     }
-                    // And if we found some blocker, we need to remove all ops after blocking op.
+                    // A blocker was found: keep only operations *before* it.
+                    // They are complete within the collected page set and can
+                    // be applied now; the blocker and everything after it stay
+                    // queued for the next collection cycle. Keeping the later
+                    // operations instead (as this filter previously did with
+                    // `>=`) applies a stream whose earlier event ids were
+                    // dropped, which the event-gap validation then defers
+                    // forever, failing the persistence worker after its
+                    // attempt budget.
                     let ops_set_to_extend = if let Some(block_op_id) = block_op_id {
                         ops_set_to_extend
                             .into_iter()
-                            .filter(|op_id| *op_id >= block_op_id)
+                            .filter(|op_id| *op_id < block_op_id)
                             .collect()
                     } else {
                         ops_set_to_extend
@@ -552,6 +560,10 @@ mod lifecycle_tests {
     }
 
     fn multi_insert_operation(id: u128, offset: u32, byte: u8) -> Operation<(), u64, TestEvents> {
+        multi_insert_operation_on(1, id, offset, byte)
+    }
+
+    fn multi_insert_operation_on(page: u32, id: u128, offset: u32, byte: u8) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
             id: OperationId::Multi(uuid::Uuid::from_u128(id)),
             pk_gen_state: (),
@@ -559,7 +571,7 @@ mod lifecycle_tests {
             secondary_keys_events: TestEvents,
             bytes: vec![byte; 8],
             link: Link {
-                page_id: 1.into(),
+                page_id: page.into(),
                 offset,
                 length: 8,
             },
@@ -618,6 +630,62 @@ mod lifecycle_tests {
         task.close().await.unwrap();
 
         assert_eq!(batches.load(Ordering::Relaxed), 1);
+    }
+
+    /// Regression: the blocker filter kept the operations *after* a blocking
+    /// multi operation instead of the complete ones before it.
+    ///
+    /// Group A (Multi id 1) lives entirely on page 1. Group B (Multi id 2)
+    /// shares page 1 but also spans page 2, so collecting from A finds B as a
+    /// blocker. The collected batch must contain exactly group A — applying B
+    /// while dropping A ships a stream whose earlier event ids never arrive,
+    /// which the event-gap validation defers until the worker's attempt
+    /// budget fails the engine.
+    #[tokio::test]
+    async fn blocked_multi_collection_applies_the_complete_earlier_group() {
+        let queue_inner_wt = Arc::new(QueueInnerWorkTable::default());
+        let mut analyzer: QueueAnalyzer<(), u64, TestEvents, TestIndex> = QueueAnalyzer::new(queue_inner_wt);
+        analyzer.push(multi_insert_operation_on(1, 1, 0, 1)).unwrap();
+        analyzer.push(multi_insert_operation_on(1, 1, 8, 2)).unwrap();
+        analyzer.push(multi_insert_operation_on(1, 2, 16, 3)).unwrap();
+        analyzer.push(multi_insert_operation_on(2, 2, 0, 4)).unwrap();
+
+        let batch = analyzer
+            .collect_batch_from_op_id(OperationId::Multi(uuid::Uuid::from_u128(1)))
+            .await
+            .unwrap()
+            .unwrap()
+            .get_batch_data_op()
+            .unwrap();
+
+        let page_one_writes = batch.get(&1.into()).unwrap();
+        assert_eq!(
+            page_one_writes,
+            &vec![
+                (
+                    Link {
+                        page_id: 1.into(),
+                        offset: 0,
+                        length: 8,
+                    },
+                    vec![1; 8],
+                ),
+                (
+                    Link {
+                        page_id: 1.into(),
+                        offset: 8,
+                        length: 8,
+                    },
+                    vec![2; 8],
+                ),
+            ],
+            "the complete earlier group must be applied"
+        );
+        assert!(
+            !batch.contains_key(&2.into()),
+            "the blocking group must stay queued, not be applied without its earlier events"
+        );
+        assert_eq!(analyzer.len(), 2, "both rows of the blocked group remain queued");
     }
 
     #[tokio::test]
