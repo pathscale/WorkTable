@@ -769,6 +769,35 @@ mod lifecycle_tests {
         assert!(Arc::ptr_eq(&wait_error, &intake_error));
     }
 
+    /// Regression: an operation pushed while `Drop` ran was accepted, then
+    /// silently lost.
+    ///
+    /// `Drop` checked the idle triggers and aborted the worker while the
+    /// lifecycle still said `Running`, and the queue stays reachable through
+    /// `vacuum_sink` clones. A push landing between the idle check and the
+    /// abort was accepted — the caller told its row was on its way to disk —
+    /// and then lost with the aborted worker. The lifecycle must leave
+    /// `Running` before the abort so such a push is refused instead.
+    #[tokio::test]
+    async fn drop_refuses_vacuum_operations_instead_of_losing_them() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::None,
+        });
+        // Let the worker reach its idle poll so `Drop` takes the abort path.
+        tokio::task::yield_now().await;
+
+        let sink = task.vacuum_sink();
+        drop(task);
+
+        // No await between the drop and this push: the refusal must be
+        // synchronous with `Drop`, not an eventual effect of the abort.
+        sink.reclaim_pages(vec![1.into()])
+            .expect_err("a push racing Drop must be refused, not accepted into a dead queue");
+    }
+
     #[tokio::test]
     async fn vacuum_reclamation_waits_for_preceding_row_moves() {
         let events = Arc::new(ParkingMutex::new(Vec::new()));
@@ -1060,11 +1089,24 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
         ) {
             return;
         }
+        // Leave `Running` before deciding anything else. `push_message`
+        // accepts operations while the state is `Running`, and the queue
+        // stays reachable through `vacuum_sink` clones after this task is
+        // gone, so an operation pushed between the idle check below and the
+        // abort would be accepted and then silently lost with the aborted
+        // worker. After `begin_close` a push is refused with the standard
+        // shutdown error before it can be accepted into a doomed queue.
+        if self.lifecycle.begin_close().is_err() {
+            // Failed terminally since the check above; the worker exits on
+            // its own and pushes are already refused.
+            return;
+        }
+        self.queue.wake();
         if self.check_wait_triggers() {
             handle.abort();
         } else {
             tracing::error!(
-                "PersistenceTask dropped with work in flight; the engine task keeps running detached.                  Call wait_for_ops() before dropping to guarantee a clean shutdown."
+                "PersistenceTask dropped with work in flight; the engine task keeps draining detached and                  then stops, but its errors can no longer be observed. Call close() (or wait_for_ops()                  before dropping) to guarantee a clean shutdown."
             );
         }
     }
