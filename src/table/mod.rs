@@ -193,6 +193,19 @@ where
         self.pk_gen.next()
     }
 
+    /// Reserves `count` consecutive primary keys on autoincrement tables.
+    ///
+    /// The returned half-open range is expressed in the raw column type so a
+    /// caller can iterate it directly while pre-assigning contiguous keys to a
+    /// batch of rows for `insert_many`. Interleaved [`Self::get_next_pk`]
+    /// calls keep working and never overlap a reservation.
+    pub fn reserve_pks<Raw>(&self, count: usize) -> std::ops::Range<Raw>
+    where
+        PkGen: crate::primary_key::PrimaryKeyGeneratorRange<Raw>,
+    {
+        self.pk_gen.reserve(count)
+    }
+
     /// Selects `Row` from table identified with provided primary key. Returns `None` if no value presented.
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]
     pub fn select(&self, pk: PrimaryKey) -> Option<Row>

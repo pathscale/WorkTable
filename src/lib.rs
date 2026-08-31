@@ -45,7 +45,9 @@ pub mod prelude {
         load_persisted_state, map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
         reconstruct_multi_index_nodes, validate_events,
     };
-    pub use crate::primary_key::{PrimaryKeyGenerator, PrimaryKeyGeneratorState, TablePrimaryKey};
+    pub use crate::primary_key::{
+        PrimaryKeyGenerator, PrimaryKeyGeneratorRange, PrimaryKeyGeneratorState, TablePrimaryKey,
+    };
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
