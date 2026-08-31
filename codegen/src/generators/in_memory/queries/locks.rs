@@ -120,8 +120,13 @@ impl InMemoryGenerator {
             #[allow(clippy::mutable_key_type)]
             let (locks, op_lock) = lock_guard.lock(lock_id);
             drop(lock_guard);
+            // The registered lock must be cancellation-covered BEFORE the
+            // predecessor wait below: a future dropped at that await (tokio
+            // timeout, task abort) would otherwise leave the registered lock
+            // held forever and hang every later operation on this key.
+            let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
             futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
-            op_lock
+            pending_lock
         }
     }
 
@@ -144,8 +149,13 @@ impl InMemoryGenerator {
             #[allow(clippy::mutable_key_type)]
             let (locks, op_lock) = lock_guard.#ident(lock_id);
             drop(lock_guard);
+            // The registered lock must be cancellation-covered BEFORE the
+            // predecessor wait below: a future dropped at that await (tokio
+            // timeout, task abort) would otherwise leave the registered lock
+            // held forever and hang every later operation on this key.
+            let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
             futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
-            op_lock
+            pending_lock
         }
     }
 }

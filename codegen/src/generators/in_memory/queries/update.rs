@@ -108,12 +108,8 @@ impl InMemoryGenerator {
                     return core::result::Result::Ok(());
                 }
                 drop(_guard);
-                let op_lock = { #full_row_lock };
-                let _guard = LockGuard::new_with_mutation(
-                    op_lock,
-                    self.0.lock_manager.clone(),
-                    pk.clone(),
-                );
+                let pending_lock = { #full_row_lock };
+                let _guard = pending_lock.into_guard_with_mutation();
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 if let Err(e) = self.reinsert(row_old, row).await {
                     self.0.update_state.remove(&pk);
@@ -125,12 +121,8 @@ impl InMemoryGenerator {
         } else {
             quote! {
                 drop(_guard);
-                let op_lock = { #full_row_lock };
-                let _guard = LockGuard::new_with_mutation(
-                    op_lock,
-                    self.0.lock_manager.clone(),
-                    pk.clone(),
-                );
+                let pending_lock = { #full_row_lock };
+                let _guard = pending_lock.into_guard_with_mutation();
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 if let Err(e) = self.reinsert(row_old, row).await {
                     self.0.update_state.remove(&pk);
@@ -147,12 +139,8 @@ impl InMemoryGenerator {
         quote! {
             pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
-                let op_lock = { #full_row_lock };
-                let guard = LockGuard::new_with_mutation(
-                    op_lock,
-                    self.0.lock_manager.clone(),
-                    pk.clone(),
-                );
+                let pending_lock = { #full_row_lock };
+                let guard = pending_lock.into_guard_with_mutation();
 
                 self.update_with_guard(row, guard).await
             }
@@ -316,12 +304,8 @@ impl InMemoryGenerator {
                     // updates could otherwise each rebuild the row from a stale
                     // snapshot and lose each other's write.
                     drop(_guard);
-                    let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new_with_mutation(
-                        op_lock,
-                        self.0.lock_manager.clone(),
-                        pk.clone(),
-                    );
+                    let pending_lock = { #full_row_lock };
+                    let _guard = pending_lock.into_guard_with_mutation();
 
                     // Re-read the current row UNDER the full-row lock so the
                     // rebuilt row reflects any committed concurrent update.
@@ -400,12 +384,8 @@ impl InMemoryGenerator {
             quote! {
                 {
                     drop(_guard);
-                    let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new_with_mutation(
-                        op_lock,
-                        self.0.lock_manager.clone(),
-                        pk.clone(),
-                    );
+                    let pending_lock = { #full_row_lock };
+                    let _guard = pending_lock.into_guard_with_mutation();
 
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
@@ -641,12 +621,8 @@ impl InMemoryGenerator {
             where #pk_ident: From<Pk>
             {
                 let pk: #pk_ident = pk.into();
-                let op_lock = { #custom_lock };
-                let _guard = LockGuard::new_with_mutation(
-                    op_lock,
-                    self.0.lock_manager.clone(),
-                    pk.clone(),
-                );
+                let pending_lock = { #custom_lock };
+                let _guard = pending_lock.into_guard_with_mutation();
 
                 let mut link: Link = self.0
                         .primary_index
@@ -718,12 +694,8 @@ impl InMemoryGenerator {
                     let old_guard = guards.remove(&pk).expect("guard should exist for this pk");
                     drop(old_guard);
 
-                    let op_lock = { #full_row_lock };
-                    let _guard = LockGuard::new_with_mutation(
-                        op_lock,
-                        self.0.lock_manager.clone(),
-                        pk.clone(),
-                    );
+                    let pending_lock = { #full_row_lock };
+                    let _guard = pending_lock.into_guard_with_mutation();
                     let row_old = self.0.select(pk.clone()).expect("should not be deleted by other thread");
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
@@ -784,8 +756,8 @@ impl InMemoryGenerator {
                 let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
                 for pk in pks.iter() {
                     let pk = pk.clone();
-                    let op_lock = { #custom_lock };
-                    guards.insert(pk.clone(), LockGuard::new(op_lock, self.0.lock_manager.clone(), pk));
+                    let pending_lock = { #custom_lock };
+                    guards.insert(pk.clone(), pending_lock.into_guard());
                 }
 
                 for pk in pks.into_iter() {
@@ -911,12 +883,8 @@ impl InMemoryGenerator {
 
                 let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
 
-                let op_lock = { #custom_lock };
-                let _guard = LockGuard::new_with_mutation(
-                    op_lock,
-                    self.0.lock_manager.clone(),
-                    pk.clone(),
-                );
+                let pending_lock = { #custom_lock };
+                let _guard = pending_lock.into_guard_with_mutation();
 
                 let link = loop {
                     let link = self.0.indexes.#index

@@ -105,12 +105,8 @@ impl InMemoryGenerator {
             where #pk_type: From<Pk>
             {
                 let pk: #pk_type = by.into();
-                let op_lock = { #custom_lock };
-                let _guard = LockGuard::new_with_mutation(
-                    op_lock,
-                    self.0.lock_manager.clone(),
-                    pk.clone(),
-                );
+                let pending_lock = { #custom_lock };
+                let _guard = pending_lock.into_guard_with_mutation();
                 let link = self
                     .0
                     .primary_index.pk_map

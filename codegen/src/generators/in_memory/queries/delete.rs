@@ -45,12 +45,8 @@ impl InMemoryGenerator {
             where #pk_ident: From<Pk>
             {
                 let pk: #pk_ident = pk.into();
-                let op_lock = { #full_row_lock };
-                let _guard = LockGuard::new_with_mutation(
-                    op_lock,
-                    self.0.lock_manager.clone(),
-                    pk.clone(),
-                );
+                let pending_lock = { #full_row_lock };
+                let _guard = pending_lock.into_guard_with_mutation();
 
                 #delete_logic
 

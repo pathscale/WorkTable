@@ -92,6 +92,72 @@ where
     }
 }
 
+/// Owns an operation lock that is registered into a row's [`RowLock`] but
+/// whose predecessor wait has not completed yet.
+///
+/// The generated lock protocol registers the operation lock into the row
+/// state, releases the row-state guard, and only then awaits every
+/// predecessor lock. That await is a cancellation point: if the future is
+/// dropped there (`tokio::time::timeout`, task abort), the registered lock
+/// would stay held forever and every later operation on the same primary key
+/// would wait on it. `PendingLock` covers exactly that window. Dropping it
+/// before conversion unlocks the registered lock and retries lock-map
+/// cleanup; converting it into the final [`LockGuard`] with
+/// [`Self::into_guard`] or [`Self::into_guard_with_mutation`] defuses that
+/// cleanup and hands ownership over.
+pub struct PendingLock<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
+    lock: Option<Arc<Lock>>,
+    lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+    primary_key: PrimaryKey,
+}
+
+impl<LockType, PrimaryKey> PendingLock<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
+    /// Takes ownership of a freshly registered operation lock. Must be called
+    /// synchronously after registration, before the predecessor wait.
+    pub fn new(lock: Arc<Lock>, lock_map: Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
+        Self {
+            lock: Some(lock),
+            lock_map,
+            primary_key,
+        }
+    }
+
+    /// Defuses the cancellation cleanup and converts into a [`LockGuard`].
+    pub fn into_guard(mut self) -> LockGuard<LockType, PrimaryKey> {
+        let lock = self.lock.take().expect("pending lock is intact until conversion or drop");
+        LockGuard::new(lock, self.lock_map.clone(), self.primary_key.clone())
+    }
+
+    /// Defuses the cancellation cleanup and converts into a [`LockGuard`]
+    /// that also serializes the mutation phase with the synchronous insert
+    /// path for the same primary key.
+    ///
+    /// The mutation stripe is acquired here, i.e. only after the predecessor
+    /// wait completed: the stripe gate is a synchronous spin lock and must
+    /// never be held across an `.await` (see [`LockMap::mutation_guard`]).
+    pub fn into_guard_with_mutation(mut self) -> LockGuard<LockType, PrimaryKey> {
+        let lock = self.lock.take().expect("pending lock is intact until conversion or drop");
+        LockGuard::new_with_mutation(lock, self.lock_map.clone(), self.primary_key.clone())
+    }
+}
+
+impl<LockType, PrimaryKey> Drop for PendingLock<LockType, PrimaryKey>
+where
+    LockType: RowLock,
+    PrimaryKey: Hash + Eq + Debug + Clone,
+{
+    fn drop(&mut self) {
+        if let Some(lock) = self.lock.take() {
+            lock.unlock();
+            self.lock_map.remove_with_lock_check(&self.primary_key);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Lock {
     id: u16,

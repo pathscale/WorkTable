@@ -180,12 +180,8 @@ impl InMemoryGenerator {
                 // bounded scheduler backoff for repeated decision races.
                 let mut backoff_spins: u32 = 0;
                 loop {
-                    let op_lock = { #full_row_lock };
-                    let guard = LockGuard::new_with_mutation(
-                        op_lock,
-                        self.0.lock_manager.clone(),
-                        pk.clone(),
-                    );
+                    let pending_lock = { #full_row_lock };
+                    let guard = pending_lock.into_guard_with_mutation();
 
                     let result = if self.0.primary_index.pk_map.contains_key(&pk) {
                         self.update_with_guard(row.clone(), guard).await
