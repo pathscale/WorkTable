@@ -9,6 +9,7 @@ mod exact_boundary_load;
 mod failure;
 mod in_place_durability;
 mod index_page;
+mod insert_many;
 mod loaded_index_growth;
 mod multi_row_backend_order;
 mod read;
