@@ -374,7 +374,12 @@ impl Generator {
                     let mut primary_file = tokio::fs::File::open(format!("{}/primary{}", path, #index_extension)).await?;
                     let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut primary_file, 0).await?;
                     let file_length = primary_file.metadata().await?.len();
-                    let count = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64);
+                    // Pages sit at a fixed #page_const_name stride with the
+                    // general header inside the slot, so the next free page id
+                    // is ceil(len / stride). The previous divisor added the
+                    // header on top of the full stride and lagged one page
+                    // behind roughly every 512 pages.
+                    let count = file_length.div_ceil(#page_const_name as u64);
                     let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(count as u32));
                     let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut primary_file, 0.into(), next_page_id.clone()).await?;
                     for page_id in toc.iter().map(|(_, page_id)| page_id) {
@@ -396,8 +401,14 @@ impl Generator {
                     let mut data_file = tokio::fs::File::open(format!("{}/{}", path, #data_extension)).await?;
                     let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut data_file, 0).await?;
                     let file_length = data_file.metadata().await?.len();
-                    let count = file_length / (#inner_const_name as u64 + GENERAL_HEADER_SIZE as u64);
-                    for page_id in 1..=count {
+                    // ceil(len / stride) counts every occupied page slot,
+                    // including the info page at id 0, whether or not the last
+                    // page fills its slot. The previous floor + inclusive
+                    // range parsed one page past EOF whenever the file ended
+                    // exactly on a page boundary (a final data page that
+                    // exactly fills its slot), failing the whole load.
+                    let count = file_length.div_ceil(#page_const_name as u64);
+                    for page_id in 1..count {
                         let index = parse_data_page::<{ #page_const_name as u32}, { #inner_const_name as usize }>(&mut data_file, page_id as u32).await?;
                         data.push(index);
                     }

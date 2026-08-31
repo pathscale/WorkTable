@@ -283,7 +283,11 @@ impl Generator {
                             let mut file = tokio::fs::File::open(format!("{}/{}{}", path, #literal, #index_extension)).await?;
                             let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut file, 0).await?;
                             let file_length = file.metadata().await?.len();
-                            let page_id = file_length / (#page_const_name as u64 + GENERAL_HEADER_SIZE as u64) + 1;
+                            // Pages sit at a fixed #page_const_name stride
+                            // (header inside the slot): the next free page id
+                            // is ceil(len / stride). The previous divisor used
+                            // stride + header and an unconditional +1.
+                            let page_id = file_length.div_ceil(#page_const_name as u64);
                             let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
                             let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
                             for page_id in toc.iter().map(|(_, page_id)| page_id) {
