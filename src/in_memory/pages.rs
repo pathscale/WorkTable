@@ -397,9 +397,17 @@ where
                 }
                 Err(e) => match e {
                     DataExecutionError::PageIsFull { .. } => {
-                        if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Relaxed) as usize) {
-                            let empty_page = self.empty_pages.write().pop_front();
-                            if let Some(page_id) = empty_page {
+                        // Re-check `current_page_id` under the empty_pages
+                        // write lock and hold that lock through the switch,
+                        // mirroring `add_next_page`. Two threads that both
+                        // failed on the same page would otherwise each pop an
+                        // empty page; the loser's store gets overwritten and
+                        // its popped page is orphaned (permanent capacity
+                        // leak). No other path acquires empty_pages while
+                        // holding page_access, so the order here is safe.
+                        let mut empty_pages = self.empty_pages.write();
+                        if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
+                            if let Some(page_id) = empty_pages.pop_front() {
                                 // Retired pages retain their old bytes until
                                 // the read-side grace period completes. Reset
                                 // only after reclamation made the page
@@ -409,6 +417,7 @@ where
                                 pages[page_id_mapper(page_id.into())].reset();
                                 self.current_page_id.store(page_id.into(), Ordering::Release);
                             } else {
+                                drop(empty_pages);
                                 self.add_next_page(tried_page);
                             }
                         }
@@ -1263,6 +1272,57 @@ mod tests {
                 .all(|link| link.page_id != old_link.page_id),
             "whole-page and inner-link allocators must not receive overlapping storage"
         );
+    }
+
+    #[test]
+    fn page_is_full_switch_does_not_orphan_empty_pages() {
+        use data_bucket::page::PageId;
+
+        // Two 24-byte rows per page, so concurrent inserters hit the
+        // PageIsFull switch path constantly.
+        const PAGE: usize = 64;
+        let pages = Arc::new(DataPages::<TestRow, PAGE>::from_data(
+            (1..=64u32).map(|i| Arc::new(Data::new(i.into()))).collect(),
+        ));
+        for i in 1..=63u32 {
+            pages.mark_page_empty(i.into());
+        }
+        assert_eq!(pages.get_empty_pages().len(), 63);
+
+        let mut handles = Vec::new();
+        for t in 0..8u64 {
+            let p = pages.clone();
+            handles.push(thread::spawn(move || {
+                for i in 0..40u64 {
+                    p.insert(TestRow { a: t, b: i }).unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Every page must remain reachable by an allocator: current, queued
+        // as empty, covered by an empty link, or too full for another row.
+        // A page with room that is none of these was popped by a racing
+        // page switch and orphaned.
+        let row_size = 24usize;
+        let current = pages.current_page_id();
+        let empty: HashSet<PageId> = pages.get_empty_pages().into_iter().collect();
+        let linked: HashSet<PageId> = pages.get_empty_links().iter().map(|l| l.page_id).collect();
+        for id in 1..=pages.get_page_count() as u32 {
+            let page_id = PageId::from(id);
+            let page = pages.get_page(page_id).unwrap();
+            let reachable = page_id == current
+                || empty.contains(&page_id)
+                || linked.contains(&page_id)
+                || page.free_space() < row_size;
+            assert!(
+                reachable,
+                "page {id} was orphaned with {} free bytes",
+                page.free_space()
+            );
+        }
     }
 
     #[test]
