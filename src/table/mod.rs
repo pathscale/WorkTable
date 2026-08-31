@@ -254,7 +254,19 @@ where
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
-                IndexError::NotFound => Err(WorkTableError::NotFound),
+                IndexError::NotFound => {
+                    // Mirror the AlreadyExists arm. Returning without rollback
+                    // left the primary key permanently bound to a ghosted row
+                    // and partial secondary entries behind. `NotFound` carries
+                    // no list of touched indexes, so unwind by the row's own
+                    // keys: every entry save_row can have inserted holds this
+                    // row's values and link.
+                    self.primary_index.remove(&pk, link);
+                    self.indexes.delete_row(row, link)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::NotFound)
+                }
             };
         }
         unsafe {
@@ -339,12 +351,31 @@ where
                     }
                 }
                 IndexError::NotFound => {
+                    // Mirror the AlreadyExists arm: roll the primary index and
+                    // the row's secondary entries back and release the data
+                    // slot, so no permanently half-committed state remains.
+                    let (_, rollback_pk_events) = self.primary_index.remove_cdc(pk.clone(), link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    let (rollback_secondary_events, _) = self.indexes.delete_row_cdc(row.clone(), link);
+
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
                         id: OperationId::Single(Uuid::now_v7()),
-                        primary_key_events: primary_key_events.clone(),
-                        secondary_keys_events: secondary_events.clone(),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
                     });
-                    (ack_op, WorkTableError::NotFound)
+
+                    if let Err(e) = self.data.delete(link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::NotFound)
+                    }
                 }
             };
             return (Some(ack_op), Err(error));
@@ -437,7 +468,19 @@ where
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
-                IndexError::NotFound => Err(WorkTableError::NotFound),
+                IndexError::NotFound => {
+                    // The primary index was never swung and the new row is
+                    // still ghosted, so no reader can observe it; release the
+                    // new data slot instead of leaking it. Partially applied
+                    // secondary entries cannot be unwound here: `NotFound`
+                    // carries no list of touched indexes, and removing by the
+                    // new row's keys would delete the old row's live entries
+                    // for unchanged unique values. No current index
+                    // implementation returns `NotFound` from reinsert_row.
+                    self.data.delete(new_link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::NotFound)
+                }
             };
         }
         unsafe {
@@ -527,12 +570,22 @@ where
                     }
                 }
                 IndexError::NotFound => {
+                    // As in `reinsert`: the primary index was never swung and
+                    // the new row is still ghosted, so releasing the new data
+                    // slot is the whole reachable rollback. `NotFound` carries
+                    // no list of touched indexes, so partially applied
+                    // secondary entries cannot be unwound precisely; no
+                    // current index implementation returns it.
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
                         id: OperationId::Single(Uuid::now_v7()),
                         primary_key_events: vec![],
                         secondary_keys_events: secondary_events.clone(),
                     });
-                    (ack_op, WorkTableError::NotFound)
+                    if let Err(e) = self.data.delete(new_link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::NotFound)
+                    }
                 }
             };
             return (Some(ack_op), Err(error));
