@@ -615,20 +615,40 @@ mod lifecycle_tests {
         assert_eq!(batches.load(Ordering::Relaxed), 1);
     }
 
+    /// Regression: `close` reported success having written nothing.
+    ///
+    /// The worker polled the queue, found it empty, and only then read the
+    /// lifecycle state. An operation enqueued in that window was abandoned,
+    /// because observing `Closing` returned without looking at the queue
+    /// again. The caller had already been told the row was accepted, so this
+    /// was silent data loss on a clean shutdown.
+    ///
+    /// A single-threaded runtime makes it deterministic rather than a race to
+    /// lose: the worker advances only where this test yields, so it parks on
+    /// the `cfg(test)` yield inside that window, and the enqueue and the close
+    /// both land before it reads the state. The single-shot
+    /// `close_drains_and_joins_the_engine` above passes either way.
     #[tokio::test]
-    async fn detached_monitor_observes_graceful_close() {
+    async fn close_never_abandons_an_operation_enqueued_as_it_begins() {
+        let batches = Arc::new(AtomicUsize::new(0));
         let task = PersistenceTask::run_engine(TestEngine {
-            batches: Arc::new(AtomicUsize::new(0)),
+            batches: batches.clone(),
             events: Arc::new(ParkingMutex::new(Vec::new())),
             config: TestConfig,
             failure: TestFailure::None,
         });
-        let monitor = task.monitor();
-        let waiter = tokio::spawn(monitor.wait_for_failure());
 
+        // Drive the worker to its idle poll, where it parks inside the window.
+        tokio::task::yield_now().await;
+
+        task.apply_operation(insert_operation(1)).unwrap();
         task.close().await.unwrap();
 
-        waiter.await.unwrap().unwrap();
+        assert_eq!(
+            batches.load(Ordering::Relaxed),
+            1,
+            "close returned Ok without applying an operation enqueued as it began"
+        );
     }
 
     #[tokio::test]
@@ -1018,14 +1038,38 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 } else if analyzer.len() == 0 && pending_reclaim.is_none() {
                     task_analyzer_in_progress.store(false, Ordering::Release);
                     engine_lifecycle.progress_notify.notify_waiters();
+                    // The gap between the poll above and the state read below
+                    // is where an operation can be enqueued and lost. It is a
+                    // few instructions wide, so a test cannot land in it by
+                    // luck; this yield holds it open. Unit tests only, and it
+                    // changes scheduling rather than behaviour.
+                    #[cfg(test)]
+                    tokio::task::yield_now().await;
                     if matches!(engine_lifecycle.state(), PersistenceState::Closing) {
-                        engine_lifecycle.finish_close();
-                        return;
+                        // Re-check the queue before giving up on it. An
+                        // operation can be enqueued between the poll above and
+                        // this read of the state, and returning on that stale
+                        // emptiness abandons it: `close` then reports success
+                        // having written nothing, losing a row the caller was
+                        // told had been accepted. A push is refused once the
+                        // state is `Closing`, so a queue seen empty here cannot
+                        // fill again, and this terminates.
+                        match engine_queue.immediate_pop() {
+                            Some(message) => {
+                                task_analyzer_in_progress.store(true, Ordering::Release);
+                                Some(message)
+                            }
+                            None => {
+                                engine_lifecycle.finish_close();
+                                return;
+                            }
+                        }
+                    } else {
+                        // The pop sets the flag back to `true` atomically with the
+                        // dequeue, so waiters never observe an empty queue with an
+                        // idle analyzer while an operation is in flight.
+                        engine_queue.pop_marking_in_progress(&task_analyzer_in_progress).await
                     }
-                    // The pop sets the flag back to `true` atomically with the
-                    // dequeue, so waiters never observe an empty queue with an
-                    // idle analyzer while an operation is in flight.
-                    engine_queue.pop_marking_in_progress(&task_analyzer_in_progress).await
                 } else {
                     None
                 };
