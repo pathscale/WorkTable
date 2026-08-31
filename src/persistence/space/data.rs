@@ -202,7 +202,16 @@ where
         };
         let info = parse_page::<_, PAGE_SIZE>(&mut data_file, 0).await?;
         let file_length = data_file.metadata().await?.len();
-        let page_id = file_length / PAGE_SIZE as u64;
+        // Mirror the index file's ceil logic: a file whose length is an exact
+        // page multiple ends with a full last page, so the plain floor
+        // division names a page id one past EOF and reopening the table fails
+        // on the header read. `ceil(len / PAGE_SIZE) - 1` is the last page
+        // that actually exists in both the partial and the full-page case.
+        let page_id = if file_length % PAGE_SIZE as u64 == 0 {
+            (file_length / PAGE_SIZE as u64).saturating_sub(1)
+        } else {
+            file_length / PAGE_SIZE as u64
+        };
         let last_page_header = parse_general_header_by_index(&mut data_file, page_id as u32).await?;
 
         Ok(Self {
