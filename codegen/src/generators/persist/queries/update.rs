@@ -55,11 +55,48 @@ impl PersistGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        let const_name = name_generator.get_page_inner_size_const_ident();
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
+        // A full-row update rewrites every column, hence every secondary
+        // index; only a table with NO secondary indexes may take the
+        // same-size in-place path (mirrors the in-memory generator).
+        let full_row_in_place_eligible = !self.columns.is_sized && self.columns.indexes.is_empty();
         let size_check = if self.columns.is_sized {
             quote! {}
         } else {
+            let in_place_attempt = if full_row_in_place_eligible {
+                quote! {
+                    // Same-size unsized full-row update overwrites its current
+                    // slot; `update_in_place` re-validates the serialized
+                    // length and we fall back to reinsert otherwise. The write
+                    // is persisted as an event-less data operation.
+                    let in_place_ok = unsafe {
+                        self.0.data.update_in_place::<{ #const_name }>(row.clone(), link).is_ok()
+                    };
+                    if in_place_ok {
+                        let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
+                        let op: Operation<
+                            <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                            #pk_ident,
+                            #secondary_events_ident
+                        > = Operation::Update(UpdateOperation {
+                            id: OperationId::Single(uuid::Uuid::now_v7()),
+                            primary_key_events: vec![],
+                            secondary_keys_events,
+                            bytes: self.0.data.select_raw(link)?,
+                            link,
+                        });
+                        self.1.apply_operation(op)?;
+                        self.0.update_state.remove(&pk);
+                        return core::result::Result::Ok(());
+                    }
+                }
+            } else {
+                quote! {}
+            };
             quote! {
-                if true {
+                #in_place_attempt
+                {
                     drop(_guard);
                     let pending_lock = { #full_row_lock };
                     let _guard = pending_lock.into_guard_with_mutation();
@@ -83,6 +120,37 @@ impl PersistGenerator {
 
                     return core::result::Result::Ok(());
                 }
+            }
+        };
+
+        // For an unsized table the size_check body handles (and returns
+        // from) every path, so the archived-swap tail is emitted only for
+        // sized rows; emitting both would leave unreachable code behind the
+        // diverging size_check block.
+        let update_body = if self.columns.is_sized {
+            quote! {
+                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                #diff_process_insert
+                #persist_op
+
+                unsafe { self.0.data.with_mut_ref(link, move |archived| {
+                    #(#row_updates)*
+                }).map_err(WorkTableError::PagesError)? };
+
+                #diff_process_remove
+
+                self.0.update_state.remove(&pk);
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        } else {
+            quote! {
+                #size_check
             }
         };
 
@@ -113,26 +181,7 @@ impl PersistGenerator {
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 self.0.update_state.insert(pk.clone(), row_old);
 
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                #size_check
-
-                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
-
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
-                #diff_process_insert
-                #persist_op
-
-                unsafe { self.0.data.with_mut_ref(link, move |archived| {
-                    #(#row_updates)*
-                }).map_err(WorkTableError::PagesError)? };
-
-                #diff_process_remove
-
-                self.0.update_state.remove(&pk);
-
-                #persist_call
-
-                core::result::Result::Ok(())
+                #update_body
             }
         }
     }
@@ -215,8 +264,21 @@ impl PersistGenerator {
         }
     }
 
-    fn gen_size_check(&self, unsized_fields: Option<Vec<&Ident>>, idents: &[Ident]) -> TokenStream {
-        if let Some(f) = unsized_fields {
+    fn gen_size_check(
+        &self,
+        unsized_fields: Option<Vec<&Ident>>,
+        idents: &[Ident],
+        idx_idents: Option<&Vec<Ident>>,
+    ) -> TokenStream {
+        // Port of the in-memory generator's gen_size_check: the in-place fast
+        // path bypasses the index diff machinery, so it only applies when no
+        // updated column is indexed; and it must persist the same-slot write
+        // as an event-less data operation.
+        let touches_index = idx_idents.map(|v| !v.is_empty()).unwrap_or(false);
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
+        let primary_key_ident = name_generator.get_primary_key_type_ident();
+        if let (Some(f), false) = (unsized_fields, touches_index) {
             let fields_check: Vec<_> = f
                 .iter()
                 .map(|f| {
@@ -230,16 +292,96 @@ impl PersistGenerator {
                 .iter()
                 .map(|i| {
                     quote! {
-                        row_new.#i = row.#i;
+                        row_new.#i = row.#i.clone();
                     }
                 })
                 .collect::<Vec<_>>();
             let full_row_lock = self.gen_full_lock_for_update();
+            let const_name = name_generator.get_page_inner_size_const_ident();
 
             quote! {
-                let mut need_to_reinsert = true;
+                // Reinsert ONLY when an unsized field's serialized size
+                // changed. `need_to_reinsert` starts false; the old `true`
+                // initializer made these per-field size checks dead and forced
+                // every unsized update through a full delete-and-reinsert.
+                let mut need_to_reinsert = false;
                 #(#fields_check)*
-                if need_to_reinsert {
+
+                {
+                    // Serialize the whole read-modify-write against other
+                    // updates of this key by holding the full-row lock, as the
+                    // in-memory generator does.
+                    drop(_guard);
+                    let pending_lock = { #full_row_lock };
+                    let _guard = pending_lock.into_guard_with_mutation();
+
+                    let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
+                    let mut row_new = row_old.clone();
+                    #(#row_updates)*
+
+                    if need_to_reinsert {
+                        if let Err(e) = self.reinsert(row_old, row_new).await {
+                            self.0.update_state.remove(&pk);
+                            return Err(e);
+                        }
+                        self.0.update_state.remove(&pk);
+                        return core::result::Result::Ok(());
+                    }
+
+                    // Same-size write at the CURRENT slot, re-resolved under
+                    // the held full-row lock. `update_in_place` re-validates
+                    // the exact slot length and errors on mismatch; the
+                    // reinsert fallback below keeps correctness.
+                    let current_link: Link = self.0
+                        .primary_index
+                        .pk_map
+                        .get_value(&pk)
+                        .map(Into::into)
+                        .ok_or(WorkTableError::NotFound)?;
+                    let in_place_ok = unsafe {
+                        self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), current_link).is_ok()
+                    };
+                    if in_place_ok {
+                        // Persist the same-slot write as an event-less data
+                        // operation (no indexed column was touched).
+                        let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
+                        let op: Operation<
+                            <<#primary_key_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                            #primary_key_ident,
+                            #secondary_events_ident
+                        > = Operation::Update(UpdateOperation {
+                            id: OperationId::Single(uuid::Uuid::now_v7()),
+                            primary_key_events: vec![],
+                            secondary_keys_events,
+                            bytes: self.0.data.select_raw(current_link)?,
+                            link: current_link,
+                        });
+                        self.1.apply_operation(op)?;
+                        self.0.update_state.remove(&pk);
+                        return core::result::Result::Ok(());
+                    }
+
+                    if let Err(e) = self.reinsert(row_old, row_new).await {
+                        self.0.update_state.remove(&pk);
+                        return Err(e);
+                    }
+                    self.0.update_state.remove(&pk);
+                    return core::result::Result::Ok(());
+                }
+            }
+        } else if self.columns.is_sized {
+            // A fixed-size row can always update archived fields in place.
+            quote! {}
+        } else if touches_index {
+            // Updating an indexed column must keep the index-maintaining
+            // reinsert path, regardless of the row's storage shape.
+            let row_updates = idents
+                .iter()
+                .map(|i| quote! { row_new.#i = row.#i.clone(); })
+                .collect::<Vec<_>>();
+            let full_row_lock = self.gen_full_lock_for_update();
+            quote! {
+                {
                     drop(_guard);
                     let pending_lock = { #full_row_lock };
                     let _guard = pending_lock.into_guard_with_mutation();
@@ -249,14 +391,16 @@ impl PersistGenerator {
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
                         self.0.update_state.remove(&pk);
-
                         return Err(e);
                     }
 
+                    self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
                 }
             }
         } else {
+            // Other columns make the row unsized, but this query updates only
+            // fixed-width, unindexed fields: the archived swap is safe.
             quote! {}
         }
     }
@@ -404,12 +548,36 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
 
-        let size_check = self.gen_size_check(unsized_fields, idents);
+        // Same gate as the in-memory generator: when the size_check body
+        // handles (and returns from) every path, emitting the archived-swap
+        // tail too would leave unreachable code.
+        let archived_swap_is_safe = self.columns.is_sized || (unsized_fields.is_none() && idx_idents.is_none());
+        let size_check = self.gen_size_check(unsized_fields, idents, idx_idents);
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+
+        let finish_update = if archived_swap_is_safe {
+            quote! {
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                #diff_process_insert
+                #persist_op
+
+                unsafe { self.0.data.with_mut_ref(link, |archived| {
+                    #(#row_updates)*
+                }).map_err(WorkTableError::PagesError)? };
+
+                #diff_process_remove
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        } else {
+            quote! {}
+        };
 
         quote! {
             pub async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -429,20 +597,8 @@ impl PersistGenerator {
                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
-                #diff_process_insert
-                #persist_op
-
-                unsafe { self.0.data.with_mut_ref(link, |archived| {
-                    #(#row_updates)*
-                }).map_err(WorkTableError::PagesError)? };
-
-                #diff_process_remove
-
-                #persist_call
-
-                core::result::Result::Ok(())
+                #finish_update
             }
         }
     }
@@ -472,6 +628,11 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
 
+        // When the query touches an unsized field the size_check body ends
+        // every loop iteration itself (in-place or reinsert, then continue),
+        // so the archived-swap tail is only emitted otherwise; emitting both
+        // would leave unreachable code after the size_check block.
+        let has_unsized = unsized_fields.is_some();
         let size_check = if let Some(f) = unsized_fields {
             let fields_check: Vec<_> = f
                 .iter()
@@ -490,25 +651,82 @@ impl PersistGenerator {
                     }
                 })
                 .collect::<Vec<_>>();
-            quote! {
-                let mut need_to_reinsert = true;
-                #(#fields_check)*
-                if need_to_reinsert {
-                    // The full-row lock for this key is already held: every
-                    // matched key was locked up front, in sorted order. The
-                    // old drop/re-acquire dance re-locked this key while later
-                    // keys' guards were still held, inverting the lock order
-                    // against a concurrent overlapping multi-row update.
-                    let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
-                    let mut row_new = row_old.clone();
-                    #(#row_updates)*
-                    if let Err(e) = self.reinsert(row_old, row_new).await {
-                        self.0.update_state.remove(&pk);
-                        return Err(e);
-                    }
+            let touches_index = idx_idents.map(|v| !v.is_empty()).unwrap_or(false);
+            let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+            let const_name = name_generator.get_page_inner_size_const_ident();
+            let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
+            let primary_key_ident = name_generator.get_primary_key_type_ident();
+            // The full-row lock for this key is already held: every matched
+            // key was locked up front, in sorted order (see the guards loop).
+            if touches_index {
+                // Updating an indexed column must keep the index-maintaining
+                // reinsert path unconditionally.
+                quote! {
+                    {
+                        let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
+                        let mut row_new = row_old.clone();
+                        #(#row_updates)*
+                        if let Err(e) = self.reinsert(row_old, row_new).await {
+                            self.0.update_state.remove(&pk);
+                            return Err(e);
+                        }
 
-                    guards.remove(&pk);
-                    continue;
+                        guards.remove(&pk);
+                        continue;
+                    }
+                }
+            } else {
+                quote! {
+                    // Reinsert ONLY when an unsized field's serialized size
+                    // changed. `need_to_reinsert` starts false; the old `true`
+                    // initializer made these per-field size checks dead and
+                    // forced every update through a full delete-and-reinsert.
+                    let mut need_to_reinsert = false;
+                    #(#fields_check)*
+                    {
+                        let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
+                        let mut row_new = row_old.clone();
+                        #(#row_updates)*
+                        if !need_to_reinsert {
+                            // Same-size write at the CURRENT slot: re-serialize
+                            // the full rebuilt row and overwrite the slot bytes
+                            // (NOT a mem::swap of archived fields, which would
+                            // dangle out-of-line String pointers).
+                            // `update_in_place` re-validates the exact slot
+                            // length and errors on mismatch, so the reinsert
+                            // fallback below keeps correctness.
+                            let in_place_ok = unsafe {
+                                self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), link).is_ok()
+                            };
+                            if in_place_ok {
+                                // Persist the same-slot write as an event-less
+                                // data operation, grouped under this multi-row
+                                // operation id.
+                                let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
+                                let op: Operation<
+                                    <<#primary_key_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                                    #primary_key_ident,
+                                    #secondary_events_ident
+                                > = Operation::Update(UpdateOperation {
+                                    id: op_id,
+                                    primary_key_events: vec![],
+                                    secondary_keys_events,
+                                    bytes: self.0.data.select_raw(link)?,
+                                    link,
+                                });
+                                self.1.apply_operation(op)?;
+                                guards.remove(&pk);
+                                continue;
+                            }
+                        }
+                        if let Err(e) = self.reinsert(row_old, row_new).await {
+                            self.0.update_state.remove(&pk);
+                            return Err(e);
+                        }
+
+                        guards.remove(&pk);
+                        continue;
+                    }
                 }
             }
         } else {
@@ -528,6 +746,27 @@ impl PersistGenerator {
             }
         };
         let full_row_lock = self.gen_full_lock_for_update();
+
+        let loop_tail = if has_unsized {
+            quote! {}
+        } else {
+            quote! {
+                    #diff_process_insert
+                    #persist_op
+
+                    unsafe {
+                        self.0.data.with_mut_ref(link, |archived| {
+                            #(#row_updates)*
+                        }).map_err(WorkTableError::PagesError)?;
+                    }
+
+                    #diff_process_remove
+
+                    #persist_call
+
+                    guards.remove(&pk);
+            }
+        };
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -594,20 +833,7 @@ impl PersistGenerator {
                     };
 
                     #size_check
-                    #diff_process_insert
-                    #persist_op
-
-                    unsafe {
-                        self.0.data.with_mut_ref(link, |archived| {
-                            #(#row_updates)*
-                        }).map_err(WorkTableError::PagesError)?;
-                    }
-
-                    #diff_process_remove
-
-                    #persist_call
-
-                    guards.remove(&pk);
+                    #loop_tail
                 }
                 core::result::Result::Ok(())
             }
@@ -647,7 +873,11 @@ impl PersistGenerator {
                 }
             })
             .collect::<Vec<_>>();
-        let size_check = self.gen_size_check(unsized_fields, idents);
+        // Same gate as the in-memory generator: when the size_check body
+        // handles (and returns from) every path, emitting the archived-swap
+        // tail too would leave unreachable code.
+        let archived_swap_is_safe = self.columns.is_sized || (unsized_fields.is_none() && idx_idents.is_none());
+        let size_check = self.gen_size_check(unsized_fields, idents, idx_idents);
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
@@ -678,6 +908,28 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+
+        let finish_update = if archived_swap_is_safe {
+            quote! {
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                #diff_process_insert
+                #persist_op
+
+                unsafe {
+                    self.0.data.with_mut_ref(link, |archived| {
+                        #(#row_updates)*
+                    }).map_err(WorkTableError::PagesError)?;
+                }
+
+                #diff_process_remove
+
+                #persist_call
+
+                core::result::Result::Ok(())
+            }
+        } else {
+            quote! {}
+        };
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -730,22 +982,8 @@ impl PersistGenerator {
                 };
                 #by_match_check
 
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
                 #size_check
-                #diff_process_insert
-                #persist_op
-
-                unsafe {
-                    self.0.data.with_mut_ref(link, |archived| {
-                        #(#row_updates)*
-                    }).map_err(WorkTableError::PagesError)?;
-                }
-
-                #diff_process_remove
-
-                #persist_call
-
-                core::result::Result::Ok(())
+                #finish_update
             }
         }
     }

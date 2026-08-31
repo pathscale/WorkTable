@@ -12,6 +12,7 @@ mod loaded_index_growth;
 mod multi_row_backend_order;
 mod read;
 mod recovery_load;
+mod same_size_in_place;
 mod schema;
 mod space_data;
 mod space_index;

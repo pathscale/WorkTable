@@ -681,6 +681,11 @@ impl InMemoryGenerator {
             })
             .collect::<Vec<_>>();
 
+        // When the query touches an unsized field the size_check body ends
+        // every loop iteration itself (in-place or reinsert, then continue),
+        // so the archived-swap tail is only emitted otherwise; emitting both
+        // would leave unreachable code after the size_check block.
+        let has_unsized = unsized_fields.is_some();
         let size_check = if let Some(f) = unsized_fields {
             let fields_check: Vec<_> = f
                 .iter()
@@ -699,25 +704,64 @@ impl InMemoryGenerator {
                     }
                 })
                 .collect::<Vec<_>>();
-            quote! {
-                let mut need_to_reinsert = true;
-                #(#fields_check)*
-                if need_to_reinsert {
-                    // The full-row lock for this key is already held: every
-                    // matched key was locked up front, in sorted order. The
-                    // old drop/re-acquire dance re-locked this key while later
-                    // keys' guards were still held, inverting the lock order
-                    // against a concurrent overlapping multi-row update.
-                    let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
-                    let mut row_new = row_old.clone();
-                    #(#row_updates)*
-                    if let Err(e) = self.reinsert(row_old, row_new).await {
-                        self.0.update_state.remove(&pk);
-                        return Err(e);
-                    }
+            let touches_index = idx_idents.map(|v| !v.is_empty()).unwrap_or(false);
+            let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+            let const_name = name_generator.get_page_inner_size_const_ident();
+            // The full-row lock for this key is already held: every matched
+            // key was locked up front, in sorted order (see the guards loop).
+            if touches_index {
+                // Updating an indexed column must keep the index-maintaining
+                // reinsert path unconditionally.
+                quote! {
+                    {
+                        let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
+                        let mut row_new = row_old.clone();
+                        #(#row_updates)*
+                        if let Err(e) = self.reinsert(row_old, row_new).await {
+                            self.0.update_state.remove(&pk);
+                            return Err(e);
+                        }
 
-                    guards.remove(&pk);
-                    continue;
+                        guards.remove(&pk);
+                        continue;
+                    }
+                }
+            } else {
+                quote! {
+                    // Reinsert ONLY when an unsized field's serialized size
+                    // changed. `need_to_reinsert` starts false; the old `true`
+                    // initializer made these per-field size checks dead and
+                    // forced every update through a full delete-and-reinsert.
+                    let mut need_to_reinsert = false;
+                    #(#fields_check)*
+                    {
+                        let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
+                        let mut row_new = row_old.clone();
+                        #(#row_updates)*
+                        if !need_to_reinsert {
+                            // Same-size write at the CURRENT slot: re-serialize
+                            // the full rebuilt row and overwrite the slot bytes
+                            // (NOT a mem::swap of archived fields, which would
+                            // dangle out-of-line String pointers).
+                            // `update_in_place` re-validates the exact slot
+                            // length and errors on mismatch, so the reinsert
+                            // fallback below keeps correctness.
+                            let in_place_ok = unsafe {
+                                self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), link).is_ok()
+                            };
+                            if in_place_ok {
+                                guards.remove(&pk);
+                                continue;
+                            }
+                        }
+                        if let Err(e) = self.reinsert(row_old, row_new).await {
+                            self.0.update_state.remove(&pk);
+                            return Err(e);
+                        }
+
+                        guards.remove(&pk);
+                        continue;
+                    }
                 }
             }
         } else {
@@ -737,6 +781,27 @@ impl InMemoryGenerator {
             }
         };
         let full_row_lock = self.gen_full_lock_for_update();
+
+        let loop_tail = if has_unsized {
+            quote! {}
+        } else {
+            quote! {
+                    #diff_process_insert
+                    #persist_op
+
+                    unsafe {
+                        self.0.data.with_mut_ref(link, |archived| {
+                            #(#row_updates)*
+                        }).map_err(WorkTableError::PagesError)?;
+                    }
+
+                    #diff_process_remove
+
+                    #persist_call
+
+                    guards.remove(&pk);
+            }
+        };
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -802,20 +867,7 @@ impl InMemoryGenerator {
                     };
 
                     #size_check
-                    #diff_process_insert
-                    #persist_op
-
-                    unsafe {
-                        self.0.data.with_mut_ref(link, |archived| {
-                            #(#row_updates)*
-                        }).map_err(WorkTableError::PagesError)?;
-                    }
-
-                    #diff_process_remove
-
-                    #persist_call
-
-                    guards.remove(&pk);
+                    #loop_tail
                 }
                 core::result::Result::Ok(())
             }
