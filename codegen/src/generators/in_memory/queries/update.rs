@@ -50,8 +50,12 @@ impl InMemoryGenerator {
 
         let idents: Vec<_> = self.columns.indexes.values().map(|idx| idx.field.clone()).collect();
 
-        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents.as_slice(), Some(&idents));
-        let diff_process_remove = self.gen_process_diffs_remove_on_index(Some(&idents));
+        // No secondary indexes means no diffs to compute: pass None (as
+        // gen_custom_updates does) so the generated update skips the second
+        // deserialize + clone + diff HashMap machinery entirely.
+        let idx_idents = if idents.is_empty() { None } else { Some(&idents) };
+        let diff_process_insert = self.gen_process_diffs_insert_on_index(idents.as_slice(), idx_idents);
+        let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
