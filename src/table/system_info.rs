@@ -67,9 +67,7 @@ where
 
         let empty_links = self.data.get_empty_links().len();
 
-        let bytes = self.data.get_bytes();
-
-        let memory_usage_bytes = bytes.iter().map(|(_buf, free_offset)| *free_offset as u64).sum();
+        let memory_usage_bytes = self.data.used_bytes();
 
         let idx_size = self.indexes.heap_size();
 

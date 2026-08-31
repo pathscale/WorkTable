@@ -766,6 +766,22 @@ where
         Some(page.clone())
     }
 
+    /// Bytes actually occupied across every page.
+    ///
+    /// The sum of each page's `free_offset`, which is what `get_bytes` was
+    /// being used to compute. That copied every page image onto the heap by
+    /// value in order to read one `u32` alongside each, so a periodic metrics
+    /// poll memcpy'd the whole table and streamed it through cache. This reads
+    /// the counters and nothing else.
+    pub fn used_bytes(&self) -> u64 {
+        let _page_access = self.page_access.read();
+        let pages = self.pages.read();
+        pages
+            .iter()
+            .map(|p| u64::from(p.free_offset.load(Ordering::Relaxed)))
+            .sum()
+    }
+
     pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
         let _page_access = self.page_access.read();
         let pages = self.pages.read();
