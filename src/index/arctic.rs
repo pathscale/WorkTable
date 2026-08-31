@@ -198,14 +198,24 @@ where
     where
         R: RangeBounds<K> + 'a,
     {
+        // An `Excluded` bound whose neighbour does not exist (`next()` on the
+        // maximum key, `previous()` on zero) makes the range empty. It must
+        // not fall through to `None`, which the match below treats as
+        // unbounded and would return the whole table for an empty range.
         let lower = match range.start_bound() {
             Bound::Included(key) => Some(key.to_arctic()),
-            Bound::Excluded(key) => key.to_arctic().next(),
+            Bound::Excluded(key) => match key.to_arctic().next() {
+                Some(lower) => Some(lower),
+                None => return Vec::new().into_iter(),
+            },
             Bound::Unbounded => None,
         };
         let upper = match range.end_bound() {
             Bound::Included(key) => Some(key.to_arctic()),
-            Bound::Excluded(key) => key.to_arctic().previous(),
+            Bound::Excluded(key) => match key.to_arctic().previous() {
+                Some(upper) => Some(upper),
+                None => return Vec::new().into_iter(),
+            },
             Bound::Unbounded => None,
         };
 
@@ -281,6 +291,40 @@ mod tests {
             vec![(4, 40), (5, 50)]
         );
         assert_eq!(index.range_values(10..).collect::<Vec<_>>(), Vec::new());
+    }
+
+    #[test]
+    fn excluded_bounds_without_neighbours_yield_empty_ranges() {
+        let index = ArcticIndex::<u64, u64>::default();
+        for key in 0..10 {
+            assert_eq!(index.insert_value_checked(key, key * 10), Some(()));
+        }
+
+        // `..0` is `Bound::Excluded(0)` above: `previous()` has no value, and
+        // the range must be empty, not unbounded (the whole table).
+        assert_eq!(index.range_values(..0).collect::<Vec<_>>(), Vec::new());
+        // `Excluded(u64::MAX)..` has no successor for the lower bound.
+        assert_eq!(
+            index
+                .range_values((Bound::Excluded(u64::MAX), Bound::Unbounded))
+                .collect::<Vec<_>>(),
+            Vec::new()
+        );
+        // Both bounds degenerate at once.
+        assert_eq!(
+            index
+                .range_values((Bound::Excluded(u64::MAX), Bound::Excluded(0)))
+                .collect::<Vec<_>>(),
+            Vec::new()
+        );
+        // Normal exclusive bounds keep working.
+        assert_eq!(index.range_values(..1).collect::<Vec<_>>(), vec![(0, 0)]);
+        assert_eq!(
+            index
+                .range_values((Bound::Excluded(8), Bound::Unbounded))
+                .collect::<Vec<_>>(),
+            vec![(9, 90)]
+        );
     }
 
     #[test]
