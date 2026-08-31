@@ -16,9 +16,11 @@ impl InMemoryGenerator {
         let select_fn = self.gen_table_select_fn();
         let select_range_fn = self.gen_table_select_range_fn();
         let insert_fn = self.gen_table_insert_fn();
+        let insert_many_fn = self.gen_table_insert_many_fn();
         let reinsert_fn = self.gen_table_reinsert_fn();
         let upsert_fn = self.gen_table_upsert_fn();
         let get_next_fn = self.gen_table_get_next_fn();
+        let reserve_pks_fn = self.gen_table_reserve_pks_fn();
         let iter_with_fn = self.gen_table_iter_with_fn();
         let iter_with_async_fn = self.gen_table_iter_with_async_fn();
         let count_fn = self.gen_table_count_fn();
@@ -32,10 +34,12 @@ impl InMemoryGenerator {
                 #select_fn
                 #select_range_fn
                 #insert_fn
+                #insert_many_fn
                 #reinsert_fn
                 #upsert_fn
                 #count_fn
                 #get_next_fn
+                #reserve_pks_fn
                 #iter_with_fn
                 #iter_with_async_fn
                 #system_info_fn
@@ -139,6 +143,24 @@ impl InMemoryGenerator {
         }
     }
 
+    fn gen_table_insert_many_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let row_type = name_generator.get_row_type_ident();
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+
+        quote! {
+            /// Inserts every row of `rows`, all or nothing.
+            ///
+            /// Any rejected row rejects the whole batch, unwinds it without
+            /// concurrent readers ever observing a value, and the error names
+            /// the offending row and index. After `Ok`, every row is visible
+            /// to reads.
+            pub fn insert_many(&self, rows: Vec<#row_type>) -> core::result::Result<Vec<#primary_key_type>, BatchInsertError> {
+                self.0.insert_many(rows)
+            }
+        }
+    }
+
     fn gen_table_reinsert_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type = name_generator.get_row_type_ident();
@@ -236,6 +258,28 @@ impl InMemoryGenerator {
             }
             GeneratorType::None => {
                 quote! {}
+            }
+        }
+    }
+
+    fn gen_table_reserve_pks_fn(&self) -> TokenStream {
+        if !matches!(self.columns.generator_type, GeneratorType::Autoincrement) || self.columns.primary_keys.len() != 1
+        {
+            return quote! {};
+        }
+        let pk_inner_type = self
+            .columns
+            .columns_map
+            .get(&self.columns.primary_keys[0])
+            .expect("primary key column should exist");
+
+        quote! {
+            /// Reserves `count` consecutive primary keys so a batch can be
+            /// assigned contiguous keys before `insert_many`. Interleaved
+            /// `get_next_pk` calls keep working and never overlap a
+            /// reservation.
+            pub fn reserve_pks(&self, count: usize) -> std::ops::Range<#pk_inner_type> {
+                self.0.reserve_pks(count)
             }
         }
     }
