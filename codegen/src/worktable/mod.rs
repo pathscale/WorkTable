@@ -55,6 +55,9 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 
     validate_index_backends(&columns, persistence)?;
     validate_page_size(config.as_ref(), persistence)?;
+    if let Some(q) = &queries {
+        validate_in_place_queries(&columns, q)?;
+    }
 
     let mut generated = if persistence.is_persisted() {
         crate::generators::persist::expand(name.clone(), columns, queries, config, version)?
@@ -94,6 +97,29 @@ fn validate_page_size(config: Option<&crate::common::model::Config>, persistence
                  tables, where they only size index nodes"
             ),
         ));
+    }
+    Ok(())
+}
+
+/// `in_place` queries hand the caller a mutable reference to the archived
+/// column bytes and bypass all index maintenance, so a column that any index
+/// is built over cannot be mutated in place: the index would keep resolving
+/// the old value.
+fn validate_in_place_queries(columns: &Columns, queries: &crate::common::model::Queries) -> syn::Result<()> {
+    for (name, op) in &queries.in_place {
+        for column in &op.columns {
+            if columns.indexes.values().any(|index| &index.field == column) {
+                return Err(syn::Error::new(
+                    column.span(),
+                    format!(
+                        "in_place query `{name}` mutates column `{column}`, which is covered by an index; \
+                         indexed columns cannot be updated in place because secondary indexes are not \
+                         maintained on this path. Use an `update` query instead"
+                    ),
+                ));
+            }
+        }
+
     }
     Ok(())
 }

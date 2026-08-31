@@ -6,6 +6,7 @@ mod bulk_load_stall;
 mod concurrent;
 mod duplicate_key_index_reload;
 mod failure;
+mod in_place_durability;
 mod index_page;
 mod loaded_index_growth;
 mod multi_row_backend_order;

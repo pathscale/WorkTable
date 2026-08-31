@@ -55,6 +55,7 @@ impl PersistGenerator {
     fn gen_primary_key_in_place(&self, snake_case_name: String, columns: &[Ident]) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_type = name_generator.get_primary_key_type_ident();
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
         let lock_ident = WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
 
         let method_ident = Ident::new(
@@ -121,6 +122,32 @@ impl PersistGenerator {
                         .with_mut_ref(link, move |archived| f(#column_fields))
                         .map_err(WorkTableError::PagesError)?
                     };
+
+                // Persist the mutated page bytes as an event-less data
+                // operation, exactly like a data-only update: without it the
+                // in-place write only changed the in-memory page and silently
+                // reverted on restart. In-place queries cannot touch indexed
+                // columns (rejected at parse time), so the event vectors stay
+                // empty.
+                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
+                let mut op: Operation<
+                    <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                    #pk_type,
+                    #secondary_events_ident
+                > = Operation::Update(UpdateOperation {
+                    id: op_id,
+                    primary_key_events: vec![],
+                    secondary_keys_events,
+                    bytes: vec![],
+                    link,
+                });
+                if let Operation::Update(op) = &mut op {
+                    op.bytes = self.0.data.select_raw(link).map_err(WorkTableError::PagesError)?;
+                } else {
+                    unreachable!("just built as an update operation")
+                };
+                self.1.apply_operation(op)?;
 
                 Ok(())
             }
