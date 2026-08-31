@@ -20,6 +20,7 @@ mod option;
 mod partitioned;
 mod reinsert_visibility;
 mod tuple_primary_key;
+mod unique_fixed_unsized;
 mod unsized_;
 mod update_delete_race;
 mod update_in_place_unsized;

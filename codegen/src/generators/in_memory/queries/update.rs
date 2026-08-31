@@ -855,6 +855,12 @@ impl InMemoryGenerator {
                 }
             })
             .collect::<Vec<_>>();
+        // Same gate as gen_pk_update: when the row is unsized but this query
+        // touches only fixed-size, non-indexed columns, the size check emits
+        // nothing and the archived in-place swap below is both safe and the
+        // only body this fn gets - gating on is_sized alone emitted a fn with
+        // no tail expression for exactly that schema.
+        let archived_swap_is_safe = self.columns.is_sized || (unsized_fields.is_none() && idx_idents.is_none());
         let size_check = self.gen_size_check(unsized_fields, idents, idx_idents);
         let diff_process_insert = self.gen_process_diffs_insert_on_index(idents, idx_idents);
         let diff_process_remove = self.gen_process_diffs_remove_on_index(idx_idents);
@@ -887,7 +893,7 @@ impl InMemoryGenerator {
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
-        let finish_update = if self.columns.is_sized {
+        let finish_update = if archived_swap_is_safe {
             quote! {
                 #diff_process_insert
                 #persist_op
