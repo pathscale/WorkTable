@@ -1,0 +1,98 @@
+name: Publish crates
+
+# A version bump landing on master is the release trigger, matching ps-blitz.
+#
+# Two differences from that workflow, both forced by this repo:
+#
+# `worktable` pins `worktable_codegen` exactly (`=1.0.0-beta.12`), so the two
+# versions and the pin must agree or the pair is unresolvable the moment it
+# reaches the index. That is checked before anything is uploaded.
+#
+# This repo tags its releases (v1.0.0-beta.4 through beta.11), and AGENTS.md
+# says to, so the tag is created after a successful publish rather than by
+# hand afterwards.
+#
+# The logic lives in scripts/release.sh so it can be run locally with
+# --dry-run. ps-blitz keeps it inline, and the one bug that workflow records
+# in its own comments -- `[ -n "$x" ] && echo` exiting 1 under `set -e` after
+# every crate had published successfully -- is the kind a script you can
+# actually execute would have caught.
+on:
+  push:
+    branches: [master]
+    paths:
+      - Cargo.toml
+      - codegen/Cargo.toml
+      - scripts/release.sh
+      - .github/workflows/publish.yml
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Package and verify without uploading'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish-worktable
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish worktable and worktable_codegen
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+          add-job-id-key: "false"
+
+      # Publishing is irreversible, so the tree is tested before it is
+      # uploaded rather than trusting that the pull request that bumped the
+      # version was green. This is the same command CI runs.
+      - name: Test
+        if: ${{ inputs.dry_run != true }}
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = 'true' ]; then
+            ./scripts/release.sh --dry-run | tee /tmp/release.log
+          else
+            ./scripts/release.sh | tee /tmp/release.log
+          fi
+
+      - name: Tag the release
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -eu
+          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml \
+            | sed -n 's/^version = "\([^"]*\)".*/\1/p' | head -1)"
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "$tag already exists, leaving it alone"
+            exit 0
+          fi
+          git tag "$tag"
+          git push origin "$tag"
+          echo "tagged $tag"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '```'
+            cat /tmp/release.log 2>/dev/null || echo 'the publish step produced no output'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
