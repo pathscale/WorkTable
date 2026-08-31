@@ -50,10 +50,18 @@ impl PersistGenerator {
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                // The index key type wraps floats in OrderedFloat (see the
+                // non-CDC twin in usual.rs); pass the wrapped key, not the raw
+                // column value.
+                let key = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
+                    quote! { OrderedFloat(row.#i) }
+                } else {
+                    quote! { row.#i }
+                };
 
                 quote! {
                     partial_events.#index_field_name = vec![];
-                    let #index_field_name = if let Some(events) = self.#index_field_name.insert_checked_cdc(row.#i.clone(), link) {
+                    let #index_field_name = if let Some(events) = self.#index_field_name.insert_checked_cdc(#key.clone(), link) {
                         let evs: Vec<_> = events.into_iter().map(|ev| ev.into()).collect();
                         partial_events.#index_field_name = evs.clone();
                         evs
@@ -99,30 +107,44 @@ impl PersistGenerator {
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                // Same OrderedFloat wrapping as save_row_cdc; float equality
+                // also goes through the index key type so NaN behaves like the
+                // index treats it.
+                let key_is_float = is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str());
+                let key_new = if key_is_float {
+                    quote! { OrderedFloat(row_new.#i) }
+                } else {
+                    quote! { row_new.#i }
+                };
+                let key_old = if key_is_float {
+                    quote! { OrderedFloat(row_old.#i) }
+                } else {
+                    quote! { row_old.#i }
+                };
 
                 let remove = if idx.is_unique {
                     quote! {
-                        if row_new.#i == row_old.#i {
-                            let events = TableIndexCdc::insert_cdc(&self.#index_field_name, row_new.#i.clone(), link_new).1;
+                        if #key_new == #key_old {
+                            let events = TableIndexCdc::insert_cdc(&self.#index_field_name, #key_new.clone(), link_new).1;
                             #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                         } else {
-                            let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row_old.#i.clone(), link_old);
+                            let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, #key_old.clone(), link_old);
                             #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                         }
                     }
                 } else {
                     quote! {
-                        let events = TableIndexCdc::insert_cdc(&self.#index_field_name, row_new.#i.clone(), link_new).1;
+                        let events = TableIndexCdc::insert_cdc(&self.#index_field_name, #key_new.clone(), link_new).1;
                         #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
-                        let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row_old.#i.clone(), link_old);
+                        let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, #key_old.clone(), link_old);
                         #index_field_name.extend(events.into_iter().map(|ev| ev.into()).collect::<Vec<_>>());
                     }
                 };
                 let insert = if idx.is_unique {
                     quote! {
-                        let mut #index_field_name = if row_new.#i != row_old.#i {
+                        let mut #index_field_name = if #key_new != #key_old {
                             partial_events.#index_field_name = vec![];
-                            let #index_field_name: Vec<_> = if let Some(events) = self.#index_field_name.insert_checked_cdc(row_new.#i.clone(), link_new) {
+                            let #index_field_name: Vec<_> = if let Some(events) = self.#index_field_name.insert_checked_cdc(#key_new.clone(), link_new) {
                                 let evs: Vec<_> = events.into_iter().map(|ev| ev.into()).collect();
                                 partial_events.#index_field_name = evs.clone();
                                 evs
@@ -181,8 +203,13 @@ impl PersistGenerator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
+                let key = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
+                    quote! { OrderedFloat(row.#i) }
+                } else {
+                    quote! { row.#i }
+                };
                 quote! {
-                    let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, row.#i, link);
+                    let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, #key, link);
                     let #index_field_name = events.into_iter().map(|ev| ev.into()).collect();
                 }
             })
@@ -392,5 +419,52 @@ impl PersistGenerator {
                 }, Ok(()))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::{Ident, Span};
+    use quote::quote;
+
+    use crate::common::Parser;
+    use crate::generators::persist::PersistGenerator;
+
+    /// Float index keys are OrderedFloat in the index type, and every CDC
+    /// path must wrap the raw column value exactly like the non-CDC twin in
+    /// usual.rs does. A persisted float-indexed table cannot yet compile end
+    /// to end (SpaceIndex cannot serialize OrderedFloat keys), so the fixed
+    /// emission is asserted on the generated tokens directly.
+    #[test]
+    fn cdc_paths_wrap_float_index_keys() {
+        let mut parser = Parser::new(quote! {
+            columns: {
+                id: u64 primary_key,
+                price: f64,
+            }
+        });
+        let mut columns = parser.parse_columns().unwrap();
+        let mut parser = Parser::new(quote! {
+            indexes: {
+                price_idx: price,
+            }
+        });
+        columns.indexes = parser.parse_indexes().unwrap();
+
+        let mut generator = PersistGenerator::new(Ident::new("FloatCdc", Span::call_site()), columns, 1);
+        let emitted = generator.gen_secondary_index_cdc_impl_def().to_string();
+
+        for wrapped in [
+            "insert_checked_cdc (OrderedFloat (row . price)",
+            "insert_cdc (& self . price_idx , OrderedFloat (row_new . price)",
+            "remove_cdc (& self . price_idx , OrderedFloat (row_old . price)",
+            "remove_cdc (& self . price_idx , OrderedFloat (row . price)",
+        ] {
+            assert!(emitted.contains(wrapped), "missing `{wrapped}` in:\n{emitted}");
+        }
+        assert!(
+            !emitted.contains("cdc (row ."),
+            "a CDC path still passes the raw float column value:\n{emitted}"
+        );
     }
 }
