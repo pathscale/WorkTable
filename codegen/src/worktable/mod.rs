@@ -13,6 +13,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let name = parser.parse_name()?;
     let version = parser.parse_version()?.unwrap_or(1);
     let persistence = parser.parse_persist()?;
+    let partition_by = parser.parse_partition_by()?;
     while let Some(ident) = parser.peek_next() {
         match ident.to_string().as_str() {
             "columns" => {
@@ -54,11 +55,17 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 
     validate_index_backends(&columns, persistence)?;
 
-    if persistence.is_persisted() {
-        crate::generators::persist::expand(name, columns, queries, config, version)
+    let mut generated = if persistence.is_persisted() {
+        crate::generators::persist::expand(name.clone(), columns, queries, config, version)?
     } else {
-        crate::generators::in_memory::expand_from_parsed(name, columns, queries, config)
+        crate::generators::in_memory::expand_from_parsed(name.clone(), columns, queries, config)?
+    };
+
+    if let Some(key) = partition_by {
+        generated.extend(crate::generators::partitions::expand(&name, &key));
     }
+
+    Ok(generated)
 }
 
 fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::Result<()> {

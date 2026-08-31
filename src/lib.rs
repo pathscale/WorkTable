@@ -5,6 +5,7 @@ mod index;
 pub mod lock;
 mod mem_stat;
 pub mod migration;
+pub mod partition;
 pub mod persistence;
 mod primary_key;
 mod row;
@@ -33,6 +34,7 @@ pub mod prelude {
     pub use crate::lock::{Lock, RowLock};
     pub use crate::lock::{LockAcquirer, LockGuard, LockMap};
     pub use crate::mem_stat::MemStat;
+    pub use crate::partition::{MAX_PARTITIONS, PartitionError, PartitionSet};
     pub use crate::persistence::{
         AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
         IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,

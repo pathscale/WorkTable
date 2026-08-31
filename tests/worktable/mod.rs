@@ -15,6 +15,7 @@ mod lock_order;
 mod mutation_gate_deadlock;
 mod nid;
 mod option;
+mod partitioned;
 mod tuple_primary_key;
 mod unsized_;
 mod update_in_place_unsized;
