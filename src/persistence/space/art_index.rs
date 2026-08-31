@@ -119,8 +119,27 @@ struct ArtFile<K> {
     marker: PhantomData<K>,
 }
 
+/// Builds the sibling temporary file used for atomic rewrites by appending
+/// `.tmp` to the complete file name. `Path::with_extension` must not be used
+/// here: it replaces the final extension, so `primary.wt.idx` would become
+/// `primary.wt.<new>` and two different index files could collide on one
+/// temporary name.
+fn temporary_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().map(ToOwned::to_owned).unwrap_or_default();
+    name.push(".tmp");
+    path.with_file_name(name)
+}
+
 impl<K: ArtPersistenceKey> ArtFile<K> {
     async fn open(path: PathBuf, backend: Backend, table_version: u32, empty_snapshot: Vec<u8>) -> eyre::Result<Self> {
+        // A crash between writing a temporary checkpoint and renaming it over
+        // the live file leaves the `.tmp` sibling behind. It was never made
+        // visible, so it is dead weight; remove it before it can be confused
+        // with live state or block a future rename.
+        let stale_temporary = temporary_path(&path);
+        if stale_temporary.exists() {
+            tokio::fs::remove_file(&stale_temporary).await?;
+        }
         if !path.exists() {
             Self::write_new_file(&path, backend, table_version, &empty_snapshot).await?;
         }
@@ -247,12 +266,25 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
     }
 
     async fn rewrite(&mut self, snapshot: &[u8]) -> eyre::Result<()> {
-        let temporary = self.path.with_extension("wt.idx.art.tmp");
-        Self::write_new_file(&temporary, self.backend, self.table_version, snapshot).await?;
-        tokio::fs::rename(&temporary, &self.path).await?;
+        Self::write_file_atomically(&self.path, self.backend, self.table_version, snapshot).await?;
         self.file = OpenOptions::new().read(true).write(true).open(&self.path).await?;
         self.file.seek(std::io::SeekFrom::End(0)).await?;
         self.wal_bytes = 0;
+        Ok(())
+    }
+
+    /// Writes a complete checkpoint next to `path` and renames it into place,
+    /// so a crash at any point leaves either the previous file or the new one,
+    /// never a truncated in-between state.
+    async fn write_file_atomically(
+        path: &Path,
+        backend: Backend,
+        table_version: u32,
+        snapshot: &[u8],
+    ) -> eyre::Result<()> {
+        let temporary = temporary_path(path);
+        Self::write_new_file(&temporary, backend, table_version, snapshot).await?;
+        tokio::fs::rename(&temporary, path).await?;
         Ok(())
     }
 
@@ -403,7 +435,10 @@ where
     ) -> eyre::Result<()> {
         let topology = index.inner_mut().export_topology(|link| link.0)?;
         let snapshot = encode_arctic_topology(&topology)?;
-        ArtFile::<K>::write_new_file(path.as_ref(), Backend::Arctic, table_version, &snapshot).await
+        // Temp-file-plus-rename: creating the live file in place truncated the
+        // previous checkpoint and the WAL, so a crash mid-checkpoint destroyed
+        // both the old and the new state.
+        ArtFile::<K>::write_file_atomically(path.as_ref(), Backend::Arctic, table_version, &snapshot).await
     }
 
     async fn compact(&mut self) -> eyre::Result<()> {
@@ -504,7 +539,8 @@ where
     ) -> eyre::Result<()> {
         let topology = index.inner_mut().export_topology(|link| link.0)?;
         let snapshot = encode_congee_topology(&topology)?;
-        ArtFile::<K>::write_new_file(path.as_ref(), Backend::Congee, table_version, &snapshot).await
+        // Temp-file-plus-rename, mirroring the Arctic checkpoint above.
+        ArtFile::<K>::write_file_atomically(path.as_ref(), Backend::Congee, table_version, &snapshot).await
     }
 
     async fn compact(&mut self) -> eyre::Result<()> {
@@ -946,6 +982,50 @@ mod tests {
             .unwrap();
         assert_eq!(index.len(), 128);
         assert_eq!(index.get_value(&91).unwrap().0, link(92));
+        tokio::fs::remove_file(path).await.unwrap();
+    }
+
+    #[test]
+    fn temporary_path_appends_to_the_full_file_name() {
+        assert_eq!(
+            temporary_path(Path::new("/tables/user/primary.wt.idx")),
+            PathBuf::from("/tables/user/primary.wt.idx.tmp")
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoints_go_through_a_temporary_file_and_stale_temporaries_are_removed() {
+        let path = std::env::temp_dir().join(format!("worktable-art-atomic-{}.wt.idx", uuid::Uuid::new_v4()));
+        let temporary = temporary_path(&path);
+
+        // A leftover temporary from a crashed checkpoint must be cleaned up
+        // when the index opens.
+        tokio::fs::write(&temporary, b"crashed checkpoint leftovers").await.unwrap();
+        let mut space = SpaceArcticIndex::<u64, 4096>::new(path.clone(), 1).await.unwrap();
+        assert!(!temporary.exists(), "stale temporary should be removed on open");
+
+        space.process_change_event(set_event(0, 7, link(7))).await.unwrap();
+        space.compact().await.unwrap();
+        assert!(!temporary.exists(), "compaction must not leave its temporary behind");
+        drop(space);
+
+        // `write_checkpoint` used to truncate the live file in place; it now
+        // stages the checkpoint in the sibling temporary and renames it over,
+        // so the final file is complete and no temporary survives.
+        let mut index = SpaceArcticIndex::<u64, 4096>::load_index::<4096>(&path, 1)
+            .await
+            .unwrap();
+        index.insert_value(9, crate::util::OffsetEqLink(link(9)));
+        SpaceArcticIndex::<u64, 4096>::write_checkpoint::<4096>(&path, 1, &mut index)
+            .await
+            .unwrap();
+        assert!(!temporary.exists(), "checkpoint must not leave its temporary behind");
+
+        let reloaded = SpaceArcticIndex::<u64, 4096>::load_index::<4096>(&path, 1)
+            .await
+            .unwrap();
+        assert_eq!(reloaded.get_value(&7).unwrap().0, link(7));
+        assert_eq!(reloaded.get_value(&9).unwrap().0, link(9));
         tokio::fs::remove_file(path).await.unwrap();
     }
 
