@@ -23,9 +23,11 @@ the interval from index lookup through acquisition of a stable row version.
 `DataPages` maintains two representations:
 
 - Archived page bytes are the compact persistence and mutation image. All
-  accesses that can overlap a mutation are serialized by one internal
-  table-wide page barrier. Its exclusive side currently serializes mutations
-  to disjoint rows and pages as well as mutations to the same page.
+  accesses that can overlap a mutation are serialized by a per-page barrier:
+  each page carries its own reader/writer lock, so mutations to disjoint
+  pages proceed in parallel and only same-page access serializes. The one
+  genuinely multi-page mutation, the vacuum row move, takes both pages'
+  barriers in ascending page-id order.
 - A concurrent link map holds an immutable application-visible row version.
   Each slot contains one `Arc<Row>` and its ghost, deleted, and vacuum lifecycle
   bits in a single version protected by a short per-slot lock. A reader cannot
@@ -119,18 +121,20 @@ mutation APIs.
 The protocol adds one owned row copy plus slot/map metadata per live physical
 link, a thread-local epoch pin/unpin per generated read (no shared
 read-modify-write on the read path), a sharded publication map lookup, and
-writer-side page serialization. `page_access` is currently one
-`RwLock<()>` per table, not one lock per row or page: insert, update, delete,
-hydration, reset/reuse, and vacuum operations that take its exclusive side form
-a table-wide writer barrier. Immutable published reads do not take that
-exclusive side after hydration, but disjoint writes can still serialize and
-therefore require contention-throughput and tail-latency validation for
-latency-sensitive deployments.
+writer-side page serialization. The page barrier is per page (`Data::access`),
+not per table: insert, update, delete, hydration, and reset/reuse serialize
+only against access to the same page, and vacuum's row move locks exactly its
+two pages. Immutable published reads take no page barrier after hydration.
+Same-page writers still serialize — notably concurrent inserts, which all
+append to the current page — and the pages-vector lock and publication
+shards remain shared, so contention validation is still warranted for
+latency-sensitive deployments. Measured on an M4 Max (10k rows, ~67 pages,
+thread-disjoint in-place row updates): parity at 1 writer, and roughly +25%
+at 4 and +65% at 8 writers over the previous table-wide barrier.
 
 These correctness costs are mandatory: the previous fast path allowed safe
 generated reads to race mutation of archived bytes, and performance cannot
-justify undefined behavior. Finer-grained or sharded page mutation barriers may
-reduce write contention without weakening the publication protocol. The
+justify undefined behavior. The
 index-visibility algorithm is separate: WorkTablesIndex acquires the selected
 node while its structural mapping is pinned on the uncontended path, and may
 retry after node contention.

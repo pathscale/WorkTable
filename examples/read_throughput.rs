@@ -50,10 +50,71 @@ fn read_pass(table: &Arc<BenchWorkTable>, threads: u64) -> f64 {
     (threads * READS_PER_THREAD) as f64 / elapsed.as_secs_f64()
 }
 
+/// In-place row mutation throughput on thread-disjoint rows spread across
+/// many pages. Under a table-global page write lock these serialize whatever
+/// the thread count; per-page barriers let disjoint pages proceed in
+/// parallel.
+fn write_pass(table: &Arc<BenchWorkTable>, links: &Arc<Vec<Link>>, threads: u64) -> f64 {
+    const WRITES_PER_THREAD: u64 = 200_000;
+    let start = Instant::now();
+    let handles: Vec<_> = (0..threads)
+        .map(|t| {
+            let table = table.clone();
+            let links = links.clone();
+            std::thread::spawn(move || {
+                // Thread-disjoint rows: t, t + threads, t + 2*threads, ...
+                let mine: Vec<Link> = links
+                    .iter()
+                    .copied()
+                    .skip(t as usize)
+                    .step_by(threads as usize)
+                    .collect();
+                for i in 0..WRITES_PER_THREAD {
+                    let link = mine[(i as usize).wrapping_mul(97) % mine.len()];
+                    unsafe {
+                        table
+                            .0
+                            .data
+                            .with_mut_ref(link, |archived| {
+                                archived.inner.value = i.into();
+                            })
+                            .unwrap();
+                    }
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    let elapsed = start.elapsed();
+    (threads * WRITES_PER_THREAD) as f64 / elapsed.as_secs_f64()
+}
+
 fn main() {
     let table = Arc::new(BenchWorkTable::default());
     for id in 0..ROWS {
         table.insert(BenchRow { id, value: id * 3 }).unwrap();
+    }
+
+    let links: Arc<Vec<Link>> = Arc::new(
+        (0..ROWS)
+            .map(|id| {
+                table
+                    .0
+                    .primary_index
+                    .pk_map
+                    .get_value(&BenchPrimaryKey::from(id))
+                    .unwrap()
+                    .0
+            })
+            .collect(),
+    );
+
+    for threads in [1u64, 2, 4, 8] {
+        let _ = write_pass(&table, &links, threads);
+        let ops = write_pass(&table, &links, threads);
+        println!("write threads={threads} {:>12.0} ops/s", ops);
     }
 
     for threads in [1u64, 2, 4, 8] {
