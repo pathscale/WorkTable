@@ -122,7 +122,12 @@ where
     }
 
     async fn add_index_page(&mut self, node: UnsizedIndexPage<T, DATA_LENGTH>, page_id: PageId) -> eyre::Result<()> {
-        let header = GeneralHeader::new(page_id, PageType::Index, self.space_id);
+        // Unsized index pages are tagged IndexUnsized everywhere: the batch
+        // create path and the bulk-load mapping already did, while this single
+        // path (and the batch split) wrote PageType::Index for the same page
+        // layout, leaving the on-disk tag dependent on which code path
+        // happened to create the page.
+        let header = GeneralHeader::new(page_id, PageType::IndexUnsized, self.space_id);
         let mut general_page = GeneralPage { inner: node, header };
         persist_page(&mut general_page, &mut self.index_file).await?;
         Ok(())
@@ -565,7 +570,7 @@ where
                             "unsized index split identity did not become canonical (page={new_page_id:?})"
                         ));
                     }
-                    let header = GeneralHeader::new(new_page_id, PageType::Index, self.space_id);
+                    let header = GeneralHeader::new(new_page_id, PageType::IndexUnsized, self.space_id);
                     let general_page = GeneralPage {
                         inner: splitted_page,
                         header,
