@@ -366,6 +366,7 @@ where
                         self.empty_links.push(l);
                     }
                     self.stage_published_row(link, row);
+                    self.row_count.fetch_add(1, Ordering::Relaxed);
                     return Ok(link);
                 }
                 Err(e) => match e {
@@ -717,6 +718,7 @@ where
     {
         unsafe { self.with_mut_ref(link, |r| r.delete())? }
 
+        self.row_count.fetch_sub(1, Ordering::Relaxed);
         queue_retirement(&self.retired_links, &self.pending_retirements, "links", link);
         self.reclaim_retired();
         Ok(())
@@ -1458,14 +1460,21 @@ mod tests {
 
         let row = TestRow { a: 10, b: 20 };
         let link = pages.insert(row).unwrap();
+        assert_eq!(pages.row_count.load(Ordering::Relaxed), 1);
         pages.delete(link).unwrap();
+        assert_eq!(pages.row_count.load(Ordering::Relaxed), 0, "delete must decrement row_count");
 
         assert_eq!(pages.empty_links.pop_max().map(|(l, _)| l), Some(link));
         pages.empty_links.push(link);
 
         let row = TestRow { a: 20, b: 20 };
         let new_link = pages.insert(row).unwrap();
-        assert_eq!(new_link, link)
+        assert_eq!(new_link, link);
+        assert_eq!(
+            pages.row_count.load(Ordering::Relaxed),
+            1,
+            "an empty-link-reuse insert must increment row_count"
+        );
     }
 
     #[test]
