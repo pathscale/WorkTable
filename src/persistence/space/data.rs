@@ -145,9 +145,14 @@ pub struct SpaceData<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: 
 
 impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<PkGenState, INNER_PAGE_SIZE, PAGE_SIZE> {
     async fn update_data_length(&mut self) -> eyre::Result<()> {
-        let offset = (u32::default().aligned_size() * 6) as u32;
+        let offset = (u32::default().aligned_size() * 6) as u64;
+        // The multiplication must happen in u64: `last_page_id * PAGE_SIZE`
+        // in u32 wraps once the file passes 4 GiB, and the wrapped position
+        // lands inside a live early page, overwriting its header in place.
         self.data_file
-            .seek(SeekFrom::Start((self.last_page_id * PAGE_SIZE + offset) as u64))
+            .seek(SeekFrom::Start(
+                u64::from(self.last_page_id) * u64::from(PAGE_SIZE) + offset,
+            ))
             .await?;
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&self.current_data_length)?;
         self.data_file.write_all(bytes.as_ref()).await?;
