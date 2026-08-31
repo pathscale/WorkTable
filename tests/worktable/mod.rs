@@ -13,6 +13,7 @@ mod index;
 mod index_backends;
 mod leak_probe;
 mod lock_order;
+mod multi_row_deadlock;
 mod mutation_gate_deadlock;
 mod nid;
 mod option;

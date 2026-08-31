@@ -655,7 +655,6 @@ impl InMemoryGenerator {
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
-        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
             .iter()
@@ -684,18 +683,15 @@ impl InMemoryGenerator {
                     }
                 })
                 .collect::<Vec<_>>();
-            let full_row_lock = self.gen_full_lock_for_update();
-
             quote! {
                 let mut need_to_reinsert = true;
                 #(#fields_check)*
                 if need_to_reinsert {
-                    drop(_mutation_guard);
-                    let old_guard = guards.remove(&pk).expect("guard should exist for this pk");
-                    drop(old_guard);
-
-                    let pending_lock = { #full_row_lock };
-                    let _guard = pending_lock.into_guard_with_mutation();
+                    // The full-row lock for this key is already held: every
+                    // matched key was locked up front, in sorted order. The
+                    // old drop/re-acquire dance re-locked this key while later
+                    // keys' guards were still held, inverting the lock order
+                    // against a concurrent overlapping multi-row update.
                     let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
@@ -704,6 +700,7 @@ impl InMemoryGenerator {
                         return Err(e);
                     }
 
+                    guards.remove(&pk);
                     continue;
                 }
             }
@@ -723,7 +720,7 @@ impl InMemoryGenerator {
                 &by
             }
         };
-        let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let full_row_lock = self.gen_full_lock_for_update();
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
@@ -754,9 +751,13 @@ impl InMemoryGenerator {
                 pks.dedup();
 
                 let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+                // Full-row locks, not per-column custom locks: each row's
+                // unsized reinsert path mutates the whole row under these
+                // guards, and one uniform lock kind keeps every concurrent
+                // multi-row update acquiring in the same sorted-key order.
                 for pk in pks.iter() {
                     let pk = pk.clone();
-                    let pending_lock = { #custom_lock };
+                    let pending_lock = { #full_row_lock };
                     guards.insert(pk.clone(), pending_lock.into_guard());
                 }
 
