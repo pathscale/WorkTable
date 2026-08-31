@@ -22,6 +22,9 @@ impl Generator {
                     Some(ArtBackend::Arctic) => quote! {
                         #i: SpaceArcticIndex<#t, { #inner_const_name as u32}>,
                     },
+                    Some(ArtBackend::ArcticMulti) => quote! {
+                        #i: SpaceArcticMultiIndex<#t, { #inner_const_name as u32}>,
+                    },
                     Some(ArtBackend::Congee) => quote! {
                         #i: SpaceCongeeIndex<#t, { #inner_const_name as u32}>,
                     },
@@ -81,6 +84,9 @@ impl Generator {
                 Ok(match layout.art_backend {
                     Some(ArtBackend::Arctic) => quote! {
                         #i: SpaceArcticIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
+                    },
+                    Some(ArtBackend::ArcticMulti) => quote! {
+                        #i: SpaceArcticMultiIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
                     },
                     Some(ArtBackend::Congee) => quote! {
                         #i: SpaceCongeeIndex::secondary_from_table_files_path(path, #literal_name, version).await?,

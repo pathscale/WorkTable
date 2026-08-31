@@ -31,6 +31,8 @@ pub(super) struct IndexLayout {
 pub(super) enum ArtBackend {
     Arctic,
     Congee,
+    /// Non-unique Arctic (multiset of `(key, link)` pairs).
+    ArcticMulti,
 }
 
 pub(super) fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
@@ -54,6 +56,7 @@ pub(super) fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
         "IndexMultiMap" | "TreeMultiIndex" => (false, false, None, false),
         "PersistentArcticIndex" => (true, false, Some(ArtBackend::Arctic), false),
         "PersistentCongeeIndex" => (true, false, Some(ArtBackend::Congee), false),
+        "PersistentArcticMultiIndex" => (false, false, Some(ArtBackend::ArcticMulti), false),
         _ => {
             return Err(syn::Error::new_spanned(
                 &field.ty,
@@ -211,6 +214,13 @@ impl Generator {
                             &mut self.#i,
                         ).await?;
                     },
+                    Some(ArtBackend::ArcticMulti) => quote! {
+                        SpaceArcticMultiIndex::<#ty, { #inner_const_name as u32 }>::write_checkpoint(
+                            format!("{}/{}{}", path, #index_name_literal, #index_extension),
+                            #version_const_name,
+                            &mut self.#i,
+                        ).await?;
+                    },
                     Some(ArtBackend::Congee) => quote! {
                         SpaceCongeeIndex::<#ty, { #inner_const_name as u32 }>::write_checkpoint(
                             format!("{}/{}{}", path, #index_name_literal, #index_extension),
@@ -267,6 +277,12 @@ impl Generator {
                 Ok(match layout.art_backend {
                     Some(ArtBackend::Arctic) => quote! {
                         let #i = SpaceArcticIndex::<#ty, { #inner_const_name as u32 }>::load_index(
+                            format!("{}/{}{}", path, #literal, #index_extension),
+                            #version_const_name,
+                        ).await?;
+                    },
+                    Some(ArtBackend::ArcticMulti) => quote! {
+                        let #i = SpaceArcticMultiIndex::<#ty, { #inner_const_name as u32 }>::load_index(
                             format!("{}/{}{}", path, #literal, #index_extension),
                             #version_const_name,
                         ).await?;
@@ -371,7 +387,15 @@ impl Generator {
                     .field_types
                     .get(i)
                     .expect("should be available as constructed from same values");
-                if layout.art_backend.is_some() {
+                if layout.art_backend == Some(ArtBackend::ArcticMulti) {
+                    let field_type = &field.ty;
+                    Ok(quote! {
+                        let #i: #field_type = Default::default();
+                        for (key, value) in self.#i.iter() {
+                            #i.insert_pair(key, value);
+                        }
+                    })
+                } else if layout.art_backend.is_some() {
                     let field_type = &field.ty;
                     Ok(quote! {
                         let #i: #field_type = Default::default();

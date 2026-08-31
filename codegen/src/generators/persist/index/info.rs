@@ -48,15 +48,27 @@ impl PersistGenerator {
                     });
                 }
             } else {
+                let (capacity, node_count) = match idx.backend {
+                    crate::common::model::IndexBackend::Arctic => (
+                        // Arctic exposes neither allocator capacity nor
+                        // internal node counts through its stable public API.
+                        quote! { self.#index_field_name.len() },
+                        quote! { 0 },
+                    ),
+                    _ => (
+                        quote! { self.#index_field_name.capacity() },
+                        quote! { self.#index_field_name.node_count() },
+                    ),
+                };
                 quote! {
                     info.push(IndexInfo {
                         name: #index_name_str.to_string(),
                         index_type: IndexKind::NonUnique,
                         key_count: self.#index_field_name.len(),
-                        capacity: self.#index_field_name.capacity(),
+                        capacity: #capacity,
                         heap_size: self.#index_field_name.heap_size(),
                         used_size: self.#index_field_name.used_size(),
-                        node_count: self.#index_field_name.node_count(),
+                        node_count: #node_count,
                     });
                 }
             }
