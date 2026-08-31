@@ -11,7 +11,8 @@ use vanilla_indexset::core::pair::Pair as VanillaPair;
 use crate::util::OffsetEqLink;
 use crate::{
     ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap,
-    PersistentArcticIndex, PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
+    PersistentArcticIndex, PersistentArcticMultiIndex, PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex,
+    UpstreamIndexMap,
 };
 
 mod cdc;
@@ -155,6 +156,28 @@ where
 /// link and `insert_checked` always succeeds. `remove` drops exactly the
 /// requested `(key, link)` pair.
 impl<T> TableIndex<T> for ArcticMultiIndex<T, OffsetEqLink>
+where
+    T: ArcticKey + Eq + Hash,
+{
+    fn insert(&self, value: T, link: Link) -> Option<Link> {
+        self.insert_pair(value, OffsetEqLink(link));
+        None
+    }
+
+    fn insert_checked(&self, value: T, link: Link) -> Option<()> {
+        self.insert_pair(value, OffsetEqLink(link));
+        Some(())
+    }
+
+    fn remove(&self, value: &T, link: Link) -> Option<(T, Link)> {
+        self.remove_pair(value, &OffsetEqLink(link))
+            .map(|removed| (value.clone(), removed.0))
+    }
+}
+
+/// Same multiset semantics as the memory-only adapter above; durable events
+/// come from the separate `TableIndexCdc` implementation.
+impl<T> TableIndex<T> for PersistentArcticMultiIndex<T, OffsetEqLink>
 where
     T: ArcticKey + Eq + Hash,
 {

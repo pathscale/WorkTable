@@ -18,7 +18,9 @@ pub use congee::{CongeeIndex, CongeeKey};
 pub use indexset::concurrent::map::BTreeMap as IndexMap;
 pub use indexset::concurrent::multimap::BTreeMultiMap as IndexMultiMap;
 pub use multipair::MultiPairRecreate;
-pub use persistent_art::{PersistentArcticIndex, PersistentArtIndex, PersistentCongeeIndex};
+pub use persistent_art::{
+    PersistentArcticIndex, PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex,
+};
 pub use persistent_wti::PersistentWtiIndex;
 pub use primary_index::PrimaryIndex;
 pub use table_index::{TableIndex, TableIndexCdc, convert_change_events, convert_upstream_change_events};

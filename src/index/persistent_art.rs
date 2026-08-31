@@ -18,7 +18,7 @@ use indexset::cdc::change::{ChangeEvent, Id};
 use indexset::core::pair::Pair;
 use parking_lot::Mutex;
 
-use crate::index::{ArcticIndex, CongeeIndex, UniqueIndex};
+use crate::index::{ArcticIndex, ArcticMultiIndex, CongeeIndex, UniqueIndex};
 use crate::util::OffsetEqLink;
 use crate::{ArcticKey, CongeeKey, TableIndexCdc};
 
@@ -37,6 +37,51 @@ pub type PersistentArcticIndex<K, V> = PersistentArtIndex<ArcticIndex<K, V>>;
 
 /// Persisted Congee index selected by the generated DSL.
 pub type PersistentCongeeIndex<K, V> = PersistentArtIndex<CongeeIndex<K, V>>;
+
+/// Persisted non-unique Arctic index selected by the generated DSL.
+pub type PersistentArcticMultiIndex<K, V> = PersistentArtIndex<ArcticMultiIndex<K, V>>;
+
+/// The generated select, info, and checkpoint paths address a non-unique
+/// index through these inherent forwards; sequencing wraps only the CDC
+/// mutation surface below.
+impl<K, V> PersistentArtIndex<ArcticMultiIndex<K, V>>
+where
+    K: ArcticKey,
+    V: Clone + Debug + PartialEq + Send + Sync + 'static,
+{
+    pub fn get(&self, key: &K) -> std::vec::IntoIter<(K, V)> {
+        self.inner.get(key)
+    }
+
+    pub fn range<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
+    where
+        R: RangeBounds<K> + 'a,
+    {
+        self.inner.range(range)
+    }
+
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {
+        self.inner.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Non-CDC mutation forward, used when a persisted index is cloned into
+    /// its page representation and by the plain [`crate::TableIndex`] path.
+    pub fn insert_pair(&self, key: K, value: V) {
+        self.inner.insert_pair(key, value)
+    }
+
+    pub fn remove_pair(&self, key: &K, value: &V) -> Option<V> {
+        self.inner.remove_pair(key, value)
+    }
+}
 
 impl<I: Debug> Debug for PersistentArtIndex<I> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -221,6 +266,52 @@ macro_rules! impl_persisted_art_cdc {
 
 impl_persisted_art_cdc!(ArcticIndex, ArcticKey);
 impl_persisted_art_cdc!(CongeeIndex, CongeeKey);
+
+/// Multiset semantics with durable pair events: `InsertAt` adds one
+/// `(key, link)` pair, `RemoveAt` drops the one pair it names. Same-key
+/// mutations are sequenced by the stripe lock so replaying records in event
+/// order reproduces the in-memory result.
+impl<T, const N: usize> TableIndexCdc<T> for PersistentArtIndex<ArcticMultiIndex<T, OffsetEqLink<N>>>
+where
+    T: ArcticKey + Eq + Hash,
+{
+    fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>) {
+        let _sequence_guard = self.mutation_stripe(&value).lock();
+        self.inner.insert_pair(value.clone(), OffsetEqLink(link));
+        let pair = Pair { key: value, value: link };
+        let event = ChangeEvent::InsertAt {
+            event_id: self.next_event_id(),
+            max_value: pair.clone(),
+            value: pair,
+            index: 0,
+        };
+        (None, vec![event])
+    }
+
+    fn insert_checked_cdc(&self, value: T, link: Link) -> Option<Vec<ChangeEvent<Pair<T, Link>>>> {
+        // A non-unique insert cannot collide; it only appends.
+        let (_, events) = self.insert_cdc(value, link);
+        Some(events)
+    }
+
+    fn remove_cdc(&self, value: T, link: Link) -> (Option<(T, Link)>, Vec<ChangeEvent<Pair<T, Link>>>) {
+        let _sequence_guard = self.mutation_stripe(&value).lock();
+        let Some(removed) = self.inner.remove_pair(&value, &OffsetEqLink(link)) else {
+            return (None, Vec::new());
+        };
+        let pair = Pair {
+            key: value.clone(),
+            value: removed.0,
+        };
+        let event = ChangeEvent::RemoveAt {
+            event_id: self.next_event_id(),
+            max_value: pair.clone(),
+            value: pair,
+            index: 0,
+        };
+        (Some((value, removed.0)), vec![event])
+    }
+}
 
 #[cfg(test)]
 mod tests {
