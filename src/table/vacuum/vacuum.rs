@@ -188,7 +188,24 @@ where
                     page_from, page_to,
                     "vacuum destination must differ from the source being reclaimed"
                 );
-                match self.move_data_from(page_from, page_to).await? {
+                let move_result = match self.move_data_from(page_from, page_to).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        // Register every staged page before propagating, or
+                        // the allocated destinations and the source tails
+                        // would leak from the allocator entirely.
+                        defragmented_pages.push_back(page_to);
+                        if let Err(cleanup_error) = self.finalize_staged_pages(free_pages, defragmented_pages) {
+                            tracing::warn!(
+                                table = self.table_name,
+                                %cleanup_error,
+                                "failed to finalize staged vacuum pages after a move error"
+                            );
+                        }
+                        return Err(error);
+                    }
+                };
+                match move_result {
                     (true, true) => {
                         // from moved fully and on to no more space
                         self.data_pages.mark_page_full(page_to);
@@ -227,13 +244,42 @@ where
                 // Queue the durable-free marker before publishing this page to
                 // in-memory allocators. Any concurrent reuse is then ordered
                 // after the marker and consumes the durable free range again.
-                persistence.reclaim_pages(vec![page_from])?;
+                if let Err(error) = persistence.reclaim_pages(vec![page_from]) {
+                    if let Err(cleanup_error) = self.finalize_staged_pages(free_pages, defragmented_pages) {
+                        tracing::warn!(
+                            table = self.table_name,
+                            %cleanup_error,
+                            "failed to finalize staged vacuum pages after a reclaim error"
+                        );
+                    }
+                    return Err(error.into());
+                }
             }
             self.data_pages.mark_page_empty(page_from);
             pages_freed += 1;
         }
 
         pages_freed += free_pages.len();
+        self.finalize_staged_pages(free_pages, defragmented_pages)?;
+
+        Ok(VacuumStats {
+            pages_processed,
+            pages_freed,
+            bytes_freed: initial_bytes_freed,
+            duration_ns: now.elapsed().as_nanos(),
+        })
+    }
+
+    /// Registers the staged destination and free pages back with the
+    /// allocator. Shared by the success tail of [`Self::defragment`] and its
+    /// error paths, so staged pages are never leaked: allocated destinations
+    /// are marked full (their tails go to the empty-links registry) and
+    /// unused free pages are reclaimed and marked empty.
+    fn finalize_staged_pages(
+        &self,
+        free_pages: VecDeque<PageId>,
+        defragmented_pages: VecDeque<PageId>,
+    ) -> eyre::Result<()> {
         if let Some(persistence) = &self.persistence
             && !free_pages.is_empty()
         {
@@ -245,13 +291,7 @@ where
         for id in defragmented_pages {
             self.data_pages.mark_page_full(id)
         }
-
-        Ok(VacuumStats {
-            pages_processed,
-            pages_freed,
-            bytes_freed: initial_bytes_freed,
-            duration_ns: now.elapsed().as_nanos(),
-        })
+        Ok(())
     }
 
     async fn move_data_from(&self, from: PageId, to: PageId) -> eyre::Result<(bool, bool)> {
