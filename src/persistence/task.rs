@@ -651,6 +651,47 @@ mod lifecycle_tests {
         );
     }
 
+    /// Regression: `close` hung forever on an idle worker.
+    ///
+    /// `pop_marking_in_progress` created its `Notified` future but never
+    /// enabled it before draining the queue and reading the lifecycle state.
+    /// `close` wakes the worker with `notify_waiters`, which stores no permit,
+    /// so a wake landing between that state read and the first poll of the
+    /// future was lost. The worker then parked on a notification that could
+    /// never come again: the state had left `Running`, so no push (the only
+    /// `notify_one` source) would ever arrive. `close` awaited the worker's
+    /// join handle and hung with it.
+    ///
+    /// The window is a few instructions wide, so the test parks the popping
+    /// task inside it with the semaphore gate, lands the `Closing` transition
+    /// and the wake exactly there, and only then lets the pop run on to its
+    /// await. The timeout bounds a regression to a test failure, not a hang.
+    #[tokio::test]
+    async fn wake_landing_inside_the_pop_race_window_is_not_lost() {
+        let lifecycle = Arc::new(PersistenceLifecycle::new());
+        let mut queue = Queue::<(), u64, TestEvents>::new(lifecycle.clone());
+        let gate = Arc::new(PopRaceWindowGate::new());
+        queue.pop_race_window_gate = Some(gate.clone());
+        let queue = Arc::new(queue);
+
+        let popping_queue = queue.clone();
+        let popping = tokio::spawn(async move {
+            let in_progress = AtomicBool::new(false);
+            popping_queue.pop_marking_in_progress(&in_progress).await
+        });
+
+        gate.wait_entered().await;
+        lifecycle.begin_close().unwrap();
+        queue.wake();
+        gate.release();
+
+        let popped = tokio::time::timeout(Duration::from_secs(5), popping)
+            .await
+            .expect("pop hung: the shutdown wake landed in the race window and was lost")
+            .unwrap();
+        assert!(popped.is_none(), "an empty closing queue must pop None");
+    }
+
     #[tokio::test]
     async fn engine_failure_is_terminal_and_reused_for_later_callers() {
         let task = PersistenceTask::run_engine(TestEngine {
@@ -791,6 +832,44 @@ enum PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     ReclaimPages(Vec<PageId>),
 }
 
+/// Holds `pop_marking_in_progress` open inside its race window — after its
+/// lifecycle state read, before its `notified.await` — so a test can land a
+/// wake there deterministically. Semaphore permits are retained, unlike
+/// `notify_waiters`, so the gate itself cannot miss a signal.
+#[cfg(test)]
+#[derive(Debug)]
+struct PopRaceWindowGate {
+    entered: tokio::sync::Semaphore,
+    proceed: tokio::sync::Semaphore,
+}
+
+#[cfg(test)]
+impl PopRaceWindowGate {
+    fn new() -> Self {
+        Self {
+            entered: tokio::sync::Semaphore::new(0),
+            proceed: tokio::sync::Semaphore::new(0),
+        }
+    }
+
+    /// Called by the popping task inside the window: reports entry, then
+    /// blocks until [`Self::release`].
+    async fn pause(&self) {
+        self.entered.add_permits(1);
+        self.proceed.acquire().await.expect("gate semaphore closed").forget();
+    }
+
+    /// Waits until the popping task is parked inside the window.
+    async fn wait_entered(&self) {
+        self.entered.acquire().await.expect("gate semaphore closed").forget();
+    }
+
+    /// Lets the popping task run on from the window.
+    fn release(&self) {
+        self.proceed.add_permits(1);
+    }
+}
+
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // Not `lockfree::queue::Queue`: its `Removable::empty` materializes the
@@ -804,6 +883,8 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // queue that still holds work.
     len: Arc<AtomicUsize>,
     lifecycle: Arc<PersistenceLifecycle>,
+    #[cfg(test)]
+    pop_race_window_gate: Option<std::sync::Arc<PopRaceWindowGate>>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
@@ -813,6 +894,8 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
             notify: Notify::new(),
             len: Arc::new(AtomicUsize::new(0)),
             lifecycle,
+            #[cfg(test)]
+            pop_race_window_gate: None,
         }
     }
 
@@ -848,6 +931,19 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     ) -> Option<PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         loop {
             let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // `wake()` uses `notify_waiters`, which stores no permit: only a
+            // waiter that already exists observes it. Register this waiter
+            // before draining the queue and reading the lifecycle state, so a
+            // `close()` that transitions to `Closing` and wakes inside that
+            // window cannot be lost forever — no further push will ever
+            // arrive to deliver a permit once the state has left `Running`.
+            // Creating the future up here is what carries the guarantee
+            // (`Notified` snapshots the `notify_waiters` generation at
+            // creation); the explicit `enable` additionally registers for
+            // `notify_one` and keeps the registration point obvious, the same
+            // pattern as `PersistenceMonitor::wait_for_failure`.
+            notified.as_mut().enable();
             // Drain values
             {
                 let mut queue = self.queue.lock();
@@ -860,6 +956,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
 
             if !matches!(self.lifecycle.state(), PersistenceState::Running) {
                 return None;
+            }
+
+            // The window between the state read above and the await below is
+            // where a `close()` wake could previously vanish. It is a few
+            // instructions wide, so a test cannot land in it by luck; this
+            // gate holds it open. Unit tests only, inert unless installed.
+            #[cfg(test)]
+            if let Some(gate) = &self.pop_race_window_gate {
+                gate.pause().await;
             }
 
             // Wait for values to be available
