@@ -223,6 +223,49 @@ impl<T> PartitionSet<T> {
         out
     }
 
+    /// Visit every live partition once, ascending by key.
+    ///
+    /// [`Self::iter`] costs a spine scan for `keys`, a `Vec`, a second lookup
+    /// per key, a refcount round trip per partition, and a second `Vec`. This
+    /// scans each slot once, allocates nothing, and hands out a borrow. Use it
+    /// for accounting and telemetry; use `iter` when the handles must outlive
+    /// the call.
+    ///
+    /// Not a snapshot: a partition created or removed during the walk may or
+    /// may not be visited. Accounting reads are approximate under concurrent
+    /// mutation either way.
+    pub fn for_each<F>(&self, mut f: F)
+    where
+        F: FnMut(u64, &T),
+    {
+        for c in 0..MAX_CHUNKS {
+            let Some(chunk) = self.chunk(c * CHUNK) else {
+                continue;
+            };
+            for (i, slot) in chunk.slots.iter().enumerate() {
+                let p = slot.load(Ordering::Acquire);
+                if !p.is_null() {
+                    // Safety: as `partition_ref`. The borrow cannot outlive
+                    // `&self`, and reclamation needs `&mut self`.
+                    f((c * CHUNK + i) as u64, unsafe { &*p });
+                }
+            }
+        }
+    }
+
+    /// Visit every partition that has been removed but not yet reclaimed.
+    ///
+    /// These are still resident and still cost memory. Reporting only live
+    /// partitions makes a total *fall* after a removal that freed nothing.
+    pub fn for_each_retired<F>(&self, mut f: F)
+    where
+        F: FnMut(&T),
+    {
+        for table in self.lock().iter() {
+            f(table);
+        }
+    }
+
     /// Every live partition, paired with its key.
     ///
     /// A snapshot, not a view: a key removed after its slot was scanned is

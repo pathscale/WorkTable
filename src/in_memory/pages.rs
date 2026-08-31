@@ -862,6 +862,14 @@ where
         self.empty_links.iter().collect()
     }
 
+    /// How many empty links the registry holds.
+    ///
+    /// `get_empty_links().len()` allocated a `Vec` of every link to read its
+    /// length, which `system_info` did on every call.
+    pub fn empty_links_count(&self) -> usize {
+        self.empty_links.iter().count()
+    }
+
     pub fn empty_links_registry(&self) -> &EmptyLinkRegistry<DATA_LENGTH> {
         &self.empty_links
     }

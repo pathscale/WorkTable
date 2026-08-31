@@ -61,11 +61,27 @@ where
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     SecondaryIndexes: MemStat + TableSecondaryIndexInfo,
 {
+    /// Rows currently in the table.
+    ///
+    /// Separate from [`Self::system_info`] because callers that want only this
+    /// were paying for the page walk, the empty-link count and the index info
+    /// to read one `usize`.
+    pub fn row_count(&self) -> usize {
+        self.primary_index.pk_map.len()
+    }
+
+    /// Row bytes plus secondary index bytes.
+    ///
+    /// The same figure `system_info` reports, without building the rest of it.
+    pub fn used_bytes(&self) -> u64 {
+        self.data.used_bytes() + self.indexes.heap_size() as u64
+    }
+
     pub fn system_info(&self) -> SystemInfo {
         let page_count = self.data.get_page_count();
         let row_count = self.primary_index.pk_map.len();
 
-        let empty_links = self.data.get_empty_links().len();
+        let empty_links = self.data.empty_links_count();
 
         let memory_usage_bytes = self.data.used_bytes();
 

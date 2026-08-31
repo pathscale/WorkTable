@@ -116,50 +116,57 @@ pub fn expand(name: &Ident, key: &PartitionKey) -> TokenStream {
                 self.inner.is_empty()
             }
 
-            /// Memory held per partition: row bytes plus index bytes.
-            ///
-            /// Sourced from `system_info()` rather than `MemStat`, because the
-            /// generated table reports its footprint there. "Which key is
-            /// costing me" is the question a partitioned store gets asked, and
-            /// a single total cannot answer it.
-            pub fn memory_by_key(&self) -> Vec<(#key_ty, u64)> {
-                self.inner
-                    .iter()
-                    .into_iter()
-                    .map(|(k, table)| {
-                        let info = table.system_info();
-                        (k as #key_ty, info.memory_usage_bytes + info.idx_size as u64)
-                    })
-                    .collect()
-            }
-
-            /// Memory held across every live partition.
-            pub fn memory_total(&self) -> u64 {
-                self.memory_by_key().into_iter().map(|(_, bytes)| bytes).sum()
-            }
-
             /// Free partitions removed earlier.
             ///
-            /// [`Self::remove`] retires a partition rather than freeing it,
-            /// because a reader running without a lock may have loaded its
-            /// pointer a moment before. This takes `&mut self`: exclusive
-            /// access is the proof that no such reader is in flight.
+            /// Returns how many were reclaimed. Takes `&mut self`, so a router
+            /// shared behind an `Arc` can never call it: treat such a router as
+            /// append-only and watch `retired_len` and `retired_bytes`.
             pub fn gc(&mut self) -> usize {
                 self.inner.gc()
             }
 
-            /// How many removed partitions are still awaiting [`Self::gc`].
+            /// How many removed partitions are still awaiting `gc`.
             pub fn retired_len(&self) -> usize {
                 self.inner.retired_len()
             }
 
-            /// Rows held per partition.
+            /// Row bytes plus index bytes, per partition, ascending by key.
+            ///
+            /// This is *used* bytes. It excludes the table's fixed floor, its
+            /// reserved-but-unused page capacity, the router spine, and
+            /// anything on the retire list, so it is not resident memory and
+            /// must not be used as one. See `retired_bytes`.
+            pub fn memory_by_key(&self) -> Vec<(#key_ty, u64)> {
+                let mut out = Vec::with_capacity(self.inner.len());
+                self.inner.for_each(|k, table| out.push((k as #key_ty, table.used_bytes())));
+                out
+            }
+
+            /// Row bytes plus index bytes across every live partition.
+            ///
+            /// Folded directly: it does not build `memory_by_key` first.
+            pub fn memory_total(&self) -> u64 {
+                let mut total = 0u64;
+                self.inner.for_each(|_, table| total += table.used_bytes());
+                total
+            }
+
+            /// Bytes held by partitions that were removed but not reclaimed.
+            ///
+            /// `remove` retires rather than frees, and `gc` needs `&mut self`,
+            /// so through a shared router this only grows. Without it a total
+            /// falls after a removal that freed nothing.
+            pub fn retired_bytes(&self) -> u64 {
+                let mut total = 0u64;
+                self.inner.for_each_retired(|table| total += table.used_bytes());
+                total
+            }
+
+            /// Rows held per partition, ascending by key.
             pub fn rows_by_key(&self) -> Vec<(#key_ty, usize)> {
-                self.inner
-                    .iter()
-                    .into_iter()
-                    .map(|(k, table)| (k as #key_ty, table.system_info().row_count))
-                    .collect()
+                let mut out = Vec::with_capacity(self.inner.len());
+                self.inner.for_each(|k, table| out.push((k as #key_ty, table.row_count())));
+                out
             }
         }
     }
