@@ -209,6 +209,15 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         self.index_ord_links.iter().map(|l| l.0)
     }
 
+    /// Number of registered empty links, without materializing them.
+    pub fn len(&self) -> usize {
+        self.index_ord_links.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.index_ord_links.is_empty()
+    }
+
     pub fn get_empty_links_size_bytes(&self) -> u64 {
         self.sum_links_len.load(Ordering::Acquire)
     }

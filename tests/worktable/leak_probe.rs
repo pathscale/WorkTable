@@ -46,7 +46,7 @@ async fn update_churn_does_not_grow_storage_unbounded() {
                 .await
                 .unwrap();
         }
-        table.0.data.get_bytes().len()
+        table.0.data.get_page_count()
     };
 
     for i in 0..5_000u64 {
@@ -61,7 +61,7 @@ async fn update_churn_does_not_grow_storage_unbounded() {
             .unwrap();
     }
 
-    let pages_after_churn = table.0.data.get_bytes().len();
+    let pages_after_churn = table.0.data.get_page_count();
 
     // Logical row count is unchanged.
     assert_eq!(table.count(), 1, "cardinality drifted under update churn");

@@ -310,11 +310,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         })
     }
 
-    pub fn get_bytes(&self) -> [u8; DATA_LENGTH] {
-        let data = unsafe { &*self.inner_data.get() };
-        data.0
-    }
-
     pub fn free_space(&self) -> usize {
         DATA_LENGTH.saturating_sub(self.free_offset.load(Ordering::Acquire) as usize)
     }

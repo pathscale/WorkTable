@@ -797,15 +797,6 @@ where
             .sum()
     }
 
-    pub fn get_bytes(&self) -> Vec<([u8; DATA_LENGTH], u32)> {
-        let _page_access = self.page_access.read();
-        let pages = self.pages.read();
-        pages
-            .iter()
-            .map(|p| (p.get_bytes(), p.free_offset.load(Ordering::Relaxed)))
-            .collect()
-    }
-
     /// Copies a row to another page without exposing either mutable byte
     /// image to application readers.
     ///
@@ -888,7 +879,7 @@ where
     /// `get_empty_links().len()` allocated a `Vec` of every link to read its
     /// length, which `system_info` did on every call.
     pub fn empty_links_count(&self) -> usize {
-        self.empty_links.iter().count()
+        self.empty_links.len()
     }
 
     pub fn empty_links_registry(&self) -> &EmptyLinkRegistry<DATA_LENGTH> {
