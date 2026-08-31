@@ -44,6 +44,29 @@ macro_rules! impl_arctic_raw_key {
 
 impl_arctic_raw_key!(u16, u32, u64, u128);
 
+/// Translates Rust range bounds over `K` into the inclusive native bounds
+/// Arctic accepts.
+///
+/// An `Excluded` bound whose neighbour does not exist (`next()` on the
+/// maximum key, `previous()` on zero) makes the range empty, which is
+/// signalled as `None`. It must not fall through to an unbounded side, which
+/// would return the whole table for an empty range.
+pub(crate) fn raw_inclusive_bounds<K: ArcticKey>(
+    range: &impl RangeBounds<K>,
+) -> Option<(Option<K::Raw>, Option<K::Raw>)> {
+    let lower = match range.start_bound() {
+        Bound::Included(key) => Some(key.to_arctic()),
+        Bound::Excluded(key) => Some(key.to_arctic().next()?),
+        Bound::Unbounded => None,
+    };
+    let upper = match range.end_bound() {
+        Bound::Included(key) => Some(key.to_arctic()),
+        Bound::Excluded(key) => Some(key.to_arctic().previous()?),
+        Bound::Unbounded => None,
+    };
+    Some((lower, upper))
+}
+
 macro_rules! impl_arctic_key {
     ($($ty:ty),* $(,)?) => {
         $(
@@ -198,25 +221,8 @@ where
     where
         R: RangeBounds<K> + 'a,
     {
-        // An `Excluded` bound whose neighbour does not exist (`next()` on the
-        // maximum key, `previous()` on zero) makes the range empty. It must
-        // not fall through to `None`, which the match below treats as
-        // unbounded and would return the whole table for an empty range.
-        let lower = match range.start_bound() {
-            Bound::Included(key) => Some(key.to_arctic()),
-            Bound::Excluded(key) => match key.to_arctic().next() {
-                Some(lower) => Some(lower),
-                None => return Vec::new().into_iter(),
-            },
-            Bound::Unbounded => None,
-        };
-        let upper = match range.end_bound() {
-            Bound::Included(key) => Some(key.to_arctic()),
-            Bound::Excluded(key) => match key.to_arctic().previous() {
-                Some(upper) => Some(upper),
-                None => return Vec::new().into_iter(),
-            },
-            Bound::Unbounded => None,
+        let Some((lower, upper)) = raw_inclusive_bounds(&range) else {
+            return Vec::new().into_iter();
         };
 
         macro_rules! collect_range {
