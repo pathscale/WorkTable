@@ -248,7 +248,6 @@ impl Generator {
                         indexes: std::sync::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
                         lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
-                        update_state: IndexMap::default(),
                         table_name: #table_name,
                         pk_phantom: std::marker::PhantomData,
                     };
@@ -318,7 +317,6 @@ impl Generator {
                         indexes: std::sync::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
                         lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
-                        update_state: IndexMap::default(),
                         table_name: #table_name,
                         pk_phantom: std::marker::PhantomData,
                     };

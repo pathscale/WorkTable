@@ -55,8 +55,6 @@ pub struct WorkTable<
 
     pub lock_manager: Arc<LockMap<LockType, PrimaryKey>>,
 
-    pub update_state: IndexMap<PrimaryKey, Row>,
-
     pub table_name: &'static str,
 
     pub pk_phantom: PhantomData<(AvailableTypes, AvailableIndexes)>,
@@ -100,7 +98,6 @@ where
             indexes: Arc::new(SecondaryIndexes::default()),
             pk_gen: Default::default(),
             lock_manager: Default::default(),
-            update_state: IndexMap::default(),
             table_name: "",
             pk_phantom: PhantomData,
         }

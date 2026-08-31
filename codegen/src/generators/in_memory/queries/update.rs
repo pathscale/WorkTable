@@ -89,8 +89,6 @@ impl InMemoryGenerator {
 
                 #diff_process_remove
 
-                self.0.update_state.remove(&pk);
-
                 #persist_call
 
                 core::result::Result::Ok(())
@@ -104,7 +102,6 @@ impl InMemoryGenerator {
                     self.0.data.update_in_place::<{ #const_name }>(row.clone(), link).is_ok()
                 };
                 if in_place_ok {
-                    self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
                 }
                 drop(_guard);
@@ -121,10 +118,8 @@ impl InMemoryGenerator {
                     .ok_or(WorkTableError::NotFound)?;
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 if let Err(e) = self.reinsert(row_old, row).await {
-                    self.0.update_state.remove(&pk);
                     return Err(e);
                 }
-                self.0.update_state.remove(&pk);
                 core::result::Result::Ok(())
             }
         } else {
@@ -143,12 +138,9 @@ impl InMemoryGenerator {
                     .ok_or(WorkTableError::NotFound)?;
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 if let Err(e) = self.reinsert(row_old, row).await {
-                    self.0.update_state.remove(&pk);
 
                     return Err(e);
                 }
-
-                self.0.update_state.remove(&pk);
 
                 core::result::Result::Ok(())
             }
@@ -178,8 +170,9 @@ impl InMemoryGenerator {
                     .map(Into::into)
                     .ok_or(WorkTableError::NotFound)?;
 
-                let row_old = self.0.data.select_non_ghosted(link)?;
-                self.0.update_state.insert(pk.clone(), row_old);
+                // Validate that the link still resolves to a live row before
+                // touching anything.
+                self.0.data.select_non_ghosted(link)?;
 
                 #update_body
             }
@@ -331,12 +324,9 @@ impl InMemoryGenerator {
 
                     if need_to_reinsert {
                         if let Err(e) = self.reinsert(row_old, row_new).await {
-                            self.0.update_state.remove(&pk);
 
                             return Err(e);
                         }
-
-                        self.0.update_state.remove(&pk);
                         return core::result::Result::Ok(());
                     }
 
@@ -369,7 +359,6 @@ impl InMemoryGenerator {
                         self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), current_link).is_ok()
                     };
                     if in_place_ok {
-                        self.0.update_state.remove(&pk);
                         return core::result::Result::Ok(());
                     }
 
@@ -377,10 +366,8 @@ impl InMemoryGenerator {
                     // length before touching page bytes, so its error path
                     // leaves this locked snapshot authoritative for fallback.
                     if let Err(e) = self.reinsert(row_old, row_new).await {
-                        self.0.update_state.remove(&pk);
                         return Err(e);
                     }
-                    self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
                 }
             }
@@ -407,11 +394,8 @@ impl InMemoryGenerator {
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
-                        self.0.update_state.remove(&pk);
                         return Err(e);
                     }
-
-                    self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
                 }
             }
@@ -718,7 +702,6 @@ impl InMemoryGenerator {
                         let mut row_new = row_old.clone();
                         #(#row_updates)*
                         if let Err(e) = self.reinsert(row_old, row_new).await {
-                            self.0.update_state.remove(&pk);
                             return Err(e);
                         }
 
@@ -755,7 +738,6 @@ impl InMemoryGenerator {
                             }
                         }
                         if let Err(e) = self.reinsert(row_old, row_new).await {
-                            self.0.update_state.remove(&pk);
                             return Err(e);
                         }
 

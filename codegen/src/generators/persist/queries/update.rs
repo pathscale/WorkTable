@@ -87,7 +87,6 @@ impl PersistGenerator {
                             link,
                         });
                         self.1.apply_operation(op)?;
-                        self.0.update_state.remove(&pk);
                         return core::result::Result::Ok(());
                     }
                 }
@@ -111,12 +110,9 @@ impl PersistGenerator {
                         .ok_or(WorkTableError::NotFound)?;
                     let row_old = self.0.data.select_non_ghosted(link)?;
                     if let Err(e) = self.reinsert(row_old, row).await {
-                        self.0.update_state.remove(&pk);
 
                         return Err(e);
                     }
-
-                    self.0.update_state.remove(&pk);
 
                     return core::result::Result::Ok(());
                 }
@@ -141,8 +137,6 @@ impl PersistGenerator {
                 }).map_err(WorkTableError::PagesError)? };
 
                 #diff_process_remove
-
-                self.0.update_state.remove(&pk);
 
                 #persist_call
 
@@ -178,8 +172,9 @@ impl PersistGenerator {
                     .map(Into::into)
                     .ok_or(WorkTableError::NotFound)?;
 
-                let row_old = self.0.data.select_non_ghosted(link)?;
-                self.0.update_state.insert(pk.clone(), row_old);
+                // Validate that the link still resolves to a live row before
+                // touching anything.
+                self.0.data.select_non_ghosted(link)?;
 
                 #update_body
             }
@@ -321,10 +316,8 @@ impl PersistGenerator {
 
                     if need_to_reinsert {
                         if let Err(e) = self.reinsert(row_old, row_new).await {
-                            self.0.update_state.remove(&pk);
                             return Err(e);
                         }
-                        self.0.update_state.remove(&pk);
                         return core::result::Result::Ok(());
                     }
 
@@ -357,15 +350,12 @@ impl PersistGenerator {
                             link: current_link,
                         });
                         self.1.apply_operation(op)?;
-                        self.0.update_state.remove(&pk);
                         return core::result::Result::Ok(());
                     }
 
                     if let Err(e) = self.reinsert(row_old, row_new).await {
-                        self.0.update_state.remove(&pk);
                         return Err(e);
                     }
-                    self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
                 }
             }
@@ -390,11 +380,8 @@ impl PersistGenerator {
                     let mut row_new = row_old.clone();
                     #(#row_updates)*
                     if let Err(e) = self.reinsert(row_old, row_new).await {
-                        self.0.update_state.remove(&pk);
                         return Err(e);
                     }
-
-                    self.0.update_state.remove(&pk);
                     return core::result::Result::Ok(());
                 }
             }
@@ -667,7 +654,6 @@ impl PersistGenerator {
                         let mut row_new = row_old.clone();
                         #(#row_updates)*
                         if let Err(e) = self.reinsert(row_old, row_new).await {
-                            self.0.update_state.remove(&pk);
                             return Err(e);
                         }
 
@@ -720,7 +706,6 @@ impl PersistGenerator {
                             }
                         }
                         if let Err(e) = self.reinsert(row_old, row_new).await {
-                            self.0.update_state.remove(&pk);
                             return Err(e);
                         }
 
