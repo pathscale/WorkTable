@@ -108,7 +108,7 @@ fn publication_shard<const DATA_LENGTH: usize>(key: &OffsetEqLink<DATA_LENGTH>) 
 /// synchronous read window (index lookup through row-version acquisition),
 /// not across `.await` points.
 pub struct ReadGuard<'a> {
-    _guard: crossbeam_epoch::Guard,
+    _guard: crate::util::epoch::Guard<'a>,
     marker: PhantomData<&'a ()>,
 }
 

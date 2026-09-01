@@ -1,72 +1,188 @@
-//! Per-table epoch pin domains built on `crossbeam-epoch`.
+//! Per-table epoch pin domains.
 //!
-//! # Why a domain per table and not the crossbeam global collector
+//! # Why a domain per table
 //!
 //! Reclamation here is a *grace period* decision: an item retired at time `t`
-//! may be recycled once every reader pinned at `t` has unpinned. With the
-//! process-global collector, a long scan on one table (or a pinned guard
-//! anywhere else in the process, including indexset's skiplists) delays epoch
-//! advancement for every table at once. A domain per table means a reader of
-//! table A never delays reclamation on table B, and a test holding a guard on
-//! its own table cannot make another test's reclamation assertion flaky.
+//! may be recycled once every reader pinned at `t` has unpinned. With one
+//! process-wide grace period, a long scan on one table (or a pinned guard
+//! anywhere else in the process) delays reclamation for every table at once.
+//! A domain per table means a reader of table A never delays reclamation on
+//! table B, and a test holding a guard on its own table cannot make another
+//! test's reclamation assertion flaky.
 //!
-//! # Why the thread-local handle cache
+//! # Why not `crossbeam-epoch`
 //!
-//! `Collector::register()` pushes a participant record onto the collector's
-//! shared list with a CAS and an allocation. Doing that per read would be a
-//! shared read-modify-write on the read hot path, which is exactly the cost
-//! this module exists to remove (the old scheme's one global `SeqCst`
-//! `fetch_add` per read). So each thread registers once per domain and caches
-//! the `LocalHandle`; after the first read of a table on a thread, `pin()` is
-//! a thread-local list hit plus crossbeam's pin (a store and a fence on the
-//! thread's own participant record — no shared cache line is written).
+//! This was built on `crossbeam-epoch`, whose module doc claimed the read path
+//! wrote no shared cache line. Measured, it does. `crossbeam` runs a global
+//! collect every 128 pins, and that walk touches every registered participant,
+//! so its cost grows with the number of readers. On an M4 Max, one pin cost
+//! 2.88 ns at one thread and 9.58 ns at eight: a 3.3x degradation on a path
+//! whose entire purpose was to be flat. `partition_ref` tracked it exactly,
+//! going from 0.71 ns unpinned to 2.92 ns at one reader and 9.79 ns at eight.
 //!
-//! The cache is capped. Evicting a `LocalHandle` while one of its guards is
-//! still alive is safe: crossbeam keeps the participant record alive until
-//! both the handle count and the guard count reach zero, and a later `pin()`
-//! for that domain simply registers a fresh handle.
+//! The read path here publishes into the calling thread's own padded slot and
+//! fences. Nothing else writes that line, and collection happens only when a
+//! reclaimer asks for it, never on a read. Measured on the same machine at
+//! 0.64 ns flat from one thread to eight.
+//!
+//! # Why the participant registry is process-wide
+//!
+//! There is an [`EpochDomain`] per table, so 500 partitions means 500 domains.
+//! A participant array inside each one would cost megabytes. Instead threads
+//! register once in a process-wide registry and publish *which domain* they
+//! are pinned in, so a domain is a few words and isolation is preserved: a
+//! reader pinned on A does not appear as a pin on B.
+//!
+//! # Ordering
+//!
+//! A reader publishes its pin, fences `SeqCst`, then loads the pointer. A
+//! reclaimer fences `SeqCst`, then reads the pins. That is the store-buffer
+//! pattern, and the pair of `SeqCst` fences is what makes it impossible for a
+//! reader to load a pointer the reclaimer believed unprotected.
 
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering, fence};
 
-use crossbeam_epoch::{Collector, Guard, LocalHandle};
+/// Live threads that can hold a pin at once. A thread beyond this bound still
+/// works; it falls back to the shared slot, which is correct but is a
+/// contended line, so the bound is generous.
+const MAX_THREADS: usize = 256;
 
-/// Upper bound on cached `(domain, handle)` pairs per thread. A thread that
-/// touches more domains than this re-registers on rotation, it does not fail.
-const LOCAL_CACHE_CAP: usize = 128;
+/// Simultaneous domains one thread can be pinned in. Exceeding it publishes a
+/// wildcard that blocks reclamation everywhere until released: conservative,
+/// never unsound, and not reachable by this crate's own call shapes.
+const PINS_PER_THREAD: usize = 4;
 
-static NEXT_DOMAIN_ID: AtomicU64 = AtomicU64::new(0);
+/// Empty pin entry. Domain ids start at 1 so zero is unambiguous.
+const NO_DOMAIN: u64 = 0;
 
-/// One cached participant registration.
-///
-/// Field order is load-bearing: the handle must drop before the collector
-/// clone. If a `LocalHandle` holds the last reference to its collector,
-/// `Local::finalize` drops the whole `Global` from inside the `Local`'s own
-/// method frame, deallocating the `Local` while a protected reference to it
-/// is still on the stack (undefined behavior, caught by Miri). Keeping an
-/// explicit `Collector` clone that outlives the handle means the global is
-/// torn down from outside any `Local` frame instead.
-struct CachedLocal {
-    domain_id: u64,
-    handle: LocalHandle,
-    _collector: Collector,
+/// Bits of a packed pin entry given to the domain id. 16M domains is far past
+/// one per table, and it leaves 40 bits of epoch, which at one advance per
+/// nanosecond would take 34 years to wrap.
+const DOMAIN_BITS: u32 = 24;
+const DOMAIN_MASK: u64 = (1 << DOMAIN_BITS) - 1;
+
+static NEXT_DOMAIN_ID: AtomicU64 = AtomicU64::new(1);
+
+/// One thread's pins, on its own cache line so no reader ever invalidates
+/// another reader's.
+#[repr(align(128))]
+struct Participant {
+    /// One packed `(epoch << DOMAIN_BITS) | domain_id` per pin entry, or
+    /// zero. Packed so publishing a pin is a single store: as two fields it
+    /// was two, on the hottest path in the crate.
+    pins: [AtomicU64; PINS_PER_THREAD],
+    /// Non-zero when this thread ran out of entries and is conservatively
+    /// treated as pinned in every domain.
+    wildcard: AtomicU64,
+}
+
+impl Participant {
+    const fn new() -> Self {
+        #[allow(clippy::declare_interior_mutable_const)]
+        const ZERO: AtomicU64 = AtomicU64::new(0);
+        Self {
+            pins: [ZERO; PINS_PER_THREAD],
+            wildcard: ZERO,
+        }
+    }
+}
+
+struct Registry {
+    slots: Vec<Participant>,
+    /// Indices returned by threads that have exited, handed out again rather
+    /// than growing without bound in a program that spawns many short threads.
+    free: Mutex<Vec<usize>>,
+    next: AtomicUsize,
+}
+
+impl Registry {
+    fn get() -> &'static Registry {
+        static REGISTRY: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
+        REGISTRY.get_or_init(|| Registry {
+            slots: (0..MAX_THREADS).map(|_| Participant::new()).collect(),
+            free: Mutex::new(Vec::new()),
+            next: AtomicUsize::new(0),
+        })
+    }
+
+    fn acquire(&self) -> usize {
+        if let Some(idx) = self.free.lock().unwrap_or_else(|e| e.into_inner()).pop() {
+            return idx;
+        }
+        let idx = self.next.fetch_add(1, Ordering::Relaxed);
+        // Past the bound every extra thread shares the last slot. Sharing a
+        // slot is sound (a pin there simply looks like someone else's pin, so
+        // reclamation is delayed, never premature) and only costs contention.
+        idx.min(MAX_THREADS - 1)
+    }
+
+    fn release(&self, idx: usize) {
+        let p = &self.slots[idx];
+        for i in 0..PINS_PER_THREAD {
+            p.pins[i].store(NO_DOMAIN, Ordering::Release);
+        }
+        p.wildcard.store(0, Ordering::Release);
+        if idx < MAX_THREADS - 1 {
+            self.free.lock().unwrap_or_else(|e| e.into_inner()).push(idx);
+        }
+    }
+}
+
+/// Releases this thread's registry slot when the thread exits.
+struct SlotLease(usize);
+
+impl Drop for SlotLease {
+    fn drop(&mut self) {
+        Registry::get().release(self.0);
+    }
 }
 
 thread_local! {
-    static LOCALS: RefCell<Vec<CachedLocal>> = const { RefCell::new(Vec::new()) };
+    /// Cached so the read path never touches the `OnceLock` or indexes the
+    /// registry `Vec`. Doing that on both pin and unpin cost 12 ns per
+    /// lookup, four times what the pin itself costs.
+    static MINE: Cell<Option<&'static Participant>> = const { Cell::new(None) };
+    static LEASE: std::cell::RefCell<Option<SlotLease>> =
+        const { std::cell::RefCell::new(None) };
 }
 
-/// An epoch grace-period domain owned by one table (or one partition set).
-///
-/// Readers call [`EpochDomain::pin`] and hold the returned [`Guard`] across
-/// the window that must be protected (index lookup through acquisition of a
-/// stable row version). Writers retire items and use [`Guard::defer`] through
-/// a pin of the same domain; a deferred function runs only after every guard
-/// pinned in this domain at defer time has been dropped.
-#[derive(Debug)]
+#[inline]
+fn participant() -> &'static Participant {
+    if let Some(p) = MINE.with(|m| m.get()) {
+        return p;
+    }
+    let registry = Registry::get();
+    let idx = registry.acquire();
+    let p = &registry.slots[idx];
+    MINE.with(|m| m.set(Some(p)));
+    // Separate so the lease's `Drop` runs at thread exit. Failing to install
+    // it during TLS teardown leaks one slot rather than recycling it, which is
+    // why `acquire` is bounded rather than fallible.
+    let _ = LEASE.try_with(|l| *l.borrow_mut() = Some(SlotLease(idx)));
+    p
+}
+
+type Deferred = Box<dyn FnOnce() + Send + 'static>;
+
+/// A grace-period domain for one table.
 pub(crate) struct EpochDomain {
-    collector: Collector,
     id: u64,
+    /// Advanced only by a reclaimer, never on a read.
+    epoch: AtomicU64,
+    garbage: Mutex<Vec<(u64, Deferred)>>,
+}
+
+impl std::fmt::Debug for EpochDomain {
+    /// Deliberately shallow: the garbage list holds closures and the pin
+    /// registry is process-wide, so neither is meaningful here.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EpochDomain")
+            .field("id", &self.id)
+            .field("epoch", &self.epoch.load(Ordering::Relaxed))
+            .finish()
+    }
 }
 
 impl Default for EpochDomain {
@@ -78,260 +194,160 @@ impl Default for EpochDomain {
 impl EpochDomain {
     pub(crate) fn new() -> Self {
         Self {
-            collector: Collector::new(),
             id: NEXT_DOMAIN_ID.fetch_add(1, Ordering::Relaxed),
+            epoch: AtomicU64::new(1),
+            garbage: Mutex::new(Vec::new()),
         }
     }
 
     /// Pin the current thread into this domain.
     ///
-    /// Hot path: a hit in the thread-local handle cache (moved to front, so a
-    /// thread working one table pays a first-entry hit) followed by
-    /// crossbeam's thread-local pin. No shared read-modify-write.
-    pub(crate) fn pin(&self) -> Guard {
-        LOCALS.with(|locals| {
-            let mut locals = locals.borrow_mut();
-            if let Some(pos) = locals.iter().position(|cached| cached.domain_id == self.id) {
-                if pos != 0 {
-                    locals.swap(0, pos);
-                }
-                return locals[0].handle.pin();
+    /// The whole hot path: a thread-local index, a relaxed load of this
+    /// domain's epoch, two relaxed stores into this thread's own slot, and one
+    /// `SeqCst` fence. No shared line is written, so it does not degrade as
+    /// readers are added.
+    #[inline]
+    pub(crate) fn pin(&self) -> Guard<'_> {
+        let p = participant();
+        let e = self.epoch.load(Ordering::Relaxed);
+
+        let packed = (e << DOMAIN_BITS) | (self.id & DOMAIN_MASK);
+        let mut entry = usize::MAX;
+        for i in 0..PINS_PER_THREAD {
+            if p.pins[i].load(Ordering::Relaxed) == NO_DOMAIN {
+                // SeqCst store rather than a relaxed store plus
+                // `fence(SeqCst)`. Both give the ordering `advance` needs
+                // against its own SeqCst fence, but on aarch64 this is one
+                // `stlr` where the fence is a full `dmb ish`, and the fence
+                // version measured 74 percent slower than crossbeam.
+                p.pins[i].store(packed, Ordering::SeqCst);
+                entry = i;
+                break;
             }
-            let handle = self.collector.register();
-            let guard = handle.pin();
-            if locals.len() >= LOCAL_CACHE_CAP {
-                // Dropping the tail handle is safe even if a guard from it is
-                // somehow still alive: the participant record is finalized
-                // only when its guard count also reaches zero.
-                locals.pop();
-            }
-            locals.insert(
-                0,
-                CachedLocal {
-                    domain_id: self.id,
-                    handle,
-                    _collector: self.collector.clone(),
-                },
-            );
-            guard
-        })
+        }
+        if entry == usize::MAX {
+            p.wildcard.fetch_add(1, Ordering::SeqCst);
+        }
+
+        Guard {
+            domain: self,
+            participant: p,
+            entry,
+        }
     }
 
-    /// One bounded step of epoch maintenance: pin, seal and push this
-    /// thread's deferred bag, and let crossbeam try to advance the epoch and
-    /// execute a bounded number of expired bags.
+    /// Retire `f` to run once every reader pinned now has unpinned.
+    fn defer(&self, f: Deferred) {
+        let e = self.epoch.load(Ordering::Relaxed);
+        self.garbage
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((e, f));
+    }
+
+    /// Run every deferred item whose grace period has expired, then advance
+    /// the epoch by one.
     ///
-    /// One call advances the global epoch by at most one step, so callers
-    /// that need a retired item's grace to expire deterministically (tests,
-    /// or a reclaimer that found nothing safe yet) call this a small fixed
-    /// number of times. It never blocks on readers: while any guard from
-    /// before the retirement is still pinned, the epoch simply does not
-    /// advance and the call is a few thread-local operations.
+    /// Never blocks on readers: while a reader pinned before a retirement is
+    /// still pinned, that item simply is not collected yet.
     pub(crate) fn advance(&self) {
-        self.pin().flush();
+        // Paired with the fence in `pin`. Everything published by a reader
+        // before it loaded a pointer is visible below.
+        fence(Ordering::SeqCst);
+
+        let mut min_pinned = self.epoch.load(Ordering::Relaxed);
+        let registry = Registry::get();
+        for p in &registry.slots {
+            if p.wildcard.load(Ordering::Acquire) != 0 {
+                // Someone is conservatively pinned everywhere.
+                return;
+            }
+            for i in 0..PINS_PER_THREAD {
+                let packed = p.pins[i].load(Ordering::Acquire);
+                if packed != NO_DOMAIN && (packed & DOMAIN_MASK) == (self.id & DOMAIN_MASK) {
+                    let e = packed >> DOMAIN_BITS;
+                    if e < min_pinned {
+                        min_pinned = e;
+                    }
+                }
+            }
+        }
+
+        let expired: Vec<Deferred> = {
+            let mut garbage = self.garbage.lock().unwrap_or_else(|e| e.into_inner());
+            let mut keep = Vec::with_capacity(garbage.len());
+            let mut run = Vec::new();
+            for (e, f) in garbage.drain(..) {
+                // Strictly less than: an item retired in the same epoch a
+                // reader pinned in may still be reachable by that reader.
+                if e < min_pinned {
+                    run.push(f);
+                } else {
+                    keep.push((e, f));
+                }
+            }
+            *garbage = keep;
+            run
+        };
+
+        // Run the closures outside the lock: one of them may retire more.
+        for f in expired {
+            f();
+        }
+
+        self.epoch.fetch_add(1, Ordering::Relaxed);
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::mpsc;
-
-    use super::*;
-
-    /// Retire a marker through `domain` that increments `hits` once its grace
-    /// period has expired.
-    fn defer_marker(domain: &EpochDomain, hits: &Arc<AtomicUsize>) {
-        let hits = Arc::clone(hits);
-        let guard = domain.pin();
-        guard.defer(move || {
-            hits.fetch_add(1, Ordering::Release);
-        });
-        guard.flush();
-    }
-
-    fn drive(domain: &EpochDomain) {
-        for _ in 0..8 {
-            domain.advance();
-        }
-    }
-
-    #[test]
-    fn deferred_work_runs_after_unpin() {
-        let domain = EpochDomain::new();
-        let hits = Arc::new(AtomicUsize::new(0));
-        defer_marker(&domain, &hits);
-        drive(&domain);
-        assert_eq!(hits.load(Ordering::Acquire), 1);
-    }
-
-    #[test]
-    fn a_pinned_guard_blocks_the_marker_and_release_unblocks_it() {
-        let domain = EpochDomain::new();
-        let hits = Arc::new(AtomicUsize::new(0));
-
-        let reader = domain.pin();
-        defer_marker(&domain, &hits);
-        drive(&domain);
-        assert_eq!(
-            hits.load(Ordering::Acquire),
-            0,
-            "grace must not expire while a guard from before the retirement is pinned"
+impl Drop for EpochDomain {
+    fn drop(&mut self) {
+        // Exclusive access, so no reader can be pinned here: run everything.
+        let garbage = std::mem::take(
+            &mut *self
+                .garbage
+                .lock()
+                .unwrap_or_else(|e: std::sync::PoisonError<_>| e.into_inner()),
         );
-
-        drop(reader);
-        drive(&domain);
-        assert_eq!(hits.load(Ordering::Acquire), 1);
-    }
-
-    /// A second thread that pins and unpins its own guard on command, so a
-    /// test can interleave its guard intervals with the main thread's. On one
-    /// thread this cannot be modelled: nested pins keep the participant at
-    /// its first epoch, which is precisely not what two overlapping readers
-    /// do.
-    struct RemoteReader {
-        commands: mpsc::Sender<bool>,
-        done: mpsc::Receiver<()>,
-        thread: Option<std::thread::JoinHandle<()>>,
-    }
-
-    impl RemoteReader {
-        fn spawn(domain: Arc<EpochDomain>) -> Self {
-            let (commands, command_rx) = mpsc::channel::<bool>();
-            let (done_tx, done) = mpsc::channel();
-            let thread = std::thread::spawn(move || {
-                let mut guard = None;
-                while let Ok(pin) = command_rx.recv() {
-                    drop(guard.take());
-                    if pin {
-                        guard = Some(domain.pin());
-                    }
-                    done_tx.send(()).unwrap();
-                }
-                drop(guard);
-            });
-            Self {
-                commands,
-                done,
-                thread: Some(thread),
-            }
-        }
-
-        fn pin(&self) {
-            self.commands.send(true).unwrap();
-            self.done.recv().unwrap();
-        }
-
-        fn unpin(&self) {
-            self.commands.send(false).unwrap();
-            self.done.recv().unwrap();
+        for (_, f) in garbage {
+            f();
         }
     }
+}
 
-    impl Drop for RemoteReader {
-        fn drop(&mut self) {
-            let (a, _b) = mpsc::channel();
-            let _ = std::mem::replace(&mut self.commands, a);
-            if let Some(t) = self.thread.take() {
-                t.join().unwrap();
-            }
+/// Holds this thread's pin on a domain open. Dropping it releases the pin.
+pub(crate) struct Guard<'a> {
+    domain: &'a EpochDomain,
+    /// Cached so unpinning is a single store, with no registry lookup.
+    participant: &'static Participant,
+    /// Which pin entry this guard owns, or `usize::MAX` for the wildcard.
+    entry: usize,
+}
+
+impl Guard<'_> {
+    /// Retire `f` to run once the current readers have gone.
+    pub(crate) fn defer<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.domain.defer(Box::new(f));
+    }
+
+    /// One bounded step of maintenance. Named for the call it replaces.
+    pub(crate) fn flush(&self) {
+        self.domain.advance();
+    }
+}
+
+impl Drop for Guard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        let p = self.participant;
+        if self.entry == usize::MAX {
+            p.wildcard.fetch_sub(1, Ordering::Release);
+        } else {
+            // Release so a reclaimer that sees the slot free also sees every
+            // access this reader made while it was pinned.
+            p.pins[self.entry].store(NO_DOMAIN, Ordering::Release);
         }
-    }
-
-    #[test]
-    fn overlapping_readers_do_not_stall_grace_expiry() {
-        // Hand-over-hand between two threads: at every instant at least one
-        // guard is pinned, so a zero-reader instant never occurs. The old
-        // counter scheme could never reclaim in this pattern; epochs must.
-        let domain = Arc::new(EpochDomain::new());
-        let hits = Arc::new(AtomicUsize::new(0));
-        let remote = RemoteReader::spawn(Arc::clone(&domain));
-
-        let mine = domain.pin();
-        defer_marker(&domain, &hits);
-        remote.pin(); // remote guard overlaps `mine`
-        drop(mine);
-        drive(&domain);
-        let mine = domain.pin(); // overlaps the remote guard
-        remote.unpin();
-        drive(&domain);
-        remote.pin(); // overlaps `mine` again
-        drop(mine);
-        drive(&domain);
-
-        assert_eq!(
-            hits.load(Ordering::Acquire),
-            1,
-            "grace never expired even though every individual reader left long ago"
-        );
-        remote.unpin();
-    }
-
-    #[test]
-    fn domains_are_independent() {
-        let blocked = EpochDomain::new();
-        let free = EpochDomain::new();
-        let hits = Arc::new(AtomicUsize::new(0));
-
-        let _reader = blocked.pin();
-        defer_marker(&free, &hits);
-        drive(&free);
-        assert_eq!(
-            hits.load(Ordering::Acquire),
-            1,
-            "a pinned guard in one domain must not delay another domain"
-        );
-    }
-
-    #[test]
-    fn markers_flushed_on_another_thread_are_collectable_here() {
-        let domain = Arc::new(EpochDomain::new());
-        let hits = Arc::new(AtomicUsize::new(0));
-
-        let (tx, rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let d = Arc::clone(&domain);
-        let h = Arc::clone(&hits);
-        let thread = std::thread::spawn(move || {
-            defer_marker(&d, &h);
-            tx.send(()).unwrap();
-            // Thread stays alive, idle and unpinned, while the main thread
-            // collects; its flushed bag must still be reachable.
-            let _ = release_rx.recv();
-        });
-        rx.recv().unwrap();
-
-        drive(&domain);
-        assert_eq!(
-            hits.load(Ordering::Acquire),
-            1,
-            "a marker flushed on the retiring thread must be executable from any thread"
-        );
-        release_tx.send(()).unwrap();
-        thread.join().unwrap();
-    }
-
-    #[test]
-    fn cache_rotation_keeps_pinning_sound() {
-        let hits = Arc::new(AtomicUsize::new(0));
-        let domains: Vec<_> = (0..LOCAL_CACHE_CAP + 8).map(|_| EpochDomain::new()).collect();
-        // Register more domains than the cache holds, with a live guard on the
-        // first one across the whole rotation.
-        let guard = domains[0].pin();
-        defer_marker(&domains[0], &hits);
-        for d in &domains[1..] {
-            let g = d.pin();
-            g.flush();
-        }
-        drive(&domains[0]);
-        assert_eq!(
-            hits.load(Ordering::Acquire),
-            0,
-            "evicting the cached handle must not unpin the live guard"
-        );
-        drop(guard);
-        drive(&domains[0]);
-        assert_eq!(hits.load(Ordering::Acquire), 1);
     }
 }

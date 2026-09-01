@@ -140,7 +140,7 @@ unsafe fn revive<T>(p: *mut T) -> Arc<T> {
 /// on the table's strong count; see [`PartitionSet::partition_ref`].
 pub struct PartRef<'a, T> {
     #[cfg(not(wt_loom))]
-    _pin: crossbeam_epoch::Guard,
+    _pin: crate::util::epoch::Guard<'a>,
     value: &'a T,
 }
 
@@ -193,7 +193,7 @@ impl<T> PartitionSet<T> {
     /// Pin this set's epoch domain for the duration of one raw slot access.
     #[cfg(not(wt_loom))]
     #[inline]
-    fn read_pin(&self) -> crossbeam_epoch::Guard {
+    fn read_pin(&self) -> crate::util::epoch::Guard<'_> {
         self.epoch.pin()
     }
 
