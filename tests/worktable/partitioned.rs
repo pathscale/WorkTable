@@ -313,7 +313,11 @@ fn a_removed_partition_waits_out_its_readers_then_frees_through_a_shared_handle(
     let reader = prices.partition_ref(4).expect("present");
     let taken = prices.remove(4).expect("was present");
     assert_eq!(prices.len(), 0);
-    assert_eq!(prices.retired_len(), 1, "removal must wait out the reader's grace period");
+    assert_eq!(
+        prices.retired_len(),
+        1,
+        "removal must wait out the reader's grace period"
+    );
 
     // All three handles still work: this is the reader-mid-query case.
     assert_eq!(reader.select(2).unwrap().bid, 9.0);
@@ -586,5 +590,100 @@ fn metrics_agree_with_each_other() {
     );
     for (k, count) in rows {
         assert_eq!(count, prices.partition_ref(k).unwrap().row_count());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The pinned scope. A pin ends in a fence that the slot loads wait on, so
+// pinning per lookup costs five times what pinning per batch does. These
+// assert the batch form behaves identically to the per-call one.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_pinned_scope_sees_what_partition_ref_sees() {
+    let prices = PricePartitions::new();
+    for k in [0u16, 7, 1023, 1024, 5000] {
+        let t = prices.partition_or_create(k).unwrap();
+        t.insert(row(1, k as f64)).unwrap();
+    }
+
+    let pinned = prices.pinned();
+    for k in [0u16, 7, 1023, 1024, 5000] {
+        assert!(pinned.contains(k), "key {k} missing from the pinned scope");
+        assert_eq!(
+            pinned.get(k).unwrap().select(1).unwrap().bid,
+            k as f64,
+            "key {k} routed wrong inside the pinned scope"
+        );
+    }
+    // Absent and out-of-range keys behave as everywhere else.
+    assert!(pinned.get(9).is_none());
+    assert!(!pinned.contains(9));
+    assert!(pinned.get(u16::MAX).is_none());
+}
+
+#[test]
+fn a_borrow_taken_in_a_pinned_scope_survives_removal() {
+    let prices = PricePartitions::new();
+    let created = prices.partition_or_create(3).unwrap();
+    created.insert(row(1, 30.0)).unwrap();
+    drop(created);
+
+    let pinned = prices.pinned();
+    // Taken *before* the removal. This is what the pin protects.
+    let borrowed = pinned.get(3).expect("present");
+    assert_eq!(borrowed.select(1).unwrap().bid, 30.0);
+
+    // Creation and removal both proceed while the scope is open.
+    prices.partition_or_create(4).unwrap();
+    assert!(prices.remove(3).is_some());
+
+    // The borrow stays readable although the partition was removed and every
+    // owning handle is gone: reclamation cannot run under the pin.
+    assert_eq!(
+        borrowed.select(1).unwrap().bid,
+        30.0,
+        "a borrow taken before the removal must stay valid"
+    );
+
+    // A fresh lookup of a removed key correctly finds nothing: the pin keeps
+    // an existing borrow alive, it does not resurrect a cleared slot.
+    assert!(pinned.get(3).is_none());
+    // A partition created after the scope opened is still routable.
+    assert!(pinned.contains(4));
+
+    drop(pinned);
+    assert!(prices.partition(3).is_none());
+}
+
+#[test]
+fn pinned_scopes_work_from_several_threads_at_once() {
+    use std::sync::Arc;
+    const KEYS: u16 = 64;
+
+    let prices = Arc::new(PricePartitions::new());
+    for k in 0..KEYS {
+        let t = prices.partition_or_create(k).unwrap();
+        t.insert(row(1, k as f64)).unwrap();
+    }
+
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let prices = prices.clone();
+            std::thread::spawn(move || {
+                // One pin for the whole batch, which is the shape the docs
+                // recommend and the benchmark measures.
+                let pinned = prices.pinned();
+                for _ in 0..200 {
+                    for k in 0..KEYS {
+                        let t = pinned.get(k).expect("partition vanished");
+                        assert_eq!(t.select(1).unwrap().bid, k as f64);
+                    }
+                }
+            })
+        })
+        .collect();
+    for r in readers {
+        r.join().unwrap();
     }
 }

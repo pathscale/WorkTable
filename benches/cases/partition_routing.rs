@@ -65,6 +65,12 @@ fn lookup(c: &mut Criterion) {
     // when the returned handle drops.
     group.bench_function("partition_arc", |b| b.iter(|| black_box(routes.partition(7))));
 
+    // Pin once, look up many: what a tick loop should do.
+    group.bench_function("pinned_get", |b| {
+        let pinned = routes.pinned();
+        b.iter(|| black_box(pinned.get(7u16)))
+    });
+
     // What a tick actually costs: routing plus the smallest real table read.
     group.bench_function("partition_ref_then_select", |b| {
         b.iter(|| black_box(routes.partition_ref(7)).map(|t| t.select(1)))
@@ -77,7 +83,7 @@ fn contended(c: &mut Criterion, name: &str, same_key: bool) {
     let mut group = c.benchmark_group(name);
     for threads in [1usize, 2, 4, 8] {
         group.throughput(Throughput::Elements(threads as u64));
-        for api in ["partition_ref", "partition_arc"] {
+        for api in ["pinned_get", "partition_arc"] {
             group.bench_with_input(BenchmarkId::new(api, threads), &threads, |b, &threads| {
                 b.iter_custom(|iters| {
                     let routes = Arc::new(populated());
