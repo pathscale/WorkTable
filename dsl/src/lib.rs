@@ -37,7 +37,12 @@
 
 pub mod model;
 pub mod parser;
+pub mod schema;
 
 #[allow(unused_imports)]
 pub use model::*;
 pub use parser::Parser;
+pub use schema::{
+    ColumnSpec, ConfigSpec, IndexSpec, OperationSpec, PartitionKeySpec, QueriesSpec, Relation, Schema, infer_relations,
+    schemas_to_mermaid,
+};
