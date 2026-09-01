@@ -83,12 +83,11 @@ fn contended(c: &mut Criterion, name: &str, same_key: bool) {
     let mut group = c.benchmark_group(name);
     for threads in [1usize, 2, 4, 8] {
         group.throughput(Throughput::Elements(threads as u64));
-        for api in ["pinned_get", "partition_arc"] {
+        for api in ["partition_ref", "pinned_get", "partition_arc"] {
             group.bench_with_input(BenchmarkId::new(api, threads), &threads, |b, &threads| {
                 b.iter_custom(|iters| {
                     let routes = Arc::new(populated());
                     let go = Arc::new(AtomicBool::new(false));
-                    let arc_api = api == "partition_arc";
 
                     let workers: Vec<_> = (0..threads)
                         .map(|t| {
@@ -102,11 +101,25 @@ fn contended(c: &mut Criterion, name: &str, same_key: bool) {
                                     std::hint::spin_loop();
                                 }
                                 let start = std::time::Instant::now();
-                                for _ in 0..iters {
-                                    if arc_api {
-                                        black_box(routes.partition(key));
-                                    } else {
-                                        black_box(routes.partition_ref(key));
+                                match api {
+                                    "partition_arc" => {
+                                        for _ in 0..iters {
+                                            black_box(routes.partition(key));
+                                        }
+                                    }
+                                    "pinned_get" => {
+                                        // Pin once for the whole batch. Reading
+                                        // this arm as `partition_ref` is the
+                                        // mistake this shape exists to prevent.
+                                        let pinned = routes.pinned();
+                                        for _ in 0..iters {
+                                            black_box(pinned.get(key));
+                                        }
+                                    }
+                                    _ => {
+                                        for _ in 0..iters {
+                                            black_box(routes.partition_ref(key));
+                                        }
                                     }
                                 }
                                 start.elapsed()
