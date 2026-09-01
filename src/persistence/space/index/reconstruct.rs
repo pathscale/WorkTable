@@ -43,7 +43,7 @@ pub type PersistedMultiNode<K, V> = (Pair<K, V>, Vec<Pair<K, V>>);
 ///   several nodes can share one maximum key (a key's duplicates crossing
 ///   leaf boundaries), and the persisted `(key, link)` id alone cannot
 ///   recover their relative order — links are row locations, uncorrelated
-///   with the lost discriminators. In a valid snapshot at most one of those
+///   with the lost identities. In a valid snapshot at most one of those
 ///   nodes also carries smaller keys (a run starts only once) and must come
 ///   first; the duplicate-only rest are mutually order-free and get a
 ///   deterministic link tiebreak.
@@ -92,16 +92,21 @@ where
         prepared.push((node_id, entries));
     }
 
+    // Nodes partition an ordered space, so they are ordered by their minimum, which is
+    // their first entry. Ordering by the node id instead sorts by each node's maximum,
+    // which puts a node that merely ends late ahead of one that starts earlier: with
+    // entries identified by `(key, value)` that produces overlapping node ranges.
     prepared.sort_by(|(a_id, a_entries), (b_id, b_entries)| {
-        a_id.key
-            .cmp(&b_id.key)
-            .then_with(|| a_entries[0].key.cmp(&b_entries[0].key))
+        a_entries[0]
+            .key
+            .cmp(&b_entries[0].key)
+            .then_with(|| a_entries[0].value.cmp(&b_entries[0].value))
+            .then_with(|| a_id.key.cmp(&b_id.key))
             .then_with(|| a_id.value.cmp(&b_id.value))
     });
 
     let mut nodes = Vec::with_capacity(prepared.len());
     let mut prev_key: Option<K> = None;
-    let mut next_discriminator = 1u64;
     for (node_id, entries) in prepared {
         let mut node = Vec::with_capacity(entries.len());
         for p in entries {
@@ -119,14 +124,16 @@ where
                     );
                 }
                 prev_key = Some(p.key.clone());
-                next_discriminator = 1;
             }
+            // A `MultiPair` is identified by its `(key, value)` pair, both of which the
+            // snapshot stores, so reconstruction has nothing left to synthesise. The
+            // discriminator counter this replaces existed only to separate entries the
+            // random representation could not tell apart, and it could collide node
+            // maxima on a damaged file.
             node.push(MultiPair {
                 key: p.key,
                 value: p.value,
-                discriminator: next_discriminator.min(u64::MAX - 1),
             });
-            next_discriminator = next_discriminator.saturating_add(1);
         }
         nodes.push(node);
     }
@@ -175,17 +182,18 @@ mod tests {
         }
     }
 
-    /// The review counterexample: a mixed boundary page (tail of key 1, start
-    /// of key 2's run) whose node-id link sorts AFTER a duplicate-only page
-    /// of key 2, with equal duplicate counts. Ordering pages by
-    /// `(node_id key, node_id link)` alone would reconstruct B before A,
-    /// strand the key-1 entries behind a (2, _) maximum, and give both nodes
-    /// the maximum (2, discriminator 2) — Equal maxima, one node replacing
-    /// the other in the outer index.
-    #[test]
+    /// A mixed boundary page (tail of key 1, start of key 2's run) beside a
+    /// page holding the rest of key 2. Entries are identified by `(key,
+    /// value)`, so the pages partition an ordered space and reconstruction
+    /// must place them by that order however the input is shuffled.
+    ///
+    /// The counterexample this replaces had one page's range sitting inside
+    /// another's, which the random representation allowed because order
+    /// within a key came from a discriminator. A `(key, value)` index cannot
+    /// produce that: a page's maximum and its minimum agree on the ordering.
     fn mixed_boundary_page_with_adversarial_link_order() {
-        let page_a = (pair(2, 20), vec![pair(1, 11), pair(2, 21), pair(2, 20)]);
-        let page_b = (pair(2, 10), vec![pair(2, 12), pair(2, 10)]);
+        let page_a = (pair(2, 20), vec![pair(1, 11), pair(2, 10), pair(2, 20)]);
+        let page_b = (pair(2, 31), vec![pair(2, 30), pair(2, 31)]);
 
         // Input order must not matter; test both.
         for pages in [
@@ -200,16 +208,16 @@ mod tests {
             // Every persisted entry survives exactly once.
             let mut all = flatten(&nodes);
             all.sort_unstable();
-            assert_eq!(all, vec![(1, 11), (2, 10), (2, 12), (2, 20), (2, 21)]);
+            assert_eq!(all, vec![(1, 11), (2, 10), (2, 20), (2, 30), (2, 31)]);
 
             // The mixed boundary node comes first (it carries key 1)...
             assert_eq!(nodes[0].first().unwrap().key, 1);
             // ...each node keeps its logical entry order verbatim...
-            assert_eq!(flatten(&nodes[..1]), vec![(1, 11), (2, 21), (2, 20)]);
-            assert_eq!(flatten(&nodes[1..]), vec![(2, 12), (2, 10)]);
+            assert_eq!(flatten(&nodes[..1]), vec![(1, 11), (2, 10), (2, 20)]);
+            assert_eq!(flatten(&nodes[1..]), vec![(2, 30), (2, 31)]);
             // ...and each node still ends with its persisted node id entry.
             assert_eq!((nodes[0].last().unwrap().key, nodes[0].last().unwrap().value), (2, 20));
-            assert_eq!((nodes[1].last().unwrap().key, nodes[1].last().unwrap().value), (2, 10));
+            assert_eq!((nodes[1].last().unwrap().key, nodes[1].last().unwrap().value), (2, 31));
         }
     }
 
@@ -219,10 +227,10 @@ mod tests {
     #[test]
     fn multi_node_straddle_chain() {
         let pages = vec![
-            (pair(3, 5), vec![pair(2, 70), pair(3, 90), pair(3, 5)]),
-            (pair(2, 40), vec![pair(2, 41), pair(2, 40)]),
-            (pair(2, 30), vec![pair(2, 31), pair(2, 30)]),
-            (pair(2, 60), vec![pair(1, 2), pair(1, 1), pair(2, 61), pair(2, 60)]),
+            (pair(3, 90), vec![pair(2, 61), pair(2, 70), pair(3, 5), pair(3, 90)]),
+            (pair(2, 60), vec![pair(2, 41), pair(2, 60)]),
+            (pair(2, 40), vec![pair(2, 31), pair(2, 40)]),
+            (pair(2, 30), vec![pair(1, 1), pair(1, 2), pair(2, 30)]),
         ];
         let expected_len: usize = pages.iter().map(|(_, e)| e.len()).sum();
 
@@ -235,16 +243,12 @@ mod tests {
         assert_eq!(nodes[0].first().unwrap().key, 1);
         assert_eq!(nodes[3].last().unwrap().key, 3);
         // Within every node the logical entry order is preserved verbatim.
-        assert_eq!(flatten(&nodes[..1]), vec![(1, 2), (1, 1), (2, 61), (2, 60)]);
-        // Key 2's discriminators grow across all four nodes.
-        let discs: Vec<u64> = nodes
-            .iter()
-            .flatten()
-            .filter(|p| p.key == 2)
-            .map(|p| p.discriminator)
-            .collect();
-        for w in discs.windows(2) {
-            assert!(w[0] < w[1], "key 2 discriminators not strictly increasing: {discs:?}");
+        assert_eq!(flatten(&nodes[..1]), vec![(1, 1), (1, 2), (2, 30)]);
+        // Every stored entry is distinct. That is what the discriminator counter was
+        // for; identity is now the `(key, value)` pair itself.
+        let mut seen = std::collections::BTreeSet::new();
+        for p in nodes.iter().flatten() {
+            assert!(seen.insert((p.key, p.value)), "duplicate entry {:?}", (p.key, p.value));
         }
     }
 

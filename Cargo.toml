@@ -3,7 +3,7 @@ members = ["codegen", "examples", "performance_measurement", "performance_measur
 
 [package]
 name = "worktable"
-version = "1.0.0-beta.14"
+version = "1.0.0-beta.15"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -48,7 +48,7 @@ derive_more = { version = "2.0.1", features = ["from", "error", "display", "debu
 eyre = "0.6.12"
 fastrand = "2.3.0"
 futures = "0.3.30"
-indexset = { package = "WorkTablesIndex", version = "=0.0.8", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "=0.0.9", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 vanilla_indexset = { package = "indexset", version = "=0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }
