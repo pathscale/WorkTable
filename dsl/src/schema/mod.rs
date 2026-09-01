@@ -48,9 +48,11 @@ use syn::spanned::Spanned as _;
 use crate::model::{Columns, GeneratorType, IndexBackend, Persistence, Queries};
 use crate::parser::Parser;
 
+mod diff;
 mod emit_dsl;
 mod emit_uml;
 
+pub use diff::{Change, Cost, Diff, TableChange, TransformReason, TransformRequest, plan};
 pub use emit_uml::{Relation, infer_relations, schemas_to_mermaid};
 
 /// One `worktable!` declaration, as data.
@@ -377,5 +379,21 @@ impl Schema {
     /// Whether the table persists to disk.
     pub fn is_persisted(&self) -> bool {
         self.persist.is_persisted()
+    }
+}
+
+impl Schema {
+    /// The implementation backing the primary index.
+    ///
+    /// Every primary-key column carries the same one: the parser rejects a
+    /// composite key whose parts disagree. A table with no primary key cannot
+    /// be declared, so the fallback is unreachable through the parser and is
+    /// here for a `Schema` built by hand.
+    pub fn primary_index_backend(&self) -> IndexBackend {
+        self.columns
+            .iter()
+            .find(|column| column.primary_key)
+            .and_then(|column| column.index_backend)
+            .unwrap_or_default()
     }
 }
