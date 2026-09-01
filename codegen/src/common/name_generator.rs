@@ -120,6 +120,18 @@ impl WorktableNameGenerator {
         )
     }
 
+    /// The name of the const carrying the table's own declaration.
+    ///
+    /// It follows `get_version_const_ident`'s shape because it answers the
+    /// question next to it: the version says *which* schema, and this says
+    /// *what* that schema is.
+    pub fn get_schema_const_ident(&self) -> Ident {
+        let upper_snake_case_name = self.name.from_case(Case::Pascal).to_case(Case::UpperSnake);
+        Ident::new(
+            format!("{}_SCHEMA", upper_snake_case_name.to_uppercase()).as_str(),
+            Span::mixed_site(),
+        )
+    }
     pub fn get_space_secondary_index_ident(&self) -> Ident {
         Ident::new(format!("{}SpaceSecondaryIndex", self.name).as_str(), Span::mixed_site())
     }
