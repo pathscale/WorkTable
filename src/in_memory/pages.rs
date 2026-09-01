@@ -108,7 +108,7 @@ fn publication_shard<const DATA_LENGTH: usize>(key: &OffsetEqLink<DATA_LENGTH>) 
 /// synchronous read window (index lookup through row-version acquisition),
 /// not across `.await` points.
 pub struct ReadGuard<'a> {
-    _guard: crossbeam_epoch::Guard,
+    _guard: crate::util::epoch::Guard<'a>,
     marker: PhantomData<&'a ()>,
 }
 
@@ -326,10 +326,11 @@ where
         }
         let reclaimable = Arc::clone(&self.reclaimable);
         let guard = self.epoch.pin();
-        guard.defer(move || {
+        guard.retire(move || {
             reclaimable.fetch_add(1, Ordering::Release);
         });
-        guard.flush();
+        drop(guard);
+        self.epoch.advance();
     }
 
     /// Incrementally recycle retired items whose grace period has expired.

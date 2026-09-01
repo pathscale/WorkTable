@@ -239,31 +239,41 @@ the library; codegen emits only a typed facade. That was deliberate: one
 generated inline would be paid for by every partitioned table. A table without
 `partition_by` generates nothing extra at all.
 
-**Measured routing cost, from `benches/cases/partition_routing.rs`.** The
-0.73 ns figure quoted below is a bare `Vec` index, not the public API, and
-review was right to reject it as a justification. What callers actually execute,
-M4 Max, release, criterion `--quick`:
+**Measured routing cost, from `benches/cases/partition_routing.rs`.** M4 Max,
+release, criterion `--quick`:
 
-| call | 1 thread | 8 threads, same key |
-| --- | --- | --- |
-| cached handle, no routing | 0.64 ns | n/a |
-| `contains` | 0.77 ns | n/a |
-| `partition_ref` | 0.71 ns | **0.79 ns** |
-| `partition` plus handle drop | 3.77 ns | **488.9 ns** |
+| call | ns |
+| --- | --- |
+| cached handle, no routing | 0.42 |
+| `pinned().get()` | **0.70** |
+| `contains` | 0.78 |
+| `partition_ref` | 3.53 |
+| `partition` plus handle drop | 3.97 |
 
-`partition` revives an `Arc`, so it pays an atomic increment and, on drop, an
-atomic decrement. Both hit the same strong count, so readers routing to one hot
-symbol serialise on that cache line: 3.65 ns at one thread, 26.8 at two, 125.4
-at four, 488.9 at eight. That is a 134x degradation, and it is the traffic
-partitioning exists to remove.
+**Pin once per batch, not once per lookup.** Safe reclamation through a shared
+router needs the reader to register, and registration ends in a `SeqCst` fence
+that the slot loads immediately after it must wait on. That fence is the entire
+difference between 0.70 ns and 3.53 ns, and no reclamation scheme avoids it:
+`crossbeam-epoch` and `ps-reclaim` measure within noise of each other here.
 
-`partition_ref` returns a borrow, touches no refcount, and is flat across the
-same sweep. **Use it on the tick path.** `partition` is for handles that must
-outlive the borrow or move to another thread.
+So `partition_ref` is the convenient form and `pinned()` is the fast one:
 
-Numbers are `--quick`, not core-pinned, and averages rather than percentiles, so
-they are directional. The shape is not in doubt: one call scales, the other
-inverts.
+```rust
+let pinned = prices.pinned();
+for tick in batch {
+    if let Some(book) = pinned.get(tick.symbol_id) {
+        book.insert(tick.into())?;
+    }
+}
+```
+
+The pin is held for the scope, so nothing retired during it is reclaimed until
+it drops. Hold it for a batch, not a session.
+
+`partition` revives an `Arc`, so it pays an atomic increment and a decrement on
+a strong count several readers share. Under eight readers on one hot key that
+was measured at 488 ns against a flat 0.79 for a borrow. Use it only for
+handles that must outlive the borrow or move to another thread.
 
 **Storage.** A segmented vector: a fixed spine of 64 chunk pointers, each chunk
 1,024 slots, chunks allocated on demand and never moved. Readers index straight
