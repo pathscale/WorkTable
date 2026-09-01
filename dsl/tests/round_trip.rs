@@ -6,63 +6,20 @@
 //! better corpus than anything written here would be: they use the grammar the
 //! way it is really used, including the corners.
 //!
-//! Both delimiter forms appear in the corpus (`worktable! { .. }` and
-//! `worktable!( .. )`), so this accepts either.
-//!
 //! The property is `parse(emit(parse(source))) == parse(source)`. It is stated
 //! on the parsed form rather than the text because the emitter does not
 //! reproduce formatting or comments and is not trying to: what has to survive
 //! is the meaning. Comparing text would fail on whitespace and would say
 //! nothing about whether anything was lost.
+//!
+//! This runs through `declarations_in_source`, so it is also the evidence that
+//! the scanner finds what is there.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::str::FromStr as _;
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
-use worktable_dsl::Schema;
+use worktable_dsl::{Schema, declarations_in_source};
 
-/// Pull every `worktable! { .. }` body out of a token stream, including the
-/// ones nested inside modules, functions and other macros.
-///
-/// This walks tokens rather than using `syn`'s item tree because an invocation
-/// inside a function body is not an item, and several of the corpus files put
-/// one there.
-fn collect_invocations(tokens: TokenStream, found: &mut Vec<TokenStream>) {
-    let trees: Vec<TokenTree> = tokens.into_iter().collect();
-    let mut index = 0;
-    while index < trees.len() {
-        if let TokenTree::Ident(ident) = &trees[index]
-            && ident == "worktable"
-            && let Some(TokenTree::Punct(bang)) = trees.get(index + 1)
-            && bang.as_char() == '!'
-            && let Some(TokenTree::Group(body)) = trees.get(index + 2)
-            && body.delimiter() != Delimiter::None
-        {
-            found.push(body.stream());
-            index += 3;
-            continue;
-        }
-        if let TokenTree::Group(group) = &trees[index] {
-            collect_invocations(group.stream(), found);
-        }
-        index += 1;
-    }
-}
-
-/// Whether a body is a `macro_rules!` template rather than a declaration.
-///
-/// A dozen of the corpus's invocations sit inside `macro_rules!` and read
-/// `name: $name, ... using $backend`. Those are not schemas: the metavariables
-/// stand for text that only exists once the outer macro expands, and no parser
-/// for this grammar can or should accept them.
-fn is_macro_template(tokens: &TokenStream) -> bool {
-    tokens.clone().into_iter().any(|tree| match tree {
-        TokenTree::Punct(punct) => punct.as_char() == '$',
-        TokenTree::Group(group) => is_macro_template(&group.stream()),
-        _ => false,
-    })
-}
 fn rust_files(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root) else { return };
     for entry in entries.flatten() {
@@ -88,8 +45,10 @@ fn every_declaration_in_the_repository_survives_a_round_trip() {
     files.sort();
     assert!(!files.is_empty(), "found no sources to read");
 
-    let mut declarations = Vec::new();
+    let mut checked = 0;
     let mut templates = 0;
+    let mut rejected = Vec::new();
+
     for file in &files {
         let Ok(contents) = fs::read_to_string(file) else {
             continue;
@@ -97,67 +56,46 @@ fn every_declaration_in_the_repository_survives_a_round_trip() {
         if !contents.contains("worktable!") {
             continue;
         }
-        let Ok(tokens) = TokenStream::from_str(&contents) else {
+        let Ok(found) = declarations_in_source(&contents) else {
             continue;
         };
-        let mut found = Vec::new();
-        collect_invocations(tokens, &mut found);
-        for body in found {
-            if is_macro_template(&body) {
-                templates += 1;
-                continue;
-            }
-            declarations.push((file.clone(), body));
+
+        templates += found.templates.len();
+        for (source, error) in found.rejected {
+            rejected.push(format!("  {}: {error}\n    {source}", file.display()));
+        }
+
+        for schema in found.schemas {
+            let emitted = schema.to_dsl();
+            let reparsed = Schema::parse(&emitted).unwrap_or_else(|error| {
+                panic!(
+                    "emitted declaration for `{}` from {} does not parse: {error}\n{emitted}",
+                    schema.name,
+                    file.display()
+                )
+            });
+            assert_eq!(
+                schema,
+                reparsed,
+                "round trip changed `{}` from {}\n{emitted}",
+                schema.name,
+                file.display()
+            );
+            checked += 1;
         }
     }
 
     assert!(
-        declarations.len() >= 100,
-        "expected the repository's declarations to be found, got {}",
-        declarations.len()
-    );
-
-    let mut unparsed = Vec::new();
-    let mut checked = 0;
-    for (file, body) in declarations {
-        let source = body.to_string();
-        let Ok(schema) = Schema::from_tokens(body) else {
-            unparsed.push((file, source));
-            continue;
-        };
-
-        let emitted = schema.to_dsl();
-        let reparsed = Schema::parse(&emitted).unwrap_or_else(|error| {
-            panic!(
-                "emitted declaration for `{}` from {} does not parse: {error}\n{emitted}",
-                schema.name,
-                file.display()
-            )
-        });
-        assert_eq!(
-            schema,
-            reparsed,
-            "round trip changed `{}` from {}\n{emitted}",
-            schema.name,
-            file.display()
-        );
-        checked += 1;
-    }
-
-    assert!(
-        unparsed.is_empty(),
+        rejected.is_empty(),
         "{} declaration(s) the parser rejected:\n{}",
-        unparsed.len(),
-        unparsed
-            .iter()
-            .map(|(file, source)| format!("  {}: {source}", file.display()))
-            .collect::<Vec<_>>()
-            .join("\n")
+        rejected.len(),
+        rejected.join("\n")
     );
     assert!(checked >= 100, "only {checked} declarations were checked");
     assert!(
         templates >= 12,
-        "the `macro_rules!` templates stopped being found, so the filter is now hiding something else: {templates}"
+        "the `macro_rules!` templates stopped being found, so the filter is now hiding \
+         something else: {templates}"
     );
 }
 

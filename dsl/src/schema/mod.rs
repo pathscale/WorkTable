@@ -51,9 +51,11 @@ use crate::parser::Parser;
 mod diff;
 mod emit_dsl;
 mod emit_uml;
+mod scan;
 
 pub use diff::{Change, Cost, Diff, TableChange, TransformReason, TransformRequest, plan};
 pub use emit_uml::{Relation, infer_relations, schemas_to_mermaid};
+pub use scan::{Declarations, declarations_in_source, declarations_in_tokens};
 
 /// One `worktable!` declaration, as data.
 #[derive(Debug, Clone, PartialEq)]
