@@ -60,7 +60,7 @@ prettytable-rs = "^0.10"
 psc-nanoid = { version = "3.1.1", features = ["rkyv", "packed"] }
 rkyv = { version = "0.8.17", features = ["uuid-1"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
-ps-reclaim = { path = "../ps-reclaim", version = "0.1.0" }
+ps-reclaim = "0.1.0"
 rustc-hash = "2.1.1"
 rusty-s3 = { version = "0.10.2", optional = true }
 smart-default = "0.7.1"
