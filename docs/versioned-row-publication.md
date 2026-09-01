@@ -108,6 +108,14 @@ For generated table APIs in this mode:
 - unique, non-unique point, and secondary-index range lookups revalidate each
   resolved row predicate.
 
+The read-grace guard is not `Send`: an epoch pin belongs to the thread that
+acquired it. Generated point reads pin and unpin inside one call, so this is
+invisible to ordinary callers; a lazy `SelectQueryBuilder` iterator, which
+pins when iteration starts, must be consumed on the thread that started it
+and not held across an `.await` in a work-stealing runtime. Holding it across
+an await now fails to compile (the future is not `Send`) instead of stalling
+reclamation, which is the safer failure mode.
+
 This is not MVCC and does not add multi-operation transactions or snapshot
 range scans. A scan may include or omit a concurrently inserted or updated row.
 A point read retries a mapping that changes while its row version is resolved,
