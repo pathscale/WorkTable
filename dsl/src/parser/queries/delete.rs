@@ -3,18 +3,18 @@ use std::collections::HashMap;
 use proc_macro2::{Ident, TokenTree};
 use syn::spanned::Spanned;
 
-use crate::common::Parser;
-use crate::common::model::Operation;
+use crate::Parser;
+use crate::model::Operation;
 
 impl Parser {
-    pub fn _parse_selects(&mut self) -> syn::Result<HashMap<Ident, Operation>> {
+    pub fn parse_deletes(&mut self) -> syn::Result<HashMap<Ident, Operation>> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
-            "Expected `select` field in declaration",
+            "Expected `delete` field in declaration",
         ))?;
         if let TokenTree::Ident(ident) = ident {
-            if ident.to_string().as_str() != "select" {
-                return Err(syn::Error::new(ident.span(), "Expected `select` field"));
+            if ident.to_string().as_str() != "delete" {
+                return Err(syn::Error::new(ident.span(), "Expected `delete` field"));
             }
         } else {
             return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
@@ -40,7 +40,7 @@ mod tests {
     use proc_macro2::{Ident, Span};
     use quote::quote;
 
-    use crate::common::Parser;
+    use crate::Parser;
 
     #[test]
     fn test_update() {

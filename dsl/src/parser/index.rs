@@ -1,5 +1,5 @@
-use crate::common::Parser;
-use crate::common::model::{Index, IndexBackend};
+use crate::Parser;
+use crate::model::{Index, IndexBackend};
 use indexmap::IndexMap;
 use proc_macro2::{Delimiter, Ident, TokenTree};
 use syn::spanned::Spanned;
@@ -141,8 +141,8 @@ impl Parser {
 mod tests {
     use quote::quote;
 
-    use crate::common::Parser;
-    use crate::common::model::IndexBackend;
+    use crate::Parser;
+    use crate::model::IndexBackend;
 
     #[test]
     fn absent_using_defaults_to_worktables_index() {

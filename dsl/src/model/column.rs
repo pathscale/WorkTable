@@ -1,8 +1,8 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
 
-use crate::common::model::index::Index;
-use crate::common::model::{GeneratorType, IndexBackend};
+use crate::model::index::Index;
+use crate::model::{GeneratorType, IndexBackend};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;

@@ -39,9 +39,9 @@ pub mod prelude {
         AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
         IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
         PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceMonitor,
-        PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex, SpaceArcticMultiIndex,
-        SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex,
-        SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, UpdateOperation,
+        PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex,
+        SpaceArcticMultiIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
+        SpaceLogicalIndex, SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, UpdateOperation,
         load_persisted_state, map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
         reconstruct_multi_index_nodes, validate_events,
     };
@@ -54,11 +54,10 @@ pub mod prelude {
     pub use crate::{
         ArcticIndex, ArcticKey, ArcticMultiIndex, AvailableIndex, BatchInsertError, CongeeIndex, CongeeKey, Difference,
         IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArcticMultiIndex,
-        PersistentArtIndex, PersistentCongeeIndex,
-        PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
-        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
-        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
-        vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
+        PersistentArtIndex, PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc,
+        TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
+        UniqueIndex, UnsizedNode, UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError,
+        vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

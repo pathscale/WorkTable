@@ -1,7 +1,7 @@
 use proc_macro2::TokenTree;
 use syn::spanned::Spanned;
 
-use crate::common::parser::Parser;
+use crate::parser::Parser;
 
 impl Parser {
     /// Parses ':' from [`proc_macro2::TokenStream`].

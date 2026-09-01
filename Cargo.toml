@@ -1,5 +1,5 @@
 [workspace]
-members = ["codegen", "examples", "performance_measurement", "performance_measurement/codegen"]
+members = ["codegen", "dsl", "examples", "performance_measurement", "performance_measurement/codegen"]
 
 [package]
 name = "worktable"

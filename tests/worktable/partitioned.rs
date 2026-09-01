@@ -313,7 +313,11 @@ fn a_removed_partition_waits_out_its_readers_then_frees_through_a_shared_handle(
     let reader = prices.partition_ref(4).expect("present");
     let taken = prices.remove(4).expect("was present");
     assert_eq!(prices.len(), 0);
-    assert_eq!(prices.retired_len(), 1, "removal must wait out the reader's grace period");
+    assert_eq!(
+        prices.retired_len(),
+        1,
+        "removal must wait out the reader's grace period"
+    );
 
     // All three handles still work: this is the reader-mid-query case.
     assert_eq!(reader.select(2).unwrap().bid, 9.0);

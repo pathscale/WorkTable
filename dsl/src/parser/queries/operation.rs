@@ -2,8 +2,8 @@ use proc_macro2::{Ident, TokenTree};
 use std::collections::HashMap;
 use syn::spanned::Spanned;
 
-use crate::common::model::Operation;
-use crate::common::parser::Parser;
+use crate::model::Operation;
+use crate::parser::Parser;
 
 impl Parser {
     pub fn parse_operations(&mut self) -> syn::Result<HashMap<Ident, Operation>> {
@@ -96,7 +96,7 @@ impl Parser {
 mod tests {
     use quote::quote;
 
-    use crate::common::parser::Parser;
+    use crate::parser::Parser;
 
     #[test]
     fn test_operation() {
