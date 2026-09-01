@@ -10,5 +10,4 @@
 //! by another crate. The compiler makes the same argument the design does.
 pub mod name_generator;
 
-pub use worktable_dsl::{Parser, *};
-pub use worktable_dsl::{model, parser};
+pub use worktable_dsl::{Parser, model, parser};
