@@ -255,7 +255,11 @@ impl<T> PartitionSet<T> {
     /// returns a pinned borrow instead: no atomics beyond the acquire on the
     /// slot are shared with other readers of the same partition.
     ///
-    /// Prefer this on a hot path. Prefer [`Self::partition`] when the handle
+    /// Prefer [`Self::pinned`] on a hot path: this pins per call, and the pin
+    /// ends in a `SeqCst` fence that the slot load immediately after it has to
+    /// wait on, which is most of what a lookup costs. Prefer this over
+    /// [`Self::pinned`] for a single lookup, or when a pin must not be held
+    /// across the batch. Prefer [`Self::partition`] when the handle
     /// has to outlive the borrow, be sent to another thread, or be stored.
     /// Holding a [`PartRef`] delays reclamation of everything retired after
     /// it was taken (in this set's domain), so bound its lifetime to the

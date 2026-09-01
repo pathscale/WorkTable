@@ -28,5 +28,14 @@
 //!
 //! `arctic` reclaims through `seize` and is right to: a trie with short reads
 //! reaches quiescence constantly. This does not.
+//!
+//! # crossbeam is still in the tree
+//!
+//! This removes it from WorkTable's own reclamation, not from the build. It
+//! still arrives three ways: `congee-wt` depends on `crossbeam-epoch` directly
+//! and re-exports its `Guard`, which `src/index/congee.rs` names; and
+//! `crossbeam-skiplist` comes in under both `WorkTablesIndex` and `indexset`.
+//! Say "no crossbeam in the reclamation path", not "no crossbeam", until
+//! `congee-wt` is ported. See `docs/TODO.md`.
 
 pub(crate) use ps_reclaim::{Domain as EpochDomain, Guard};
