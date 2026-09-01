@@ -171,7 +171,7 @@ impl ReadOnlyGenerator {
                                 )
                             })?;
                             let expected_key = #expected_key;
-                            if indexed_key != &expected_key {
+                            if indexed_key != expected_key {
                                 return Err(PersistenceLoadError::corrupt(
                                     path,
                                     format!("secondary index {} key does not match its referenced row", #index_name),

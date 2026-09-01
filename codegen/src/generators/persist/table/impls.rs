@@ -167,13 +167,10 @@ impl PersistGenerator {
                         }
                     }
                 } else {
-                    // WorkTablesIndex multimap iteration lends borrowed keys;
-                    // the arctic multimap yields owned snapshot pairs.
-                    let key_mismatch = if index.backend == crate::common::model::IndexBackend::Arctic {
-                        quote! { indexed_key != expected_key }
-                    } else {
-                        quote! { indexed_key != &expected_key }
-                    };
+                    // Every multimap backend yields owned pairs: the arctic
+                    // multimap snapshots, and WorkTablesIndex iterators yield
+                    // owned clones as of 0.0.8.
+                    let key_mismatch = quote! { indexed_key != expected_key };
                     quote! {
                         for (indexed_key, offset_link) in self.0.indexes.#index_field.iter() {
                             let row = self.0.data.select_non_ghosted_checked(offset_link.0).map_err(|error| {

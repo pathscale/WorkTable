@@ -48,7 +48,7 @@ impl BatchInnerWorkTable {
             .indexes
             .link_idx
             .iter()
-            .map(|(l, _)| *l)
+            .map(|(l, _)| l)
             .collect::<Vec<_>>()
             .into_iter()
     }

@@ -137,7 +137,7 @@ where
         self.inner.iter_nodes()
     }
 
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&K, &V)> + '_ {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {
         self.inner.iter()
     }
 
@@ -197,11 +197,11 @@ where
     }
 
     fn iter_values(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {
-        self.inner.iter().map(|(key, value)| (key.clone(), value.clone()))
+        self.inner.iter()
     }
 
     fn iter_links(&self) -> impl DoubleEndedIterator<Item = V> + '_ {
-        self.inner.iter().map(|(_, value)| value.clone())
+        self.inner.iter().map(|(_, value)| value)
     }
 
     fn range_values<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a

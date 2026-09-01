@@ -265,7 +265,7 @@ where
             .operation_id_idx
             .iter()
             .next()
-            .map(|(id, _)| *id)
+            .map(|(id, _)| id)
     }
 
     pub async fn collect_batch_from_op_id(
@@ -355,7 +355,7 @@ where
             };
             let mut range = self.queue_inner_wt.0.indexes.operation_id_idx.range(next_op_id..);
             if let Some((id, _)) = range.nth(1) {
-                next_op_id = *id;
+                next_op_id = id;
             } else {
                 no_more_ops = true
             }

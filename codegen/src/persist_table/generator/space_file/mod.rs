@@ -164,9 +164,8 @@ impl Generator {
                 }
                 // Reconstruct reverse_pk_map by iterating over pk_map
                 let mut reverse_pk_map = IndexMap::<OffsetEqLink<#const_name>, #pk_ident>::new();
-                for entry in pk_map.iter() {
-                    let (pk, link) = entry;
-                    reverse_pk_map.insert(*link, pk.clone());
+                for (pk, link) in pk_map.iter() {
+                    reverse_pk_map.insert(link, pk);
                 }
                 let primary_index = PrimaryIndex { pk_map, reverse_pk_map };
             }

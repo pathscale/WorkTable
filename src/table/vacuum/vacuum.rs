@@ -338,7 +338,7 @@ where
                 break;
             }
             sum_links_len += next.length;
-            links.push((*next, pk.clone()));
+            links.push((next, pk));
         }
 
         drop(range);

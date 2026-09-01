@@ -65,7 +65,7 @@ pub struct PageFragmentationInfo {
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     /// Returns all empty [`Link`]s for a specific page.
     pub fn get_page_empty_links(&self, page_id: PageId) -> Vec<Link> {
-        self.page_links_map.get(&page_id).map(|(_, link)| *link).collect()
+        self.page_links_map.get(&page_id).map(|(_, link)| link).collect()
     }
 
     /// Calculates `PageFragmentationInfo` information for all pages with
@@ -77,9 +77,9 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             let _op_lock = self.op_lock.lock();
             let iter = self.page_links_map.iter();
             for (page_id, link) in iter {
-                let entry = page_empty_data.entry(*page_id).or_default();
+                let entry = page_empty_data.entry(page_id).or_default();
                 entry.0 += link.length;
-                entry.1.push(*link);
+                entry.1.push(link);
             }
         }
 
