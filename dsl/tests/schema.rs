@@ -1,6 +1,6 @@
 //! What the IR and the emitters promise, stated one claim per test.
 
-use worktable_dsl::{Schema, infer_relations, schemas_to_mermaid};
+use worktable_dsl::{Schema, declarations_in_source, infer_relations, schemas_to_mermaid};
 
 fn parse(source: &str) -> Schema {
     Schema::parse(source).unwrap_or_else(|error| panic!("{error}\n{source}"))
@@ -255,4 +255,67 @@ fn a_schema_survives_a_trip_through_serde() {
     let decoded: Schema = serde_json::from_str(&encoded).expect("deserialises");
     assert_eq!(schema, decoded);
     assert_eq!(schema.to_dsl(), decoded.to_dsl());
+}
+
+#[test]
+fn the_scanner_reads_both_delimiter_forms_and_nested_invocations() {
+    // An invocation inside a function body is not an item, and real code puts
+    // them there, so an item walk would quietly miss a table.
+    let source = r#"
+        worktable!(
+            name: Braced,
+            columns: { id: u64 primary_key },
+        );
+
+        mod inner {
+            worktable! {
+                name: Nested,
+                columns: { id: u64 primary_key },
+            }
+        }
+
+        fn in_a_body() {
+            worktable! {
+                name: InABody,
+                columns: { id: u64 primary_key },
+            }
+        }
+    "#;
+
+    let found = declarations_in_source(source).expect("the source tokenises");
+    let names: Vec<&str> = found.schemas.iter().map(|schema| schema.name.as_str()).collect();
+    assert_eq!(names, ["Braced", "Nested", "InABody"]);
+    assert!(found.is_complete());
+    assert_eq!(found.found(), 3);
+}
+
+#[test]
+fn the_scanner_sets_templates_aside_and_reports_real_failures() {
+    // A `macro_rules!` body is not a declaration and its metavariables are not
+    // mistakes. A declaration the compiler would accept but this cannot read is
+    // a different matter, and dropping it silently would be worse than saying
+    // so.
+    let source = r#"
+        macro_rules! table_for {
+            ($name:ident, $backend:ident) => {
+                worktable! {
+                    name: $name,
+                    columns: { id: u64 primary_key using $backend },
+                }
+            };
+        }
+
+        worktable! {
+            name: Broken,
+            columns: { id: u64 primary_key },
+            nonsense: { whatever: 1 },
+        }
+    "#;
+
+    let found = declarations_in_source(source).expect("the source tokenises");
+    assert!(found.schemas.is_empty());
+    assert_eq!(found.templates.len(), 1);
+    assert_eq!(found.rejected.len(), 1);
+    assert!(!found.is_complete());
+    assert!(found.rejected[0].1.to_string().contains("Unexpected identifier"));
 }
