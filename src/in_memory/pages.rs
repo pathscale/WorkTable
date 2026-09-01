@@ -326,7 +326,7 @@ where
         }
         let reclaimable = Arc::clone(&self.reclaimable);
         let guard = self.epoch.pin();
-        guard.retire(move || {
+        self.epoch.retire(move || {
             reclaimable.fetch_add(1, Ordering::Release);
         });
         drop(guard);
