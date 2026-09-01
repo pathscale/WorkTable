@@ -2,8 +2,17 @@ use proc_macro2::TokenStream;
 
 use crate::common::Parser;
 use crate::common::model::{Columns, IndexBackend, Persistence};
+use crate::common::name_generator::WorktableNameGenerator;
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
+    // Keep the tokens. The declaration is read a second time at the end, as
+    // data, so the generated table can carry its own schema. It happens at the
+    // end rather than here so that this function's diagnostics are the ones a
+    // bad declaration produces: both parses reject the same inputs, but only
+    // one of them knows to say that a separate `attributes` section is not
+    // part of the 1.0 grammar.
+    let declaration = input.clone();
+
     let mut parser = Parser::new(input);
     let mut columns = None;
     let mut queries = None;
@@ -84,7 +93,40 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         generated.extend(crate::generators::partitions::expand(&name, &key, persistence));
     }
 
+    generated.extend(gen_schema_const(&worktable_dsl::Schema::from_tokens(declaration)?));
+
     Ok(generated)
+}
+
+/// Bake the declaration into the generated code, as the text it was written in.
+///
+/// The point is that a compiled binary should be able to say what schema it was
+/// built against, without the source. A migration planner needs it as the
+/// "declared" side of a comparison against what is on disk; a designer needs it
+/// to draw a diagram of an application it did not build.
+///
+/// The stored form is the DSL text rather than a serialised structure. It needs
+/// no format decision, no serde in the dependency graph of every user's build,
+/// and it is legible in a hex dump; `worktable_dsl` reads it back with the same
+/// parser that read the original, and `dsl/tests/round_trip.rs` holds that
+/// property against all 116 declarations in this repository.
+///
+/// `allow(dead_code)` because a `worktable!` inside a function body puts this
+/// const inside that body, where nothing refers to it and `-D warnings` would
+/// otherwise fail a user's build over a const they never asked for.
+fn gen_schema_const(schema: &worktable_dsl::Schema) -> TokenStream {
+    let ident = WorktableNameGenerator::from_table_name(schema.name.clone()).get_schema_const_ident();
+    let text = schema.to_dsl();
+    let doc = format!(
+        "The `worktable!` declaration `{}` was generated from, as text. Read it with `worktable_dsl::Schema::parse`.",
+        schema.name
+    );
+
+    quote::quote! {
+        #[doc = #doc]
+        #[allow(dead_code)]
+        pub const #ident: &str = #text;
+    }
 }
 
 /// data_bucket's on-disk layer seeks with its own hardcoded `PAGE_SIZE` of
@@ -869,5 +911,88 @@ mod generator_determinism {
         let first = expand(declaration.clone()).expect("expands").to_string();
         let second = expand(declaration).expect("expands").to_string();
         assert_eq!(first, second);
+    }
+}
+
+/// The generated table carries its own declaration.
+#[cfg(test)]
+mod schema_const {
+    use proc_macro2::{TokenStream, TokenTree};
+    use quote::quote;
+    use worktable_dsl::Schema;
+
+    use super::expand;
+
+    /// Pull the string out of `pub const <NAME>: &str = "..";` in generated code.
+    fn baked_schema(generated: TokenStream, const_name: &str) -> String {
+        let mut trees = generated
+            .into_iter()
+            .skip_while(|tree| !matches!(tree, TokenTree::Ident(ident) if ident == const_name));
+        assert!(trees.next().is_some(), "no `{const_name}` const in the generated code");
+        for tree in trees {
+            if let TokenTree::Literal(literal) = tree {
+                let text = literal.to_string();
+                return syn::parse_str::<syn::LitStr>(&text).expect("a string literal").value();
+            }
+        }
+        panic!("`{const_name}` has no value");
+    }
+
+    #[test]
+    fn a_persisted_table_carries_the_declaration_it_was_built_from() {
+        let declaration = quote! {
+            name: Account,
+            version: 3,
+            persist: true,
+            columns: {
+                id: u64 primary_key autoincrement,
+                email: String,
+                nickname: String optional,
+            },
+            indexes: { email_idx: email unique },
+            queries: { update: { Nickname(nickname) by id } }
+        };
+
+        let baked = baked_schema(expand(declaration.clone()).expect("expands"), "ACCOUNT_SCHEMA");
+
+        assert_eq!(
+            Schema::parse(&baked).expect("the baked text parses"),
+            Schema::from_tokens(declaration).expect("the declaration parses"),
+            "the baked declaration is not the one the table was generated from"
+        );
+    }
+
+    #[test]
+    fn an_in_memory_table_carries_it_too() {
+        // A designer reading a crate wants every table, not only the persisted
+        // ones, and the const costs a string either way.
+        let declaration = quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            columns: { exchange_id: u8 primary_key, bid: f64 },
+        };
+
+        let baked = baked_schema(expand(declaration.clone()).expect("expands"), "PRICE_SCHEMA");
+
+        assert_eq!(
+            Schema::parse(&baked).expect("the baked text parses"),
+            Schema::from_tokens(declaration).expect("the declaration parses"),
+        );
+    }
+
+    #[test]
+    fn the_baked_text_is_a_declaration_the_macro_accepts() {
+        // Which is what makes it usable as the old table definition a
+        // migration would otherwise need kept by hand.
+        let declaration = quote! {
+            name: Regenerated,
+            persist: true,
+            columns: { id: u64 primary_key autoincrement, payload: String },
+            indexes: { payload_idx: payload unique }
+        };
+
+        let baked = baked_schema(expand(declaration).expect("expands"), "REGENERATED_SCHEMA");
+        let reparsed: TokenStream = syn::parse_str(&baked).expect("tokenises");
+        expand(reparsed).expect("the baked declaration expands");
     }
 }
