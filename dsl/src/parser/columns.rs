@@ -1,8 +1,8 @@
 use proc_macro2::{Delimiter, TokenTree};
 use syn::spanned::Spanned as _;
 
-use crate::common::Parser;
-use crate::common::model::{Columns, GeneratorType, Row};
+use crate::Parser;
+use crate::model::{Columns, GeneratorType, Row};
 
 impl Parser {
     pub fn parse_columns(&mut self) -> syn::Result<Columns> {
@@ -129,7 +129,7 @@ mod tests {
 
     use quote::quote;
 
-    use crate::common::Parser;
+    use crate::Parser;
 
     #[test]
     fn test_columns_parse() {
@@ -321,7 +321,7 @@ mod tests {
             let mut parser = Parser::new(row_tokens);
             let row = parser.parse_row().unwrap();
 
-            assert_eq!(row.index_backend, Some(crate::common::model::IndexBackend::Congee));
+            assert_eq!(row.index_backend, Some(crate::model::IndexBackend::Congee));
         }
 
         #[test]

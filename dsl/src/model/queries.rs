@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use proc_macro2::Ident;
 
-use crate::common::model::Operation;
+use crate::model::Operation;
 
 #[derive(Debug, Default)]
 pub struct Queries {

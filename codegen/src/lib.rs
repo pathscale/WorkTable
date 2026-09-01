@@ -1,3 +1,11 @@
+// `common` is now a thin front for `worktable_dsl`, which holds the schema
+// model and parser so that anything other than this macro can read a
+// declaration. Kept as a module rather than an alias because the name
+// generator stays here: generators define inherent `impl`s on it, which the
+// orphan rule allows only in the crate that owns the type.
+//
+// The 127 `crate::common::` paths across this crate are unchanged, so the diff
+// is a move rather than a sweep.
 mod common;
 mod generators;
 mod mem_stat;

@@ -3,18 +3,18 @@ use std::collections::HashMap;
 use proc_macro2::{Ident, TokenTree};
 use syn::spanned::Spanned;
 
-use crate::common::Parser;
-use crate::common::model::Operation;
+use crate::Parser;
+use crate::model::Operation;
 
 impl Parser {
-    pub fn parse_in_place(&mut self) -> syn::Result<HashMap<Ident, Operation>> {
+    pub fn _parse_selects(&mut self) -> syn::Result<HashMap<Ident, Operation>> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
-            "Expected `in_place` field in declaration",
+            "Expected `select` field in declaration",
         ))?;
         if let TokenTree::Ident(ident) = ident {
-            if ident.to_string().as_str() != "in_place" {
-                return Err(syn::Error::new(ident.span(), "Expected `in_place` field"));
+            if ident.to_string().as_str() != "select" {
+                return Err(syn::Error::new(ident.span(), "Expected `select` field"));
             }
         } else {
             return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
@@ -40,24 +40,26 @@ mod tests {
     use proc_macro2::{Ident, Span};
     use quote::quote;
 
-    use crate::common::Parser;
+    use crate::Parser;
 
     #[test]
     fn test_update() {
         let tokens = quote! {
-            in_place: {
-                TestQuery(id) by name,
+            update: {
+                TestQuery(id, test) by name,
+                Test1Query(id, name) by test,
             }
         };
         let mut parser = Parser::new(tokens);
-        let ops = parser.parse_in_place().unwrap();
+        let ops = parser.parse_updates().unwrap();
 
-        assert_eq!(ops.len(), 1);
+        assert_eq!(ops.len(), 2);
         let op = ops.get(&Ident::new("TestQuery", Span::mixed_site())).unwrap();
 
         assert_eq!(op.name, "TestQuery");
-        assert_eq!(op.columns.len(), 1);
+        assert_eq!(op.columns.len(), 2);
         assert_eq!(op.columns[0], "id");
+        assert_eq!(op.columns[1], "test");
         assert_eq!(op.by, "name");
     }
 }

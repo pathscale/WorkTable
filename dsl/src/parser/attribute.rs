@@ -1,8 +1,8 @@
 use proc_macro2::TokenTree;
 use syn::spanned::Spanned as _;
 
-use crate::common::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence};
-use crate::common::parser::Parser;
+use crate::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence};
+use crate::parser::Parser;
 
 // TODO: Move this to separate attributes section because now it only parses persist.
 impl Parser {
@@ -97,8 +97,8 @@ impl Parser {
 mod tests {
     use quote::quote;
 
-    use crate::common::Parser;
-    use crate::common::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence};
+    use crate::Parser;
+    use crate::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence};
 
     #[test]
     fn test_empty() {
