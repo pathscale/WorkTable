@@ -2,7 +2,7 @@ use proc_macro2::Ident;
 use proc_macro2::TokenTree;
 use syn::spanned::Spanned as _;
 
-use crate::common::parser::Parser;
+use crate::parser::Parser;
 
 impl Parser {
     pub fn parse_name(&mut self) -> syn::Result<Ident> {
@@ -73,7 +73,7 @@ impl Parser {
 mod tests {
     use quote::quote;
 
-    use crate::common::Parser;
+    use crate::Parser;
 
     #[test]
     fn test_name_parse() {
