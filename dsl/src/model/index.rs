@@ -6,6 +6,7 @@ use proc_macro2::Ident;
 /// their current implementation and persistence semantics when `using` is
 /// absent. Vanilla upstream IndexSet is an explicit, parallel backend.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum IndexBackend {
     #[default]
     WorktablesIndex,

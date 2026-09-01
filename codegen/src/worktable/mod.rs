@@ -704,3 +704,170 @@ mod position_tests {
         );
     }
 }
+
+/// What a designer needs from the schema IR: a declaration that has been read
+/// into [`worktable_dsl::Schema`] and written back out is a declaration this
+/// macro accepts.
+///
+/// `worktable_dsl` can test its own round trip, which shows nothing was lost
+/// between its parser and its emitter. It cannot show that the text it emits
+/// is a declaration *this* macro accepts, because it cannot call this macro:
+/// that check has to live on the near side of the proc-macro boundary.
+///
+/// The stronger claim — that the emitted declaration generates the *same code*
+/// — is not asserted here, and cannot be until the generator is deterministic.
+/// See `the_same_declaration_expands_the_same_way_twice` below, which is
+/// ignored because it currently fails on unmodified code.
+#[cfg(test)]
+mod emitted_declarations {
+    use quote::quote;
+    use worktable_dsl::Schema;
+
+    use super::expand;
+
+    fn survives_the_round_trip(declaration: proc_macro2::TokenStream) {
+        expand(declaration.clone()).expect("the original expands");
+
+        let schema = Schema::from_tokens(declaration).expect("the IR reads it");
+        let emitted = schema.to_dsl();
+        let reparsed: proc_macro2::TokenStream = syn::parse_str(&emitted)
+            .unwrap_or_else(|error| panic!("emitted text does not tokenise: {error}\n{emitted}"));
+
+        assert_eq!(
+            Schema::from_tokens(reparsed.clone()).expect("the emitted text reads back"),
+            schema,
+            "the emitted declaration describes a different schema\n{emitted}"
+        );
+        expand(reparsed).unwrap_or_else(|error| panic!("the emitted declaration does not expand: {error}\n{emitted}"));
+    }
+
+    #[test]
+    fn a_minimal_declaration() {
+        survives_the_round_trip(quote! {
+            name: Minimal,
+            columns: { id: u64 primary_key },
+        });
+    }
+
+    #[test]
+    fn a_persisted_declaration_with_indexes_and_queries() {
+        survives_the_round_trip(quote! {
+            name: Account,
+            version: 3,
+            persist: true,
+            columns: {
+                id: u64 primary_key autoincrement,
+                email: String,
+                tenant: u64,
+                nickname: String optional,
+                balance: f64,
+            },
+            indexes: {
+                email_idx: email unique,
+                tenant_idx: tenant,
+            },
+            queries: {
+                update: {
+                    Nickname(nickname) by id,
+                    Email(email) by tenant,
+                }
+                delete: {
+                    ById() by id,
+                }
+                in_place: {
+                    Balance(balance) by id,
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn a_partitioned_declaration() {
+        survives_the_round_trip(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            columns: {
+                exchange_id: u8 primary_key,
+                bid: f64,
+            },
+        });
+    }
+
+    #[test]
+    fn a_composite_key_keeps_its_column_order() {
+        // The order of a composite key decides the field order of the
+        // generated `get_primary_key`, and so the layout of the key type. An
+        // emitter that wrote the columns back in a `HashMap`'s order would
+        // change it.
+        survives_the_round_trip(quote! {
+            name: CompositeKey,
+            persist: true,
+            columns: {
+                tenant_id: u64 primary_key,
+                record_id: u64 primary_key,
+                value: i64,
+            },
+        });
+    }
+
+    #[test]
+    fn an_explicit_backend_and_a_custom_page_size() {
+        survives_the_round_trip(quote! {
+            name: Tuned,
+            persist: false,
+            columns: {
+                id: u64 primary_key using congee,
+                value: u64,
+            },
+            indexes: {
+                value_idx: value unique using arctic,
+            },
+            config: {
+                page_size: 1024,
+                row_derives: Clone, Debug,
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod generator_determinism {
+    use quote::quote;
+
+    use super::expand;
+
+    /// Expanding one declaration twice must produce one program. It does not.
+    ///
+    /// `Columns::columns_map` is a `std::collections::HashMap`, and several
+    /// generators iterate it directly to emit an ordered construct: the
+    /// `RowFields` enum and the `AvaiableTypes` enum among them. `RandomState`
+    /// seeds each map instance differently, so two expansions of the same
+    /// declaration in the same process emit those variants in different
+    /// orders, and two compilations of the same source can too.
+    ///
+    /// This is ignored rather than deleted because it is the evidence. It is
+    /// ignored rather than failing because the fix — ordering `columns_map`,
+    /// which `field_positions` already records the order for — changes the
+    /// generated code of every table and is a change to review on its own,
+    /// not a side effect of adding an emitter.
+    ///
+    /// Run it with `cargo test -p worktable_codegen -- --ignored`.
+    #[test]
+    #[ignore = "records a known generator bug: columns_map is a HashMap, so expansion is not deterministic"]
+    fn the_same_declaration_expands_the_same_way_twice() {
+        let declaration = quote! {
+            name: Twice,
+            persist: true,
+            columns: {
+                id: u64 primary_key autoincrement,
+                email: String,
+                tenant: u64,
+                balance: f64,
+            },
+        };
+
+        let first = expand(declaration.clone()).expect("expands").to_string();
+        let second = expand(declaration).expect("expands").to_string();
+        assert_eq!(first, second);
+    }
+}
