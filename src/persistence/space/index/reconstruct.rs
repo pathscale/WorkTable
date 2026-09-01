@@ -191,6 +191,7 @@ mod tests {
     /// another's, which the random representation allowed because order
     /// within a key came from a discriminator. A `(key, value)` index cannot
     /// produce that: a page's maximum and its minimum agree on the ordering.
+    #[test]
     fn mixed_boundary_page_with_adversarial_link_order() {
         let page_a = (pair(2, 20), vec![pair(1, 11), pair(2, 10), pair(2, 20)]);
         let page_b = (pair(2, 31), vec![pair(2, 30), pair(2, 31)]);
