@@ -42,6 +42,7 @@ pub mod schema;
 #[allow(unused_imports)]
 pub use model::*;
 pub use parser::Parser;
+pub use schema::{Change, Cost, Diff, TableChange, TransformReason, TransformRequest, plan};
 pub use schema::{
     ColumnSpec, ConfigSpec, IndexSpec, OperationSpec, PartitionKeySpec, QueriesSpec, Relation, Schema, infer_relations,
     schemas_to_mermaid,
