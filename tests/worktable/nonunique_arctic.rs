@@ -135,7 +135,9 @@ fn range_select_over_non_unique_arctic_keys() {
     let table = ArcticAdjacencyWorkTable::default();
     for key in 0..10u64 {
         for copy in 0..3u128 {
-            table.insert(row(&table, key as u128, key as u128 * 100 + copy, key)).unwrap();
+            table
+                .insert(row(&table, key as u128, key as u128 * 100 + copy, key))
+                .unwrap();
         }
     }
 

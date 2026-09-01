@@ -1215,7 +1215,10 @@ mod tests {
         let bytes = encode_multi_pairs(pairs.iter().cloned());
         assert_eq!(decode_multi_pairs::<u64>(&bytes).unwrap(), pairs);
         assert!(decode_multi_pairs::<u64>(&bytes[..bytes.len() - 1]).is_err());
-        assert_eq!(decode_multi_pairs::<u64>(&encode_multi_pairs(std::iter::empty::<(u64, Link)>())).unwrap(), vec![]);
+        assert_eq!(
+            decode_multi_pairs::<u64>(&encode_multi_pairs(std::iter::empty::<(u64, Link)>())).unwrap(),
+            vec![]
+        );
     }
 
     #[test]
@@ -1259,7 +1262,9 @@ mod tests {
         assert_eq!(index.get(&9).map(|(_, link)| link.0).collect::<Vec<_>>(), vec![link(4)]);
 
         space.compact().await.unwrap();
-        let image = ArtFile::<u64>::read_image(&path, Backend::ArcticMulti, 5).await.unwrap();
+        let image = ArtFile::<u64>::read_image(&path, Backend::ArcticMulti, 5)
+            .await
+            .unwrap();
         assert!(image.wal.is_empty());
         drop(space);
 
