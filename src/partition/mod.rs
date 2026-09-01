@@ -72,9 +72,9 @@ use std::sync::Arc;
 #[cfg(not(wt_loom))]
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
+use crate::mem_stat::MemStat;
 #[cfg(not(wt_loom))]
 use crate::util::epoch::EpochDomain;
-use crate::mem_stat::MemStat;
 
 /// Most retired partitions one opportunistic collect frees inline.
 #[cfg(not(wt_loom))]

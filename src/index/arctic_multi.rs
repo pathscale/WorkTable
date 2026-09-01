@@ -142,7 +142,9 @@ where
                         self.remove_dead_slot(&raw);
                         continue;
                     }
-                    links.links.push(value.take().expect("reclaimed above or never consumed"));
+                    links
+                        .links
+                        .push(value.take().expect("reclaimed above or never consumed"));
                     self.len.fetch_add(1, Ordering::Relaxed);
                     return;
                 }
@@ -232,7 +234,12 @@ where
                 while let Some((key, slot)) = entries.lend() {
                     let raw = <K::Raw as ArcticNativeKey>::insert_to_key(key);
                     let links = slot.read();
-                    pairs.extend(links.links.iter().map(|value| (K::from_arctic(raw), value.clone())));
+                    pairs.extend(
+                        links
+                            .links
+                            .iter()
+                            .map(|value| (K::from_arctic(raw), value.clone())),
+                    );
                 }
                 pairs
             }};
@@ -318,10 +325,7 @@ mod tests {
             index.insert_pair(3, value);
         }
         assert_eq!(index.remove_pair(&3, &2), Some(2));
-        assert_eq!(
-            index.get(&3).map(|(_, v)| v).collect::<Vec<_>>(),
-            vec![0, 1, 3, 4]
-        );
+        assert_eq!(index.get(&3).map(|(_, v)| v).collect::<Vec<_>>(), vec![0, 1, 3, 4]);
     }
 
     #[test]
@@ -338,12 +342,7 @@ mod tests {
 
         // Degenerate excluded bounds are empty, not unbounded.
         assert_eq!(index.range(..0).count(), 0);
-        assert_eq!(
-            index
-                .range((Bound::Excluded(u64::MAX), Bound::Unbounded))
-                .count(),
-            0
-        );
+        assert_eq!(index.range((Bound::Excluded(u64::MAX), Bound::Unbounded)).count(), 0);
         assert_eq!(index.iter().count(), 30);
     }
 

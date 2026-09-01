@@ -10,9 +10,8 @@ use vanilla_indexset::core::pair::Pair as VanillaPair;
 
 use crate::util::OffsetEqLink;
 use crate::{
-    ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap,
-    PersistentArcticIndex, PersistentArcticMultiIndex, PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex,
-    UpstreamIndexMap,
+    ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, PersistentArcticIndex,
+    PersistentArcticMultiIndex, PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
 };
 
 mod cdc;

@@ -278,7 +278,10 @@ where
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>) {
         let _sequence_guard = self.mutation_stripe(&value).lock();
         self.inner.insert_pair(value.clone(), OffsetEqLink(link));
-        let pair = Pair { key: value, value: link };
+        let pair = Pair {
+            key: value,
+            value: link,
+        };
         let event = ChangeEvent::InsertAt {
             event_id: self.next_event_id(),
             max_value: pair.clone(),
