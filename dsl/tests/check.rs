@@ -122,3 +122,46 @@ fn a_diagnostic_points_at_the_offending_text() {
     let span = checked.diagnostics[0].span.expect("the spans feature is on");
     assert_eq!(&source[span.start..span.end], "label_idx");
 }
+
+/// An index over a column that does not exist.
+///
+/// The macro never reaches this rule: its own parse fails first, so the
+/// validator was written with an `expect` on the column being present.
+/// `check` does reach it, because it runs the same rules over whatever a
+/// person has typed, and an index naming a column that is not there yet is
+/// exactly what half-finished input looks like. It panicked, which for an
+/// editor calling `check` on every keystroke is a crash rather than a squiggle.
+#[test]
+fn an_index_over_a_missing_column_is_reported_rather_than_panicking() {
+    let checked = worktable_dsl::check(
+        r#"
+        name: Broken,
+        columns: { id: u64 primary_key, email: String },
+        indexes: { nope_idx: does_not_exist unique },
+        "#,
+    );
+
+    assert!(!checked.is_acceptable(), "a dangling index must not be accepted");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("nope_idx") && d.message.contains("not a column")),
+        "the diagnostic must name the index and say what is wrong: {:?}",
+        checked.diagnostics
+    );
+}
+
+/// The same schema with the column present is accepted, so the rule above is
+/// rejecting the dangling reference and not the shape of the declaration.
+#[test]
+fn the_same_index_is_accepted_once_its_column_exists() {
+    let checked = worktable_dsl::check(
+        r#"
+        name: Fixed,
+        columns: { id: u64 primary_key, does_not_exist: String },
+        indexes: { nope_idx: does_not_exist unique },
+        "#,
+    );
+    assert!(checked.is_acceptable(), "unexpected: {:?}", checked.diagnostics);
+}

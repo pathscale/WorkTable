@@ -127,11 +127,27 @@ fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut
     }
 
     for (column, index) in &columns.indexes {
-        let key_type = columns
-            .columns_map
-            .get(column)
-            .expect("an index always references a validated column")
-            .to_string();
+        // An index over a column that does not exist. The macro never reaches
+        // this: its own parse fails first, which is why this used to be an
+        // `expect`. `check` does reach it, because it runs the same rules over
+        // whatever a person has typed so far, and an index naming a column
+        // that is not there yet is what half-finished input looks like. It
+        // panicked, which for an editor calling `check` on every keystroke is
+        // a crash rather than a squiggle.
+        //
+        // Reported rather than skipped: nothing else validates this, so
+        // without it a schema with a dangling index was accepted in silence.
+        let Some(key_type) = columns.columns_map.get(column) else {
+            errors.push(syn::Error::new(
+                index.name.span(),
+                format!(
+                    "index `{}` is declared over `{column}`, which is not a column",
+                    index.name
+                ),
+            ));
+            continue;
+        };
+        let key_type = key_type.to_string();
         let supported = match index.backend {
             IndexBackend::Congee => Some(&["u8", "u16", "u32", "u64", "usize"][..]),
             IndexBackend::Arctic => Some(&["u16", "u32", "u64", "u128"][..]),
