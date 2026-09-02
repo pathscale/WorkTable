@@ -35,10 +35,13 @@
 //! literals are handled by `proc_macro2` rather than by hand. The schema files
 //! this reads are more comment than code, which makes that difference matter.
 
+pub mod check;
 pub mod model;
 pub mod parser;
 pub mod schema;
+pub mod validate;
 
+pub use check::{Checked, Diagnostic, SourceSpan, Stage, check};
 #[allow(unused_imports)]
 pub use model::*;
 pub use parser::Parser;

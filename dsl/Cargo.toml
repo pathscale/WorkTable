@@ -31,3 +31,8 @@ serde_json = "1"
 # macro in front of every WorkTable user's first compile to serve consumers
 # who are not the compiler. The designer and the migration planner turn it on.
 serde = ["dep:serde"]
+# Byte ranges on diagnostics, for an editor that wants to underline the
+# offending token. Off by default for the same reason `serde` is: this crate is
+# compiled for the host as part of `worktable_codegen` before anything else in
+# a dependent's build, and span tracking is a cost the compiler does not need.
+spans = ["proc-macro2/span-locations"]
