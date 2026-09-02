@@ -98,6 +98,17 @@ mod params {
     pub fn scale_floor() -> f64 {
         env_f64("WT_SCALE_FLOOR", 0.6)
     }
+
+    /// Whether this is a release build.
+    ///
+    /// A function rather than `cfg!(..)` inline, so the assertion that uses it
+    /// is not a compile-time constant. `assert!(!cfg!(debug_assertions))` is
+    /// rejected by clippy as a constant assertion, and `#[cfg] panic!` makes
+    /// the rest of the function unreachable and its imports unused. This keeps
+    /// one code path in both profiles.
+    pub fn is_release_build() -> bool {
+        !cfg!(debug_assertions)
+    }
 }
 
 use std::collections::HashMap;
@@ -366,7 +377,7 @@ fn insert_throughput_should_scale_past_four_writers() {
     // throughput assertion that passes for the wrong reason is worse than none,
     // so refuse rather than mislead.
     assert!(
-        !cfg!(debug_assertions),
+        params::is_release_build(),
         "run this in release: `cargo test --release --test mod insert_throughput -- --ignored --nocapture`. \
          In a debug build the per-operation overhead hides the contention and this test passes for the wrong reason."
     );
