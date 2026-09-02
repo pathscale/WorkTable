@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -85,7 +85,22 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 
     /// Aggregate bytes across all registered empty links. u64: a u32 wraps
     /// once the aggregate passes 4 GiB of reclaimable space.
+    ///
+    /// Accounting only. It is a sum of lengths, so it cannot answer "is
+    /// anything registered" without assuming every mutation was real, and a
+    /// mutation that changed nothing used to move it anyway.
     sum_links_len: AtomicU64,
+
+    /// How many links are registered in the authoritative container.
+    ///
+    /// Separate from `sum_links_len` because the `pop_max` fast path needs
+    /// membership, not bytes, and membership is the thing that can be kept
+    /// exact: both counters now move only when `index_ord_links` actually
+    /// reports a change. Before that, a double remove drove the byte total to
+    /// zero while links were still registered, and the fast path then returned
+    /// `None` before taking the lock, so those links could never be reused and
+    /// inserts appended forever.
+    item_count: AtomicUsize,
 
     pub(crate) op_lock: FairMutex<()>,
 
@@ -109,6 +124,7 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
             length_ord_links: BTreeMultiMap::new(),
             page_links_map: BTreeMultiMap::new(),
             sum_links_len: Default::default(),
+            item_count: Default::default(),
             op_lock: Default::default(),
             vacuum_lock: Default::default(),
         }
@@ -118,26 +134,40 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
 impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     pub fn remove_link<L: Into<Link>>(&self, link: L) {
         let link = link.into();
-        self.index_ord_links.remove(&IndexOrdLink(link));
+        // `index_ord_links` is the authoritative membership set, and its
+        // `remove` reports whether anything was there. The counters follow
+        // that answer rather than the caller's intent: a remove for a link
+        // that is not registered must leave both untouched, or the aggregate
+        // drifts down past what is actually free.
+        let was_present = self.index_ord_links.remove(&IndexOrdLink(link)).is_some();
         self.length_ord_links.remove(&link.length, &link);
         self.page_links_map.remove(&link.page_id, &link);
 
-        // Saturating: a remove for a link that is not accounted any more
-        // (e.g. a double remove) must not underflow the aggregate.
-        let _ = self
-            .sum_links_len
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
-                Some(v.saturating_sub(u64::from(link.length)))
-            });
+        if was_present {
+            self.item_count.fetch_sub(1, Ordering::AcqRel);
+            // Saturating still, as a belt: the count is what the fast path
+            // trusts, and this is accounting.
+            let _ = self
+                .sum_links_len
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
+                    Some(v.saturating_sub(u64::from(link.length)))
+                });
+        }
     }
 
     fn insert_link<L: Into<Link>>(&self, link: L) {
         let link = link.into();
-        self.index_ord_links.insert(IndexOrdLink(link));
+        // Symmetrically: `insert` reports false when an equal entry was
+        // already registered, and counting that would drift the other way,
+        // leaving the fast path convinced there is space that is not there.
+        let is_new = self.index_ord_links.insert(IndexOrdLink(link));
         self.length_ord_links.insert(link.length, link);
         self.page_links_map.insert(link.page_id, link);
 
-        self.sum_links_len.fetch_add(u64::from(link.length), Ordering::AcqRel);
+        if is_new {
+            self.item_count.fetch_add(1, Ordering::AcqRel);
+            self.sum_links_len.fetch_add(u64::from(link.length), Ordering::AcqRel);
+        }
     }
 
     pub fn remove_link_for_page(&self, page_id: PageId) {
@@ -267,7 +297,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         // instruction earlier, and the link stays registered for the next
         // insert. The reverse cannot happen: the counter is only non-zero when
         // a link was registered, and the locked path below re-checks anyway.
-        if self.sum_links_len.load(Ordering::Relaxed) == 0 {
+        if self.item_count.load(Ordering::Relaxed) == 0 {
             return None;
         }
 
@@ -590,6 +620,56 @@ mod tests {
         let (popped, _guard) = registry.pop_max().unwrap();
         assert_eq!(popped.offset, 0);
         assert_eq!(popped.length, 192);
+    }
+
+    /// A remove for a link that is not registered must not move the counters.
+    ///
+    /// It used to. `remove_link` subtracted the length whether or not anything
+    /// was there, so removing the same link twice drove the aggregate to zero
+    /// while another link was still registered. The `pop_max` fast path then
+    /// returned `None` before taking the lock, and that surviving link could
+    /// never be reused: every insert appended instead, forever.
+    #[test]
+    fn a_double_remove_does_not_hide_a_surviving_link() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+        let a = link(1, 0, 100);
+        let b = link(1, 500, 100);
+        registry.push(a);
+        registry.push(b);
+
+        let _g = registry.op_lock.lock();
+        registry.remove_link(a);
+        registry.remove_link(a);
+        drop(_g);
+
+        assert_eq!(registry.len(), 1, "b must still be registered");
+        let (popped, _guard) = registry
+            .pop_max()
+            .expect("the surviving link must still be reachable through the fast path");
+        assert_eq!(popped, b);
+    }
+
+    /// And pushing the same link twice must not invent space that is not
+    /// there, which is the same defect with the sign flipped.
+    #[test]
+    fn a_duplicate_push_does_not_invent_space() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+        let a = link(2, 0, 100);
+        registry.push(a);
+        registry.push(a);
+
+        assert_eq!(registry.len(), 1, "the same link is one entry");
+        assert_eq!(
+            registry.get_empty_links_size_bytes(),
+            100,
+            "byte total must match the one entry actually registered"
+        );
+        let (popped, _guard) = registry.pop_max().expect("the entry is there");
+        assert_eq!(popped, a);
+        assert!(
+            registry.pop_max().is_none(),
+            "one push and one duplicate is one link, not two"
+        );
     }
 
     #[test]

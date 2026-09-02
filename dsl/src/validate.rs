@@ -78,34 +78,39 @@ pub fn validate_in_place_queries(columns: &Columns, queries: &crate::model::Quer
 /// key type *and* a non-unique congee index has two things wrong with it, not
 /// one thing and a surprise after the fix.
 fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut Vec<syn::Error>) {
-    let explicit_backend = if columns.primary_index_backend.requires_explicit_persistence() {
-        Some((
-            columns.primary_index_backend,
-            columns.primary_keys.first().expect("primary key exists"),
-            true,
-        ))
-    } else {
-        columns
-            .indexes
-            .values()
-            .find(|index| index.backend.requires_explicit_persistence())
-            .map(|index| (index.backend, &index.name, false))
-    };
+    // Every offending index, in declaration order, not the first one found.
+    //
+    // This used to pick one: the primary if it qualified, and otherwise the
+    // first secondary that did. A declaration with three such indexes reported
+    // one, and if the primary qualified no secondary was examined at all. That
+    // contradicts `all`'s contract of collecting every failure, and recreates
+    // the fix-one-recompile-find-the-next loop the collecting form exists to
+    // remove.
+    let mut explicit_backends = Vec::new();
+    if columns.primary_index_backend.requires_explicit_persistence() {
+        // A schema with no primary key is malformed, but `check` runs these
+        // rules over half-typed input where that is an ordinary state, so it
+        // is skipped rather than unwrapped.
+        if let Some(ident) = columns.primary_keys.first() {
+            explicit_backends.push((columns.primary_index_backend, ident, true));
+        }
+    }
+    for index in columns.indexes.values() {
+        if index.backend.requires_explicit_persistence() {
+            explicit_backends.push((index.backend, &index.name, false));
+        }
+    }
 
-    if let Some((backend, ident, is_primary)) = explicit_backend {
-        let kind = if is_primary { "primary index" } else { "index" };
-        match persistence {
-            Persistence::MemoryOnly => {}
-            Persistence::Omitted => {
-                errors.push(syn::Error::new(
-                    ident.span(),
-                    format!(
-                        "{kind} `{ident}` uses `{}`, which requires an explicit `persist: true` or `persist: false`",
-                        backend.name()
-                    ),
-                ));
-            }
-            Persistence::Persisted => {}
+    if persistence == Persistence::Omitted {
+        for (backend, ident, is_primary) in explicit_backends {
+            let kind = if is_primary { "primary index" } else { "index" };
+            errors.push(syn::Error::new(
+                ident.span(),
+                format!(
+                    "{kind} `{ident}` uses `{}`, which requires an explicit `persist: true` or `persist: false`",
+                    backend.name()
+                ),
+            ));
         }
     }
 

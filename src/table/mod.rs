@@ -361,6 +361,20 @@ where
             // no index entry ever resolves to storage that has been freed or
             // reused.
             if let Err(source) = self.indexes.delete_row(row, link) {
+                // Finish the rows that already succeeded before leaving.
+                //
+                // Each of them is out of every index but not yet ghosted,
+                // because ghosting is deferred to one pass below. Returning
+                // here without it would leave them allocated, live in the page
+                // layer, and unreachable through any index: leaked for the
+                // lifetime of the table, and contradicting the documented
+                // promise that a failed batch's earlier rows are genuinely
+                // gone and queued for reuse.
+                //
+                // A failure here is reported in preference to a failure in the
+                // cleanup: the caller's key is the more useful diagnosis, and
+                // the cleanup failing means the pages were already unusable.
+                let _ = self.data.delete_many(&links);
                 return Err(BatchDeleteError::Key {
                     key: pk.clone(),
                     deleted: deleted.len(),
@@ -429,8 +443,10 @@ where
         }
         let _mutation_guards = self.lock_manager.mutation_guards(keys.iter());
 
-        // Second walk, under the guards, so these links cannot move and can be
-        // used directly. This is the whole point: `k` individual lookups cost
+        // Second walk, under the guards. Links for guarded keys cannot move
+        // and are used directly; keys that appeared since the first walk are
+        // filtered out below, because no guard covers them. This is the whole
+        // point: `k` individual lookups cost
         // `k` times `O(log n)` in table size, one walk costs `O(log n + k)`, so
         // the saving grows with both the batch and the table. A first version
         // walked and then looked every key up again, which is strictly more
@@ -445,11 +461,29 @@ where
         let mut deleted: Vec<PrimaryKey> = Vec::with_capacity(pinned.len());
         let mut links: Vec<Link> = Vec::with_capacity(pinned.len());
         for (key, link) in pinned {
+            // Only keys the guards actually cover.
+            //
+            // The guards were taken over the first walk's key set. A key
+            // inserted into the span between the two walks appears in this one
+            // while hashing to a stripe nobody locked, so deleting it would
+            // tear down its indexes and storage with none of the mutation
+            // serialisation every other write on this table has, racing the
+            // publication that is still in flight.
+            //
+            // `keys` came from an ordered walk, so it is sorted and this is a
+            // binary search rather than a set allocation.
+            if keys.binary_search(&key).is_err() {
+                continue;
+            }
             // Read at the link, as above: the walk already produced it.
             let Ok(row) = self.data.select_non_ghosted(link) else {
                 continue;
             };
             if let Err(source) = self.indexes.delete_row(row, link) {
+                // As in `delete_many`: ghost what already succeeded rather
+                // than leaving those rows out of every index and still
+                // allocated.
+                let _ = self.data.delete_many(&links);
                 return Err(BatchDeleteError::Key {
                     key,
                     deleted: deleted.len(),

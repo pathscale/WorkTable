@@ -426,7 +426,30 @@ where
     /// sweep on their own path, because they are about to ask for storage
     /// rather than to reason about it.
     pub fn reclaim_pending(&self) {
-        self.reclaim_retired();
+        // Drain everything currently reclaimable, not one batch of it.
+        //
+        // `reclaim_retired` deliberately stops at `RECLAIM_BATCH_LIMIT`, which
+        // is right on a mutation path: a delete must not absorb an unbounded
+        // backlog. It is wrong here. Vacuum plans from the empty-link registry
+        // immediately after this call, so with a backlog larger than one batch
+        // it would choose pages from a picture missing everything in the later
+        // batches, and a successful vacuum would leave reclaimable space
+        // untouched.
+        //
+        // Bounded by progress rather than by a count: each pass either shrinks
+        // the queue or is blocked by a live reader, and the second case stops
+        // the loop rather than spinning against a pin that is not going
+        // anywhere.
+        loop {
+            let before = self.pending_retirements.load(Ordering::Acquire);
+            if before == 0 {
+                return;
+            }
+            self.reclaim_retired();
+            if self.pending_retirements.load(Ordering::Acquire) == before {
+                return;
+            }
+        }
     }
 
     /// Reclaims only once the queue has grown past [`RECLAIM_BACKLOG_TRIGGER`].
@@ -1743,6 +1766,47 @@ mod tests {
                 .iter()
                 .all(|link| link.page_id != old_link.page_id),
             "processing the page must not resurrect its inner links either"
+        );
+    }
+
+    /// A backlog larger than one reclaim batch must still be fully visible to
+    /// whoever asks for a drain.
+    ///
+    /// `reclaim_retired` stops at `RECLAIM_BATCH_LIMIT`, which is correct on a
+    /// mutation path and wrong for vacuum: it plans from the empty-link
+    /// registry immediately after asking, so one bounded pass left it choosing
+    /// pages from a picture missing everything past the first 256 entries.
+    #[test]
+    fn reclaim_pending_drains_a_backlog_larger_than_one_batch() {
+        let pages = DataPages::<TestRow>::new();
+
+        let mut links = Vec::new();
+        for i in 0..(super::RECLAIM_BATCH_LIMIT * 3) {
+            let link = pages.insert(TestRow { a: i as u64, b: 0 }).unwrap();
+            unsafe {
+                pages.with_mut_ref(link, |r| r.unghost()).unwrap();
+            }
+            links.push(link);
+        }
+        // Ghost and retire them all without letting any mutation reclaim.
+        let guard = pages.read_guard();
+        for link in &links {
+            pages.delete(*link).unwrap();
+        }
+        drop(guard);
+
+        assert!(
+            pages.pending_retirements.load(Ordering::Acquire) > super::RECLAIM_BATCH_LIMIT,
+            "the fixture must build a backlog bigger than one batch"
+        );
+
+        pages.reclaim_pending();
+
+        assert_eq!(
+            pages.pending_retirements.load(Ordering::Acquire),
+            0,
+            "reclaim_pending left {} retirements queued, so vacuum would plan against a stale registry",
+            pages.pending_retirements.load(Ordering::Acquire)
         );
     }
 
