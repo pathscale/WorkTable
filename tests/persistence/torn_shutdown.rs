@@ -99,7 +99,10 @@ fn torn_shutdown_writer() {
         .unwrap();
     runtime.block_on(async {
         let table = open_table().await;
-        for i in start.. {
+        // Bounded only to satisfy `clippy::for_unbounded_range`, which is right
+        // in general: an unbounded range wraps. This child is killed by its
+        // parent within a second and will never approach the bound.
+        for i in start..=u64::MAX {
             // Errors are tolerated, aborts are not: the parent only checks
             // how this process DIES, and it must die by the parent's signal,
             // not by its own reading of what the last kill left behind.
