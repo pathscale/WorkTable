@@ -45,11 +45,11 @@ fn table_with(rows: u64) -> EvictWorkTable {
     table
 }
 
-#[test]
-fn delete_many_removes_exactly_the_named_keys() {
+#[tokio::test]
+async fn delete_many_removes_exactly_the_named_keys() {
     let table = table_with(20);
 
-    let deleted = table.delete_many((0..5u64).collect()).expect("bulk delete");
+    let deleted = table.delete_many((0..5u64).collect()).await.expect("bulk delete");
 
     let expected: Vec<EvictPrimaryKey> = (0..5u64).map(Into::into).collect();
     assert_eq!(deleted, expected);
@@ -74,11 +74,11 @@ fn delete_many_removes_exactly_the_named_keys() {
 /// entry is invisible through `select` and the test passed with secondary
 /// removal deleted entirely. What catches it is claiming the key again: a
 /// unique index that still holds the deleted row's value rejects the insert.
-#[test]
-fn deleted_rows_are_unreachable_through_every_index() {
+#[tokio::test]
+async fn deleted_rows_are_unreachable_through_every_index() {
     let table = table_with(20);
 
-    table.delete_many((0..5u64).collect()).expect("bulk delete");
+    table.delete_many((0..5u64).collect()).await.expect("bulk delete");
 
     for id in 0..5u64 {
         assert!(
@@ -113,12 +113,13 @@ fn deleted_rows_are_unreachable_through_every_index() {
 /// A caller evicting a generation does not know which of its keys a concurrent
 /// writer already removed, and making them find out first is a race they cannot
 /// win. The return value is what was actually deleted, so the caller can tell.
-#[test]
-fn absent_keys_are_skipped_rather_than_failing_the_batch() {
+#[tokio::test]
+async fn absent_keys_are_skipped_rather_than_failing_the_batch() {
     let table = table_with(10);
 
     let deleted = table
         .delete_many(vec![1u64, 999, 3, 1_000, 5])
+        .await
         .expect("absent keys must not fail the batch");
 
     let expected: Vec<EvictPrimaryKey> = vec![1u64, 3, 5].into_iter().map(Into::into).collect();
@@ -127,22 +128,22 @@ fn absent_keys_are_skipped_rather_than_failing_the_batch() {
 }
 
 /// Deleting the same key twice in one batch is not a double free.
-#[test]
-fn a_repeated_key_is_deleted_once() {
+#[tokio::test]
+async fn a_repeated_key_is_deleted_once() {
     let table = table_with(10);
 
-    let deleted = table.delete_many(vec![2u64, 2, 2]).expect("repeats must be safe");
+    let deleted = table.delete_many(vec![2u64, 2, 2]).await.expect("repeats must be safe");
 
     let expected: Vec<EvictPrimaryKey> = vec![2u64.into()];
     assert_eq!(deleted, expected, "a key already ghosted in this batch is skipped");
     assert_eq!(table.count(), 9);
 }
 
-#[test]
-fn an_empty_batch_is_a_no_op() {
+#[tokio::test]
+async fn an_empty_batch_is_a_no_op() {
     let table = table_with(4);
     assert_eq!(
-        table.delete_many(Vec::<u64>::new()).expect("empty batch"),
+        table.delete_many(Vec::<u64>::new()).await.expect("empty batch"),
         Vec::<EvictPrimaryKey>::new()
     );
     assert_eq!(table.count(), 4);
@@ -154,14 +155,14 @@ fn an_empty_batch_is_a_no_op() {
 /// reach the links, so the observable property is that a delete-then-insert
 /// cycle does not grow the table without bound. A table that never reused a
 /// link would grow by the full batch on every cycle.
-#[test]
-fn bulk_delete_then_insert_reuses_storage() {
+#[tokio::test]
+async fn bulk_delete_then_insert_reuses_storage() {
     let table = table_with(200);
     let before = table.count();
 
     for cycle in 0..10u64 {
         let keys: Vec<u64> = (0..100).collect();
-        table.delete_many(keys).expect("bulk delete");
+        table.delete_many(keys).await.expect("bulk delete");
         assert_eq!(table.count(), before - 100);
 
         let refill: Vec<_> = (0..100)
@@ -188,7 +189,7 @@ async fn delete_many_matches_a_loop_of_delete() {
     let looped = table_with(30);
 
     let keys: Vec<u64> = (0..30).filter(|i| i % 3 == 0).collect();
-    batched.delete_many(keys.clone()).expect("bulk delete");
+    batched.delete_many(keys.clone()).await.expect("bulk delete");
     for key in &keys {
         looped.delete(*key).await.expect("single delete");
     }
@@ -204,11 +205,13 @@ async fn delete_many_matches_a_loop_of_delete() {
 }
 
 /// Eviction by span, which is the shape a caller dropping a generation has.
-#[test]
-fn delete_range_removes_the_span_and_nothing_else() {
+#[tokio::test]
+async fn delete_range_removes_the_span_and_nothing_else() {
     let table = table_with(20);
 
-    let deleted = table.delete_range(EvictPrimaryKey::from(5u64)..EvictPrimaryKey::from(10u64));
+    let deleted = table
+        .delete_range(EvictPrimaryKey::from(5u64)..EvictPrimaryKey::from(10u64))
+        .await;
     let deleted = deleted.expect("range delete");
 
     let expected: Vec<EvictPrimaryKey> = (5u64..10).map(Into::into).collect();
@@ -226,17 +229,19 @@ fn delete_range_removes_the_span_and_nothing_else() {
 }
 
 /// An inclusive end, and a range that matches nothing.
-#[test]
-fn delete_range_honours_its_bounds() {
+#[tokio::test]
+async fn delete_range_honours_its_bounds() {
     let table = table_with(20);
 
     let deleted = table
         .delete_range(EvictPrimaryKey::from(0u64)..=EvictPrimaryKey::from(2u64))
+        .await
         .expect("inclusive range");
     assert_eq!(deleted.len(), 3, "0, 1 and 2");
 
     let empty = table
         .delete_range(EvictPrimaryKey::from(500u64)..EvictPrimaryKey::from(600u64))
+        .await
         .expect("a range matching nothing is not an error");
     assert!(empty.is_empty());
     assert_eq!(table.count(), 17);
