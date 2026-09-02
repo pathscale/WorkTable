@@ -292,13 +292,37 @@ impl<T> PartitionSet<T> {
     ///
     /// So a tick loop should not pin per lookup. Pin once, read many:
     ///
-    /// ```ignore
+    /// ```
+    /// use worktable::prelude::*;
+    /// use worktable::worktable;
+    ///
+    /// worktable!(
+    ///     name: Price,
+    ///     partition_by: symbol_id: u16,
+    ///     columns: {
+    ///         exchange_id: u8 primary_key,
+    ///         bid: f64
+    ///     }
+    /// );
+    ///
+    /// let prices = PricePartitions::new();
+    /// for symbol in [7u16, 9, 11] {
+    ///     prices
+    ///         .partition_or_create(symbol)
+    ///         .unwrap()
+    ///         .insert(PriceRow { exchange_id: 1, bid: symbol as f64 })
+    ///         .unwrap();
+    /// }
+    ///
+    /// // One pin for the whole batch, then three dependent loads per lookup.
     /// let pinned = prices.pinned();
-    /// for tick in batch {
-    ///     if let Some(book) = pinned.get(tick.symbol_id) {
-    ///         book.insert(tick.into())?;
+    /// let mut total = 0.0;
+    /// for symbol in [7u16, 9, 11] {
+    ///     if let Some(book) = pinned.get(symbol) {
+    ///         total += book.select(1).unwrap().bid;
     ///     }
     /// }
+    /// assert_eq!(total, 27.0);
     /// ```
     ///
     /// The pin is held for the whole scope, so nothing retired during it is
