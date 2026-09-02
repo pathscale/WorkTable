@@ -74,16 +74,29 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then echo "CARGO_REGISTRY_TOKEN not set; skipping publish"; exit 0; fi
-          v=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
-          if curl -fsSL "https://index.crates.io/wo/rk/worktable" | sed -n 's/.*"vers":"\([^"]*\)".*/\1/p' | grep -qx "$v"; then
-            echo "worktable $v is already on crates.io; nothing to publish"
-            exit 0
-          fi
-          # The main crate pins its codegen twin exactly, so the twin must land
-          # on the registry first; cargo waits for availability between the two.
-          cv=$(sed -n 's/^version = "\(.*\)"$/\1/p' codegen/Cargo.toml | head -1)
-          if ! curl -fsSL "https://index.crates.io/wo/rk/worktable_codegen" | sed -n 's/.*"vers":"\([^"]*\)".*/\1/p' | grep -qx "$cv"; then
-            cargo publish -p worktable_codegen
-          fi
-          cargo publish -p worktable
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then echo "CARGO_REGISTRY_TOKEN not set; skipping publish"; exit 0; fi
+
+          # Publish in dependency order. worktable_codegen depends on
+          # worktable_dsl and worktable depends on worktable_codegen, both by
+          # path with an exact version, so each must be on the registry before
+          # the next is packaged. Omitting worktable_dsl here is what made
+          # `cargo publish -p worktable_codegen` fail with "no matching package
+          # named `worktable_dsl` found" the moment the DSL extraction landed.
+          publish_if_new() {
+            crate="$1"
+            manifest="$2"
+            version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$manifest" | head -1)
+            # crates.io index paths: four or more characters is {first two}/{next two}/{name}.
+            if curl -fsSL "https://index.crates.io/wo/rk/$crate" \
+              | sed -n 's/.*"vers":"\([^"]*\)".*/\1/p' | grep -qx "$version"; then
+              echo "$crate $version is already on crates.io; skipping"
+              return 0
+            fi
+            echo "publishing $crate $version"
+            cargo publish -p "$crate"
+          }
+
+          publish_if_new worktable_dsl dsl/Cargo.toml
+          publish_if_new worktable_codegen codegen/Cargo.toml
+          publish_if_new worktable Cargo.toml

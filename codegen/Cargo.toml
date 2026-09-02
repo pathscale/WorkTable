@@ -1,6 +1,6 @@
 [package]
 name = "worktable_codegen"
-version = "1.0.0-beta.15"
+version = "1.0.0-beta.17"
 edition = "2024"
 license = "MIT"
 description = "Proc-macro companion crate for worktable: the worktable! macro and its derives."
@@ -20,7 +20,7 @@ proc-macro = true
 [dependencies]
 # The schema language, extracted so consumers other than this macro can read
 # a declaration. See its crate docs for why that needed a separate crate.
-worktable_dsl = { path = "../dsl", version = "1.0.0-beta.14" }
+worktable_dsl = { path = "../dsl", version = "=1.0.0-beta.17" }
 rkyv = { version = "0.8.17" }
 syn = { version = "2.0.74", features = ["full"] }
 quote = "1.0.36"
