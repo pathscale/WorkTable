@@ -267,17 +267,23 @@ impl InMemoryGenerator {
                     let result = if self.0.primary_index.pk_map.contains_key(&pk) {
                         self.update_with_guard(row.clone(), guard).await
                     } else {
-                        // `insert` acquires the same per-key mutation gate as
-                        // `guard`; release the row operation before entering
-                        // the synchronous insertion protocol, then retry the
-                        // locked decision if another writer won the race.
-                        drop(guard);
-                        match self.insert(row.clone()) {
+                        // Insert without letting go.
+                        //
+                        // This used to `drop(guard)` first and retry if it lost
+                        // the race, because `insert` re-acquires the same
+                        // per-key mutation gate the guard already holds and
+                        // would deadlock against itself. `insert_locked` is
+                        // that same insert without the acquisition, so the
+                        // decision and the write are one critical section and
+                        // there is no window to lose.
+                        let result = match self.0.insert_locked(row.clone()) {
                             core::result::Result::Ok(_) => core::result::Result::Ok(()),
                             core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) =>
                                 core::result::Result::Err(WorkTableError::NotFound),
                             core::result::Result::Err(e) => core::result::Result::Err(e),
-                        }
+                        };
+                        drop(guard);
+                        result
                     };
 
                     match result {

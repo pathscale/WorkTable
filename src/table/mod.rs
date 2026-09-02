@@ -252,6 +252,47 @@ where
     {
         let pk = row.get_primary_key().clone();
         let _mutation_guard = self.lock_manager.mutation_guard(&pk);
+        self.insert_locked(row)
+    }
+
+    /// `insert`, for a caller already holding this key's mutation gate.
+    ///
+    /// `upsert` needs this. It takes the full row lock, finds the key absent,
+    /// and wants to insert without letting go: releasing first is what opens a
+    /// window another writer can win, which is why that path carries a retry
+    /// loop and a backoff. It could not hold on, because `insert` re-acquires
+    /// the same per-key gate the guard already holds and would deadlock
+    /// against itself.
+    ///
+    /// Splitting the acquisition off is the whole fix, and it is the shape
+    /// `update_with_guard` already uses. Making `insert` async does not help
+    /// here and makes it worse: the drop-to-insert window would then contain
+    /// an await, so a task can be descheduled inside it and the race widens
+    /// from a few hundred nanoseconds of straight-line code to a scheduling
+    /// quantum.
+    ///
+    /// # Correctness
+    ///
+    /// The caller must already hold the mutation gate for this row's primary
+    /// key. Calling it without one drops the serialisation every other write
+    /// on this table has.
+    pub fn insert_locked(&self, row: Row) -> Result<PrimaryKey, WorkTableError>
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        AvailableIndexes: AvailableIndex,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+        LockType: 'static,
+    {
+        let pk = row.get_primary_key().clone();
         let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
         if self.primary_index.insert_checked(pk.clone(), link).is_none() {
             self.data.delete(link).map_err(WorkTableError::PagesError)?;

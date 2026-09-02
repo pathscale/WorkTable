@@ -30,6 +30,7 @@ mod unsized_;
 mod update_delete_race;
 mod update_in_place_unsized;
 mod upsert;
+mod upsert_guard;
 mod uuid;
 mod vacuum;
 mod vacuum_no_row_loss;
