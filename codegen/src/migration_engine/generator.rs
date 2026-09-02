@@ -47,7 +47,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                 let rows = source.select_all().execute()?;
                 for row in rows {
                     #chain_steps
-                    target.insert(current_row)?;
+                    target.insert(current_row).await?;
                 }
                 Ok(())
             }

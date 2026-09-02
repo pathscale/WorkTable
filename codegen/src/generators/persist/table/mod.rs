@@ -187,7 +187,10 @@ impl PersistGenerator {
                 #schema_attribute
                 #secondary_schema_attribute
                 pub struct #ident(
-                    WorkTable<
+                    // Public because the crate's own internals reach the inner
+                    // table directly: a synchronous internal path cannot call
+                    // the generated wrapper once that wrapper is async.
+                    pub WorkTable<
                         #row_type,
                         #primary_key_type,
                         #avt_type_ident,
@@ -207,7 +210,10 @@ impl PersistGenerator {
                 #schema_attribute
                 #secondary_schema_attribute
                 pub struct #ident(
-                    WorkTable<
+                    // Public because the crate's own internals reach the inner
+                    // table directly: a synchronous internal path cannot call
+                    // the generated wrapper once that wrapper is async.
+                    pub WorkTable<
                         #row_type,
                         #primary_key_type,
                         #avt_type_ident,

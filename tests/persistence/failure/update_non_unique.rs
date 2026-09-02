@@ -26,7 +26,7 @@ fn test_update_non_unique_middle_fail() {
                 unique_value: 10,
                 data: 100,
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = MixedIdxRow {
                 id: table.get_next_pk().0,
@@ -34,7 +34,7 @@ fn test_update_non_unique_middle_fail() {
                 unique_value: 20,
                 data: 200,
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
 
             let row3 = MixedIdxRow {
                 id: table.get_next_pk().0,
@@ -42,7 +42,7 @@ fn test_update_non_unique_middle_fail() {
                 unique_value: 30,
                 data: 300,
             };
-            table.insert(row3.clone()).unwrap();
+            table.insert(row3.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id, row3.id)
@@ -59,7 +59,7 @@ fn test_update_non_unique_middle_fail() {
                 unique_value: 1000,
                 data: 1000,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = MixedIdxRow {
                 id: table.get_next_pk().0,
@@ -67,7 +67,7 @@ fn test_update_non_unique_middle_fail() {
                 unique_value: 2000,
                 data: 2000,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -81,7 +81,7 @@ fn test_update_non_unique_middle_fail() {
                 unique_value: 3000,
                 data: 3000,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -126,7 +126,7 @@ fn test_update_non_unique_last_fail() {
                 unique_value: 99,
                 data: 0,
             };
-            table.insert(conflict_row.clone()).unwrap();
+            table.insert(conflict_row.clone()).await.unwrap();
 
             let row1 = MixedIdxRow {
                 id: table.get_next_pk().0,
@@ -134,7 +134,7 @@ fn test_update_non_unique_last_fail() {
                 unique_value: 10,
                 data: 100,
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = MixedIdxRow {
                 id: table.get_next_pk().0,
@@ -142,7 +142,7 @@ fn test_update_non_unique_last_fail() {
                 unique_value: 20,
                 data: 200,
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
 
             let row3 = MixedIdxRow {
                 id: table.get_next_pk().0,
@@ -150,7 +150,7 @@ fn test_update_non_unique_last_fail() {
                 unique_value: 30,
                 data: 300,
             };
-            table.insert(row3.clone()).unwrap();
+            table.insert(row3.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             conflict_row.id
@@ -167,7 +167,7 @@ fn test_update_non_unique_last_fail() {
                 unique_value: 1000,
                 data: 1000,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = MixedIdxRow {
                 id: table.get_next_pk().0,
@@ -175,7 +175,7 @@ fn test_update_non_unique_last_fail() {
                 unique_value: 2000,
                 data: 2000,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -189,7 +189,7 @@ fn test_update_non_unique_last_fail() {
                 unique_value: 3000,
                 data: 3000,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await

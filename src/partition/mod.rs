@@ -293,6 +293,7 @@ impl<T> PartitionSet<T> {
     /// So a tick loop should not pin per lookup. Pin once, read many:
     ///
     /// ```
+    /// # fn main() { futures::executor::block_on(async {
     /// use worktable::prelude::*;
     /// use worktable::worktable;
     ///
@@ -311,6 +312,7 @@ impl<T> PartitionSet<T> {
     ///         .partition_or_create(symbol)
     ///         .unwrap()
     ///         .insert(PriceRow { exchange_id: 1, bid: symbol as f64 })
+    ///         .await
     ///         .unwrap();
     /// }
     ///
@@ -323,6 +325,7 @@ impl<T> PartitionSet<T> {
     ///     }
     /// }
     /// assert_eq!(total, 27.0);
+    /// # }); }
     /// ```
     ///
     /// The pin is held for the whole scope, so nothing retired during it is

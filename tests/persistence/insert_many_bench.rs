@@ -50,7 +50,7 @@ fn insert_many_vs_loop_insert_at_5000_rows() {
         let loop_rows = rows_for(loop_table.reserve_pks(ROWS as usize));
         let started = Instant::now();
         for row in loop_rows {
-            loop_table.insert(row).unwrap();
+            loop_table.insert(row).await.unwrap();
         }
         let loop_visible = started.elapsed();
         loop_table.wait_for_ops().await.unwrap();
@@ -61,7 +61,7 @@ fn insert_many_vs_loop_insert_at_5000_rows() {
         let batch_table = table_at("tests/data/insert_many/bench_batch").await;
         let batch_rows = rows_for(batch_table.reserve_pks(ROWS as usize));
         let started = Instant::now();
-        batch_table.insert_many(batch_rows).unwrap();
+        batch_table.insert_many(batch_rows).await.unwrap();
         let batch_visible = started.elapsed();
         batch_table.wait_for_ops().await.unwrap();
         let batch_durable = started.elapsed();

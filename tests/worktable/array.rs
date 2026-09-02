@@ -20,7 +20,7 @@ worktable! (
 async fn insert() {
     let table = TestWorkTable::default();
     let row = TestRow { id: 1, test: [1; 20] };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
@@ -31,7 +31,7 @@ async fn insert() {
 async fn update() {
     let table = TestWorkTable::default();
     let row = TestRow { id: 1, test: [1; 20] };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let new_row = TestRow { id: 1, test: [2; 20] };
     table.update(new_row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
@@ -45,7 +45,7 @@ async fn update_in_a_middle() {
     let table = TestWorkTable::default();
     for i in 0..10 {
         let row = TestRow { id: i, test: [1; 20] };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let new_row = TestRow { id: 3, test: [1; 20] };
     table.update(new_row.clone()).await.unwrap();
@@ -58,7 +58,7 @@ async fn update_in_a_middle() {
 async fn update_query() {
     let table = TestWorkTable::default();
     let row = TestRow { id: 1, test: [1; 20] };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let q = TestByIdQuery { test: [2; 20] };
     table.update_test_by_id(q.clone(), pk.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
@@ -86,7 +86,7 @@ worktable! (
 async fn insert_i() {
     let table = TestIWorkTable::default();
     let row = TestIRow { id: 1, test: [1; 20] };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
@@ -97,7 +97,7 @@ async fn insert_i() {
 async fn update_i() {
     let table = TestIWorkTable::default();
     let row = TestIRow { id: 1, test: [1; 20] };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let new_row = TestIRow { id: 1, test: [2; 20] };
     table.update(new_row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
@@ -111,7 +111,7 @@ async fn update_in_a_middle_i() {
     let table = TestIWorkTable::default();
     for i in 0..10 {
         let row = TestIRow { id: i, test: [1; 20] };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let new_row = TestIRow { id: 3, test: [1; 20] };
     table.update(new_row.clone()).await.unwrap();
@@ -124,7 +124,7 @@ async fn update_in_a_middle_i() {
 async fn update_query_i() {
     let table = TestIWorkTable::default();
     let row = TestIRow { id: 1, test: [1; 20] };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let q = TestIByIdQuery { test: [2; 20] };
     table.update_test_i_by_id(q.clone(), pk.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();

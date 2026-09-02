@@ -36,16 +36,16 @@ fn row(exchange_id: u8, bid: f64) -> PriceRow {
     }
 }
 
-#[test]
-fn partitions_are_independent_tables() {
+#[tokio::test]
+async fn partitions_are_independent_tables() {
     let prices = PricePartitions::new();
     assert!(prices.is_empty());
     assert!(prices.partition(7).is_none(), "reading must not create");
 
     let btc = prices.partition_or_create(7).unwrap();
     let eth = prices.partition_or_create(9).unwrap();
-    btc.insert(row(1, 100.0)).unwrap();
-    eth.insert(row(1, 200.0)).unwrap();
+    btc.insert(row(1, 100.0)).await.unwrap();
+    eth.insert(row(1, 200.0)).await.unwrap();
 
     // The same primary key in two partitions is two different rows. This is
     // the semantic change partitioning makes, so it is asserted rather than
@@ -56,35 +56,35 @@ fn partitions_are_independent_tables() {
     assert_eq!(prices.keys(), vec![7u16, 9]);
 }
 
-#[test]
-fn a_key_maps_to_one_table_however_often_it_is_asked_for() {
+#[tokio::test]
+async fn a_key_maps_to_one_table_however_often_it_is_asked_for() {
     let prices = PricePartitions::new();
     let a = prices.partition_or_create(3).unwrap();
-    a.insert(row(0, 1.0)).unwrap();
+    a.insert(row(0, 1.0)).await.unwrap();
     let b = prices.partition_or_create(3).unwrap();
     // Same table, so the row inserted through `a` is visible through `b`.
     assert_eq!(b.select(0).unwrap().bid, 1.0);
     assert_eq!(prices.len(), 1);
 }
 
-#[test]
-fn keys_are_typed_and_span_chunk_boundaries() {
+#[tokio::test]
+async fn keys_are_typed_and_span_chunk_boundaries() {
     let prices = PricePartitions::new();
     for k in [5000u16, 0, 1024, 1023, 2048] {
         prices.partition_or_create(k).unwrap();
     }
     assert_eq!(prices.keys(), vec![0u16, 1023, 1024, 2048, 5000]);
     for (k, table) in prices.iter() {
-        table.insert(row(0, k as f64)).unwrap();
+        table.insert(row(0, k as f64)).await.unwrap();
         assert_eq!(table.select(0).unwrap().bid, k as f64);
     }
 }
 
-#[test]
-fn removing_a_partition_leaves_held_handles_alive() {
+#[tokio::test]
+async fn removing_a_partition_leaves_held_handles_alive() {
     let prices = PricePartitions::new();
     let held = prices.partition_or_create(4).unwrap();
-    held.insert(row(2, 9.0)).unwrap();
+    held.insert(row(2, 9.0)).await.unwrap();
 
     assert!(prices.remove(4).is_some());
     assert_eq!(prices.len(), 0);
@@ -94,14 +94,14 @@ fn removing_a_partition_leaves_held_handles_alive() {
     assert!(prices.remove(4).is_none());
 }
 
-#[test]
-fn insert_with_a_custom_initialiser_runs_once_per_key() {
+#[tokio::test]
+async fn insert_with_a_custom_initialiser_runs_once_per_key() {
     let prices = PricePartitions::new();
     let seeded = prices
         .partition_or_insert_with(11, || {
             let t = PriceWorkTable::default();
             for e in 0..3u8 {
-                t.insert(row(e, e as f64)).unwrap();
+                futures::executor::block_on(t.insert(row(e, e as f64))).unwrap();
             }
             t
         })
@@ -125,12 +125,14 @@ async fn partitioning_composes_with_indexes_and_queries() {
         tag: 1,
         px: 10.0,
     })
+    .await
     .unwrap();
     b.insert(QuoteRow {
         id: b.get_next_pk().0,
         tag: 1,
         px: 20.0,
     })
+    .await
     .unwrap();
 
     // `tag` is a unique index, and tag 1 exists in both partitions, because
@@ -144,14 +146,14 @@ async fn partitioning_composes_with_indexes_and_queries() {
     assert_eq!(from_a.id, from_b.id);
 }
 
-#[test]
-fn memory_and_rows_are_reported_per_key() {
+#[tokio::test]
+async fn memory_and_rows_are_reported_per_key() {
     let prices = PricePartitions::new();
     assert_eq!(prices.memory_total(), 0);
     for k in [1u16, 2, 3] {
         let t = prices.partition_or_create(k).unwrap();
         for e in 0..(k as u8) {
-            t.insert(row(e, 1.0)).unwrap();
+            t.insert(row(e, 1.0)).await.unwrap();
         }
     }
     let by_key = prices.memory_by_key();
@@ -175,7 +177,7 @@ fn concurrent_creation_and_reading_is_sound() {
                 let table = prices.partition_or_create(k).unwrap();
                 // Every thread writes the same row for a key, so whichever
                 // wins the insert the value must match the key.
-                let _ = table.insert(row(0, k as f64));
+                let _ = futures::executor::block_on(table.insert(row(0, k as f64)));
                 let got = prices.partition(k).unwrap().select(0).unwrap();
                 assert_eq!(got.bid, k as f64, "thread {t} saw a torn partition at {k}");
             }
@@ -198,8 +200,8 @@ async fn updates_are_scoped_to_one_partition() {
     let prices = PricePartitions::new();
     let a = prices.partition_or_create(1).unwrap();
     let b = prices.partition_or_create(2).unwrap();
-    a.insert(row(7, 100.0)).unwrap();
-    b.insert(row(7, 200.0)).unwrap();
+    a.insert(row(7, 100.0)).await.unwrap();
+    b.insert(row(7, 200.0)).await.unwrap();
 
     a.update(PriceRow {
         exchange_id: 7,
@@ -222,8 +224,8 @@ async fn deletes_are_scoped_to_one_partition() {
     let prices = PricePartitions::new();
     let a = prices.partition_or_create(1).unwrap();
     let b = prices.partition_or_create(2).unwrap();
-    let pk = a.insert(row(7, 100.0)).unwrap();
-    b.insert(row(7, 200.0)).unwrap();
+    let pk = a.insert(row(7, 100.0)).await.unwrap();
+    b.insert(row(7, 200.0)).await.unwrap();
 
     a.delete(pk).await.unwrap();
 
@@ -247,6 +249,7 @@ async fn a_unique_index_collides_only_inside_its_own_partition() {
         tag: 42,
         px: 1.0,
     })
+    .await
     .unwrap();
     // The same tag in a sibling partition is fine.
     b.insert(QuoteRow {
@@ -254,21 +257,24 @@ async fn a_unique_index_collides_only_inside_its_own_partition() {
         tag: 42,
         px: 2.0,
     })
+    .await
     .unwrap();
     // The same tag again in the same partition is not.
-    let dup = a.insert(QuoteRow {
-        id: a.get_next_pk().0,
-        tag: 42,
-        px: 3.0,
-    });
+    let dup = a
+        .insert(QuoteRow {
+            id: a.get_next_pk().0,
+            tag: 42,
+            px: 3.0,
+        })
+        .await;
     assert!(dup.is_err(), "a unique index must still be unique within its partition");
 
     assert_eq!(a.select_by_tag(42).unwrap().px, 1.0);
     assert_eq!(b.select_by_tag(42).unwrap().px, 2.0);
 }
 
-#[test]
-fn autoincrement_counts_independently_in_each_partition() {
+#[tokio::test]
+async fn autoincrement_counts_independently_in_each_partition() {
     let quotes = QuotePartitions::new();
     let a = quotes.partition_or_create(1).unwrap();
     let b = quotes.partition_or_create(2).unwrap();
@@ -279,6 +285,7 @@ fn autoincrement_counts_independently_in_each_partition() {
             tag: i,
             px: 1.0,
         })
+        .await
         .unwrap();
     }
     // `b` has had no inserts, so its counter has not moved.
@@ -288,6 +295,7 @@ fn autoincrement_counts_independently_in_each_partition() {
         tag: 100,
         px: 2.0,
     })
+    .await
     .unwrap();
 
     assert_eq!(
@@ -302,11 +310,11 @@ fn autoincrement_counts_independently_in_each_partition() {
 // Reclamation through the generated facade.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_removed_partition_waits_out_its_readers_then_frees_through_a_shared_handle() {
+#[tokio::test]
+async fn a_removed_partition_waits_out_its_readers_then_frees_through_a_shared_handle() {
     let prices = PricePartitions::new();
     let held = prices.partition_or_create(4).unwrap();
-    held.insert(row(2, 9.0)).unwrap();
+    held.insert(row(2, 9.0)).await.unwrap();
 
     // A pinned borrow models the reader that resolved the partition before
     // the removal; its grace period keeps the removal retired.
@@ -405,8 +413,8 @@ fn the_full_range_of_a_u16_key_is_routable() {
 // unit tests' trivial payload.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn concurrent_writers_on_disjoint_partitions_do_not_interfere() {
+#[tokio::test]
+async fn concurrent_writers_on_disjoint_partitions_do_not_interfere() {
     use std::sync::Arc;
     const THREADS: u16 = 8;
     const ROWS: u8 = 32;
@@ -418,7 +426,7 @@ fn concurrent_writers_on_disjoint_partitions_do_not_interfere() {
             std::thread::spawn(move || {
                 let table = prices.partition_or_create(t).unwrap();
                 for e in 0..ROWS {
-                    table.insert(row(e, t as f64 * 1000.0 + e as f64)).unwrap();
+                    futures::executor::block_on(table.insert(row(e, t as f64 * 1000.0 + e as f64))).unwrap();
                 }
             })
         })
@@ -444,8 +452,8 @@ fn concurrent_writers_on_disjoint_partitions_do_not_interfere() {
     );
 }
 
-#[test]
-fn readers_survive_partitions_being_removed_under_them() {
+#[tokio::test]
+async fn readers_survive_partitions_being_removed_under_them() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     const KEYS: u16 = 24;
@@ -482,7 +490,7 @@ fn readers_survive_partitions_being_removed_under_them() {
             let t = prices
                 .partition_or_insert_with(k, || {
                     let t = PriceWorkTable::default();
-                    t.insert(row(0, k as f64)).unwrap();
+                    futures::executor::block_on(t.insert(row(0, k as f64))).unwrap();
                     t
                 })
                 .unwrap();
@@ -518,13 +526,13 @@ fn readers_survive_partitions_being_removed_under_them() {
 // residency budget.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn retired_bytes_accounts_for_what_removal_has_not_freed_yet() {
+#[tokio::test]
+async fn retired_bytes_accounts_for_what_removal_has_not_freed_yet() {
     let prices = PricePartitions::new();
     for k in 0..4u16 {
         let t = prices.partition_or_create(k).unwrap();
         for e in 0..(k as u8 + 1) {
-            t.insert(row(e, 1.0)).unwrap();
+            t.insert(row(e, 1.0)).await.unwrap();
         }
     }
     let live_before = prices.memory_total();
@@ -565,13 +573,13 @@ fn retired_bytes_accounts_for_what_removal_has_not_freed_yet() {
     assert_eq!(prices.retired_len(), 0);
 }
 
-#[test]
-fn metrics_agree_with_each_other() {
+#[tokio::test]
+async fn metrics_agree_with_each_other() {
     let prices = PricePartitions::new();
     for k in [1u16, 7, 2048] {
         let t = prices.partition_or_create(k).unwrap();
         for e in 0..(k as u8 % 5 + 1) {
-            t.insert(row(e, 1.0)).unwrap();
+            t.insert(row(e, 1.0)).await.unwrap();
         }
     }
 
@@ -599,12 +607,12 @@ fn metrics_agree_with_each_other() {
 // assert the batch form behaves identically to the per-call one.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn a_pinned_scope_sees_what_partition_ref_sees() {
+#[tokio::test]
+async fn a_pinned_scope_sees_what_partition_ref_sees() {
     let prices = PricePartitions::new();
     for k in [0u16, 7, 1023, 1024, 5000] {
         let t = prices.partition_or_create(k).unwrap();
-        t.insert(row(1, k as f64)).unwrap();
+        t.insert(row(1, k as f64)).await.unwrap();
     }
 
     let pinned = prices.pinned();
@@ -622,11 +630,11 @@ fn a_pinned_scope_sees_what_partition_ref_sees() {
     assert!(pinned.get(u16::MAX).is_none());
 }
 
-#[test]
-fn a_borrow_taken_in_a_pinned_scope_survives_removal() {
+#[tokio::test]
+async fn a_borrow_taken_in_a_pinned_scope_survives_removal() {
     let prices = PricePartitions::new();
     let created = prices.partition_or_create(3).unwrap();
-    created.insert(row(1, 30.0)).unwrap();
+    created.insert(row(1, 30.0)).await.unwrap();
     drop(created);
 
     let pinned = prices.pinned();
@@ -656,15 +664,15 @@ fn a_borrow_taken_in_a_pinned_scope_survives_removal() {
     assert!(prices.partition(3).is_none());
 }
 
-#[test]
-fn pinned_scopes_work_from_several_threads_at_once() {
+#[tokio::test]
+async fn pinned_scopes_work_from_several_threads_at_once() {
     use std::sync::Arc;
     const KEYS: u16 = 64;
 
     let prices = Arc::new(PricePartitions::new());
     for k in 0..KEYS {
         let t = prices.partition_or_create(k).unwrap();
-        t.insert(row(1, k as f64)).unwrap();
+        t.insert(row(1, k as f64)).await.unwrap();
     }
 
     let readers: Vec<_> = (0..4)

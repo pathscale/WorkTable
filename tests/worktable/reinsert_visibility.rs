@@ -38,8 +38,8 @@ async fn failed_reinsert_never_exposes_uncommitted_values() {
         val: 2,
         payload: "occupant".to_string(),
     };
-    table.insert(row_a.clone()).unwrap();
-    table.insert(row_b.clone()).unwrap();
+    table.insert(row_a.clone()).await.unwrap();
+    table.insert(row_b.clone()).await.unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
     let reader = {

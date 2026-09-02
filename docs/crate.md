@@ -8,6 +8,7 @@ does not provide multi-table transactions or multi-process access.
 ## In-memory quick start
 
 ```rust
+# fn main() { futures::executor::block_on(async {
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -27,15 +28,17 @@ let row = UserRow {
     id: 1,
     email: "person@example.com".to_owned(),
 };
-table.insert(row.clone()).unwrap();
+table.insert(row.clone()).await.unwrap();
 assert_eq!(table.select(1), Some(row.clone()));
 assert_eq!(table.select_by_email("person@example.com".to_owned()), Some(row));
+# }); }
 ```
 
 String and tuple primary keys accept borrowed forms, so callers do not need to
 write an explicit clone merely to perform a lookup or delete.
 
 ```rust
+# fn main() { futures::executor::block_on(async {
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -55,8 +58,9 @@ let row = AccountRow {
     account: key.1.clone(),
     enabled: true,
 };
-table.insert(row.clone()).unwrap();
+table.insert(row.clone()).await.unwrap();
 assert_eq!(table.select(&key), Some(row));
+# }); }
 ```
 
 ## Persistence contract

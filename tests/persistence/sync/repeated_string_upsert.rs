@@ -44,6 +44,7 @@ fn repeated_varying_string_upserts_keep_the_worker_healthy() {
                         value: format!("initial-{index}"),
                         updated_at: format!("2026-08-08T00:{:02}:00Z", index % 60),
                     })
+                    .await
                     .unwrap();
             }
             table
@@ -52,6 +53,7 @@ fn repeated_varying_string_upserts_keep_the_worker_healthy() {
                     value: "{}".into(),
                     updated_at: "2026-08-08T00:00:00Z".into(),
                 })
+                .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
             table.close().await.unwrap();

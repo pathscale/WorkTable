@@ -93,7 +93,7 @@ fn test_space_insert_sync() {
                 field: 0.234,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -136,7 +136,7 @@ fn test_space_insert_many_sync() {
                         field: i as f64 / 100.0,
                         id: table.get_next_pk().0,
                     };
-                    table.insert(row.clone()).unwrap();
+                    table.insert(row.clone()).await.unwrap();
                     row.id
                 };
                 pks.push(pk);
@@ -183,7 +183,7 @@ fn test_space_update_full_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update(TestSyncRow {
                     another: 13,
@@ -233,7 +233,7 @@ fn test_space_update_query_pk_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update_another_by_id(AnotherByIdQuery { another: 13 }, row.id)
                 .await
@@ -278,7 +278,7 @@ fn test_space_update_query_unique_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update_field_by_another(FieldByAnotherQuery { field: 1.0 }, 42)
                 .await
@@ -323,7 +323,7 @@ fn test_space_update_query_non_unique_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update_another_by_non_unique(AnotherByNonUniqueQuery { another: 13 }, 10)
                 .await
@@ -368,7 +368,7 @@ fn test_space_delete_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.delete(row.id).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
@@ -409,7 +409,7 @@ fn test_space_delete_query_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.delete_by_another(row.another).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id

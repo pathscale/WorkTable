@@ -54,6 +54,7 @@ fn in_place_update_survives_reload() {
                     counter: 10,
                     note: "row".to_string(),
                 })
+                .await
                 .unwrap();
             table
                 .update_counter_by_id_in_place(|counter| *counter = 42u64.into(), 1)

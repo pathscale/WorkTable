@@ -51,6 +51,7 @@ async fn multi_row_update_locks_in_primary_key_order_not_index_order() {
                 group_b: 1,
                 value: 0,
             })
+            .await
             .unwrap();
     }
 

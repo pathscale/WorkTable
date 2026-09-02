@@ -38,6 +38,7 @@ async fn update_churn_reclaims_under_concurrent_readers() {
             id: 1,
             payload: "0000".to_string(),
         })
+        .await
         .unwrap();
     for i in 0..100u64 {
         table
@@ -105,6 +106,7 @@ async fn update_churn_does_not_grow_storage_unbounded() {
             id: 1,
             payload: "0000".to_string(),
         })
+        .await
         .unwrap();
 
     // One row, many same-length updates. Logical cardinality stays 1 the whole

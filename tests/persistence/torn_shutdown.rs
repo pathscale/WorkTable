@@ -106,7 +106,7 @@ fn torn_shutdown_writer() {
             // Errors are tolerated, aborts are not: the parent only checks
             // how this process DIES, and it must die by the parent's signal,
             // not by its own reading of what the last kill left behind.
-            let _ = table.insert(row(i));
+            let _ = table.insert(row(i)).await;
             if i % 64 == 0 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
@@ -135,7 +135,7 @@ fn tear_the_store_repeatedly() {
         {
             let table = open_table().await;
             for i in 0..200 {
-                table.insert(row(i)).unwrap();
+                table.insert(row(i)).await.unwrap();
             }
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
@@ -262,7 +262,7 @@ fn test_store_survives_torn_shutdowns() {
                     );
                 }
                 // And the survivor must still accept writes and a drain.
-                table.insert(row(9_000_000)).unwrap();
+                table.insert(row(9_000_000)).await.unwrap();
                 timeout(Duration::from_secs(30), table.wait_for_ops())
                     .await
                     .expect("persistence stalled appending to the survivor store")
@@ -289,7 +289,7 @@ fn corrupted_row_is_refused_with_typed_load_error() {
     let link = runtime.block_on(async {
         remove_dir_if_exists(DIR.to_string()).await;
         let table = open_table().await;
-        let primary_key = table.insert(row(7)).unwrap();
+        let primary_key = table.insert(row(7)).await.unwrap();
         let link = table.0.primary_index.pk_map.get_value(&primary_key).unwrap().0;
         table.close().await.unwrap();
         link
@@ -337,7 +337,7 @@ fn incomplete_secondary_index_is_refused_with_typed_load_error() {
     runtime.block_on(async {
         remove_dir_if_exists(DIR.to_string()).await;
         let table = open_table().await;
-        table.insert(row(11)).unwrap();
+        table.insert(row(11)).await.unwrap();
         table.close().await.unwrap();
     });
 
@@ -403,6 +403,7 @@ fn test_many_clean_sessions_stay_readable() {
             for _ in 0..8 {
                 table
                     .insert(row(next_id))
+                    .await
                     .unwrap_or_else(|error| panic!("session {session}: insert {next_id} refused: {error:?}"));
                 next_id += 1;
             }

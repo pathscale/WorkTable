@@ -42,7 +42,7 @@ async fn vacuum_parallel_with_selects() {
             data: format!("test_data_{}", i),
         };
         let id = row.id;
-        table.insert(row.clone()).unwrap();
+        table.insert(row.clone()).await.unwrap();
         rows.push((id, row));
     }
     let rows = Arc::new(rows);
@@ -92,7 +92,7 @@ async fn vacuum_parallel_with_inserts() {
             data: format!("test_data_{}", i),
         };
         let id = row.id;
-        table.insert(row.clone()).unwrap();
+        table.insert(row.clone()).await.unwrap();
         rows.push((id, row));
     }
     let rows = Arc::new(rows);
@@ -118,7 +118,7 @@ async fn vacuum_parallel_with_inserts() {
             data: format!("test_data_{}", i),
         };
         let id = row.id;
-        table.insert(row.clone()).unwrap();
+        table.insert(row.clone()).await.unwrap();
         inserted_rows.push((id, row));
     }
 
@@ -160,7 +160,7 @@ async fn vacuum_parallel_with_upserts() {
             data: format!("test_data_{}", i),
         };
         let id = row.id;
-        table.insert(row.clone()).unwrap();
+        table.insert(row.clone()).await.unwrap();
         rows.push((id, row));
     }
     let rows = Arc::new(rows);
@@ -239,7 +239,7 @@ async fn vacuum_loop_test() {
             value: chrono::Utc::now().timestamp_nanos_opt().unwrap(),
             data: format!("test_data_{}", i),
         };
-        table.insert(row.clone()).unwrap();
+        table.insert(row.clone()).await.unwrap();
     }
 
     let vacuum = table.vacuum();
@@ -256,7 +256,7 @@ async fn vacuum_loop_test() {
                 value: chrono::Utc::now().timestamp_nanos_opt().unwrap(),
                 data: format!("test_data_{}", i),
             };
-            insert_table.insert(row.clone()).unwrap();
+            insert_table.insert(row.clone()).await.unwrap();
             tokio::time::sleep(Duration::from_micros(500)).await;
             i += 1;
         }

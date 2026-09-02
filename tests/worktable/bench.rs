@@ -38,7 +38,7 @@ async fn _rw_lock_hash_map_vs_wt() {
     for i in 0..100 {
         let s: String = Alphanumeric.sample_string(&mut rand::rng(), 8);
         let row = MapRow { id: i, value: s };
-        wt.insert(row).unwrap();
+        wt.insert(row).await.unwrap();
     }
     println!("wt insert in {} μs", wt_start.elapsed().as_micros());
 

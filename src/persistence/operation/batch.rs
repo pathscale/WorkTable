@@ -699,6 +699,7 @@ mod tests {
                     op_type: OperationType::Insert,
                     pos,
                 })
+                .await
                 .unwrap();
         }
 

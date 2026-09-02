@@ -93,6 +93,7 @@ fn test_concurrent() {
                                 value,
                                 ..Default::default()
                             })
+                            .await
                             .unwrap();
 
                         tokio::time::sleep(Duration::from_millis(50)).await;

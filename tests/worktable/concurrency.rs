@@ -104,8 +104,8 @@ macro_rules! backend_suite {
             /// Eight rather than four on purpose. Four is where the existing
             /// tests stop and where this engine still behaves; the interesting
             /// interleavings start above it.
-            #[test]
-            fn eight_writers_lose_no_rows() {
+            #[tokio::test]
+            async fn eight_writers_lose_no_rows() {
                 let (writers, per_writer) = (params::writers(), params::per_writer());
 
                 let table = Arc::new(ConcWorkTable::default());
@@ -115,7 +115,7 @@ macro_rules! backend_suite {
                         scope.spawn(move || {
                             for n in 0..per_writer {
                                 let id = w * per_writer + n;
-                                table.insert(row(id)).expect("insert");
+                                futures::executor::block_on(table.insert(row(id))).expect("insert");
                                 // Read while the others write, so the scan and
                                 // the mutations actually overlap.
                                 let _ = table.select(id);
@@ -148,7 +148,7 @@ macro_rules! backend_suite {
 
                 let table = Arc::new(ConcWorkTable::default());
                 for id in 0..seed {
-                    table.insert(row(id)).expect("seed");
+                    table.insert(row(id)).await.expect("seed");
                 }
 
                 let deleter = {
@@ -166,7 +166,7 @@ macro_rules! backend_suite {
                         scope.spawn(move || {
                             for n in 0..per_writer {
                                 let id = seed + w * per_writer + n;
-                                table.insert(row(id)).expect("insert");
+                                futures::executor::block_on(table.insert(row(id))).expect("insert");
                             }
                         });
                     }
@@ -200,8 +200,8 @@ macro_rules! backend_suite {
             /// testing, and a deadlock here shows up as a hang rather than a
             /// failure, which is why the batches and singles interleave on
             /// overlapping stripes rather than staying politely apart.
-            #[test]
-            fn batches_and_single_inserts_interleave_without_loss() {
+            #[tokio::test]
+            async fn batches_and_single_inserts_interleave_without_loss() {
                 let writers = params::writers();
                 let per_writer = params::per_writer();
 
@@ -218,11 +218,11 @@ macro_rules! backend_suite {
                                     let rows: Vec<_> = (chunk..(chunk + 16).min(per_writer))
                                         .map(|n| row(base + n))
                                         .collect();
-                                    table.insert_many(rows).expect("insert_many");
+                                    futures::executor::block_on(table.insert_many(rows)).expect("insert_many");
                                 }
                             } else {
                                 for n in 0..per_writer {
-                                    table.insert(row(base + n)).expect("insert");
+                                    futures::executor::block_on(table.insert(row(base + n))).expect("insert");
                                 }
                             }
                         });
@@ -250,8 +250,8 @@ macro_rules! backend_suite {
             /// Every writer races to claim the same payload. Exactly one must
             /// win: two winners is a broken unique index, zero is a broken
             /// insert.
-            #[test]
-            fn a_contended_unique_key_admits_exactly_one_writer() {
+            #[tokio::test]
+            async fn a_contended_unique_key_admits_exactly_one_writer() {
                 let writers = params::writers();
 
                 let table = Arc::new(ConcWorkTable::default());
@@ -263,7 +263,7 @@ macro_rules! backend_suite {
                         scope.spawn(move || {
                             // Distinct primary keys, one shared payload.
                             let contended = ConcRow { id: w, payload: 42, bucket: 0 };
-                            if table.insert(contended).is_ok() {
+                            if futures::executor::block_on(table.insert(contended)).is_ok() {
                                 winners.fetch_add(1, Ordering::Release);
                             }
                         });
@@ -315,8 +315,8 @@ macro_rules! backend_suite {
             /// three runs out of four, 128 catches it in five out of five,
             /// costing 1.4s. Lowering it trades away the only thing this test
             /// does. Raise `WT_CONC_PER_WRITER` to go further.
-            #[test]
-            fn readers_never_see_a_row_reassembled_from_reused_storage() {
+            #[tokio::test]
+            async fn readers_never_see_a_row_reassembled_from_reused_storage() {
                 /// Rows live per writer per set. Small enough that readers
                 /// sweep the live population often, large enough to keep the
                 /// free list and its coalescing genuinely busy.
@@ -330,7 +330,7 @@ macro_rules! backend_suite {
 
                 let table = Arc::new(ConcWorkTable::default());
                 for id in 0..seed {
-                    table.insert(row(id)).expect("seed");
+                    table.insert(row(id)).await.expect("seed");
                 }
 
                 // Writer `w` owns [base, base + 2 * WINDOW): set A below, set B
@@ -339,7 +339,7 @@ macro_rules! backend_suite {
                 let base_of = |w: u64| seed + w * WINDOW * 2;
                 for w in 0..writers {
                     for i in 0..WINDOW {
-                        table.insert(row(base_of(w) + i)).expect("seed set A");
+                        table.insert(row(base_of(w) + i)).await.expect("seed set A");
                     }
                 }
 
@@ -364,7 +364,7 @@ macro_rules! backend_suite {
                                 };
                                 for i in 0..WINDOW {
                                     futures::executor::block_on(table.delete(from + i)).expect("delete");
-                                    table.insert(row(to + i)).expect("insert");
+                                    futures::executor::block_on(table.insert(row(to + i))).expect("insert");
                                 }
                             }
                             finished.fetch_add(1, Ordering::Release);
@@ -441,8 +441,8 @@ macro_rules! backend_suite {
                 }
             }
 
-            #[test]
-            fn readers_see_consistent_groups_during_writes() {
+            #[tokio::test]
+            async fn readers_see_consistent_groups_during_writes() {
                 let (writers, per_writer) = (params::writers(), params::per_writer());
                 let readers = params::readers();
 
@@ -452,7 +452,7 @@ macro_rules! backend_suite {
                         let table = Arc::clone(&table);
                         scope.spawn(move || {
                             for n in 0..per_writer {
-                                table.insert(row(w * per_writer + n)).expect("insert");
+                                futures::executor::block_on(table.insert(row(w * per_writer + n))).expect("insert");
                             }
                         });
                     }

@@ -120,12 +120,14 @@ fn test_migrate_v1_to_current() {
                     id: table.get_next_pk().into(),
                     name: "Alice".to_string(),
                 })
+                .await
                 .unwrap();
             table
                 .insert(v1::UserRow {
                     id: table.get_next_pk().into(),
                     name: "Bob".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -202,6 +204,7 @@ fn test_migrate_v2_to_current() {
                     name: "Charlie".to_string(),
                     email: "charlie@test.com".to_string(),
                 })
+                .await
                 .unwrap();
             table
                 .insert(v2::UserRow {
@@ -209,6 +212,7 @@ fn test_migrate_v2_to_current() {
                     name: "Diana".to_string(),
                     email: "diana@test.com".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -271,6 +275,7 @@ fn test_next_pk_and_indexes_after_migration() {
                     name: "Eve".to_string(),
                     email: "eve@test.com".to_string(),
                 })
+                .await
                 .unwrap();
             table
                 .insert(v2::UserRow {
@@ -278,6 +283,7 @@ fn test_next_pk_and_indexes_after_migration() {
                     name: "Frank".to_string(),
                     email: "frank@test.com".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -307,7 +313,7 @@ fn test_next_pk_and_indexes_after_migration() {
                 created_at: ctx.default_created_at + 1,
             };
 
-            table.insert(inserted.clone()).unwrap();
+            table.insert(inserted.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             assert_eq!(table.count(), 3);

@@ -76,7 +76,7 @@ macro_rules! unsized_in_place_suite {
                         payload: "abcdefgh".to_string(), // 8 bytes
                         balance: 1.0,
                     })
-                    .unwrap();
+                    .await.unwrap();
 
                 let before = link_of(&table, 1);
 
@@ -110,7 +110,7 @@ macro_rules! unsized_in_place_suite {
                         payload: "abcdefghij".to_string(),
                         balance: 1.0,
                     })
-                    .unwrap();
+                    .await.unwrap();
 
                 table
                     .update_payload(
@@ -152,7 +152,7 @@ macro_rules! unsized_in_place_suite {
                         payload: "0000".to_string(),
                         balance: 1.0,
                     })
-                    .unwrap();
+                    .await.unwrap();
 
                 let writer = {
                     let table = table.clone();
@@ -216,7 +216,7 @@ macro_rules! unsized_in_place_suite {
                         payload: "out-of-line payload that must remain unchanged".to_string(),
                         balance: 1.0,
                     })
-                    .unwrap();
+                    .await.unwrap();
                 let before = link_of(&table, 1);
 
                 table

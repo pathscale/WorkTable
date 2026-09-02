@@ -71,7 +71,7 @@ async fn borrowed_custom_primary_key_is_accepted() {
         id: id.clone(),
         test: 7,
     };
-    table.insert(row.clone()).unwrap();
+    table.insert(row.clone()).await.unwrap();
 
     assert_eq!(table.select(&id), Some(row));
     table.delete(&id).await.unwrap();

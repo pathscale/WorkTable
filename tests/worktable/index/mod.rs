@@ -101,7 +101,7 @@ async fn update_2_idx() {
     let attr1_new = "OK".to_string();
     let attr2_new = 1337;
 
-    let pk = test_table.insert(row.clone()).unwrap();
+    let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
         .update_all_attr_by_id(
             AllAttrByIdQuery {
@@ -143,7 +143,7 @@ async fn update_2_idx_full_row() {
     let attr1_new = "OK".to_string();
     let attr2_new = 1337;
 
-    let pk = test_table.insert(row.clone()).unwrap();
+    let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
         .update(Test2Row {
             id: pk.clone().into(),
@@ -207,7 +207,7 @@ async fn update_1_idx() {
 
     let attr1_new = "OK".to_string();
 
-    let pk = test_table.insert(row.clone()).unwrap();
+    let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
         .update_attr_1_by_id(
             Attr1ByIdQuery {
@@ -243,7 +243,7 @@ async fn update_1_idx_full_row() {
 
     let attr1_new = "OK".to_string();
 
-    let pk = test_table.insert(row.clone()).unwrap();
+    let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
         .update(TestRow {
             attr2: row.attr2,

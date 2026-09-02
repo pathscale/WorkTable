@@ -57,6 +57,7 @@ fn test_key() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             table
                 .insert(StringReReadRow {
@@ -66,6 +67,7 @@ fn test_key() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap()
@@ -81,6 +83,7 @@ fn test_key() {
                     second: "second_last".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             table.wait_for_ops().await.unwrap()
         }
@@ -121,6 +124,7 @@ fn test_key_delete_scenario() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             let pk = table
                 .insert(StringReReadRow {
@@ -130,6 +134,7 @@ fn test_key_delete_scenario() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -158,6 +163,7 @@ fn test_key_delete_scenario() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap()
@@ -217,6 +223,7 @@ fn test_key_delete() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             let pk = table
                 .insert(StringReReadRow {
@@ -226,6 +233,7 @@ fn test_key_delete() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -279,6 +287,7 @@ fn test_key_delete_all() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             let pk1 = table
                 .insert(StringReReadRow {
@@ -288,6 +297,7 @@ fn test_key_delete_all() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -344,6 +354,7 @@ fn test_key_delete_all_and_insert() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             let pk1 = table
                 .insert(StringReReadRow {
@@ -353,6 +364,7 @@ fn test_key_delete_all_and_insert() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -379,6 +391,7 @@ fn test_key_delete_all_and_insert() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -426,6 +439,7 @@ fn test_key_delete_by_unique() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             let pk = table
                 .insert(StringReReadRow {
@@ -435,6 +449,7 @@ fn test_key_delete_by_unique() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -488,6 +503,7 @@ fn test_key_delete_by_non_unique() {
                     second: "second".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
             let pk1 = table
                 .insert(StringReReadRow {
@@ -497,6 +513,7 @@ fn test_key_delete_by_non_unique() {
                     second: "second_again".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -553,6 +570,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
                     second: "second_1".to_string(),
                     last: "last_1".to_string(),
                 })
+                .await
                 .unwrap();
 
             table
@@ -563,6 +581,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
                     second: "second_2".to_string(),
                     last: "last_2".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -591,13 +610,15 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
             let engine = StringReReadPersistenceEngine::new(config.clone()).await.unwrap();
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
-            let result = table.insert(StringReReadRow {
-                first: "same_first".to_string(),
-                id: table.get_next_pk().into(),
-                third: "third_3".to_string(),
-                second: "second_3".to_string(),
-                last: "last_3".to_string(),
-            });
+            let result = table
+                .insert(StringReReadRow {
+                    first: "same_first".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third_3".to_string(),
+                    second: "second_3".to_string(),
+                    last: "last_3".to_string(),
+                })
+                .await;
 
             assert!(result.is_ok(), "TOC entry is stale after update with same index value");
 
@@ -652,6 +673,7 @@ fn test_big_amount_reread() {
                         second: format!("second_{i}"),
                         last: format!("_________________________last_____________________{i}"),
                     })
+                    .await
                     .unwrap();
             }
 
@@ -668,6 +690,7 @@ fn test_big_amount_reread() {
                     second: "second_last".to_string(),
                     last: "_________________________last_____________________".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap()
@@ -712,6 +735,7 @@ fn test_unique_index_same_value_link_changes() {
                     second: "unique_second".to_string(),
                     last: "last_1".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap();
@@ -736,13 +760,15 @@ fn test_unique_index_same_value_link_changes() {
                 .unwrap();
 
             // Insert new row with different unique value
-            let result = table.insert(StringReReadRow {
-                first: "first_2".to_string(),
-                id: table.get_next_pk().into(),
-                third: "third_2".to_string(),
-                second: "unique_second_2".to_string(),
-                last: "last_2".to_string(),
-            });
+            let result = table
+                .insert(StringReReadRow {
+                    first: "first_2".to_string(),
+                    id: table.get_next_pk().into(),
+                    third: "third_2".to_string(),
+                    second: "unique_second_2".to_string(),
+                    last: "last_2".to_string(),
+                })
+                .await;
 
             assert!(
                 result.is_ok(),

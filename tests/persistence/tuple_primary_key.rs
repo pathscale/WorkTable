@@ -47,7 +47,7 @@ async fn composite_primary_key_survives_mutations_and_reload() {
             .unwrap();
         let table = PersistedTuplePrimaryKeyWorkTable::load(engine).await.unwrap();
         for row in &rows {
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
         }
         table.wait_for_ops().await.unwrap();
         for row in &rows {

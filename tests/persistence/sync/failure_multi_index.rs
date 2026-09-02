@@ -56,7 +56,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 unique_a: 0,
                 unique_b: 0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -72,14 +72,14 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 unique_a: 9999,
                 unique_b: 999,
             };
-            table.insert(valid_row).unwrap();
+            table.insert(valid_row).await.unwrap();
 
             let valid_row = MultiUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 1,
                 unique_b: 1,
             };
-            table.insert(valid_row).unwrap();
+            table.insert(valid_row).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -89,7 +89,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 unique_b: 0, // This already exists
             };
 
-            let result = table.insert(failing_row);
+            let result = table.insert(failing_row).await;
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), WorkTableError::AlreadyExists(_)));
 
@@ -99,7 +99,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 unique_b: 0, // This already exists
             };
 
-            let result = table.insert(failing_row);
+            let result = table.insert(failing_row).await;
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), WorkTableError::AlreadyExists(_)));
 
@@ -109,7 +109,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 unique_b: 99,
             };
             let valid_pk = valid_row.id;
-            table.insert(valid_row).unwrap();
+            table.insert(valid_row).await.unwrap();
 
             // Use timeout to detect if persistence is stuck
             // If this hangs, the bug exists - CDC queue is blocked
@@ -145,7 +145,7 @@ fn test_multi_index_insert_failure_doesnt_corrupt_persistence() {
                 unique_a: 99,
                 unique_b: 100,
             };
-            let result = table.insert(row_with_99.clone());
+            let result = table.insert(row_with_99.clone()).await;
             assert!(
                 result.is_ok(),
                 "BUG DETECTED: unique_a_idx has orphaned entry for unique_a=99 \

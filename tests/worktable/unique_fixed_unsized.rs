@@ -33,6 +33,7 @@ async fn unique_keyed_fixed_size_update_on_unsized_row_works() {
             amount: 0,
             note: "unsized part".to_string(),
         })
+        .await
         .unwrap();
 
     table

@@ -93,7 +93,7 @@ fn test_primary_index_grows_on_a_loaded_table() {
             let engine = LoadedIndexGrowthPersistenceEngine::new(config.clone()).await.unwrap();
             let table = LoadedIndexGrowthWorkTable::load(engine).await.unwrap();
             for i in 0..ROWS_BEFORE_RELOAD {
-                table.insert(row(i)).unwrap();
+                table.insert(row(i)).await.unwrap();
             }
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
@@ -112,6 +112,7 @@ fn test_primary_index_grows_on_a_loaded_table() {
             for i in ROWS_BEFORE_RELOAD..(ROWS_BEFORE_RELOAD + ROWS_AFTER_RELOAD) {
                 table
                     .insert(row(i))
+                    .await
                     .unwrap_or_else(|error| panic!("insert {i} into the loaded table was refused: {error:?}"));
             }
             timeout(Duration::from_secs(30), table.wait_for_ops())
@@ -164,7 +165,7 @@ fn test_primary_index_grows_on_a_loaded_table() {
 
             // And the grown, reloaded table must still be writable: the
             // production stores died on exactly this insert.
-            table.insert(row(ROWS_BEFORE_RELOAD + ROWS_AFTER_RELOAD)).unwrap();
+            table.insert(row(ROWS_BEFORE_RELOAD + ROWS_AFTER_RELOAD)).await.unwrap();
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on the post-reload insert")

@@ -55,7 +55,7 @@ async fn vacuum_never_loses_surviving_rows() {
             value: i,
             data: format!("{i:04}-{}", "d".repeat(4_000)),
         };
-        table.insert(row.clone()).unwrap();
+        table.insert(row.clone()).await.unwrap();
         all.insert(row.id, row);
     }
 

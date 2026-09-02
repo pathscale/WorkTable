@@ -244,7 +244,10 @@ where
         };
         let pos = self.operations.push(value);
         row.pos = pos;
-        self.queue_inner_wt.insert(row)?;
+        // The generated wrapper is async now; this is a synchronous internal
+        // queue push, so it uses the inner table's insert directly. The inner
+        // one is the same write without the async signature.
+        self.queue_inner_wt.0.insert(row)?;
         Ok(())
     }
 
@@ -392,7 +395,8 @@ where
         for (pos, (op, mut row)) in queued_ops.into_iter().enumerate() {
             row.pos = pos;
             row.op_type = op.operation_type();
-            info_wt.insert(row)?;
+            // Inner insert: see the note in `push`.
+            info_wt.0.insert(row)?;
             ops.push(op);
         }
 

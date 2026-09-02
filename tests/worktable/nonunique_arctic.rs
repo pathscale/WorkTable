@@ -48,13 +48,13 @@ fn row(table: &ArcticAdjacencyWorkTable, source_hash: u128, edge_hash: u128, wei
 const SOURCE_A: u128 = u128::MAX - 5;
 const SOURCE_B: u128 = 1 << 90;
 
-#[test]
-fn select_by_non_unique_key_returns_every_matching_row() {
+#[tokio::test]
+async fn select_by_non_unique_key_returns_every_matching_row() {
     let table = ArcticAdjacencyWorkTable::default();
     for edge in 0..100u128 {
-        table.insert(row(&table, SOURCE_A, edge, edge as u64)).unwrap();
+        table.insert(row(&table, SOURCE_A, edge, edge as u64)).await.unwrap();
     }
-    table.insert(row(&table, SOURCE_B, 1000, 1)).unwrap();
+    table.insert(row(&table, SOURCE_B, 1000, 1)).await.unwrap();
 
     let rows = table.select_by_source_hash(SOURCE_A).execute().unwrap();
     assert_eq!(rows.len(), 100);
@@ -71,8 +71,8 @@ fn select_by_non_unique_key_returns_every_matching_row() {
 #[tokio::test]
 async fn delete_removes_rows_from_the_non_unique_index() {
     let table = ArcticAdjacencyWorkTable::default();
-    let pk = table.insert(row(&table, SOURCE_A, 1, 10)).unwrap();
-    table.insert(row(&table, SOURCE_A, 2, 20)).unwrap();
+    let pk = table.insert(row(&table, SOURCE_A, 1, 10)).await.unwrap();
+    table.insert(row(&table, SOURCE_A, 2, 20)).await.unwrap();
 
     table.delete(pk).await.unwrap();
     let rows = table.select_by_source_hash(SOURCE_A).execute().unwrap();
@@ -80,7 +80,7 @@ async fn delete_removes_rows_from_the_non_unique_index() {
     assert_eq!(rows[0].edge_hash, 2);
 
     // Custom delete-by-non-unique-key drains the whole key.
-    table.insert(row(&table, SOURCE_A, 3, 30)).unwrap();
+    table.insert(row(&table, SOURCE_A, 3, 30)).await.unwrap();
     table.delete_by_source(SOURCE_A).await.unwrap();
     assert!(table.select_by_source_hash(SOURCE_A).execute().unwrap().is_empty());
     assert_eq!(table.count(), 0);
@@ -89,8 +89,8 @@ async fn delete_removes_rows_from_the_non_unique_index() {
 #[tokio::test]
 async fn update_moves_a_row_between_non_unique_keys() {
     let table = ArcticAdjacencyWorkTable::default();
-    let pk = table.insert(row(&table, SOURCE_A, 1, 10)).unwrap();
-    table.insert(row(&table, SOURCE_A, 2, 20)).unwrap();
+    let pk = table.insert(row(&table, SOURCE_A, 1, 10)).await.unwrap();
+    table.insert(row(&table, SOURCE_A, 2, 20)).await.unwrap();
 
     table
         .update_source_by_id(SourceByIdQuery { source_hash: SOURCE_B }, pk.clone())
@@ -114,15 +114,15 @@ async fn update_moves_a_row_between_non_unique_keys() {
     assert_eq!(rows[0].source_hash, SOURCE_A);
 }
 
-#[test]
-fn unique_collision_unwinds_the_non_unique_entries() {
+#[tokio::test]
+async fn unique_collision_unwinds_the_non_unique_entries() {
     let table = ArcticAdjacencyWorkTable::default();
-    table.insert(row(&table, SOURCE_A, 42, 10)).unwrap();
+    table.insert(row(&table, SOURCE_A, 42, 10)).await.unwrap();
 
     // `source_idx` and `weight_idx` are declared before `edge_idx`, so both
     // non-unique entries are already inserted when the unique index rejects
     // the duplicate edge hash; the failed insert must remove them again.
-    let err = table.insert(row(&table, SOURCE_B, 42, 999)).unwrap_err();
+    let err = table.insert(row(&table, SOURCE_B, 42, 999)).await.unwrap_err();
     assert!(matches!(err, WorkTableError::AlreadyExists(_)));
 
     assert!(table.select_by_source_hash(SOURCE_B).execute().unwrap().is_empty());
@@ -130,13 +130,14 @@ fn unique_collision_unwinds_the_non_unique_entries() {
     assert_eq!(table.count(), 1);
 }
 
-#[test]
-fn range_select_over_non_unique_arctic_keys() {
+#[tokio::test]
+async fn range_select_over_non_unique_arctic_keys() {
     let table = ArcticAdjacencyWorkTable::default();
     for key in 0..10u64 {
         for copy in 0..3u128 {
             table
                 .insert(row(&table, key as u128, key as u128 * 100 + copy, key))
+                .await
                 .unwrap();
         }
     }
@@ -150,8 +151,8 @@ fn range_select_over_non_unique_arctic_keys() {
     assert!(rows.iter().all(|r| r.weight >= 8));
 }
 
-#[test]
-fn concurrent_inserts_and_deletes_keep_the_index_consistent() {
+#[tokio::test]
+async fn concurrent_inserts_and_deletes_keep_the_index_consistent() {
     let table = Arc::new(ArcticAdjacencyWorkTable::default());
     let keys = 8u128;
     let writers = 4;
@@ -164,7 +165,7 @@ fn concurrent_inserts_and_deletes_keep_the_index_consistent() {
                 for n in 0..per_writer {
                     let edge = (writer as u128) << 64 | n as u128;
                     let source = (n as u128) % keys;
-                    table.insert(row(&table, source, edge, n)).unwrap();
+                    futures::executor::block_on(table.insert(row(&table, source, edge, n))).unwrap();
                     // Interleave point reads to race the writers.
                     let _ = table.select_by_source_hash(source).execute().unwrap();
                 }
@@ -196,7 +197,7 @@ async fn concurrent_deletes_leave_no_stale_links() {
     let table = Arc::new(ArcticAdjacencyWorkTable::default());
     let mut pks = Vec::new();
     for n in 0..400u128 {
-        pks.push(table.insert(row(&table, n % 4, n, n as u64)).unwrap());
+        pks.push(table.insert(row(&table, n % 4, n, n as u64)).await.unwrap());
     }
 
     let mut tasks = Vec::new();
@@ -219,11 +220,11 @@ async fn concurrent_deletes_leave_no_stale_links() {
     assert_eq!(table.count(), 0);
 }
 
-#[test]
-fn system_info_reports_the_non_unique_arctic_index() {
+#[tokio::test]
+async fn system_info_reports_the_non_unique_arctic_index() {
     let table = ArcticAdjacencyWorkTable::default();
     for n in 0..5u128 {
-        table.insert(row(&table, SOURCE_A, n, n as u64)).unwrap();
+        table.insert(row(&table, SOURCE_A, n, n as u64)).await.unwrap();
     }
 
     let info = table.system_info();
@@ -282,13 +283,13 @@ mod persisted {
         let hot = u128::MAX - 3;
         let mut deleted_pk = None;
         for n in 0..30u64 {
-            let pk = table.insert(row(&table, hot, n)).unwrap();
+            let pk = table.insert(row(&table, hot, n)).await.unwrap();
             if n == 7 {
                 deleted_pk = Some(pk);
             }
         }
-        table.insert(row(&table, 5, 100)).unwrap();
-        let moved_pk = table.insert(row(&table, 5, 101)).unwrap();
+        table.insert(row(&table, 5, 100)).await.unwrap();
+        let moved_pk = table.insert(row(&table, 5, 101)).await.unwrap();
 
         // Delete one row under the hot key, and move one row between keys.
         table.delete(deleted_pk.unwrap()).await.unwrap();
@@ -313,7 +314,7 @@ mod persisted {
         assert_eq!(moved_rows, vec![moved]);
 
         // The reloaded index keeps accepting writes that survive another cycle.
-        table.insert(row(&table, hot, 500)).unwrap();
+        table.insert(row(&table, hot, 500)).await.unwrap();
         table.wait_for_ops().await.unwrap();
         drop(table);
 
@@ -368,6 +369,7 @@ mod persisted {
                     source_hash: 1,
                     edge_hash: 42,
                 })
+                .await
                 .unwrap();
             let err = table
                 .insert(PersistedEdgesRow {
@@ -375,6 +377,7 @@ mod persisted {
                     source_hash: 2,
                     edge_hash: 42,
                 })
+                .await
                 .unwrap_err();
             assert!(matches!(err, WorkTableError::AlreadyExists(_)));
             assert!(table.select_by_source_hash(2).execute().unwrap().is_empty());
@@ -427,6 +430,7 @@ mod persisted {
                             source_hash: key,
                             weight: worker * ROWS_PER_WORKER + n,
                         })
+                        .await
                         .unwrap();
                     if n % 5 == 4 {
                         table.delete(pk).await.unwrap();
