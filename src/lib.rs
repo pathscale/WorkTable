@@ -52,12 +52,12 @@ pub mod prelude {
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
-        ArcticIndex, ArcticKey, ArcticMultiIndex, AvailableIndex, BatchInsertError, CongeeIndex, CongeeKey, Difference,
-        IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArcticMultiIndex,
-        PersistentArtIndex, PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc,
-        TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
-        UniqueIndex, UnsizedNode, UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError,
-        vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
+        ArcticIndex, ArcticKey, ArcticMultiIndex, AvailableIndex, BatchDeleteError, BatchInsertError, CongeeIndex,
+        CongeeKey, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex,
+        PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex,
+        TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
+        TableSecondaryIndexInfo, UniqueIndex, UnsizedNode, UpstreamIndexMap, UpstreamIndexPair, WorkTable,
+        WorkTableError, vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

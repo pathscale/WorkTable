@@ -7,6 +7,7 @@ mod config;
 mod count;
 mod custom_pk;
 mod delete;
+mod delete_many;
 mod float;
 mod in_place;
 mod index;
