@@ -10,6 +10,25 @@
 # than looped so that each job's arguments are the literal ones CI passes.
 set -u
 
+# CI installs `dtolnay/rust-toolchain@stable`, which is whatever the newest
+# stable release is on the day the job runs. This script uses whatever is
+# default here. When those differ, every lint clippy added in between is
+# invisible locally and fires in CI, and the failure looks like it came from
+# nowhere: `clippy::for_unbounded_range` arrived in 1.98 and took a green PR
+# red on code nobody had touched.
+#
+# So say which toolchain is being used, and say what CI will use, rather than
+# letting a pass here be read as a pass there.
+echo "=== toolchain ==="
+rustc --version
+if rustup check >/dev/null 2>&1; then
+    rustup check | grep -i "stable" || true
+fi
+echo "CI runs dtolnay/rust-toolchain@stable, i.e. the newest stable at run time."
+echo "If the line above says a newer stable is available, this run cannot see"
+echo "the lints that came with it."
+echo
+
 fail_count=0
 failed=""
 

@@ -281,6 +281,166 @@ macro_rules! backend_suite {
 
             /// Concurrent readers see a consistent non-unique group while it is
             /// being written.
+            /// Readers racing storage *reuse*, which is the case the rest of
+            /// this suite does not reach.
+            ///
+            /// The other tests race readers against inserts, so links are only
+            /// ever allocated. This one deletes and reinserts continuously, so
+            /// links are retired, reclaimed, and handed to *different* rows
+            /// while readers are resolving index entries. That covers the
+            /// epoch grace period, the retirement queue, the free list, and
+            /// the deferral that moved reclamation off the deleting thread.
+            ///
+            /// Three things here were each necessary to make it test anything,
+            /// and each was found by instrumenting rather than by reasoning:
+            ///
+            /// 1. **The reader uses the raw link path, not `select`.** `select`
+            ///    returns an owned published snapshot rather than page bytes,
+            ///    and that indirection is exactly what makes the published path
+            ///    safe. Written against `select`, this test passes with the
+            ///    grace period deleted outright.
+            /// 2. **Two id sets share the same storage.** A writer that deletes
+            ///    and reinserts the *same* id would put the same id back in the
+            ///    recycled space, and a stale link would read the row it
+            ///    expected. Set A and set B alternate, so recycled storage
+            ///    holds a different id than the link was resolved for.
+            /// 3. **A live population is kept at all times.** The first version
+            ///    inserted and immediately deleted, so across a whole run the
+            ///    readers resolved a live link nine times. It asserted almost
+            ///    nothing.
+            ///
+            /// The detection is probabilistic, so the round count is
+            /// load-bearing rather than arbitrary. Measured against a build
+            /// with the grace period removed outright: 16 rounds catches it in
+            /// three runs out of four, 128 catches it in five out of five,
+            /// costing 1.4s. Lowering it trades away the only thing this test
+            /// does. Raise `WT_CONC_PER_WRITER` to go further.
+            #[test]
+            fn readers_never_see_a_row_reassembled_from_reused_storage() {
+                /// Rows live per writer per set. Small enough that readers
+                /// sweep the live population often, large enough to keep the
+                /// free list and its coalescing genuinely busy.
+                const WINDOW: u64 = 32;
+
+                let readers = params::readers();
+                let seed = params::seed_rows();
+                let writers = params::writers();
+                // Each round retires and reallocates `WINDOW` rows per writer.
+                let rounds = (params::per_writer() / WINDOW).max(128);
+
+                let table = Arc::new(ConcWorkTable::default());
+                for id in 0..seed {
+                    table.insert(row(id)).expect("seed");
+                }
+
+                // Writer `w` owns [base, base + 2 * WINDOW): set A below, set B
+                // above. Disjoint per writer, so a failure is reuse rather than
+                // two writers colliding on a key.
+                let base_of = |w: u64| seed + w * WINDOW * 2;
+                for w in 0..writers {
+                    for i in 0..WINDOW {
+                        table.insert(row(base_of(w) + i)).expect("seed set A");
+                    }
+                }
+
+                let churn_end = base_of(writers);
+                let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let finished = Arc::new(AtomicU64::new(0));
+
+                std::thread::scope(|scope| {
+                    for w in 0..writers {
+                        let table = Arc::clone(&table);
+                        let finished = Arc::clone(&finished);
+                        scope.spawn(move || {
+                            let base = base_of(w);
+                            for round in 0..rounds {
+                                // Alternate which set is live. The set being
+                                // freed this round is the storage the set being
+                                // filled will be given.
+                                let (from, to) = if round % 2 == 0 {
+                                    (base, base + WINDOW)
+                                } else {
+                                    (base + WINDOW, base)
+                                };
+                                for i in 0..WINDOW {
+                                    futures::executor::block_on(table.delete(from + i)).expect("delete");
+                                    table.insert(row(to + i)).expect("insert");
+                                }
+                            }
+                            finished.fetch_add(1, Ordering::Release);
+                        });
+                    }
+
+                    for _ in 0..readers {
+                        let table = Arc::clone(&table);
+                        let stop = Arc::clone(&stop);
+                        scope.spawn(move || {
+                            while !stop.load(Ordering::Relaxed) {
+                                for id in seed..churn_end {
+                                    let pk: ConcPrimaryKey = id.into();
+                                    // Pin first, then resolve, then read: the
+                                    // order `select` itself uses, and the order
+                                    // the grace period is defined against.
+                                    let guard = table.0.data.read_guard();
+                                    let link: Option<Link> =
+                                        table.0.primary_index.pk_map.get_value(&pk).map(Into::into);
+                                    // The interval between resolving a link and
+                                    // reading through it is the whole hazard.
+                                    std::thread::yield_now();
+                                    if let Some(link) = link
+                                        && let Ok(r) = table.0.data.select_non_ghosted(link)
+                                    {
+                                        assert_eq!(
+                                            r.id, id,
+                                            "{}: the link resolved for {id} produced row {}, so its storage was \
+                                             recycled while a reader was pinned on it",
+                                            $label, r.id
+                                        );
+                                        assert_eq!(r.payload, 1_000_000 + r.id, "{}: payload disagrees with id", $label);
+                                    }
+                                    drop(guard);
+                                }
+                                // The published path too, so ordinary reads are
+                                // checked for consistency beside the raw ones.
+                                for bucket in 0..16u32 {
+                                    for r in table.select_by_bucket(bucket).execute().unwrap() {
+                                        assert_eq!(r.payload, 1_000_000 + r.id, "{}: group read saw a mismatched row", $label);
+                                        assert_eq!(r.bucket, bucket, "{}: row in the wrong group", $label);
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // Counting finished writers rather than watching the row
+                    // count: the count returns to its starting value between
+                    // every delete and the next insert.
+                    scope.spawn({
+                        let stop = Arc::clone(&stop);
+                        let finished = Arc::clone(&finished);
+                        move || {
+                            while finished.load(Ordering::Acquire) < writers {
+                                std::hint::spin_loop();
+                            }
+                            stop.store(true, Ordering::Relaxed);
+                        }
+                    });
+                });
+
+                // The seeded rows are untouched: churn beside them must not
+                // have taken any with it.
+                for id in 0..seed {
+                    let r = table.select(id).expect("seeded row present");
+                    assert_eq!(r.payload, 1_000_000 + id, "{}: seeded row {id} was corrupted", $label);
+                }
+                // And each writer's window ends with exactly one set live.
+                for w in 0..writers {
+                    let base = base_of(w);
+                    let live = (base..base + WINDOW * 2).filter(|id| table.select(*id).is_some()).count();
+                    assert_eq!(live as u64, WINDOW, "{}: writer {w} left {live} rows, expected {WINDOW}", $label);
+                }
+            }
+
             #[test]
             fn readers_see_consistent_groups_during_writes() {
                 let (writers, per_writer) = (params::writers(), params::per_writer());

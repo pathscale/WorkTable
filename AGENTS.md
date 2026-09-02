@@ -35,6 +35,10 @@ success.
   error is not something you introduced, and saying so requires checking.
 - A build that finishes suspiciously fast was cached, not rebuilt. Force a real rebuild when
   the rebuild is the thing you're verifying.
+- **`ci-local.sh` runs your default toolchain; CI runs the newest stable.** A clippy lint
+  added between the two is invisible here and fails there, on code nobody touched. The
+  script prints both so a local pass is not mistaken for a CI pass. If they differ and the
+  lint matters, get the toolchain updated rather than pushing to find out.
 
 ## PR discipline
 
