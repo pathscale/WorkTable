@@ -74,7 +74,7 @@ fn test_string_update_doesnt_block_persistence() {
                 status: 1,
                 honey_app_role: 2,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row
         };

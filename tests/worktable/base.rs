@@ -44,8 +44,8 @@ fn table_name() {
     assert_eq!(name, "Test");
 }
 
-#[test]
-fn iter_with() {
+#[tokio::test]
+async fn iter_with() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -53,21 +53,21 @@ fn iter_with() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 2,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 3,
         another: 3,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     table.iter_with(|_| Ok(())).unwrap()
 }
@@ -81,21 +81,21 @@ async fn iter_with_async() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 2,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 3,
         another: 3,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     table.iter_with_async(|_| async move { Ok(()) }).await.unwrap()
 }
@@ -109,7 +109,7 @@ async fn update_spawn() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let updated = TestRow {
         id: pk.clone().into(),
         test: 2,
@@ -137,7 +137,7 @@ async fn upsert_spawn() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let updated = TestRow {
         id: pk.clone().into(),
         test: 2,
@@ -165,7 +165,7 @@ async fn update() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let updated = TestRow {
         id: pk.clone().into(),
         test: 2,
@@ -188,7 +188,7 @@ async fn update_string() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let updated = TestRow {
         id: pk.clone().into(),
@@ -219,7 +219,7 @@ async fn update_parallel() {
             another: 1,
             exchange: "test".to_string(),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let shared_i_state = i_state.clone();
@@ -272,7 +272,7 @@ async fn delete() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
@@ -288,7 +288,7 @@ async fn delete() {
         another: 3,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(updated.clone()).unwrap();
+    let pk = table.insert(updated.clone()).await.unwrap();
     let new_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     assert_eq!(link, new_link)
@@ -303,14 +303,14 @@ async fn delete_by_another() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     table.delete_by_another(1).await.unwrap();
     assert_eq!(table.select_all().execute().unwrap().len(), 0)
 }
@@ -324,14 +324,14 @@ async fn delete_by_exchange() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     table.delete_by_exchange("test".to_string()).await.unwrap();
     assert_eq!(table.select_all().execute().unwrap().len(), 0)
 }
@@ -345,14 +345,14 @@ async fn delete_by_test() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     table.delete_by_test(2).await.unwrap();
     assert_eq!(table.select_all().execute().unwrap().len(), 1)
 }
@@ -366,14 +366,14 @@ async fn delete_and_insert_less() {
         another: 0,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 1,
         another: 1,
         exchange: "test1234567890".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
@@ -385,7 +385,7 @@ async fn delete_and_insert_less() {
         another: 3,
         exchange: "test1".to_string(),
     };
-    let pk = table.insert(updated.clone()).unwrap();
+    let pk = table.insert(updated.clone()).await.unwrap();
     let new_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     assert_ne!(link.0, new_link.0)
@@ -400,14 +400,14 @@ async fn delete_and_replace() {
         another: 0,
         exchange: "test1".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 1,
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     table.delete(pk.clone()).await.unwrap();
     let selected_row = table.select(pk);
@@ -419,7 +419,7 @@ async fn delete_and_replace() {
         another: 3,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(updated.clone()).unwrap();
+    let pk = table.insert(updated.clone()).await.unwrap();
     let new_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     assert_eq!(link, new_link)
@@ -448,8 +448,8 @@ async fn upsert() {
     assert!(table.select(2).is_none())
 }
 
-#[test]
-fn insert_same() {
+#[tokio::test]
+async fn insert_same() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -457,13 +457,13 @@ fn insert_same() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
-    let res = table.insert(row.clone());
+    let _ = table.insert(row.clone()).await.unwrap();
+    let res = table.insert(row.clone()).await;
     assert!(res.is_err())
 }
 
-#[test]
-fn insert_exchange_same() {
+#[tokio::test]
+async fn insert_exchange_same() {
     let table = TestWorkTable::default();
     let row = TestRow {
         id: table.get_next_pk().into(),
@@ -471,14 +471,14 @@ fn insert_exchange_same() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row = TestRow {
         id: table.get_next_pk().into(),
         test: 1,
         another: 1,
         exchange: "test".to_string(),
     };
-    let res = table.insert(row.clone());
+    let res = table.insert(row.clone()).await;
     assert!(res.is_err())
 }
 
@@ -491,7 +491,7 @@ async fn select_by_exchange() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let selected_rows = table.select_by_exchange("test".to_string()).execute().expect("rows");
 
     assert_eq!(selected_rows.len(), 1);
@@ -514,14 +514,14 @@ async fn select_multiple_by_exchange() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let row_next = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row_next.clone()).unwrap();
+    let _ = table.insert(row_next.clone()).await.unwrap();
     let selected_rows = table.select_by_exchange("test".to_string()).execute().expect("rows");
 
     assert_eq!(selected_rows.len(), 2);
@@ -545,7 +545,7 @@ async fn select_by_test() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
     let selected_row = table.select_by_test(1).unwrap();
 
     assert_eq!(selected_row, row);
@@ -561,14 +561,14 @@ async fn select_all_test() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
 
     let all = table.select_all().execute().unwrap();
 
@@ -600,9 +600,9 @@ async fn select_all_range_test() {
         exchange: "P".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table
         .select_all()
@@ -636,9 +636,9 @@ async fn select_all_range_inclusive_test() {
         exchange: "P".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table
         .select_all()
@@ -672,9 +672,9 @@ async fn select_all_where_by_eq_string_test() {
         exchange: "P1".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table.select_all();
 
@@ -705,9 +705,9 @@ async fn select_all_where_by_contains_string_test() {
         exchange: "P1".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table.select_all();
     let contains = all.where_by(|row| row.exchange.contains("1")).execute().unwrap();
@@ -738,9 +738,9 @@ async fn select_all_where_by_gt_string_number_test() {
         exchange: "P1".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table.select_all();
 
@@ -771,9 +771,9 @@ async fn select_all_where_by_eq_string_number_test() {
         exchange: "P1".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table.select_all();
 
@@ -804,9 +804,9 @@ async fn select_all_order_multiple_test() {
         exchange: "P".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table
         .select_all()
@@ -830,14 +830,14 @@ async fn select_all_limit_test() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 100 - 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
     for i in 3..100 {
         let row = TestRow {
             id: table.get_next_pk().into(),
@@ -845,7 +845,7 @@ async fn select_all_limit_test() {
             another: 1,
             exchange: "test".to_string(),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
 
     let all = table.select_all().limit(2).execute().unwrap();
@@ -864,14 +864,14 @@ async fn select_all_offset_test() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 100 - 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
 
     let all = table.select_all().offset(1).execute().unwrap();
     assert_eq!(all.len(), 1);
@@ -890,14 +890,14 @@ async fn select_all_order_on_unique_test() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
     for i in 3..100 {
         let row = TestRow {
             id: table.get_next_pk().into(),
@@ -905,7 +905,7 @@ async fn select_all_order_on_unique_test() {
             another: 1,
             exchange: "test".to_string(),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
 
     let all = table
@@ -929,14 +929,14 @@ async fn select_all_order_on_non_unique_test() {
         another: 3,
         exchange: "c_test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 2,
         exchange: "b_test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
     for i in 3..100 {
         let row = TestRow {
             id: table.get_next_pk().into(),
@@ -944,7 +944,7 @@ async fn select_all_order_on_non_unique_test() {
             another: 1,
             exchange: "a_test".to_string(),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
 
     let all = table
@@ -968,14 +968,14 @@ async fn select_all_order_two_test() {
         another: 3,
         exchange: "a_test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 2,
         exchange: "b_test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
     for i in 3..100 {
         let row = TestRow {
             id: table.get_next_pk().into(),
@@ -983,7 +983,7 @@ async fn select_all_order_two_test() {
             another: 1,
             exchange: "c_test".to_string(),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
 
     let all = table
@@ -1000,8 +1000,8 @@ async fn select_all_order_two_test() {
     assert_eq!(&all[2].test, &3)
 }
 
-#[test]
-fn select_by_order_on_test() {
+#[tokio::test]
+async fn select_by_order_on_test() {
     let table = TestWorkTable::default();
     let row1 = TestRow {
         id: table.get_next_pk().into(),
@@ -1009,14 +1009,14 @@ fn select_by_order_on_test() {
         another: 3,
         exchange: "a_test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 2,
         exchange: "b_test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
     for i in 3..100 {
         let row = TestRow {
             id: table.get_next_pk().into(),
@@ -1024,7 +1024,7 @@ fn select_by_order_on_test() {
             another: 1,
             exchange: "c_test".to_string(),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
 
     let all = table
@@ -1052,14 +1052,14 @@ async fn select_by_offset_test() {
         another: 3,
         exchange: "a_test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 2,
         exchange: "b_test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
     for i in 3..100 {
         let row = TestRow {
             id: table.get_next_pk().into(),
@@ -1067,7 +1067,7 @@ async fn select_by_offset_test() {
             another: 1,
             exchange: "c_test".to_string(),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
 
     let all = table
@@ -1096,14 +1096,14 @@ async fn test_update_by_non_unique() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row1.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
         test: 2,
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row2.clone()).unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
 
     let row = AnotherByExchangeQuery { another: 3 };
     table.update_another_by_exchange(row, "test".to_string()).await.unwrap();
@@ -1140,7 +1140,7 @@ async fn test_update_by_unique() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     let row = AnotherByTestQuery { another: 3 };
     table.update_another_by_test(row, 1).await.unwrap();
@@ -1167,7 +1167,7 @@ async fn test_update_by_pk() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
 
     let row = AnotherByIdQuery { another: 3 };
     table.update_another_by_id(row, pk).await.unwrap();
@@ -1199,7 +1199,7 @@ async fn _bench() {
             exchange: "XD".to_string(),
         };
 
-        let a = table.insert(row).expect("TODO: panic message");
+        let a = table.insert(row).await.expect("TODO: panic message");
         v.push(a)
     }
 

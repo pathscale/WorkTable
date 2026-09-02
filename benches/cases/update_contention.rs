@@ -19,7 +19,7 @@ fn single_row_update_contention(c: &mut Criterion) {
             another: "test".to_string(),
             something: 0,
         };
-        table.insert(row).unwrap().into()
+        table.insert(row).await.unwrap().into()
     });
 
     for contention_level in [2, 4, 8, 16, 32] {
@@ -66,7 +66,7 @@ fn single_row_in_place_contention(c: &mut Criterion) {
             another: "test".to_string(),
             something: 0,
         };
-        table.insert(row).unwrap().into()
+        table.insert(row).await.unwrap().into()
     });
 
     for contention_level in [2, 4, 8, 16, 32] {

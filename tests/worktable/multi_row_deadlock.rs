@@ -43,6 +43,7 @@ async fn overlapping_multi_row_updates_do_not_deadlock() {
                 group_b: 1,
                 name: "seed".to_string(),
             })
+            .await
             .unwrap();
     }
 

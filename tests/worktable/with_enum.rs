@@ -30,7 +30,7 @@ async fn insert() {
         id: 1,
         test: SomeEnum::First,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
@@ -44,7 +44,7 @@ async fn update() {
         id: 1,
         test: SomeEnum::First,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let updated = TestRow {
         id: 1,
         test: SomeEnum::Second,

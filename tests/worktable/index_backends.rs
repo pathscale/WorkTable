@@ -129,7 +129,7 @@ async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
         arctic_key: 14,
     };
 
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let second = MixedBackendRow {
         id: table.get_next_pk().into(),
         wti_key: 31,
@@ -137,7 +137,7 @@ async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
         congee_key: 33,
         arctic_key: 34,
     };
-    table.insert(second.clone()).unwrap();
+    table.insert(second.clone()).await.unwrap();
 
     assert_eq!(table.select(pk), Some(row.clone()));
     assert_eq!(table.select_by_wti_key(11), Some(row.clone()));
@@ -154,7 +154,7 @@ async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
             congee_key: if duplicate_backend == "congee" { 13 } else { base + 3 },
             arctic_key: if duplicate_backend == "arctic" { 14 } else { base + 4 },
         };
-        assert!(table.insert(candidate.clone()).is_err());
+        assert!(table.insert(candidate.clone()).await.is_err());
         assert!(table.select(candidate.id).is_none());
         if candidate.wti_key != 11 {
             assert!(table.select_by_wti_key(candidate.wti_key).is_none());
@@ -216,7 +216,7 @@ async fn alternative_primary_backends_support_point_crud() {
                 id: table.get_next_pk().into(),
                 value: 1,
             };
-            let pk = table.insert(original.clone()).unwrap();
+            let pk = table.insert(original.clone()).await.unwrap();
             assert_eq!(table.select(pk.clone()), Some(original.clone()));
 
             let updated = $row {
@@ -256,6 +256,7 @@ async fn upstream_indexset_survives_persist_reload_and_more_writes() {
                 id: table.get_next_pk().into(),
                 unique_key,
             })
+            .await
             .unwrap();
     }
     table.wait_for_ops().await.unwrap();
@@ -271,6 +272,7 @@ async fn upstream_indexset_survives_persist_reload_and_more_writes() {
             id: table.get_next_pk().into(),
             unique_key: 2_000,
         })
+        .await
         .unwrap();
     let added_id: u64 = added_pk.clone().into();
     table.delete(10).await.unwrap();
@@ -311,6 +313,7 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
                 id: table.get_next_pk().into(),
                 congee_key,
             })
+            .await
             .unwrap();
     }
     let rejected_id = table.get_next_pk().0;
@@ -320,6 +323,7 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
                 id: rejected_id,
                 congee_key: 77,
             })
+            .await
             .is_err()
     );
     let accepted_id = table.get_next_pk().0;
@@ -328,6 +332,7 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
             id: accepted_id,
             congee_key: 300,
         })
+        .await
         .unwrap();
     table.wait_for_ops().await.unwrap();
     drop(table);
@@ -366,6 +371,7 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
                 id: table.get_next_pk().into(),
                 arctic_key,
             })
+            .await
             .unwrap();
     }
     table.wait_for_ops().await.unwrap();
@@ -411,7 +417,7 @@ async fn native_art_backends_recover_concurrent_same_row_updates() {
     let engine = PersistedArcticPersistenceEngine::new(config.clone()).await.unwrap();
     let table = Arc::new(PersistedArcticWorkTable::load(engine).await.unwrap());
     let id = table.get_next_pk().0;
-    table.insert(PersistedArcticRow { id, congee_key: 1 }).unwrap();
+    table.insert(PersistedArcticRow { id, congee_key: 1 }).await.unwrap();
 
     let barrier = Arc::new(Barrier::new(WORKERS as usize + 1));
     let mut workers = Vec::new();
@@ -543,6 +549,7 @@ async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() 
                 id: table.get_next_pk().into(),
                 unique_key,
             })
+            .await
             .unwrap();
     }
     table.wait_for_ops().await.unwrap();
@@ -565,6 +572,7 @@ async fn persisted_tables_can_switch_between_wti_and_upstream_without_rebuild() 
             id: table.get_next_pk().into(),
             unique_key: 2_000,
         })
+        .await
         .unwrap();
     table.wait_for_ops().await.unwrap();
     drop(table);

@@ -35,6 +35,7 @@ async fn unique_update_does_not_mutate_a_row_that_stole_the_value() {
             code: 10,
             value: 0,
         })
+        .await
         .unwrap();
     let pk = WrongRowPrimaryKey(1);
 
@@ -84,6 +85,7 @@ async fn unique_update_does_not_mutate_a_row_that_stole_the_value() {
             code: 10,
             value: 0,
         })
+        .await
         .unwrap();
 
     blocker.unlock();

@@ -33,7 +33,7 @@ async fn update() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let new_row = TestRow {
         id: pk.clone().into(),
         test: Some(1),
@@ -54,7 +54,7 @@ async fn update_by_another() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     table
         .update_test_by_another(TestByAnotherQuery { test: Some(1) }, 1)
         .await
@@ -72,7 +72,7 @@ async fn update_by_exchange() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     table
         .update_test_by_exchange(TestByExchangeQuery { test: Some(1) }, 1)
         .await
@@ -90,7 +90,7 @@ async fn update_none_to_some() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     assert_eq!(table.select(pk.clone()).unwrap().test, None);
 
     table
@@ -111,7 +111,7 @@ async fn update_some_to_none() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     assert_eq!(table.select(pk.clone()).unwrap().test, Some(100));
 
     table
@@ -133,7 +133,7 @@ async fn update_multiple_values() {
         another: 1,
         exchange: 1,
     };
-    let pk1 = table.insert(row1).unwrap();
+    let pk1 = table.insert(row1).await.unwrap();
 
     let row2 = TestRow {
         id: table.get_next_pk().into(),
@@ -141,7 +141,7 @@ async fn update_multiple_values() {
         another: 2,
         exchange: 2,
     };
-    let pk2 = table.insert(row2).unwrap();
+    let pk2 = table.insert(row2).await.unwrap();
 
     table
         .update_test_by_id(TestByIdQuery { test: Some(30) }, pk1.clone())
@@ -182,7 +182,7 @@ async fn custom_update() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let test_uuid = Uuid::new_v4();
     let new_row = TestCustomRow {
         id: pk.clone().into(),
@@ -204,7 +204,7 @@ async fn custom_update_by_another() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let test_uuid = Uuid::new_v4();
     table
         .update_custom_test_by_another(CustomTestByAnotherQuery { test: Some(test_uuid) }, 1)
@@ -223,7 +223,7 @@ async fn custom_update_by_exchange() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let test_uuid = Uuid::new_v4();
     table
         .update_custom_test_by_exchange(CustomTestByExchangeQuery { test: Some(test_uuid) }, 1)
@@ -242,7 +242,7 @@ async fn custom_update_none_to_some() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     assert_eq!(table.select(pk.clone()).unwrap().test, None);
 
     let test_uuid = Uuid::new_v4();
@@ -265,7 +265,7 @@ async fn custom_update_some_to_none() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     assert_eq!(table.select(pk.clone()).unwrap().test, Some(test_uuid));
 
     table
@@ -289,7 +289,7 @@ async fn custom_update_multiple_uuids() {
         another: 1,
         exchange: 1,
     };
-    let pk1 = table.insert(row1).unwrap();
+    let pk1 = table.insert(row1).await.unwrap();
 
     let row2 = TestCustomRow {
         id: table.get_next_pk().into(),
@@ -297,7 +297,7 @@ async fn custom_update_multiple_uuids() {
         another: 2,
         exchange: 2,
     };
-    let pk2 = table.insert(row2).unwrap();
+    let pk2 = table.insert(row2).await.unwrap();
 
     let uuid3 = Uuid::new_v4();
     table
@@ -342,7 +342,7 @@ async fn indexed_insert_and_select_by_uuid_some() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
 
     // Select by the indexed UUID field with Some value
     let result = table.select_by_test(Some(test_uuid)).execute().unwrap();
@@ -360,7 +360,7 @@ async fn indexed_select_by_uuid_none() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row).unwrap();
+    let pk = table.insert(row).await.unwrap();
 
     // Select by None in the indexed field
     let result = table.select_by_test(None).execute().unwrap();
@@ -379,7 +379,7 @@ async fn indexed_multiple_rows_same_uuid() {
         another: 1,
         exchange: 1,
     };
-    let pk1 = table.insert(row1).unwrap();
+    let pk1 = table.insert(row1).await.unwrap();
 
     let row2 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -387,7 +387,7 @@ async fn indexed_multiple_rows_same_uuid() {
         another: 2,
         exchange: 2,
     };
-    let pk2 = table.insert(row2).unwrap();
+    let pk2 = table.insert(row2).await.unwrap();
 
     let row3 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -395,7 +395,7 @@ async fn indexed_multiple_rows_same_uuid() {
         another: 3,
         exchange: 3,
     };
-    let pk3 = table.insert(row3).unwrap();
+    let pk3 = table.insert(row3).await.unwrap();
 
     // Should find all three rows with the same UUID
     let result = table.select_by_test(Some(test_uuid)).execute().unwrap();
@@ -415,7 +415,7 @@ async fn indexed_multiple_rows_none() {
         another: 1,
         exchange: 1,
     };
-    let pk1 = table.insert(row1).unwrap();
+    let pk1 = table.insert(row1).await.unwrap();
 
     let row2 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -423,7 +423,7 @@ async fn indexed_multiple_rows_none() {
         another: 2,
         exchange: 2,
     };
-    let pk2 = table.insert(row2).unwrap();
+    let pk2 = table.insert(row2).await.unwrap();
 
     let row3 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -431,7 +431,7 @@ async fn indexed_multiple_rows_none() {
         another: 3,
         exchange: 3,
     };
-    let pk3 = table.insert(row3).unwrap();
+    let pk3 = table.insert(row3).await.unwrap();
 
     // Should find all three rows with None
     let result = table.select_by_test(None).execute().unwrap();
@@ -452,7 +452,7 @@ async fn indexed_update_indexed_field() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row).unwrap();
+    let pk = table.insert(row).await.unwrap();
 
     // Verify initial UUID is indexed
     let result = table.select_by_test(Some(uuid1)).execute().unwrap();
@@ -487,7 +487,7 @@ async fn indexed_update_from_some_to_none() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row).unwrap();
+    let pk = table.insert(row).await.unwrap();
 
     // Verify initial UUID is indexed
     let result = table.select_by_test(Some(test_uuid)).execute().unwrap();
@@ -519,7 +519,7 @@ async fn indexed_update_from_none_to_some() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row).unwrap();
+    let pk = table.insert(row).await.unwrap();
 
     // Verify None is indexed
     let result = table.select_by_test(None).execute().unwrap();
@@ -554,7 +554,7 @@ async fn indexed_update_via_another_index() {
         another: 999,
         exchange: 1,
     };
-    table.insert(row).unwrap();
+    table.insert(row).await.unwrap();
 
     // Update via the unique 'another' index
     table
@@ -582,7 +582,7 @@ async fn indexed_update_via_non_unique_index() {
         another: 1,
         exchange: 100,
     };
-    let pk1 = table.insert(row1).unwrap();
+    let pk1 = table.insert(row1).await.unwrap();
 
     let row2 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -590,7 +590,7 @@ async fn indexed_update_via_non_unique_index() {
         another: 2,
         exchange: 100,
     };
-    let pk2 = table.insert(row2).unwrap();
+    let pk2 = table.insert(row2).await.unwrap();
 
     // Update both rows via the non-unique 'exchange' index
     table
@@ -624,7 +624,7 @@ async fn indexed_mixed_none_and_some() {
         another: 1,
         exchange: 1,
     };
-    table.insert(row1).unwrap();
+    table.insert(row1).await.unwrap();
 
     let row2 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -632,7 +632,7 @@ async fn indexed_mixed_none_and_some() {
         another: 2,
         exchange: 2,
     };
-    table.insert(row2).unwrap();
+    table.insert(row2).await.unwrap();
 
     let row3 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -640,7 +640,7 @@ async fn indexed_mixed_none_and_some() {
         another: 3,
         exchange: 3,
     };
-    table.insert(row3).unwrap();
+    table.insert(row3).await.unwrap();
 
     let row4 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -648,7 +648,7 @@ async fn indexed_mixed_none_and_some() {
         another: 4,
         exchange: 4,
     };
-    table.insert(row4).unwrap();
+    table.insert(row4).await.unwrap();
 
     // Verify counts
     let result_none = table.select_by_test(None).execute().unwrap();
@@ -672,7 +672,7 @@ async fn indexed_delete_row_with_uuid() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row).unwrap();
+    let pk = table.insert(row).await.unwrap();
 
     // Verify UUID is indexed
     let result = table.select_by_test(Some(test_uuid)).execute().unwrap();
@@ -696,7 +696,7 @@ async fn indexed_delete_row_with_none() {
         another: 1,
         exchange: 1,
     };
-    let pk = table.insert(row).unwrap();
+    let pk = table.insert(row).await.unwrap();
 
     // Verify None is indexed
     let result = table.select_by_test(None).execute().unwrap();
@@ -721,7 +721,7 @@ async fn indexed_no_match_for_uuid() {
         another: 1,
         exchange: 1,
     };
-    table.insert(row).unwrap();
+    table.insert(row).await.unwrap();
 
     // Search for a different UUID
     let other_uuid = Uuid::new_v4();
@@ -741,7 +741,7 @@ async fn indexed_no_match_for_none_when_all_have_values() {
         another: 1,
         exchange: 1,
     };
-    table.insert(row1).unwrap();
+    table.insert(row1).await.unwrap();
 
     let row2 = TestIndexRow {
         id: table.get_next_pk().into(),
@@ -749,7 +749,7 @@ async fn indexed_no_match_for_none_when_all_have_values() {
         another: 2,
         exchange: 2,
     };
-    table.insert(row2).unwrap();
+    table.insert(row2).await.unwrap();
 
     // Search for None when all rows have Some values
     let result = table.select_by_test(None).execute().unwrap();

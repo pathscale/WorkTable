@@ -54,7 +54,7 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
             let mut delete_successes = 0;
             let mut delete_misses = 0;
             for i in 0..5_000u64 {
-                match table.insert(UpsertChurnRow { id: KEY, val: i }) {
+                match table.insert(UpsertChurnRow { id: KEY, val: i }).await {
                     Ok(_) => insert_successes += 1,
                     Err(WorkTableError::PrimaryAlreadyExists) => insert_conflicts += 1,
                     Err(error) => panic!("raw insert returned an unexpected error: {error:?}"),

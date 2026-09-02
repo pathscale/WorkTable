@@ -52,6 +52,7 @@ fn same_size_updates_keep_the_row_link() {
                     amount: 1,
                     note: "aaaa".to_string(),
                 })
+                .await
                 .unwrap();
             let pk = SameSizeInPlacePrimaryKey(1);
             let link_before = table.0.primary_index.pk_map.get_value(&pk).unwrap().0;

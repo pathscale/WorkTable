@@ -71,8 +71,8 @@ fn concurrent_same_stripe_updates_do_not_deadlock() {
 
     runtime.block_on(async move {
         let table = Arc::new(GateBenchWorkTable::default());
-        table.insert(GateBenchRow { id: a, val: 0 }).unwrap();
-        table.insert(GateBenchRow { id: b, val: 0 }).unwrap();
+        table.insert(GateBenchRow { id: a, val: 0 }).await.unwrap();
+        table.insert(GateBenchRow { id: b, val: 0 }).await.unwrap();
 
         let ta = {
             let table = table.clone();
@@ -118,7 +118,7 @@ fn many_same_stripe_updates_do_not_starve_worker_pool() {
     runtime.block_on(async move {
         let table = Arc::new(GateBenchWorkTable::default());
         for k in [a, b] {
-            table.insert(GateBenchRow { id: k, val: 0 }).unwrap();
+            table.insert(GateBenchRow { id: k, val: 0 }).await.unwrap();
         }
 
         let mut handles = Vec::new();

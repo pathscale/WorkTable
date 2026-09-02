@@ -41,7 +41,7 @@ async fn test_update_string_full_row() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     table
@@ -81,7 +81,7 @@ async fn test_update_string_by_unique() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeByTestQuery {
@@ -116,7 +116,7 @@ async fn test_update_string_by_pk() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeByIdQuery {
@@ -151,7 +151,7 @@ async fn test_update_string_by_non_unique() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row1.clone()).unwrap();
+    let pk = table.insert(row1.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let row2 = TestRow {
         id: table.get_next_pk().into(),
@@ -159,7 +159,7 @@ async fn test_update_string_by_non_unique() {
         another: 1,
         exchange: "test".to_string(),
     };
-    let pk = table.insert(row2.clone()).unwrap();
+    let pk = table.insert(row2.clone()).await.unwrap();
     let second_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeByAbotherQuery {
@@ -212,7 +212,7 @@ async fn update_many_times() {
             another: 1,
             exchange: format!("test_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let mut i_state = HashMap::new();
     for _ in 0..1000 {
@@ -252,7 +252,7 @@ async fn update_parallel() {
             another: 1,
             exchange: format!("test_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let shared_i_state = i_state.clone();
@@ -349,7 +349,7 @@ async fn test_update_many_strings_by_unique() {
         some_string: "some".to_string(),
         other_srting: "other".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeAndSomeByTestQuery {
@@ -389,7 +389,7 @@ async fn test_update_many_strings_by_pk() {
         some_string: "some".to_string(),
         other_srting: "other".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeAndSomeByIdQuery {
@@ -429,7 +429,7 @@ async fn test_update_many_strings_by_non_unique() {
         some_string: "some".to_string(),
         other_srting: "other".to_string(),
     };
-    let pk = table.insert(row1.clone()).unwrap();
+    let pk = table.insert(row1.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let row2 = TestMoreStringsRow {
         id: table.get_next_pk().into(),
@@ -439,7 +439,7 @@ async fn test_update_many_strings_by_non_unique() {
         some_string: "some".to_string(),
         other_srting: "other".to_string(),
     };
-    let pk = table.insert(row2.clone()).unwrap();
+    let pk = table.insert(row2.clone()).await.unwrap();
     let second_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = ExchangeAndSomeByAnotherQuery {
@@ -498,7 +498,7 @@ async fn test_update_many_strings_by_string() {
         some_string: "something".to_string(),
         other_srting: "other er".to_string(),
     };
-    let pk = table.insert(row1.clone()).unwrap();
+    let pk = table.insert(row1.clone()).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
     let row2 = TestMoreStringsRow {
         id: table.get_next_pk().into(),
@@ -508,7 +508,7 @@ async fn test_update_many_strings_by_string() {
         some_string: "some ome".to_string(),
         other_srting: "other".to_string(),
     };
-    let pk = table.insert(row2.clone()).unwrap();
+    let pk = table.insert(row2.clone()).await.unwrap();
     let second_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     let row = SomeOtherByExchangeQuery {
@@ -573,7 +573,7 @@ async fn update_parallel_more_strings() {
             some_string: format!("some_{i}"),
             other_srting: format!("other_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let shared_e_state = e_state.clone();
@@ -646,7 +646,7 @@ async fn update_parallel_more_strings_more_threads() {
             some_string: format!("some_{i}"),
             other_srting: format!("other_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let shared_e_state = e_state.clone();
@@ -741,7 +741,7 @@ async fn update_parallel_more_strings_with_select_non_unique() {
             some_string: format!("some_{s_val}"),
             other_srting: format!("other_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let shared_e_state = e_state.clone();
@@ -818,7 +818,7 @@ async fn delete_parallel() {
             some_string: format!("some_{s_val}"),
             other_srting: format!("other_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let h1 = tokio::spawn(async move {
@@ -833,7 +833,7 @@ async fn delete_parallel() {
                 some_string: format!("some_{s_val}"),
                 other_srting: format!("other_{i}"),
             };
-            let _ = shared.insert(row.clone()).unwrap();
+            let _ = shared.insert(row.clone()).await.unwrap();
         }
     });
     let shared = table.clone();
@@ -880,7 +880,7 @@ async fn update_parallel_more_strings_with_select_unique() {
             some_string: format!("some_{s_val}"),
             other_srting: format!("other_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let shared_e_state = e_state.clone();
@@ -951,7 +951,7 @@ async fn upsert_parallel() {
             some_string: format!("some_{s_val}"),
             other_srting: format!("other_{i}"),
         };
-        let _ = table.insert(row.clone()).unwrap();
+        let _ = table.insert(row.clone()).await.unwrap();
     }
     let shared = table.clone();
     let shared_e_state = e_state.clone();

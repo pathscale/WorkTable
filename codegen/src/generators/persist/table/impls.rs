@@ -443,7 +443,7 @@ impl PersistGenerator {
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
 
         quote! {
-            pub fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+            pub async fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
                 self.1.ensure_running()?;
                 let (op, res) = self.0.insert_cdc::<#secondary_events_ident>(row);
                 if let Some(op) = op {
@@ -469,7 +469,7 @@ impl PersistGenerator {
             /// to reads; persisted durability follows the same `wait_for_ops`
             /// contract as single inserts, with the whole batch coalesced
             /// into one persistence engine application.
-            pub fn insert_many(&self, rows: Vec<#row_type>) -> core::result::Result<Vec<#primary_key_type>, BatchInsertError> {
+            pub async fn insert_many(&self, rows: Vec<#row_type>) -> core::result::Result<Vec<#primary_key_type>, BatchInsertError> {
                 if let core::result::Result::Err(e) = self.1.ensure_running() {
                     return core::result::Result::Err(BatchInsertError::Table(WorkTableError::PersistenceError(e)));
                 }
@@ -595,7 +595,7 @@ impl PersistGenerator {
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 if !self.0.primary_index.pk_map.contains_key(&pk) {
-                    match self.insert(row.clone()) {
+                    match self.insert(row.clone()).await {
                         core::result::Result::Ok(_) => return core::result::Result::Ok(()),
                         core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) => {}
                         core::result::Result::Err(e) => return core::result::Result::Err(e),
@@ -618,7 +618,7 @@ impl PersistGenerator {
                         // the synchronous insertion protocol, then retry the
                         // locked decision if another writer won the race.
                         drop(guard);
-                        match self.insert(row.clone()) {
+                        match self.insert(row.clone()).await {
                             core::result::Result::Ok(_) => core::result::Result::Ok(()),
                             core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) =>
                                 core::result::Result::Err(WorkTableError::NotFound),

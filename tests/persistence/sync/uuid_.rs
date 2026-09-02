@@ -46,6 +46,7 @@ fn test_uuid() {
                     id: table.get_next_pk().into(),
                     second: Uuid::now_v7(),
                 })
+                .await
                 .unwrap();
             table
                 .insert(UuidReReadRow {
@@ -53,6 +54,7 @@ fn test_uuid() {
                     id: table.get_next_pk().into(),
                     second: Uuid::now_v7(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap()
@@ -66,6 +68,7 @@ fn test_uuid() {
                     id: table.get_next_pk().into(),
                     second: Uuid::now_v7(),
                 })
+                .await
                 .unwrap();
             table.wait_for_ops().await.unwrap()
         }
@@ -105,6 +108,7 @@ fn test_big_amount_reread() {
                         id: table.get_next_pk().into(),
                         second: Uuid::now_v7(),
                     })
+                    .await
                     .unwrap();
             }
 
@@ -121,6 +125,7 @@ fn test_big_amount_reread() {
                     id: table.get_next_pk().into(),
                     second: second_last,
                 })
+                .await
                 .unwrap();
             table.wait_for_ops().await.unwrap()
         }

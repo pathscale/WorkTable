@@ -37,14 +37,14 @@ macro_rules! width_case {
                 indexes: { key_idx: key unique using $backend },
             );
 
-            #[test]
-            fn the_advertised_key_width_round_trips() {
+            #[tokio::test]
+            async fn the_advertised_key_width_round_trips() {
                 let table = WidthWorkTable::default();
 
                 // Three keys rather than one, so ordering has something to be
                 // wrong about on a trie backend.
                 for (id, key) in [(1u64, 7 as $key), (2, 42 as $key), (3, 5 as $key)] {
-                    table.insert(WidthRow { id, key }).unwrap_or_else(|error| {
+                    table.insert(WidthRow { id, key }).await.unwrap_or_else(|error| {
                         panic!("{}: insert failed for key type {}: {error}", $label, stringify!($key))
                     });
                 }

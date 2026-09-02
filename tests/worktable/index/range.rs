@@ -39,7 +39,7 @@ async fn idle_select_builder_does_not_pin_retired_links() {
         id: table.get_next_pk().into(),
         num: 1,
     };
-    let first_pk = table.insert(first).unwrap();
+    let first_pk = table.insert(first).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&first_pk).unwrap().0;
 
     // Construct the lazy query but do not consume it. Query configuration is
@@ -51,7 +51,7 @@ async fn idle_select_builder_does_not_pin_retired_links() {
         id: table.get_next_pk().into(),
         num: 2,
     };
-    let second_pk = table.insert(second).unwrap();
+    let second_pk = table.insert(second).await.unwrap();
     let second_link = table.0.primary_index.pk_map.get_value(&second_pk).unwrap().0;
 
     assert_eq!(
@@ -61,8 +61,8 @@ async fn idle_select_builder_does_not_pin_retired_links() {
     drop(idle_query);
 }
 
-#[test]
-fn range_read_revalidates_each_resolved_row() {
+#[tokio::test]
+async fn range_read_revalidates_each_resolved_row() {
     let table = RangeTestWorkTable::default();
     let inside = RangeTestRow {
         id: table.get_next_pk().into(),
@@ -74,8 +74,8 @@ fn range_read_revalidates_each_resolved_row() {
         value: 100,
         name: "outside".to_string(),
     };
-    table.insert(inside.clone()).unwrap();
-    table.insert(outside.clone()).unwrap();
+    table.insert(inside.clone()).await.unwrap();
+    table.insert(outside.clone()).await.unwrap();
 
     let outside_link = table
         .0
@@ -93,8 +93,8 @@ fn range_read_revalidates_each_resolved_row() {
     assert_eq!(rows, vec![inside]);
 }
 
-#[test]
-fn test_range_select_basic() {
+#[tokio::test]
+async fn test_range_select_basic() {
     let table = RangeTestWorkTable::default();
 
     for v in 0..6 {
@@ -104,6 +104,7 @@ fn test_range_select_basic() {
                 value: v * 10,
                 name: format!("name_{}", v * 10),
             })
+            .await
             .unwrap();
     }
 
@@ -111,8 +112,8 @@ fn test_range_select_basic() {
     assert_eq!(results.len(), 2);
 }
 
-#[test]
-fn test_range_select_inclusive() {
+#[tokio::test]
+async fn test_range_select_inclusive() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 10000u64;
@@ -122,6 +123,7 @@ fn test_range_select_inclusive() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -129,8 +131,8 @@ fn test_range_select_inclusive() {
     assert_eq!(results.len(), 6);
 }
 
-#[test]
-fn test_range_select_open_from() {
+#[tokio::test]
+async fn test_range_select_open_from() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 20000u64;
@@ -140,6 +142,7 @@ fn test_range_select_open_from() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -147,8 +150,8 @@ fn test_range_select_open_from() {
     assert_eq!(results.len(), 6);
 }
 
-#[test]
-fn test_range_select_open_to() {
+#[tokio::test]
+async fn test_range_select_open_to() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 30000u64;
@@ -158,6 +161,7 @@ fn test_range_select_open_to() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -165,8 +169,8 @@ fn test_range_select_open_to() {
     assert_eq!(results.len(), 5);
 }
 
-#[test]
-fn test_range_select_with_limit() {
+#[tokio::test]
+async fn test_range_select_with_limit() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 40000u64;
@@ -176,6 +180,7 @@ fn test_range_select_with_limit() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -183,8 +188,8 @@ fn test_range_select_with_limit() {
     assert_eq!(results.len(), 5);
 }
 
-#[test]
-fn test_range_select_with_offset() {
+#[tokio::test]
+async fn test_range_select_with_offset() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 50000u64;
@@ -194,6 +199,7 @@ fn test_range_select_with_offset() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -201,8 +207,8 @@ fn test_range_select_with_offset() {
     assert_eq!(results.len(), 8);
 }
 
-#[test]
-fn test_range_select_empty_result() {
+#[tokio::test]
+async fn test_range_select_empty_result() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 60000u64;
@@ -212,6 +218,7 @@ fn test_range_select_empty_result() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -219,8 +226,8 @@ fn test_range_select_empty_result() {
     assert_eq!(results.len(), 0);
 }
 
-#[test]
-fn test_range_select_full_range() {
+#[tokio::test]
+async fn test_range_select_full_range() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 70000u64;
@@ -230,6 +237,7 @@ fn test_range_select_full_range() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -237,8 +245,8 @@ fn test_range_select_full_range() {
     assert_eq!(results.len(), 11);
 }
 
-#[test]
-fn test_range_select_non_unique_multiple_per_key() {
+#[tokio::test]
+async fn test_range_select_non_unique_multiple_per_key() {
     let table = RangeTestWorkTable::default();
 
     for (v, suffix) in [(10, "a"), (10, "b"), (10, "c"), (20, "d"), (20, "e")] {
@@ -248,6 +256,7 @@ fn test_range_select_non_unique_multiple_per_key() {
                 value: v,
                 name: format!("item_{}", suffix),
             })
+            .await
             .unwrap();
     }
 
@@ -255,8 +264,8 @@ fn test_range_select_non_unique_multiple_per_key() {
     assert_eq!(results.len(), 5);
 }
 
-#[test]
-fn test_range_select_with_order() {
+#[tokio::test]
+async fn test_range_select_with_order() {
     let table = UniqueRangeTestWorkTable::default();
 
     let base = 80000u64;
@@ -266,6 +275,7 @@ fn test_range_select_with_order() {
                 id: table.get_next_pk().into(),
                 num: n,
             })
+            .await
             .unwrap();
     }
 
@@ -280,8 +290,8 @@ fn test_range_select_with_order() {
     assert_eq!(results.last().unwrap().num, base);
 }
 
-#[test]
-fn test_pk_range_select_basic() {
+#[tokio::test]
+async fn test_pk_range_select_basic() {
     let table = PkRangeTestWorkTable::default();
 
     for i in 0..20 {
@@ -290,6 +300,7 @@ fn test_pk_range_select_basic() {
                 id: table.get_next_pk().into(),
                 data: format!("data_{}", i),
             })
+            .await
             .unwrap();
     }
 
@@ -297,8 +308,8 @@ fn test_pk_range_select_basic() {
     assert_eq!(results.len(), 5);
 }
 
-#[test]
-fn test_pk_range_select_inclusive() {
+#[tokio::test]
+async fn test_pk_range_select_inclusive() {
     let table = PkRangeTestWorkTable::default();
 
     for i in 0..20 {
@@ -307,6 +318,7 @@ fn test_pk_range_select_inclusive() {
                 id: table.get_next_pk().into(),
                 data: format!("data_{}", i),
             })
+            .await
             .unwrap();
     }
 
@@ -314,8 +326,8 @@ fn test_pk_range_select_inclusive() {
     assert_eq!(results.len(), 6);
 }
 
-#[test]
-fn test_pk_range_select_open_from() {
+#[tokio::test]
+async fn test_pk_range_select_open_from() {
     let table = PkRangeTestWorkTable::default();
 
     for i in 0..20 {
@@ -324,6 +336,7 @@ fn test_pk_range_select_open_from() {
                 id: table.get_next_pk().into(),
                 data: format!("data_{}", i),
             })
+            .await
             .unwrap();
     }
 
@@ -331,8 +344,8 @@ fn test_pk_range_select_open_from() {
     assert_eq!(results.len(), 5);
 }
 
-#[test]
-fn test_pk_range_select_open_to() {
+#[tokio::test]
+async fn test_pk_range_select_open_to() {
     let table = PkRangeTestWorkTable::default();
 
     for i in 0..20 {
@@ -341,6 +354,7 @@ fn test_pk_range_select_open_to() {
                 id: table.get_next_pk().into(),
                 data: format!("data_{}", i),
             })
+            .await
             .unwrap();
     }
 
@@ -348,8 +362,8 @@ fn test_pk_range_select_open_to() {
     assert_eq!(results.len(), 5);
 }
 
-#[test]
-fn test_pk_range_select_with_limit() {
+#[tokio::test]
+async fn test_pk_range_select_with_limit() {
     let table = PkRangeTestWorkTable::default();
 
     for i in 0..50 {
@@ -358,6 +372,7 @@ fn test_pk_range_select_with_limit() {
                 id: table.get_next_pk().into(),
                 data: format!("data_{}", i),
             })
+            .await
             .unwrap();
     }
 
@@ -365,8 +380,8 @@ fn test_pk_range_select_with_limit() {
     assert_eq!(results.len(), 5);
 }
 
-#[test]
-fn test_pk_range_select_with_order() {
+#[tokio::test]
+async fn test_pk_range_select_with_order() {
     let table = PkRangeTestWorkTable::default();
 
     for i in 0..20 {
@@ -375,6 +390,7 @@ fn test_pk_range_select_with_order() {
                 id: table.get_next_pk().into(),
                 data: format!("data_{}", i),
             })
+            .await
             .unwrap();
     }
 

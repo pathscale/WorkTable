@@ -49,6 +49,7 @@ macro_rules! persisted_multi_row_backend_case {
                             group_id: 7,
                             payload: "x".repeat(length),
                         })
+                        .await
                         .unwrap();
                 }
                 table.wait_for_ops().await.unwrap();

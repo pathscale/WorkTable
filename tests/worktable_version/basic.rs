@@ -56,6 +56,7 @@ fn test_version_reads_persisted_data() {
                     name: "Alice".to_string(),
                     email: "alice@example.com".to_string(),
                 })
+                .await
                 .unwrap();
 
             table
@@ -64,6 +65,7 @@ fn test_version_reads_persisted_data() {
                     name: "Bob".to_string(),
                     email: "bob@example.com".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap()

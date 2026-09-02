@@ -38,16 +38,16 @@ fn row(id: u64, unique_value: u64, generation: u32) -> EvictRow {
     }
 }
 
-fn table_with(rows: u64) -> EvictWorkTable {
+async fn table_with(rows: u64) -> EvictWorkTable {
     let table = EvictWorkTable::default();
     let batch: Vec<_> = (0..rows).map(|i| row(i, 1_000 + i, (i % 4) as u32)).collect();
-    table.insert_many(batch).expect("fixture inserts");
+    table.insert_many(batch).await.expect("fixture inserts");
     table
 }
 
 #[tokio::test]
 async fn delete_many_removes_exactly_the_named_keys() {
-    let table = table_with(20);
+    let table = table_with(20).await;
 
     let deleted = table.delete_many((0..5u64).collect()).await.expect("bulk delete");
 
@@ -76,7 +76,7 @@ async fn delete_many_removes_exactly_the_named_keys() {
 /// unique index that still holds the deleted row's value rejects the insert.
 #[tokio::test]
 async fn deleted_rows_are_unreachable_through_every_index() {
-    let table = table_with(20);
+    let table = table_with(20).await;
 
     table.delete_many((0..5u64).collect()).await.expect("bulk delete");
 
@@ -104,6 +104,7 @@ async fn deleted_rows_are_unreachable_through_every_index() {
     for id in 0..5u64 {
         table
             .insert(row(100 + id, 1_000 + id, 9))
+            .await
             .unwrap_or_else(|error| panic!("unique value {} was not released by the delete: {error}", 1_000 + id));
     }
 }
@@ -115,7 +116,7 @@ async fn deleted_rows_are_unreachable_through_every_index() {
 /// win. The return value is what was actually deleted, so the caller can tell.
 #[tokio::test]
 async fn absent_keys_are_skipped_rather_than_failing_the_batch() {
-    let table = table_with(10);
+    let table = table_with(10).await;
 
     let deleted = table
         .delete_many(vec![1u64, 999, 3, 1_000, 5])
@@ -130,7 +131,7 @@ async fn absent_keys_are_skipped_rather_than_failing_the_batch() {
 /// Deleting the same key twice in one batch is not a double free.
 #[tokio::test]
 async fn a_repeated_key_is_deleted_once() {
-    let table = table_with(10);
+    let table = table_with(10).await;
 
     let deleted = table.delete_many(vec![2u64, 2, 2]).await.expect("repeats must be safe");
 
@@ -141,7 +142,7 @@ async fn a_repeated_key_is_deleted_once() {
 
 #[tokio::test]
 async fn an_empty_batch_is_a_no_op() {
-    let table = table_with(4);
+    let table = table_with(4).await;
     assert_eq!(
         table.delete_many(Vec::<u64>::new()).await.expect("empty batch"),
         Vec::<EvictPrimaryKey>::new()
@@ -157,7 +158,7 @@ async fn an_empty_batch_is_a_no_op() {
 /// link would grow by the full batch on every cycle.
 #[tokio::test]
 async fn bulk_delete_then_insert_reuses_storage() {
-    let table = table_with(200);
+    let table = table_with(200).await;
     let before = table.count();
 
     for cycle in 0..10u64 {
@@ -168,7 +169,7 @@ async fn bulk_delete_then_insert_reuses_storage() {
         let refill: Vec<_> = (0..100)
             .map(|i| row(i, 500_000 + cycle * 1_000 + i, (i % 4) as u32))
             .collect();
-        table.insert_many(refill).expect("refill");
+        table.insert_many(refill).await.expect("refill");
         assert_eq!(table.count(), before);
     }
 
@@ -185,8 +186,8 @@ async fn bulk_delete_then_insert_reuses_storage() {
 /// stops doing exactly what a loop of `delete` does, this is where it shows.
 #[tokio::test]
 async fn delete_many_matches_a_loop_of_delete() {
-    let batched = table_with(30);
-    let looped = table_with(30);
+    let batched = table_with(30).await;
+    let looped = table_with(30).await;
 
     let keys: Vec<u64> = (0..30).filter(|i| i % 3 == 0).collect();
     batched.delete_many(keys.clone()).await.expect("bulk delete");
@@ -207,7 +208,7 @@ async fn delete_many_matches_a_loop_of_delete() {
 /// Eviction by span, which is the shape a caller dropping a generation has.
 #[tokio::test]
 async fn delete_range_removes_the_span_and_nothing_else() {
-    let table = table_with(20);
+    let table = table_with(20).await;
 
     let deleted = table
         .delete_range(EvictPrimaryKey::from(5u64)..EvictPrimaryKey::from(10u64))
@@ -231,7 +232,7 @@ async fn delete_range_removes_the_span_and_nothing_else() {
 /// An inclusive end, and a range that matches nothing.
 #[tokio::test]
 async fn delete_range_honours_its_bounds() {
-    let table = table_with(20);
+    let table = table_with(20).await;
 
     let deleted = table
         .delete_range(EvictPrimaryKey::from(0u64)..=EvictPrimaryKey::from(2u64))

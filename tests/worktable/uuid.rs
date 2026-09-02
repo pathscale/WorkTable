@@ -17,7 +17,7 @@ async fn insert() {
         id: Uuid::new_v4(),
         another: 1,
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);

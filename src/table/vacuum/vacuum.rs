@@ -590,7 +590,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.push((id, row));
         }
 
@@ -621,7 +621,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.insert(id, row);
         }
 
@@ -655,7 +655,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.insert(id, row);
         }
 
@@ -689,7 +689,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.insert(id, row);
         }
 
@@ -721,7 +721,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.push((id, row));
         }
 
@@ -751,7 +751,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.push((id, row));
         }
 
@@ -789,7 +789,7 @@ mod tests {
                 exchange: s.to_string(),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.insert(id, row);
         }
 
@@ -821,7 +821,7 @@ mod tests {
                 exchange: format!("original{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             original_ids.insert(id, row);
         }
 
@@ -842,7 +842,7 @@ mod tests {
                 exchange: format!("new{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             new_ids.insert(id, row);
         }
 
@@ -871,7 +871,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.push((id, row));
         }
 
@@ -903,7 +903,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.push((id, row));
         }
 
@@ -935,7 +935,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.push((id, row));
         }
 
@@ -964,7 +964,7 @@ mod tests {
                 exchange: format!("test{}", i),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             ids.push((id, row));
         }
 
@@ -1002,7 +1002,7 @@ mod tests {
                 exchange: format!("{i:02}-{}", "x".repeat(6_000)),
             };
             let id = row.id;
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             let link = table
                 .0
                 .primary_index
@@ -1066,7 +1066,7 @@ mod tests {
                 another: i as u64,
                 exchange: format!("test{}", i),
             };
-            table.insert(row).unwrap();
+            table.insert(row).await.unwrap();
         }
 
         // Nothing was deleted, so there is nothing to free: the page vacuum
@@ -1091,7 +1091,7 @@ mod tests {
                 another: i,
                 exchange: format!("{i:02}-{}", "x".repeat(6_000)),
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             rows.push(row);
         }
 
@@ -1143,7 +1143,7 @@ mod tests {
                 another: i,
                 exchange: format!("{i:02}-{}", "x".repeat(6_000)),
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             rows.push(row);
         }
 
@@ -1187,7 +1187,7 @@ mod tests {
             exchange: "target00".to_string(),
         };
         let target_id = target.id;
-        table.insert(target).unwrap();
+        table.insert(target).await.unwrap();
 
         // Model the reverse-index snapshot taken before vacuum waits for the
         // row lock.
@@ -1226,7 +1226,7 @@ mod tests {
             exchange: "reused00".to_string(),
         };
         let replacement_id = replacement.id;
-        table.insert(replacement.clone()).unwrap();
+        table.insert(replacement.clone()).await.unwrap();
         let replacement_link = table
             .0
             .primary_index

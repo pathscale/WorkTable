@@ -45,9 +45,9 @@ async fn recovery_mode_reads_valid_rows_through_a_surviving_secondary_index() {
     remove_dir_if_exists(DIR.to_owned()).await;
 
     let table = RecoveryLoadWorkTable::load(engine(DIR).await).await.unwrap();
-    table.insert(row("row-1", "project-a")).unwrap();
-    table.insert(row("row-2", "project-a")).unwrap();
-    table.insert(row("row-3", "project-b")).unwrap();
+    table.insert(row("row-1", "project-a")).await.unwrap();
+    table.insert(row("row-2", "project-a")).await.unwrap();
+    table.insert(row("row-3", "project-b")).await.unwrap();
     table.close().await.unwrap();
 
     let table_dir = format!("{DIR}/{}", RecoveryLoadWorkTable::name_snake_case());
@@ -98,7 +98,7 @@ async fn recovery_mode_rejects_corrupt_rows_reached_through_a_secondary_index() 
     remove_dir_if_exists(CORRUPT_DIR.to_owned()).await;
 
     let table = RecoveryLoadWorkTable::load(engine(CORRUPT_DIR).await).await.unwrap();
-    let id = table.insert(row("row-corrupt", "project-a")).unwrap();
+    let id = table.insert(row("row-corrupt", "project-a")).await.unwrap();
     let link = table.0.primary_index.pk_map.get_value(&id).unwrap().0;
     table.close().await.unwrap();
 

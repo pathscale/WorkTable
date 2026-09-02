@@ -31,6 +31,7 @@ async fn concurrent_update_and_delete_never_panics() {
             name: "seed".to_string(),
             value: 0,
         })
+        .await
         .unwrap();
 
     let updater = {
@@ -64,11 +65,13 @@ async fn concurrent_update_and_delete_never_panics() {
                     Err(WorkTableError::NotFound) => {}
                     Err(e) => panic!("unexpected delete error: {e:?}"),
                 }
-                let _ = table.insert(UpdateDeleteRaceRow {
-                    id: 1,
-                    name: "restored".to_string(),
-                    value: 0,
-                });
+                let _ = table
+                    .insert(UpdateDeleteRaceRow {
+                        id: 1,
+                        name: "restored".to_string(),
+                        value: 0,
+                    })
+                    .await;
                 tokio::task::yield_now().await;
             }
         })

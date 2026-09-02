@@ -45,6 +45,7 @@ async fn cancelled_full_row_update_releases_registered_lock() {
             value: 0,
             other: 0,
         })
+        .await
         .unwrap();
     let pk = CancelSafetyPrimaryKey(1);
 
@@ -100,6 +101,7 @@ async fn cancelled_custom_update_releases_registered_lock() {
             value: 0,
             other: 0,
         })
+        .await
         .unwrap();
     let pk = CancelSafetyPrimaryKey(3);
 

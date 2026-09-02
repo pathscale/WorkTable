@@ -53,7 +53,7 @@ fn test_option_insert_none_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -95,7 +95,7 @@ fn test_option_insert_some_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -137,7 +137,7 @@ fn test_option_update_full_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update(TestOptionSyncRow {
@@ -189,7 +189,7 @@ fn test_option_update_by_id_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_test_by_id(TestByIdQuery { test: Some(42) }, row.id)
@@ -236,7 +236,7 @@ fn test_option_update_none_to_some_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_test_by_id(TestByIdQuery { test: Some(55) }, row.id)
@@ -283,7 +283,7 @@ fn test_option_update_some_to_none_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_test_by_id(TestByIdQuery { test: None }, row.id)
@@ -330,7 +330,7 @@ fn test_option_update_by_another_sync() {
                 another: 123,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_test_by_another(TestByAnotherQuery { test: Some(77) }, 123)
@@ -377,7 +377,7 @@ fn test_option_update_by_exchange_sync() {
                 another: 1,
                 exchange: 456,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_test_by_exchange(TestByExchangeQuery { test: Some(88) }, 456)
@@ -425,7 +425,7 @@ fn test_option_multiple_rows_sync() {
                 another: 1,
                 exchange: 1,
             };
-            let pk1 = table.insert(row1).unwrap();
+            let pk1 = table.insert(row1).await.unwrap();
 
             let row2 = TestOptionSyncRow {
                 id: table.get_next_pk().0,
@@ -433,7 +433,7 @@ fn test_option_multiple_rows_sync() {
                 another: 2,
                 exchange: 2,
             };
-            let pk2 = table.insert(row2).unwrap();
+            let pk2 = table.insert(row2).await.unwrap();
 
             table
                 .update_test_by_id(TestByIdQuery { test: Some(30) }, pk1.clone())
@@ -503,7 +503,7 @@ fn test_option_indexed_insert_none_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -545,7 +545,7 @@ fn test_option_indexed_insert_some_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -587,7 +587,7 @@ fn test_option_indexed_update_none_to_some_by_id_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_index_test_by_id(IndexTestByIdQuery { test: Some(55) }, row.id)
@@ -634,7 +634,7 @@ fn test_option_indexed_update_some_to_none_by_id_sync() {
                 another: 1,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_index_test_by_id(IndexTestByIdQuery { test: None }, row.id)
@@ -681,7 +681,7 @@ fn test_option_indexed_update_by_another_sync() {
                 another: 123,
                 exchange: 1,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update_index_test_by_another(IndexTestByAnotherQuery { test: Some(77) }, 123)
@@ -729,7 +729,7 @@ fn test_option_indexed_multiple_rows_sync() {
                 another: 1,
                 exchange: 1,
             };
-            let pk1 = table.insert(row1).unwrap();
+            let pk1 = table.insert(row1).await.unwrap();
 
             let row2 = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -737,7 +737,7 @@ fn test_option_indexed_multiple_rows_sync() {
                 another: 2,
                 exchange: 2,
             };
-            let pk2 = table.insert(row2).unwrap();
+            let pk2 = table.insert(row2).await.unwrap();
 
             let row3 = TestOptionSyncIndexRow {
                 id: table.get_next_pk().0,
@@ -745,7 +745,7 @@ fn test_option_indexed_multiple_rows_sync() {
                 another: 3,
                 exchange: 3,
             };
-            let pk3 = table.insert(row3).unwrap();
+            let pk3 = table.insert(row3).await.unwrap();
 
             table
                 .update_index_test_by_id(IndexTestByIdQuery { test: Some(40) }, pk1.clone())
@@ -798,7 +798,7 @@ fn test_option_indexed_full_row_update_sync() {
                 another: 100,
                 exchange: 200,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
 
             table
                 .update(TestOptionSyncIndexRow {

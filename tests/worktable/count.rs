@@ -65,10 +65,10 @@ async fn count() {
     // Count WT with 0 rows
     assert_eq!(0, test_table.count());
 
-    let _ = test_table.insert(row1);
-    let _ = test_table.insert(row2);
-    let _ = test_table.insert(row3);
-    let _ = test_table.insert(row4);
+    let _ = test_table.insert(row1).await;
+    let _ = test_table.insert(row2).await;
+    let _ = test_table.insert(row3).await;
+    let _ = test_table.insert(row4).await;
 
     // Count by WT
     assert_eq!(4, test_table.count());

@@ -72,7 +72,7 @@ fn fragmented_string_index_compacts_after_restart_before_appending() {
                     project_id: project_id.clone(),
                 };
                 inserted_ids.push(row.id);
-                table.insert(row).unwrap();
+                table.insert(row).await.unwrap();
             }
             table.wait_for_ops().await.unwrap();
             for id in inserted_ids.iter().take(37).copied() {
@@ -91,7 +91,7 @@ fn fragmented_string_index_compacts_after_restart_before_appending() {
                     id: table.get_next_pk().0,
                     project_id: project_id.clone(),
                 };
-                table.insert(row).unwrap();
+                table.insert(row).await.unwrap();
             }
             table.wait_for_ops().await.unwrap();
         }
@@ -151,7 +151,7 @@ fn test_space_insert_sync() {
                 field: 0.234,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -194,7 +194,7 @@ fn test_space_insert_many_sync() {
                         field: i as f64 / 100.0,
                         id: table.get_next_pk().0,
                     };
-                    table.insert(row.clone()).unwrap();
+                    table.insert(row.clone()).await.unwrap();
                     row.id
                 };
                 pks.push(pk);
@@ -241,7 +241,7 @@ fn test_space_update_full_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update(TestSyncRow {
                     another: "Some string to test updated".to_string(),
@@ -298,7 +298,7 @@ fn test_space_update_query_pk_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update_another_by_id(
                     AnotherByIdQuery {
@@ -351,7 +351,7 @@ fn test_space_update_query_unique_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update_field_by_another(FieldByAnotherQuery { field: 1.0 }, "Some string before".to_string())
                 .await
@@ -396,7 +396,7 @@ fn test_space_update_query_non_unique_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table
                 .update_another_by_non_unique(
                     AnotherByNonUniqueQuery {
@@ -449,7 +449,7 @@ fn test_space_delete_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.delete(row.id).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
@@ -490,7 +490,7 @@ fn test_space_delete_query_sync() {
                 field: 0.0,
                 id: table.get_next_pk().0,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.delete_by_another(row.another).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id

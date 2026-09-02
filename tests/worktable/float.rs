@@ -32,8 +32,8 @@ worktable! (
     }
 );
 
-#[test]
-fn unique_float_point_read_revalidates_the_returned_row() {
+#[tokio::test]
+async fn unique_float_point_read_revalidates_the_returned_row() {
     let table = TestUniqueFloatWorkTable::default();
     let first = TestUniqueFloatRow {
         id: table.get_next_pk().into(),
@@ -43,8 +43,8 @@ fn unique_float_point_read_revalidates_the_returned_row() {
         id: table.get_next_pk().into(),
         value: 2.5,
     };
-    table.insert(first.clone()).unwrap();
-    table.insert(second.clone()).unwrap();
+    table.insert(first.clone()).await.unwrap();
+    table.insert(second.clone()).await.unwrap();
 
     let second_link = table
         .0
@@ -59,8 +59,8 @@ fn unique_float_point_read_revalidates_the_returned_row() {
     assert_eq!(table.select_by_value(second.value), Some(second));
 }
 
-#[test]
-fn float_range_read_revalidates_each_resolved_row() {
+#[tokio::test]
+async fn float_range_read_revalidates_each_resolved_row() {
     let table = TestFloatWorkTable::default();
     let inside = TestFloatRow {
         id: table.get_next_pk().into(),
@@ -74,8 +74,8 @@ fn float_range_read_revalidates_each_resolved_row() {
         another: 100.0,
         exchange: "outside".to_string(),
     };
-    table.insert(inside.clone()).unwrap();
-    table.insert(outside.clone()).unwrap();
+    table.insert(inside.clone()).await.unwrap();
+    table.insert(outside.clone()).await.unwrap();
 
     let outside_link = table
         .0
@@ -90,8 +90,8 @@ fn float_range_read_revalidates_each_resolved_row() {
     assert_eq!(rows, vec![inside]);
 }
 
-#[test]
-fn select_all_range_float_test() {
+#[tokio::test]
+async fn select_all_range_float_test() {
     let table = TestFloatWorkTable::default();
 
     let row1 = TestFloatRow {
@@ -113,9 +113,9 @@ fn select_all_range_float_test() {
         exchange: "P".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let all = table
         .select_all()
@@ -128,8 +128,8 @@ fn select_all_range_float_test() {
     assert!(all.contains(&row2))
 }
 
-#[test]
-fn select_by_another_test() {
+#[tokio::test]
+async fn select_by_another_test() {
     let table = TestFloatWorkTable::default();
 
     let row1 = TestFloatRow {
@@ -151,9 +151,9 @@ fn select_by_another_test() {
         exchange: "P".to_string(),
     };
 
-    let _ = table.insert(row1.clone()).unwrap();
-    let _ = table.insert(row2.clone()).unwrap();
-    let _ = table.insert(row3.clone()).unwrap();
+    let _ = table.insert(row1.clone()).await.unwrap();
+    let _ = table.insert(row2.clone()).await.unwrap();
+    let _ = table.insert(row3.clone()).await.unwrap();
 
     let where_100 = table.select_by_another(100.0).execute().unwrap();
     assert_eq!(where_100.len(), 2);
@@ -164,8 +164,8 @@ fn select_by_another_test() {
     assert!(where_200.contains(&row3));
 }
 
-#[test]
-fn select_by_another_range_test() {
+#[tokio::test]
+async fn select_by_another_range_test() {
     let table = TestFloatWorkTable::default();
 
     let rows: Vec<TestFloatRow> = (0..10)
@@ -178,7 +178,7 @@ fn select_by_another_range_test() {
         .collect();
 
     for row in &rows {
-        table.insert(row.clone()).unwrap();
+        table.insert(row.clone()).await.unwrap();
     }
 
     let results = table.select_by_another_range(20.0..50.0).execute().unwrap();

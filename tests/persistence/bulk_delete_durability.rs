@@ -62,7 +62,7 @@ fn bulk_deletes_survive_reload() {
                 .unwrap();
             let table = BulkDeleteDurabilityWorkTable::load(engine).await.unwrap();
             for id in 0..20u64 {
-                table.insert(row(id)).unwrap();
+                table.insert(row(id)).await.unwrap();
             }
             table.wait_for_ops().await.unwrap();
 

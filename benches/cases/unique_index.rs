@@ -52,7 +52,7 @@ fn select_by_pk(c: &mut Criterion) {
                 test: fastrand::i64(..),
                 another: fastrand::u64(..),
             };
-            table.insert(row).unwrap()
+            futures::executor::block_on(table.insert(row)).unwrap()
         })
         .collect();
 
@@ -73,7 +73,7 @@ fn select_by_unique_index(c: &mut Criterion) {
             test: i,
             another: i as u64,
         };
-        table.insert(row).unwrap();
+        futures::executor::block_on(table.insert(row)).unwrap();
     }
 
     c.bench_function("unique_index_select_by_test", |b| {
@@ -93,7 +93,7 @@ fn select_by_unique_index_range(c: &mut Criterion) {
             test: i,
             another: i as u64,
         };
-        table.insert(row).unwrap();
+        futures::executor::block_on(table.insert(row)).unwrap();
     }
 
     c.bench_function("unique_index_select_by_test_range", |b| {
@@ -109,8 +109,8 @@ fn art_primary_key_ranges(c: &mut Criterion) {
     let congee = CongeeRangeBenchmarkWorkTable::default();
     let arctic = ArcticRangeBenchmarkWorkTable::default();
     for id in 0..ROWS {
-        congee.insert(CongeeRangeBenchmarkRow { id, value: id }).unwrap();
-        arctic.insert(ArcticRangeBenchmarkRow { id, value: id }).unwrap();
+        futures::executor::block_on(congee.insert(CongeeRangeBenchmarkRow { id, value: id })).unwrap();
+        futures::executor::block_on(arctic.insert(ArcticRangeBenchmarkRow { id, value: id })).unwrap();
     }
 
     let mut group = c.benchmark_group("art_primary_key_single_row_range");
@@ -142,7 +142,7 @@ fn update(c: &mut Criterion) {
                 test: i as i64,
                 another: i,
             };
-            pks.push(table.insert(row).unwrap());
+            pks.push(table.insert(row).await.unwrap());
         }
         pks
     });
@@ -173,7 +173,7 @@ fn delete(c: &mut Criterion) {
                     test: fastrand::i64(..),
                     another: fastrand::u64(..),
                 };
-                table.insert(row).unwrap()
+                futures::executor::block_on(table.insert(row)).unwrap()
             },
             |pk: UniqueIndexPrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
@@ -241,7 +241,7 @@ fn batch_insert(c: &mut Criterion) {
                             test: i as i64,
                             another: i as u64,
                         };
-                        table.insert(black_box(row)).unwrap();
+                        futures::executor::block_on(table.insert(black_box(row))).unwrap();
                     }
                     black_box(table)
                 },
@@ -267,7 +267,7 @@ fn batch_select_pk(c: &mut Criterion) {
                     test: fastrand::i64(..),
                     another: fastrand::u64(..),
                 };
-                table.insert(row).unwrap()
+                futures::executor::block_on(table.insert(row)).unwrap()
             })
             .collect();
 

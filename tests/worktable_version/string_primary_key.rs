@@ -59,6 +59,7 @@ fn test_version_reads_persisted_data_with_string_primary_key() {
                     title: "Alpha".to_string(),
                     author: "Alice".to_string(),
                 })
+                .await
                 .unwrap();
 
             table
@@ -67,6 +68,7 @@ fn test_version_reads_persisted_data_with_string_primary_key() {
                     title: "Beta".to_string(),
                     author: "Bob".to_string(),
                 })
+                .await
                 .unwrap();
 
             table.wait_for_ops().await.unwrap()

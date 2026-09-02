@@ -208,6 +208,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
                         bucket: bucket.clone(),
                         label: format!("row-{i}-{}", "x".repeat((i % 50) as usize)),
                     })
+                    .await
                     .unwrap();
                 model.insert(i, i % KEYS, bucket);
             }
@@ -239,6 +240,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
                         bucket: bucket.clone(),
                         label: format!("late-{j}"),
                     })
+                    .await
                     .unwrap();
                 model.insert(id, j % KEYS, bucket);
             }
@@ -324,6 +326,7 @@ fn test_single_key_all_duplicates_survives_reload() {
                         bucket: "the-bucket".to_string(),
                         label: format!("row-{i}"),
                     })
+                    .await
                     .unwrap();
             }
             assert_eq!(table.select_by_score(42).execute().unwrap().len() as u64, ROWS);
@@ -360,6 +363,7 @@ fn test_single_key_all_duplicates_survives_reload() {
                     bucket: "the-bucket".to_string(),
                     label: "post-reload".to_string(),
                 })
+                .await
                 .unwrap();
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
@@ -409,6 +413,7 @@ fn test_duplicate_key_mutations_without_reload() {
                     bucket: bucket.clone(),
                     label: format!("row-{i}-{}", "x".repeat((i % 50) as usize)),
                 })
+                .await
                 .unwrap();
             model.insert(i, i % KEYS, bucket);
         }
@@ -427,6 +432,7 @@ fn test_duplicate_key_mutations_without_reload() {
                     bucket: bucket.clone(),
                     label: format!("late-{j}"),
                 })
+                .await
                 .unwrap();
             model.insert(id, j % KEYS, bucket);
         }
