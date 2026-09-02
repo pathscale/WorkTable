@@ -50,7 +50,12 @@ impl Parser {
                         let in_place = parser.parse_in_place()?;
                         queries.in_place = in_place;
                     }
-                    _ => return Err(syn::Error::new(ident.span(), "Unexpected identifier")),
+                    other => {
+                        return Err(syn::Error::new(
+                            ident.span(),
+                            format!("Unexpected token `{other}`; expected one of `update`, `delete`, `in_place`"),
+                        ));
+                    }
                 }
             }
         } else {

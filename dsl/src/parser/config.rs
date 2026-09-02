@@ -50,6 +50,14 @@ impl Parser {
         let mut config = Config::default();
         parser.parse_config(&mut config)?;
 
+        // `parse_updates`, `parse_indexes` and `parse_queries` have always
+        // consumed the comma that may follow their block. This one did not, so
+        // `config: { .. },` left the comma for the top-level dispatch, which
+        // reported it as an unexpected identifier. `config` happens to be
+        // written last in every declaration in this repository, which is the
+        // only reason nobody hit it.
+        self.try_parse_comma()?;
+
         Ok(config)
     }
 
@@ -120,7 +128,12 @@ impl Parser {
 
                     config.row_derives = derives;
                 }
-                _ => return Err(syn::Error::new(name.span(), "Unexpected identifier")),
+                other => {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!("Unexpected token `{other}` in `config`"),
+                    ));
+                }
             }
         }
 

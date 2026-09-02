@@ -317,5 +317,13 @@ fn the_scanner_sets_templates_aside_and_reports_real_failures() {
     assert_eq!(found.templates.len(), 1);
     assert_eq!(found.rejected.len(), 1);
     assert!(!found.is_complete());
-    assert!(found.rejected[0].1.to_string().contains("Unexpected identifier"));
+    // The rejection names the token it tripped on. The old text said
+    // "Unexpected identifier" for anything at all, including a `,`, which
+    // named the wrong category of token and sent the reader hunting for a
+    // misspelled keyword.
+    let reason = found.rejected[0].1.to_string();
+    assert!(
+        reason.contains("nonsense"),
+        "the rejection should name the block it did not recognise, got: {reason}"
+    );
 }

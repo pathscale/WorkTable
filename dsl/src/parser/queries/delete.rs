@@ -28,7 +28,11 @@ impl Parser {
             .ok_or(syn::Error::new(self.input.span(), "Expected operation declarations"))?;
         if let TokenTree::Group(ops) = ops {
             let mut parser = Parser::new(ops.stream());
-            parser.parse_operations()
+            let operations = parser.parse_operations()?;
+            // Symmetry with `parse_updates`: consume a comma after the block,
+            // so a `delete` block is not required to be written last.
+            self.try_parse_comma()?;
+            Ok(operations)
         } else {
             Err(syn::Error::new(ops.span(), "Expected operation declarations"))
         }

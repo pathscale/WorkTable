@@ -231,7 +231,14 @@ impl Schema {
                          name, version, persist, partition_by, then columns/indexes/queries/config",
                     ));
                 }
-                _ => return Err(syn::Error::new(ident.span(), "Unexpected identifier")),
+                other => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!(
+                            "Unexpected token `{other}`; expected one of `columns`, `indexes`, `queries`, `config`"
+                        ),
+                    ));
+                }
             }
         }
 
