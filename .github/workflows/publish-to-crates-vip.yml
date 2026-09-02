@@ -21,7 +21,20 @@ on:
         default: false
 
 jobs:
+  # The workspace publishes bottom-up. `worktable_codegen` depends on
+  # `worktable_dsl` by path *and* version, so the DSL entry has to exist in the
+  # registry before codegen's is written, exactly as it does on crates.io.
+  dsl:
+    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@master
+    with:
+      manifest-path: dsl/Cargo.toml
+      dry-run: ${{ inputs.dry-run }}
+    secrets:
+      tigris-key-id: ${{ secrets.CRATES_VIP_TIGRIS_KEY_ID }}
+      tigris-key-secret: ${{ secrets.CRATES_VIP_TIGRIS_KEY_SECRET }}
+
   codegen:
+    needs: dsl
     uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@master
     with:
       manifest-path: codegen/Cargo.toml
