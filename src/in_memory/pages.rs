@@ -368,15 +368,31 @@ where
                 retired.push_back(item);
                 queued += 1;
             }
+            // Both counters are published while the queue lock is still held,
+            // because they are not statistics: `reclaim_retired` reads
+            // `queued_page_retirements` to decide whether it must look for
+            // page retirements queued behind the links it is about to free.
+            //
+            // Incrementing after the lock was released opened exactly the race
+            // the counter exists to close. A reclaimer with already-expired
+            // claims could take the queue in the gap, see the page retirement
+            // in it, read the counter as zero, skip building `queued_pages`,
+            // and hand an older link from that same page back to the
+            // allocator. A row written through that link is then destroyed
+            // when the page retirement matures and the page is reset.
+            //
+            // The queue and its two mirrors are one state transition. Anything
+            // that observes the queue must observe the counters that describe
+            // it.
+            if queued_pages > 0 {
+                self.queued_page_retirements.fetch_add(queued_pages, Ordering::Release);
+            }
+            self.pending_retirements.fetch_add(queued, Ordering::Release);
             retired.len()
         };
         if queued == 0 {
             return;
         }
-        if queued_pages > 0 {
-            self.queued_page_retirements.fetch_add(queued_pages, Ordering::Release);
-        }
-        self.pending_retirements.fetch_add(queued, Ordering::Release);
         if len >= RETIREMENT_BACKLOG_WARN_AT && len.is_power_of_two() {
             tracing::warn!(len, "versioned publication retirement backlog is growing");
         }
