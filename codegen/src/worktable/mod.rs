@@ -68,7 +68,12 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                     "a separate `attributes` section is not part of the 1.0 grammar; keep `primary_key`, `autoincrement`, `custom`, `optional`, and `using` inline on their column or index declarations",
                 ));
             }
-            _ => return Err(syn::Error::new(ident.span(), "Unexpected identifier")),
+            other => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    format!("Unexpected token `{other}`; expected one of `columns`, `indexes`, `queries`, `config`"),
+                ));
+            }
         }
     }
 

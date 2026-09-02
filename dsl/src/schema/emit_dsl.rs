@@ -159,10 +159,9 @@ fn write_query_block(out: &mut String, kind: &str, operations: &[OperationSpec])
             operation.by
         );
     }
-    // No comma after the closing brace. `parse_updates` consumes one if it is
-    // there, but `parse_deletes` and `parse_in_place` do not, so a comma after
-    // either of those blocks reaches the `queries` dispatch loop as a `,`
-    // token and dies as "Unexpected identifier". Omitting it is accepted by
-    // all three, which makes it the only form that is always valid.
+    // No comma after the closing brace. All six block parsers now consume one
+    // if it is there, so both forms parse; omitting it is kept because it is
+    // also what versions before 1.0.0-beta.17 accept, and emitted text is
+    // routinely fed to a macro older than the emitter that wrote it.
     let _ = writeln!(out, "{INDENT}}}");
 }
