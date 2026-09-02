@@ -238,6 +238,60 @@ macro_rules! backend_suite {
                 }
             }
 
+            /// `insert` and `insert_many` racing on the same table.
+            ///
+            /// They take the same striped mutation gate by different routes:
+            /// `insert` gates one key, `insert_many` gates its whole key set
+            /// and sorts the stripes so a batch and a single insert cannot
+            /// deadlock against each other. That ordering is the claim worth
+            /// testing, and a deadlock here shows up as a hang rather than a
+            /// failure, which is why the batches and singles interleave on
+            /// overlapping stripes rather than staying politely apart.
+            #[test]
+            fn batches_and_single_inserts_interleave_without_loss() {
+                let writers = params::writers();
+                let per_writer = params::per_writer();
+
+                let table = Arc::new(ConcWorkTable::default());
+                std::thread::scope(|scope| {
+                    for w in 0..writers {
+                        let table = Arc::clone(&table);
+                        scope.spawn(move || {
+                            let base = w * per_writer;
+                            if w % 2 == 0 {
+                                // Batches, in chunks, so several stripes are
+                                // held at once.
+                                for chunk in (0..per_writer).step_by(16) {
+                                    let rows: Vec<_> = (chunk..(chunk + 16).min(per_writer))
+                                        .map(|n| row(base + n))
+                                        .collect();
+                                    table.insert_many(rows).expect("insert_many");
+                                }
+                            } else {
+                                for n in 0..per_writer {
+                                    table.insert(row(base + n)).expect("insert");
+                                }
+                            }
+                        });
+                    }
+                });
+
+                assert_eq!(
+                    table.count(),
+                    (writers * per_writer) as usize,
+                    "{}: rows lost between insert and insert_many",
+                    $label
+                );
+                for id in 0..(writers * per_writer) {
+                    assert!(table.select(id).is_some(), "{}: row {id} missing", $label);
+                    assert!(
+                        table.select_by_payload(1_000_000 + id).is_some(),
+                        "{}: row {id} missing from the unique index",
+                        $label
+                    );
+                }
+            }
+
             /// A unique collision under contention rejects exactly one writer.
             ///
             /// Every writer races to claim the same payload. Exactly one must
