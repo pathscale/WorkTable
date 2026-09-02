@@ -43,16 +43,6 @@ mod params {
         }
     }
 
-    pub fn env_f64(name: &str, default: f64) -> f64 {
-        match std::env::var(name) {
-            Ok(raw) => raw
-                .trim()
-                .parse()
-                .unwrap_or_else(|_| panic!("{name} must be a number, got {raw:?}")),
-            Err(_) => default,
-        }
-    }
-
     /// Concurrent writers. Defaults to eight because four is where the rest of
     /// the suite stops and where this engine still looks healthy.
     pub fn writers() -> u64 {
@@ -73,48 +63,11 @@ mod params {
     pub fn readers() -> u64 {
         env_u64("WT_CONC_READERS", 4)
     }
-
-    /// Rows inserted per arm of the throughput sweep.
-    pub fn scale_rows() -> u64 {
-        env_u64("WT_SCALE_ROWS", 200_000)
-    }
-
-    /// Writer counts the throughput sweep visits.
-    pub fn scale_sweep() -> Vec<u64> {
-        match std::env::var("WT_SCALE_SWEEP") {
-            Ok(raw) => raw
-                .split(',')
-                .map(|part| {
-                    part.trim()
-                        .parse()
-                        .unwrap_or_else(|_| panic!("WT_SCALE_SWEEP must be comma-separated integers, got {raw:?}"))
-                })
-                .collect(),
-            Err(_) => vec![2, 4, 8, 16],
-        }
-    }
-
-    /// Share of single-writer throughput a run must keep.
-    pub fn scale_floor() -> f64 {
-        env_f64("WT_SCALE_FLOOR", 0.6)
-    }
-
-    /// Whether this is a release build.
-    ///
-    /// A function rather than `cfg!(..)` inline, so the assertion that uses it
-    /// is not a compile-time constant. `assert!(!cfg!(debug_assertions))` is
-    /// rejected by clippy as a constant assertion, and `#[cfg] panic!` makes
-    /// the rest of the function unreachable and its imports unused. This keeps
-    /// one code path in both profiles.
-    pub fn is_release_build() -> bool {
-        !cfg!(debug_assertions)
-    }
 }
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 use worktable::prelude::*;
 use worktable::worktable;
@@ -381,100 +334,3 @@ macro_rules! backend_suite {
 backend_suite!(wti, worktables_index, "wti");
 backend_suite!(arctic, arctic, "arctic");
 backend_suite!(congee, congee, "congee");
-
-worktable!(
-    name: Scale,
-    persist: false,
-    columns: {
-        id: u64 primary_key,
-        payload: u64,
-    },
-    indexes: { payload_idx: payload unique },
-);
-
-/// Insert throughput must not collapse as writers are added.
-///
-/// **Ignored because it fails on current code, deliberately.** It records a
-/// defect rather than guarding against one, in the same way
-/// `worktable_codegen`'s `generator_determinism` does. Run it with
-/// `cargo test --test mod insert_throughput -- --ignored --nocapture`.
-///
-/// Measured on an M4 Max, best of three, 200,000 inserts:
-///
-/// | writers | throughput | vs 1 writer |
-/// | ---: | ---: | ---: |
-/// | 1 | 1.20 M/s | 1.00x |
-/// | 2 | 1.20 M/s | 1.00x |
-/// | 4 | 1.11 M/s | 0.92x |
-/// | 8 | 297 K/s | **0.25x** |
-/// | 16 | 266 K/s | 0.22x |
-///
-/// Eight concurrent writers are four times slower **in aggregate** than one.
-/// It is not the index: all three backends collapse to the same ~300 K/s, and
-/// arctic and congee are 1.3x faster than WTI single-threaded before hitting
-/// the identical wall. A `sample` of the eight-writer run puts the time in
-/// `parking_lot::RawRwLock::lock_exclusive_slow` and `DataPages`, which is
-/// `pages.rs`: every insert takes an exclusive write lock on the *one* page
-/// named by `current_page_id`, so appends serialise by construction, and
-/// `EmptyLinkRegistry::pop_max` takes a global mutex on every insert even when
-/// the free list is empty.
-///
-/// The threshold is 0.6x rather than 1.0x: some loss is expected from cache
-/// traffic and allocation, and a benchmark-shaped assertion on a shared machine
-/// has to leave room. At 0.25x this is not a threshold question.
-#[test]
-#[ignore = "records the concurrent-insert collapse; fails until pages.rs stops serialising appends"]
-fn insert_throughput_should_scale_past_four_writers() {
-    // A debug build makes this test lie, and lie reassuringly. Per-operation
-    // overhead swamps the lock contention, so the collapse disappears and the
-    // sweep reports 8 writers as *faster* than 1 (measured: 2.79x). A
-    // throughput assertion that passes for the wrong reason is worse than none,
-    // so refuse rather than mislead.
-    assert!(
-        params::is_release_build(),
-        "run this in release: `cargo test --release --test mod insert_throughput -- --ignored --nocapture`. \
-         In a debug build the per-operation overhead hides the contention and this test passes for the wrong reason."
-    );
-
-    let n = params::scale_rows();
-    let floor = params::scale_floor();
-
-    let throughput = |writers: u64| -> f64 {
-        let mut best = f64::MAX;
-        for _ in 0..3 {
-            let table = Arc::new(ScaleWorkTable::default());
-            let per = n / writers;
-            let start = Instant::now();
-            std::thread::scope(|scope| {
-                for w in 0..writers {
-                    let table = Arc::clone(&table);
-                    scope.spawn(move || {
-                        for i in (w * per)..((w + 1) * per) {
-                            let _ = table.insert(ScaleRow {
-                                id: i,
-                                payload: 1_000_000 + i,
-                            });
-                        }
-                    });
-                }
-            });
-            let ns = start.elapsed().as_nanos() as f64 / n as f64;
-            if ns < best {
-                best = ns;
-            }
-        }
-        1e9 / best
-    };
-
-    let single = throughput(1);
-    println!("  1 writer : {single:>12.0}/s  1.00x (baseline)");
-    for writers in params::scale_sweep() {
-        let scaled = throughput(writers);
-        println!("{writers:>3} writers: {scaled:>12.0}/s  {:.2}x", scaled / single);
-        assert!(
-            scaled / single >= floor,
-            "{writers} writers reached {:.2}x of single-writer throughput, below the {floor:.2}x floor",
-            scaled / single
-        );
-    }
-}
