@@ -1,0 +1,121 @@
+diff --git a/src/persistence/space/index/mod.rs b/src/persistence/space/index/mod.rs
+index 4f35de9..b9cbfae 100644
+--- a/src/persistence/space/index/mod.rs
++++ b/src/persistence/space/index/mod.rs
+@@ -512,6 +512,30 @@ where
+         self.index_file.flush().await?;
+         Ok(())
+     }
++
++    async fn validate_loaded_state(&mut self) -> eyre::Result<()> {
++        let entries: Vec<_> = self
++            .table_of_contents
++            .iter()
++            .map(|(node_id, page_id)| (node_id.clone(), *page_id))
++            .collect();
++        let mut page_ids = std::collections::HashSet::with_capacity(entries.len());
++
++        for (node_id, page_id) in entries {
++            if !page_ids.insert(page_id) {
++                return Err(eyre!("table of contents maps more than one node to page {page_id:?}"));
++            }
++            let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_id.into()).await?;
++            let persisted_node_id = (page.inner.node_id.key, page.inner.node_id.link);
++            if persisted_node_id != node_id {
++                return Err(eyre!(
++                    "table of contents maps node {node_id:?} to page {page_id:?}, but that page declares node {persisted_node_id:?}"
++                ));
++            }
++        }
++
++        Ok(())
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/src/persistence/space/index/unsized_.rs b/src/persistence/space/index/unsized_.rs
+index 42070a4..b6f94fa 100644
+--- a/src/persistence/space/index/unsized_.rs
++++ b/src/persistence/space/index/unsized_.rs
+@@ -512,4 +512,32 @@ where
+         self.index_file.flush().await?;
+         Ok(())
+     }
++
++    async fn validate_loaded_state(&mut self) -> eyre::Result<()> {
++        let entries: Vec<_> = self
++            .table_of_contents
++            .iter()
++            .map(|(node_id, page_id)| (node_id.clone(), *page_id))
++            .collect();
++        let mut page_ids = std::collections::HashSet::with_capacity(entries.len());
++
++        for (node_id, page_id) in entries {
++            if !page_ids.insert(page_id) {
++                return Err(eyre!("table of contents maps more than one node to page {page_id:?}"));
++            }
++            let page = parse_page::<UnsizedIndexPage<T, INNER_PAGE_SIZE>, INNER_PAGE_SIZE>(
++                &mut self.index_file,
++                page_id.into(),
++            )
++            .await?;
++            let persisted_node_id = (page.inner.node_id.key, page.inner.node_id.link);
++            if persisted_node_id != node_id {
++                return Err(eyre!(
++                    "table of contents maps node {node_id:?} to page {page_id:?}, but that page declares node {persisted_node_id:?}"
++                ));
++            }
++        }
++
++        Ok(())
++    }
+ }
+diff --git a/src/persistence/space/mod.rs b/src/persistence/space/mod.rs
+index dee296f..5817d3a 100644
+--- a/src/persistence/space/mod.rs
++++ b/src/persistence/space/mod.rs
+@@ -63,6 +63,13 @@ where
+         &mut self,
+         events: BatchChangeEvent<T>,
+     ) -> impl Future<Output = eyre::Result<()>> + Send;
++
++    /// Validates persistence-only index metadata before a loaded table is
++    /// exposed. Backends whose constructors fully validate their format may
++    /// keep the default no-op.
++    fn validate_loaded_state(&mut self) -> impl Future<Output = eyre::Result<()>> + Send {
++        async { Ok(()) }
++    }
+ }
+ 
+ pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
+@@ -77,6 +84,10 @@ pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
+         &mut self,
+         events: SecondaryIndexEvents,
+     ) -> impl Future<Output = eyre::Result<()>> + Send;
++
++    fn validate_loaded_state(&mut self) -> impl Future<Output = eyre::Result<()>> + Send {
++        async { Ok(()) }
++    }
+ }
+ 
+ pub async fn open_or_create_file<S: AsRef<str>>(path: S) -> eyre::Result<File> {
+diff --git a/tests/non-existent/test_persist/.wt.data b/tests/non-existent/test_persist/.wt.data
+index e6d5590..6db8357 100644
+Binary files a/tests/non-existent/test_persist/.wt.data and b/tests/non-existent/test_persist/.wt.data differ
+diff --git a/tests/persistence/torn_shutdown.rs b/tests/persistence/torn_shutdown.rs
+index f206bdb..39d025d 100644
+--- a/tests/persistence/torn_shutdown.rs
++++ b/tests/persistence/torn_shutdown.rs
+@@ -345,7 +345,11 @@ fn incomplete_secondary_index_is_refused_with_typed_load_error() {
+     );
+     {
+         let secondary_file = std::fs::OpenOptions::new().write(true).open(secondary_path).unwrap();
+-        secondary_file.set_len(PAGE_SIZE as u64).unwrap();
++        // A one-row secondary index may already occupy exactly one page, so
++        // truncating to PAGE_SIZE can be a no-op. An empty existing file is a
++        // deterministic incomplete-index fixture: parsing or the startup
++        // cardinality audit must refuse it.
++        secondary_file.set_len(0).unwrap();
+         secondary_file.sync_all().unwrap();
+     }
+ 

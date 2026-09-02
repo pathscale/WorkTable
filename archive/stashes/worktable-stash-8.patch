@@ -1,0 +1,111 @@
+diff --git a/codegen/src/generators/in_memory/queries/update.rs b/codegen/src/generators/in_memory/queries/update.rs
+index 949f9dc..669178f 100644
+--- a/codegen/src/generators/in_memory/queries/update.rs
++++ b/codegen/src/generators/in_memory/queries/update.rs
+@@ -115,7 +115,17 @@ impl InMemoryGenerator {
+                     self.0.lock_manager.clone(),
+                     pk.clone(),
+                 );
+-                let row_old = self.0.data.select_non_ghosted(link)?;
++                // Vacuum or another reinsert can move the row while the first
++                // guard is dropped. Resolve the link again under the stronger
++                // full-row guard; the earlier link may already belong to a
++                // different primary key.
++                let current_link: Link = self.0
++                    .primary_index
++                    .pk_map
++                    .get_value(&pk)
++                    .map(Into::into)
++                    .ok_or(WorkTableError::NotFound)?;
++                let row_old = self.0.data.select_non_ghosted(current_link)?;
+                 if let Err(e) = self.reinsert(row_old, row).await {
+                     self.0.update_state.remove(&pk);
+                     return Err(e);
+@@ -132,7 +142,15 @@ impl InMemoryGenerator {
+                     self.0.lock_manager.clone(),
+                     pk.clone(),
+                 );
+-                let row_old = self.0.data.select_non_ghosted(link)?;
++                // The link captured before the guard upgrade is not stable:
++                // vacuum may move the row and recycle that slot in the gap.
++                let current_link: Link = self.0
++                    .primary_index
++                    .pk_map
++                    .get_value(&pk)
++                    .map(Into::into)
++                    .ok_or(WorkTableError::NotFound)?;
++                let row_old = self.0.data.select_non_ghosted(current_link)?;
+                 if let Err(e) = self.reinsert(row_old, row).await {
+                     self.0.update_state.remove(&pk);
+ 
+diff --git a/codegen/src/generators/persist/queries/update.rs b/codegen/src/generators/persist/queries/update.rs
+index dbe0dfc..8dbf9ab 100644
+--- a/codegen/src/generators/persist/queries/update.rs
++++ b/codegen/src/generators/persist/queries/update.rs
+@@ -67,7 +67,16 @@ impl PersistGenerator {
+                         self.0.lock_manager.clone(),
+                         pk.clone(),
+                     );
+-                    let row_old = self.0.data.select_non_ghosted(link)?;
++                    // Vacuum or another reinsert can move the row while the
++                    // first guard is dropped. Re-resolve under the full-row
++                    // guard so a recycled stale slot cannot supply row_old.
++                    let current_link: Link = self.0
++                        .primary_index
++                        .pk_map
++                        .get_value(&pk)
++                        .map(Into::into)
++                        .ok_or(WorkTableError::NotFound)?;
++                    let row_old = self.0.data.select_non_ghosted(current_link)?;
+                     if let Err(e) = self.reinsert(row_old, row).await {
+                         self.0.update_state.remove(&pk);
+ 
+diff --git a/codegen/src/worktable/mod.rs b/codegen/src/worktable/mod.rs
+index e9334af..e1cf36d 100644
+--- a/codegen/src/worktable/mod.rs
++++ b/codegen/src/worktable/mod.rs
+@@ -194,6 +194,44 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn unsized_full_row_update_reresolves_its_link_after_lock_upgrade() {
++        for persist in [true, false] {
++            let output = expand(quote! {
++                name: UnsizedFullRowUpdate,
++                persist: #persist,
++                columns: {
++                    id: u64 primary_key,
++                    payload: String,
++                    indexed: u64,
++                },
++                indexes: {
++                    indexed_idx: indexed unique,
++                },
++            })
++            .unwrap()
++            .to_string();
++
++            let update = output
++                .split("async fn update_with_guard")
++                .nth(1)
++                .expect("generated full-row update helper");
++            let upgraded = update
++                .split("drop (_guard)")
++                .nth(1)
++                .expect("unsized update upgrades to a full-row guard");
++
++            assert!(
++                upgraded.contains("let current_link : Link = self . 0 . primary_index . pk_map . get_value (& pk)"),
++                "full-row update must resolve the primary link after upgrading its guard"
++            );
++            assert!(
++                upgraded.contains("select_non_ghosted (current_link)"),
++                "full-row update must not read row_old through its pre-upgrade link"
++            );
++        }
++    }
++
+     #[test]
+     fn absent_using_keeps_worktables_index_default() {
+         let output = expand(quote! {
