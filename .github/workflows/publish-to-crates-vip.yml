@@ -1,0 +1,43 @@
+name: publish-to-crates.vip
+
+# Publishes this workspace's crates to the private registry at crates.vip.
+#
+# The heavy lifting lives in api.crates.vip's reusable workflow: it packages the
+# crate, derives the sparse-index entry from `cargo metadata`, and writes both to
+# Tigris under conditional requests. Nothing is installed — the runner image
+# already ships `aws` and `jq`.
+#
+# Publishing is manual on purpose. A published version is immutable, and
+# `cargo package` embeds the git sha, so a version republished from a different
+# commit is refused rather than silently replaced.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Derive the index entry and print it, but write nothing
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  codegen:
+    uses: pathscale/api.crates.vip/.github/workflows/publish-crate.yml@master
+    with:
+      manifest-path: codegen/Cargo.toml
+      dry-run: ${{ inputs.dry-run }}
+    secrets:
+      tigris-key-id: ${{ secrets.CRATES_VIP_TIGRIS_KEY_ID }}
+      tigris-key-secret: ${{ secrets.CRATES_VIP_TIGRIS_KEY_SECRET }}
+
+  # `worktable` depends on `worktable_codegen`, so the codegen crate has to be
+  # resolvable in the registry before this entry is written.
+  worktable:
+    needs: codegen
+    uses: pathscale/api.crates.vip/.github/workflows/publish-crate.yml@master
+    with:
+      manifest-path: Cargo.toml
+      dry-run: ${{ inputs.dry-run }}
+    secrets:
+      tigris-key-id: ${{ secrets.CRATES_VIP_TIGRIS_KEY_ID }}
+      tigris-key-secret: ${{ secrets.CRATES_VIP_TIGRIS_KEY_SECRET }}
