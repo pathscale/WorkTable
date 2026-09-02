@@ -206,6 +206,14 @@ where
     /// when there is no work pending.
     pending_retirements: AtomicUsize,
 
+    /// How many queued retirements are whole pages. A reclaim sweep has to
+    /// know whether any page retirement is queued behind the links it is
+    /// about to free, and the only way to answer that from the queue itself
+    /// is to scan all of it, on every sweep, which is quadratic in the
+    /// backlog. Pages are retired rarely, so counting them makes the answer
+    /// one relaxed load in the case that matters.
+    queued_page_retirements: AtomicUsize,
+
     /// Pages vector. Currently, not lock free.
     pages: RwLock<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
 
@@ -331,9 +339,13 @@ where
     /// mutations for no reason.
     fn retire_many(&self, items: impl IntoIterator<Item = Retired<DATA_LENGTH>>) {
         let mut queued = 0usize;
+        let mut queued_pages = 0usize;
         let len = {
             let mut retired = self.retired.lock();
             for item in items {
+                if matches!(item, Retired::Page(_)) {
+                    queued_pages += 1;
+                }
                 retired.push_back(item);
                 queued += 1;
             }
@@ -341,6 +353,9 @@ where
         };
         if queued == 0 {
             return;
+        }
+        if queued_pages > 0 {
+            self.queued_page_retirements.fetch_add(queued_pages, Ordering::Release);
         }
         self.pending_retirements.fetch_add(queued, Ordering::Release);
         if len >= RETIREMENT_BACKLOG_WARN_AT && len.is_power_of_two() {
@@ -396,13 +411,29 @@ where
         // link is skipped when its page's retirement is queued anywhere
         // behind it, and a page purges its stale links on processing, so the
         // invariant holds across batch boundaries in both directions.
-        let queued_pages: HashSet<PageId> = retired
-            .iter()
-            .filter_map(|item| match item {
-                Retired::Page(page_id) => Some(*page_id),
-                _ => None,
-            })
-            .collect();
+        //
+        // Building that set means reading the whole queue, so it is built
+        // only when a page retirement is actually queued. Otherwise every
+        // sweep would scan the entire backlog to learn there is nothing to
+        // skip, which is quadratic in the backlog and shows up the moment
+        // reclamation runs behind the mutations feeding it.
+        let queued_pages: HashSet<PageId> = if self.queued_page_retirements.load(Ordering::Acquire) == 0 {
+            HashSet::new()
+        } else {
+            retired
+                .iter()
+                .filter_map(|item| match item {
+                    Retired::Page(page_id) => Some(*page_id),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        // Freed links are collected and restored together. Reclamation runs
+        // in retirement order, so a workload deleting in key order frees a
+        // contiguous run, and the registry can merge such a run into a single
+        // insertion instead of coalescing once per link.
+        let mut freed: Vec<Link> = Vec::new();
 
         for _ in 0..take {
             let Some(item) = retired.pop_front() else {
@@ -413,21 +444,33 @@ where
                     let key = OffsetEqLink(link);
                     self.published_rows[publication_shard(&key)].write().remove(&key);
                     if !queued_pages.contains(&link.page_id) {
-                        self.empty_links.push(link);
+                        freed.push(link);
                     }
                 }
                 Retired::Publication(key) => {
                     self.published_rows[publication_shard(&key)].write().remove(&key);
                 }
                 Retired::Page(page_id) => {
+                    // `queued_pages` has already kept this page's links out of
+                    // the buffer, so flushing here is not what upholds the
+                    // invariant. It keeps the buffer from outliving a purge
+                    // regardless: batching is a change to *when* links are
+                    // restored, and the one ordering that must not drift is
+                    // restoring them after a page they belong to was reset.
+                    self.empty_links.push_many(&freed);
+                    freed.clear();
+
                     // Purge stale fragments of this page from the link
                     // allocator before exposing the whole page for reuse.
                     self.empty_links.remove_link_for_page(page_id);
                     self.empty_pages.write().push_back(page_id);
+                    self.queued_page_retirements.fetch_sub(1, Ordering::Release);
                 }
             }
             self.pending_retirements.fetch_sub(1, Ordering::Release);
         }
+
+        self.empty_links.push_many(&freed);
     }
 
     pub fn new() -> Self {
@@ -437,6 +480,7 @@ where
             retired: Mutex::new(VecDeque::new()),
             reclaimable: Arc::new(AtomicUsize::new(0)),
             pending_retirements: AtomicUsize::new(0),
+            queued_page_retirements: AtomicUsize::new(0),
             // We are starting ID's from `1` because `0`'s page in file is info page.
             pages: RwLock::new(vec![Arc::new(Data::new(1.into()))]),
             empty_links: EmptyLinkRegistry::<DATA_LENGTH>::default(),
@@ -459,6 +503,7 @@ where
                 retired: Mutex::new(VecDeque::new()),
                 reclaimable: Arc::new(AtomicUsize::new(0)),
                 pending_retirements: AtomicUsize::new(0),
+                queued_page_retirements: AtomicUsize::new(0),
                 pages: RwLock::new(vec),
                 empty_links: EmptyLinkRegistry::default(),
                 empty_pages: Default::default(),
@@ -1579,6 +1624,65 @@ mod tests {
                 .iter()
                 .all(|link| link.page_id != old_link.page_id),
             "whole-page and inner-link allocators must not receive overlapping storage"
+        );
+    }
+
+    /// The case a single-sweep test cannot reach: the link's grace period
+    /// expires before the page's, so one sweep frees the link while the whole
+    /// page retirement is still queued behind it.
+    ///
+    /// If the link were republished here, an insert could pop it and start
+    /// writing through it before the later sweep hands the same page to the
+    /// page allocator, which is two allocators owning overlapping storage.
+    /// The existing whole-page test processes both retirements in one sweep
+    /// and stays green even with the queued-page check disabled entirely;
+    /// this one does not.
+    #[test]
+    fn a_link_is_not_reused_while_its_page_retirement_is_still_queued() {
+        let pages = DataPages::<TestRow>::from_data(vec![
+            Arc::new(Data::new(1.into())),
+            Arc::new(Data::new(2.into())),
+            Arc::new(Data::new(3.into())),
+        ]);
+        pages.current_page_id.store(2, Ordering::Release);
+        let old_link = pages.insert(TestRow { a: 1, b: 1 }).unwrap();
+        unsafe {
+            pages.with_mut_ref(old_link, |row| row.unghost()).unwrap();
+        }
+        pages.current_page_id.store(3, Ordering::Release);
+
+        // Queue the row's retirement and then the page's, with a reader
+        // pinned throughout so neither is reclaimed inline.
+        let read_guard = pages.read_guard();
+        pages.delete(old_link).unwrap();
+        pages.mark_page_empty(old_link.page_id);
+        drop(read_guard);
+
+        // Let exactly one retirement through. A sweep is capped at
+        // `RECLAIM_BATCH_LIMIT` and only drains what has actually expired, so
+        // a partial sweep is the ordinary case rather than a contrived one.
+        pages.reclaimable.store(1, Ordering::Release);
+        pages.reclaim_retired();
+
+        assert!(
+            pages
+                .get_empty_links()
+                .iter()
+                .all(|link| link.page_id != old_link.page_id),
+            "a link must not be handed back for reuse while its page is queued for whole-page reclamation"
+        );
+
+        // And once the page retirement is processed, the page itself is the
+        // thing that becomes reusable.
+        pages.reclaimable.store(1, Ordering::Release);
+        pages.reclaim_retired();
+        assert!(pages.get_empty_pages().contains(&old_link.page_id));
+        assert!(
+            pages
+                .get_empty_links()
+                .iter()
+                .all(|link| link.page_id != old_link.page_id),
+            "processing the page must not resurrect its inner links either"
         );
     }
 
