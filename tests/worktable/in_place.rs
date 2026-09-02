@@ -43,7 +43,7 @@ async fn test_update_val_by_id() -> eyre::Result<()> {
         another: "another".to_string(),
         something: 0,
     };
-    let pk = table.insert(row)?;
+    let pk = table.insert(row).await?;
     for _ in 0..10000 {
         table.update_val_by_id_in_place(|val| *val += 1, pk.0).await?
     }
@@ -63,7 +63,7 @@ async fn test_update_val2_by_id() -> eyre::Result<()> {
         another: "another".to_string(),
         something: 0,
     };
-    let pk = table.insert(row)?;
+    let pk = table.insert(row).await?;
     for _ in 0..100 {
         table.update_val_2_by_id_in_place(|val| *val += 1, pk.0).await?
     }
@@ -83,7 +83,7 @@ async fn test_update_val_by_id_two_thread() -> eyre::Result<()> {
         another: "another".to_string(),
         something: 0,
     };
-    let pk = table.insert(row)?;
+    let pk = table.insert(row).await?;
     let shared_table = table.clone();
     let h = tokio::spawn(async move {
         for _ in 0..10_000 {
@@ -113,7 +113,7 @@ async fn test_update_val_and_val2_by_id_four_thread() -> eyre::Result<()> {
         another: "another".to_string(),
         something: 0,
     };
-    let pk = table.insert(row)?;
+    let pk = table.insert(row).await?;
     let shared_table = table.clone();
     let h1 = tokio::spawn(async move {
         for _ in 0..10_000 {
@@ -164,7 +164,7 @@ async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
         another: "another".to_string(),
         something: 0,
     };
-    let pk = table.insert(row)?;
+    let pk = table.insert(row).await?;
     let shared_table = table.clone();
     let h1 = tokio::spawn(async move {
         for _ in 0..10_000 {
@@ -218,7 +218,7 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
             another: format!("another_{i}"),
             something: 0,
         };
-        let _ = table.insert(row.clone())?;
+        let _ = table.insert(row.clone()).await?;
     }
     let shared = table.clone();
     let shared_val_state = val_state.clone();
@@ -297,7 +297,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
             another: format!("another_{i}"),
             something: 0,
         };
-        let _ = table.insert(row.clone())?;
+        let _ = table.insert(row.clone()).await?;
     }
     let shared = table.clone();
     let shared_val_state = val_state.clone();

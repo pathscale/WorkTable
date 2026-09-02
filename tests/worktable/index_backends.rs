@@ -129,7 +129,7 @@ async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
         arctic_key: 14,
     };
 
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let second = MixedBackendRow {
         id: table.get_next_pk().into(),
         wti_key: 31,
@@ -137,7 +137,7 @@ async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
         congee_key: 33,
         arctic_key: 34,
     };
-    table.insert(second.clone()).unwrap();
+    table.insert(second.clone()).await.unwrap();
 
     assert_eq!(table.select(pk), Some(row.clone()));
     assert_eq!(table.select_by_wti_key(11), Some(row.clone()));
@@ -154,7 +154,7 @@ async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
             congee_key: if duplicate_backend == "congee" { 13 } else { base + 3 },
             arctic_key: if duplicate_backend == "arctic" { 14 } else { base + 4 },
         };
-        assert!(table.insert(candidate.clone()).is_err());
+        assert!(table.insert(candidate.clone()).await.is_err());
         assert!(table.select(candidate.id).is_none());
         if candidate.wti_key != 11 {
             assert!(table.select_by_wti_key(candidate.wti_key).is_none());
@@ -216,7 +216,7 @@ async fn alternative_primary_backends_support_point_crud() {
                 id: table.get_next_pk().into(),
                 value: 1,
             };
-            let pk = table.insert(original.clone()).unwrap();
+            let pk = table.insert(original.clone()).await.unwrap();
             assert_eq!(table.select(pk.clone()), Some(original.clone()));
 
             let updated = $row {
@@ -411,7 +411,7 @@ async fn native_art_backends_recover_concurrent_same_row_updates() {
     let engine = PersistedArcticPersistenceEngine::new(config.clone()).await.unwrap();
     let table = Arc::new(PersistedArcticWorkTable::load(engine).await.unwrap());
     let id = table.get_next_pk().0;
-    table.insert(PersistedArcticRow { id, congee_key: 1 }).unwrap();
+    table.insert(PersistedArcticRow { id, congee_key: 1 }).await.unwrap();
 
     let barrier = Arc::new(Barrier::new(WORKERS as usize + 1));
     let mut workers = Vec::new();
@@ -476,7 +476,7 @@ async fn logical_wti_recovers_concurrent_same_row_updates() {
     let engine = wti::ProviderSwitchPersistenceEngine::new(config.clone()).await.unwrap();
     let table = Arc::new(wti::ProviderSwitchWorkTable::load(engine).await.unwrap());
     let id: u64 = table.get_next_pk().into();
-    table.insert(wti::ProviderSwitchRow { id, unique_key: 1 }).unwrap();
+    table.insert(wti::ProviderSwitchRow { id, unique_key: 1 }).await.unwrap();
 
     let barrier = Arc::new(Barrier::new(WORKERS as usize + 1));
     let mut workers = Vec::new();

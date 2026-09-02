@@ -32,7 +32,7 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
                     non_unique: 0,
                     field: i as f64,
                 };
-                table.insert(row.clone()).unwrap();
+                table.insert(row.clone()).await.unwrap();
                 pks.push(row.id);
             }
             table.wait_for_ops().await.unwrap();
@@ -105,7 +105,7 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
                     non_unique: 0,
                     field: i as f64,
                 };
-                table.insert(row.clone()).unwrap();
+                table.insert(row.clone()).await.unwrap();
                 pks.push(row.id);
             }
             table.wait_for_ops().await.unwrap();
@@ -178,7 +178,7 @@ fn test_failed_delete_by_pk_doesnt_corrupt_persistence() {
                     non_unique: 0,
                     field: i as f64,
                 };
-                table.insert(row.clone()).unwrap();
+                table.insert(row.clone()).await.unwrap();
                 pks.push(row.id);
             }
             table.wait_for_ops().await.unwrap();

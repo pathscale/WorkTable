@@ -68,7 +68,7 @@ async fn concurrent_update_and_delete_never_panics() {
                     id: 1,
                     name: "restored".to_string(),
                     value: 0,
-                });
+                }).await;
                 tokio::task::yield_now().await;
             }
         })

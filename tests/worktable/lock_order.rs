@@ -89,7 +89,7 @@ async fn multi_row_update_locks_in_primary_key_order_not_index_order() {
     table
         .0
         .lock_manager
-        .insert(blocker_pk.clone(), Arc::new(tokio::sync::RwLock::new(blocker_state)));
+        .insert(blocker_pk.clone(), Arc::new(tokio::sync::RwLock::new(blocker_state))).await;
 
     let update_table = table.clone();
     let update = tokio::spawn(async move {

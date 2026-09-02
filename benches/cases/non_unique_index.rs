@@ -33,7 +33,7 @@ fn select_by_pk(c: &mut Criterion) {
                 value: fastrand::u64(..),
                 category: fastrand::u64(0..10),
             };
-            table.insert(row).unwrap()
+            table.insert(row).await.unwrap()
         })
         .collect();
 
@@ -54,7 +54,7 @@ fn select_by_non_unique_index(c: &mut Criterion) {
             value: fastrand::u64(..),
             category: i % 10,
         };
-        table.insert(row).unwrap();
+        table.insert(row).await.unwrap();
     }
 
     c.bench_function("non_unique_index_select_by_category", |b| {
@@ -77,7 +77,7 @@ fn update(c: &mut Criterion) {
                 value: i,
                 category: i % 10,
             };
-            pks.push(table.insert(row).unwrap());
+            pks.push(table.insert(row).await.unwrap());
         }
         pks
     });
@@ -108,7 +108,7 @@ fn delete(c: &mut Criterion) {
                     value: fastrand::u64(..),
                     category: fastrand::u64(0..10),
                 };
-                table.insert(row).unwrap()
+                table.insert(row).await.unwrap()
             },
             |pk: NonUniqueIndexPrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
@@ -176,7 +176,7 @@ fn batch_insert(c: &mut Criterion) {
                             value: i as u64,
                             category: (i % 10) as u64,
                         };
-                        table.insert(black_box(row)).unwrap();
+                        table.insert(black_box(row)).await.unwrap();
                     }
                     black_box(table)
                 },
@@ -202,7 +202,7 @@ fn batch_select_pk(c: &mut Criterion) {
                     value: fastrand::u64(..),
                     category: fastrand::u64(0..10),
                 };
-                table.insert(row).unwrap()
+                table.insert(row).await.unwrap()
             })
             .collect();
 

@@ -45,8 +45,8 @@ struct Model {
 
 impl Model {
     fn insert(&mut self, id: u64, score: u64, bucket: String) {
-        self.by_score.entry(score).or_default().insert(id);
-        self.by_bucket.entry(bucket).or_default().insert(id);
+        self.by_score.entry(score).or_default().insert(id).await;
+        self.by_bucket.entry(bucket).or_default().insert(id).await;
     }
 
     fn remove(&mut self, id: u64) {
@@ -65,7 +65,7 @@ impl Model {
             ids.remove(&id);
             !ids.is_empty()
         });
-        self.by_score.entry(new_score).or_default().insert(id);
+        self.by_score.entry(new_score).or_default().insert(id).await;
     }
 
     /// Compares EXACT id sets, not counts: a count can pass while one link is
@@ -209,7 +209,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
                         label: format!("row-{i}-{}", "x".repeat((i % 50) as usize)),
                     })
                     .unwrap();
-                model.insert(i, i % KEYS, bucket);
+                model.insert(i, i % KEYS, bucket).await;
             }
 
             model.assert_matches(&table, "in-memory before first persist");
@@ -240,7 +240,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
                         label: format!("late-{j}"),
                     })
                     .unwrap();
-                model.insert(id, j % KEYS, bucket);
+                model.insert(id, j % KEYS, bucket).await;
             }
             // Deletes spread over every region of the key space (every 13th
             // row hits assorted in-node and boundary positions), plus one
@@ -410,7 +410,7 @@ fn test_duplicate_key_mutations_without_reload() {
                     label: format!("row-{i}-{}", "x".repeat((i % 50) as usize)),
                 })
                 .unwrap();
-            model.insert(i, i % KEYS, bucket);
+            model.insert(i, i % KEYS, bucket).await;
         }
         timeout(Duration::from_secs(30), table.wait_for_ops())
             .await
@@ -428,7 +428,7 @@ fn test_duplicate_key_mutations_without_reload() {
                     label: format!("late-{j}"),
                 })
                 .unwrap();
-            model.insert(id, j % KEYS, bucket);
+            model.insert(id, j % KEYS, bucket).await;
         }
         for id in (0..ROWS).step_by(13) {
             table.delete(id).await.unwrap();

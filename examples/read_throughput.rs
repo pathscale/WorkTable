@@ -94,7 +94,7 @@ fn write_pass(table: &Arc<BenchWorkTable>, links: &Arc<Vec<Link>>, threads: u64)
 fn main() {
     let table = Arc::new(BenchWorkTable::default());
     for id in 0..ROWS {
-        table.insert(BenchRow { id, value: id * 3 }).unwrap();
+        table.insert(BenchRow { id, value: id * 3 }).await.unwrap();
     }
 
     let links: Arc<Vec<Link>> = Arc::new(
@@ -153,7 +153,7 @@ fn main() {
     rt.block_on(async {
         for i in 0..CHURN {
             let id = ROWS + (i % 64);
-            table.insert(BenchRow { id, value: i }).unwrap();
+            table.insert(BenchRow { id, value: i }).await.unwrap();
             table.delete(id).await.unwrap();
         }
     });

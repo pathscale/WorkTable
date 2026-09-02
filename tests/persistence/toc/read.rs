@@ -309,7 +309,7 @@ async fn test_truncated_table_of_contents_is_an_error_not_an_empty_index() {
     // A DATA_LENGTH of 20 forces the table of contents to span several pages.
     let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(1)));
     for key in 0..10 {
-        toc.insert(key, u32::from(key).into());
+        toc.insert(key, u32::from(key).into()).await;
     }
     assert!(toc.pages.len() > 1, "fixture must span TOC pages");
     toc.persist(&mut file).await.unwrap();

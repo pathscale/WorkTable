@@ -142,7 +142,7 @@ async fn delete_during_insert_publication_window_returns_not_found() {
     const KEY: u64 = 7;
     let row = UpsertChurnRow { id: KEY, val: 11 };
 
-    let link = table.0.data.insert(row.clone()).unwrap();
+    let link = table.0.data.insert(row.clone()).await.unwrap();
     assert!(
         table
             .0

@@ -48,7 +48,7 @@ async fn unique_update_does_not_mutate_a_row_that_stole_the_value() {
     table
         .0
         .lock_manager
-        .insert(pk.clone(), Arc::new(tokio::sync::RwLock::new(blocker_state)));
+        .insert(pk.clone(), Arc::new(tokio::sync::RwLock::new(blocker_state))).await;
 
     let update = {
         let table = table.clone();

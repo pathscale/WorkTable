@@ -62,8 +62,8 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                     exchange: format!("test{i}"),
                 };
                 let id = row.id;
-                table.insert(row.clone()).unwrap();
-                rows.insert(id, row);
+                table.insert(row.clone()).await.unwrap();
+                rows.insert(id, row).await;
             }
 
             let mut ids: Vec<_> = rows.keys().cloned().collect();
@@ -103,8 +103,8 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                     exchange: format!("test{i}"),
                 };
                 let id = row.id;
-                table.insert(row.clone()).unwrap();
-                rows.insert(id, row);
+                table.insert(row.clone()).await.unwrap();
+                rows.insert(id, row).await;
                 if i % 50 == 49 {
                     timeout(Duration::from_secs(30), table.wait_for_ops())
                         .await
@@ -155,8 +155,8 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             };
             let reused_id = reused_row.id;
             reused_after_reload_id = reused_id;
-            table.insert(reused_row.clone()).unwrap();
-            rows.insert(reused_id, reused_row);
+            table.insert(reused_row.clone()).await.unwrap();
+            rows.insert(reused_id, reused_row).await;
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
                 .expect("persistence should catch up after durable page reuse")
@@ -194,7 +194,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                 another: 1_101,
                 exchange: "second-reuse-after-reload".to_string(),
             };
-            table.insert(second_reused_row).unwrap();
+            table.insert(second_reused_row).await.unwrap();
             timeout(Duration::from_secs(30), table.wait_for_ops())
                 .await
                 .expect("persistence should catch up after a second durable page reuse")

@@ -139,7 +139,16 @@ impl InMemoryGenerator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
 
         quote! {
-            pub fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+            /// Inserts one row.
+            ///
+            /// `async` like every other write on this table. It waits on
+            /// nothing today: cell-level locking makes an update wait on the
+            /// readers of the cells it touches, and an insert has no existing
+            /// cell to contend on. It is async anyway because a write surface
+            /// where the caller has to know which operations happen to need a
+            /// cell lock is one where `let _ = table.upsert(row)` compiles,
+            /// drops the future, and loses the write.
+            pub async fn insert(&self, row: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
                 self.0.insert(row)
             }
         }
@@ -157,7 +166,7 @@ impl InMemoryGenerator {
             /// concurrent readers ever observing a value, and the error names
             /// the offending row and index. After `Ok`, every row is visible
             /// to reads.
-            pub fn insert_many(&self, rows: Vec<#row_type>) -> core::result::Result<Vec<#primary_key_type>, BatchInsertError> {
+            pub async fn insert_many(&self, rows: Vec<#row_type>) -> core::result::Result<Vec<#primary_key_type>, BatchInsertError> {
                 self.0.insert_many(rows)
             }
         }
@@ -249,7 +258,7 @@ impl InMemoryGenerator {
             pub async fn upsert(&self, row: #row_type) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 if !self.0.primary_index.pk_map.contains_key(&pk) {
-                    match self.insert(row.clone()) {
+                    match self.insert(row.clone()).await {
                         core::result::Result::Ok(_) => return core::result::Result::Ok(()),
                         core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) => {}
                         core::result::Result::Err(e) => return core::result::Result::Err(e),
@@ -272,7 +281,7 @@ impl InMemoryGenerator {
                         // the synchronous insertion protocol, then retry the
                         // locked decision if another writer won the race.
                         drop(guard);
-                        match self.insert(row.clone()) {
+                        match self.insert(row.clone()).await {
                             core::result::Result::Ok(_) => core::result::Result::Ok(()),
                             core::result::Result::Err(WorkTableError::PrimaryAlreadyExists) =>
                                 core::result::Result::Err(WorkTableError::NotFound),

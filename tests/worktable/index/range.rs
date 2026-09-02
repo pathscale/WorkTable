@@ -39,7 +39,7 @@ async fn idle_select_builder_does_not_pin_retired_links() {
         id: table.get_next_pk().into(),
         num: 1,
     };
-    let first_pk = table.insert(first).unwrap();
+    let first_pk = table.insert(first).await.unwrap();
     let first_link = table.0.primary_index.pk_map.get_value(&first_pk).unwrap().0;
 
     // Construct the lazy query but do not consume it. Query configuration is
@@ -51,7 +51,7 @@ async fn idle_select_builder_does_not_pin_retired_links() {
         id: table.get_next_pk().into(),
         num: 2,
     };
-    let second_pk = table.insert(second).unwrap();
+    let second_pk = table.insert(second).await.unwrap();
     let second_link = table.0.primary_index.pk_map.get_value(&second_pk).unwrap().0;
 
     assert_eq!(
@@ -74,8 +74,8 @@ fn range_read_revalidates_each_resolved_row() {
         value: 100,
         name: "outside".to_string(),
     };
-    table.insert(inside.clone()).unwrap();
-    table.insert(outside.clone()).unwrap();
+    table.insert(inside.clone()).await.unwrap();
+    table.insert(outside.clone()).await.unwrap();
 
     let outside_link = table
         .0

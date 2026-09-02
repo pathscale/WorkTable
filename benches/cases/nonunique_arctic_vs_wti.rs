@@ -58,7 +58,7 @@ fn populated_wti(fan_out: u64, keys: u64) -> WtiStringAdjacencyWorkTable {
                 source: string_key(key),
                 payload: copy,
             };
-            table.insert(row).unwrap();
+            table.insert(row).await.unwrap();
         }
     }
     table
@@ -73,7 +73,7 @@ fn populated_arctic(fan_out: u64, keys: u64) -> ArcticHashAdjacencyWorkTable {
                 source: hash_of(key),
                 payload: copy,
             };
-            table.insert(row).unwrap();
+            table.insert(row).await.unwrap();
         }
     }
     table
@@ -116,7 +116,7 @@ fn insert(c: &mut Criterion) {
                     source: string_key(fastrand::u64(0..keys)),
                     payload: u64::MAX,
                 },
-                |row| table.insert(black_box(row)).unwrap(),
+                |row| table.insert(black_box(row)).await.unwrap(),
                 BatchSize::SmallInput,
             )
         });
@@ -129,7 +129,7 @@ fn insert(c: &mut Criterion) {
                     source: hash_of(fastrand::u64(0..keys)),
                     payload: u64::MAX,
                 },
-                |row| table.insert(black_box(row)).unwrap(),
+                |row| table.insert(black_box(row)).await.unwrap(),
                 BatchSize::SmallInput,
             )
         });

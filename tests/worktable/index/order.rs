@@ -50,7 +50,7 @@ async fn insert_failure_rollback_order() {
         field_b: 1,
         field_c: 1,
     };
-    let pk1 = table.insert(row1).unwrap();
+    let pk1 = table.insert(row1).await.unwrap();
     let pk1_val: u64 = pk1.into();
     assert_eq!(pk1_val, 0u64);
 
@@ -60,7 +60,7 @@ async fn insert_failure_rollback_order() {
         field_b: 2,
         field_c: 2,
     };
-    let err = table.insert(row2).unwrap_err();
+    let err = table.insert(row2).await.unwrap_err();
 
     let err_str = err.to_string();
     assert!(
@@ -81,7 +81,7 @@ async fn insert_success_order() {
         field_c: 100,
     };
 
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let pk_val: u64 = pk.into();
     assert_eq!(pk_val, 0u64);
 

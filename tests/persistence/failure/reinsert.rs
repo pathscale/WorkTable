@@ -24,7 +24,7 @@ fn test_reinsert_pk_mismatch() {
                 unique_a: 100,
                 unique_b: 200,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -39,14 +39,14 @@ fn test_reinsert_pk_mismatch() {
                 unique_a: 1000,
                 unique_b: 1001,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = TwoUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 2000,
                 unique_b: 2001,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -64,7 +64,7 @@ fn test_reinsert_pk_mismatch() {
                 unique_a: 3000,
                 unique_b: 3001,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -108,14 +108,14 @@ fn test_reinsert_two_indexes_first_fail() {
                 unique_a: 100,
                 unique_b: 200,
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = TwoUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 300,
                 unique_b: 400,
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id, row1.unique_a)
@@ -131,14 +131,14 @@ fn test_reinsert_two_indexes_first_fail() {
                 unique_a: 1000,
                 unique_b: 1001,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = TwoUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 2000,
                 unique_b: 2001,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -156,7 +156,7 @@ fn test_reinsert_two_indexes_first_fail() {
                 unique_a: 3000,
                 unique_b: 3001,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -206,14 +206,14 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_a: 100,
                 unique_b: 200,
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = TwoUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 300,
                 unique_b: 400,
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             row1.unique_b
@@ -229,14 +229,14 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_a: 1000,
                 unique_b: 1001,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = TwoUniqueIdxRow {
                 id: table.get_next_pk().0,
                 unique_a: 2000,
                 unique_b: 2001,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -256,7 +256,7 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_a: 3000,
                 unique_b: 3001,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -274,7 +274,7 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_a: 500,
                 unique_b: 600,
             };
-            assert!(table.insert(new_row).is_ok(), "BUG: orphaned entry in unique_a_idx!");
+            assert!(table.insert(new_row).await.is_ok(), "BUG: orphaned entry in unique_a_idx!");
             table.wait_for_ops().await.unwrap();
         }
     });
@@ -304,7 +304,7 @@ fn test_reinsert_three_indexes_first_fail() {
                 unique_b: 200,
                 unique_c: 300,
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = ThreeUniqueIdxRow {
                 id: table.get_next_pk().0,
@@ -312,7 +312,7 @@ fn test_reinsert_three_indexes_first_fail() {
                 unique_b: 500,
                 unique_c: 600,
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             row1.unique_a
@@ -329,7 +329,7 @@ fn test_reinsert_three_indexes_first_fail() {
                 unique_b: 1001,
                 unique_c: 1002,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = ThreeUniqueIdxRow {
                 id: table.get_next_pk().0,
@@ -337,7 +337,7 @@ fn test_reinsert_three_indexes_first_fail() {
                 unique_b: 2001,
                 unique_c: 2002,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -359,7 +359,7 @@ fn test_reinsert_three_indexes_first_fail() {
                 unique_b: 3001,
                 unique_c: 3002,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -405,7 +405,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_b: 200,
                 unique_c: 300,
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = ThreeUniqueIdxRow {
                 id: table.get_next_pk().0,
@@ -413,7 +413,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_b: 500,
                 unique_c: 600,
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             row1.unique_b
@@ -430,7 +430,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_b: 1001,
                 unique_c: 1002,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = ThreeUniqueIdxRow {
                 id: table.get_next_pk().0,
@@ -438,7 +438,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_b: 2001,
                 unique_c: 2002,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -460,7 +460,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_b: 3001,
                 unique_c: 3002,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -479,7 +479,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_b: 900,
                 unique_c: 1000,
             };
-            assert!(table.insert(new_row).is_ok(), "BUG: orphaned entry!");
+            assert!(table.insert(new_row).await.is_ok(), "BUG: orphaned entry!");
             table.wait_for_ops().await.unwrap();
         }
     });
@@ -509,7 +509,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_b: 200,
                 unique_c: 300,
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = ThreeUniqueIdxRow {
                 id: table.get_next_pk().0,
@@ -517,7 +517,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_b: 500,
                 unique_c: 600,
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             row1.unique_c
@@ -534,7 +534,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_b: 1001,
                 unique_c: 1002,
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = ThreeUniqueIdxRow {
                 id: table.get_next_pk().0,
@@ -542,7 +542,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_b: 2001,
                 unique_c: 2002,
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -564,7 +564,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_b: 3001,
                 unique_c: 3002,
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -583,7 +583,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_b: 800,
                 unique_c: 900,
             };
-            assert!(table.insert(new_row).is_ok(), "BUG: orphaned entries!");
+            assert!(table.insert(new_row).await.is_ok(), "BUG: orphaned entries!");
             table.wait_for_ops().await.unwrap();
         }
     });

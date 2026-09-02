@@ -75,8 +75,8 @@ fn test_bulk_insert_delete_persistence() {
                     exchange: format!("test{i}"),
                 };
                 let id = row.id;
-                table.insert(row.clone()).unwrap();
-                rows.insert(id, row);
+                table.insert(row.clone()).await.unwrap();
+                rows.insert(id, row).await;
             }
 
             let mut ids: Vec<_> = rows.keys().cloned().collect();

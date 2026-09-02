@@ -23,7 +23,7 @@ async fn update_two_via_query_unique_indexes() {
     let attr1_new = "1337".to_string();
     let attr2_new = 1337;
 
-    let _ = test_table.insert(row.clone()).unwrap();
+    let _ = test_table.insert(row.clone()).await.unwrap();
     test_table
         .update_unique_two_attr_by_third(
             UniqueTwoAttrByThirdQuery {
@@ -60,7 +60,7 @@ async fn update_with_reinsert_and_secondary_unique_violation() {
         attr3: 65000,
         id: 0,
     };
-    test_table.insert(row1.clone()).unwrap();
+    test_table.insert(row1.clone()).await.unwrap();
     let row2 = Test3UniqueRow {
         val: 1,
         attr1: "TEST__________________1".to_string(),
@@ -68,7 +68,7 @@ async fn update_with_reinsert_and_secondary_unique_violation() {
         attr3: 65001,
         id: 1,
     };
-    test_table.insert(row2.clone()).unwrap();
+    test_table.insert(row2.clone()).await.unwrap();
     let update = UniqueTwoAttrByThirdQuery {
         attr1: row2.attr1.clone(),
         attr2: 999,
@@ -100,7 +100,7 @@ async fn update_with_secondary_unique_violation() {
         attr3: 65000,
         id: 0,
     };
-    test_table.insert(row1.clone()).unwrap();
+    test_table.insert(row1.clone()).await.unwrap();
     let row2 = Test3UniqueRow {
         val: 1,
         attr1: "TEST__________________1".to_string(),
@@ -108,7 +108,7 @@ async fn update_with_secondary_unique_violation() {
         attr3: 65001,
         id: 1,
     };
-    test_table.insert(row2.clone()).unwrap();
+    test_table.insert(row2.clone()).await.unwrap();
     let update = UniqueTwoAttrByThirdQuery {
         attr1: row1.attr1.clone(),
         attr2: row2.attr2,
@@ -148,7 +148,7 @@ async fn update_two_via_query_non_unique_indexes() {
     let attr1_new = "1337".to_string();
     let attr2_new = 1337;
 
-    let _ = test_table.insert(row.clone()).unwrap();
+    let _ = test_table.insert(row.clone()).await.unwrap();
     test_table
         .update_two_attr_by_third(
             TwoAttrByThirdQuery {

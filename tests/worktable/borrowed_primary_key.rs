@@ -34,7 +34,7 @@ async fn string_primary_key_accepts_borrowed_forms() {
         id: id.clone(),
         value: 7,
     };
-    table.insert(row.clone()).unwrap();
+    table.insert(row.clone()).await.unwrap();
 
     assert_eq!(table.select(&id), Some(row.clone()));
     assert_eq!(table.select(id.as_str()), Some(row.clone()));
@@ -73,7 +73,7 @@ async fn tuple_primary_key_accepts_a_borrowed_tuple() {
         record: key.1.clone(),
         value: 11,
     };
-    table.insert(row.clone()).unwrap();
+    table.insert(row.clone()).await.unwrap();
 
     assert_eq!(table.select(&key), Some(row));
     table.delete(&key).await.unwrap();

@@ -30,7 +30,7 @@ async fn _rw_lock_hash_map_vs_wt() {
     for i in 0..100u64 {
         let mut map = hash_map.write().await;
         let s: String = Alphanumeric.sample_string(&mut rand::rng(), 8);
-        map.insert(i, s);
+        map.insert(i, s).await;
     }
     println!("map insert in {} μs", map_start.elapsed().as_micros());
 
@@ -38,7 +38,7 @@ async fn _rw_lock_hash_map_vs_wt() {
     for i in 0..100 {
         let s: String = Alphanumeric.sample_string(&mut rand::rng(), 8);
         let row = MapRow { id: i, value: s };
-        wt.insert(row).unwrap();
+        wt.insert(row).await.unwrap();
     }
     println!("wt insert in {} μs", wt_start.elapsed().as_micros());
 
@@ -49,13 +49,13 @@ async fn _rw_lock_hash_map_vs_wt() {
         for i in 0..100000u64 {
             let mut map = task_map.write().await;
             let s: String = Alphanumeric.sample_string(&mut rand::rng(), 8);
-            map.insert((i % 50) * 2, s);
+            map.insert((i % 50) * 2, s).await;
         }
     });
     for i in 0..100000u64 {
         let mut map = hash_map.write().await;
         let s: String = Alphanumeric.sample_string(&mut rand::rng(), 8);
-        map.insert((i % 50) * 2 + 1, s);
+        map.insert((i % 50) * 2 + 1, s).await;
     }
     h.await.unwrap();
     println!("map update in {} μs", map_start.elapsed().as_micros());

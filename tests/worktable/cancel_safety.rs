@@ -29,7 +29,7 @@ fn install_blocker(table: &CancelSafetyWorkTable, pk: &CancelSafetyPrimaryKey) -
     table
         .0
         .lock_manager
-        .insert(pk.clone(), Arc::new(tokio::sync::RwLock::new(blocker_state)));
+        .insert(pk.clone(), Arc::new(tokio::sync::RwLock::new(blocker_state))).await;
     blocker
 }
 

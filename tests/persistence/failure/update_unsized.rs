@@ -26,7 +26,7 @@ fn test_update_unsized_same_size() {
                 unique_value: 10,
                 name: "aaa".to_string(),
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -34,7 +34,7 @@ fn test_update_unsized_same_size() {
                 unique_value: 20,
                 name: "bbb".to_string(),
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
 
             let row3 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -42,7 +42,7 @@ fn test_update_unsized_same_size() {
                 unique_value: 30,
                 name: "ccc".to_string(),
             };
-            table.insert(row3.clone()).unwrap();
+            table.insert(row3.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id, row3.id)
@@ -59,7 +59,7 @@ fn test_update_unsized_same_size() {
                 unique_value: 1000,
                 name: "xxx".to_string(),
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -67,7 +67,7 @@ fn test_update_unsized_same_size() {
                 unique_value: 2000,
                 name: "yyy".to_string(),
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -84,7 +84,7 @@ fn test_update_unsized_same_size() {
                 unique_value: 3000,
                 name: "zzz".to_string(),
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -129,7 +129,7 @@ fn test_update_unsized_larger_all_success() {
                 unique_value: 10,
                 name: "a".to_string(),
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -145,7 +145,7 @@ fn test_update_unsized_larger_all_success() {
                 unique_value: 1000,
                 name: "xxx".to_string(),
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -153,7 +153,7 @@ fn test_update_unsized_larger_all_success() {
                 unique_value: 2000,
                 name: "yyy".to_string(),
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -171,7 +171,7 @@ fn test_update_unsized_larger_all_success() {
                 unique_value: 3000,
                 name: "zzz".to_string(),
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -215,7 +215,7 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 99,
                 name: "x".to_string(),
             };
-            table.insert(conflict.clone()).unwrap();
+            table.insert(conflict.clone()).await.unwrap();
 
             let row1 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -223,7 +223,7 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 10,
                 name: "a".to_string(),
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -231,7 +231,7 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 20,
                 name: "b".to_string(),
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
 
             let row3 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -239,7 +239,7 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 30,
                 name: "c".to_string(),
             };
-            table.insert(row3.clone()).unwrap();
+            table.insert(row3.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             (conflict.id, row2.id, row3.id)
@@ -256,7 +256,7 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 1000,
                 name: "xxx".to_string(),
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -264,7 +264,7 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 2000,
                 name: "yyy".to_string(),
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -282,7 +282,7 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 3000,
                 name: "zzz".to_string(),
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await
@@ -334,7 +334,7 @@ fn test_update_unsized_larger_last_fail() {
                 unique_value: 10,
                 name: "a".to_string(),
             };
-            table.insert(row1.clone()).unwrap();
+            table.insert(row1.clone()).await.unwrap();
 
             let row2 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -342,7 +342,7 @@ fn test_update_unsized_larger_last_fail() {
                 unique_value: 20,
                 name: "b".to_string(),
             };
-            table.insert(row2.clone()).unwrap();
+            table.insert(row2.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             (row1.id, row2.id)
@@ -359,7 +359,7 @@ fn test_update_unsized_larger_last_fail() {
                 unique_value: 1000,
                 name: "xxx".to_string(),
             };
-            table.insert(valid_row1).unwrap();
+            table.insert(valid_row1).await.unwrap();
 
             let valid_row2 = NonUniqueUnsizedRow {
                 id: table.get_next_pk().0,
@@ -367,7 +367,7 @@ fn test_update_unsized_larger_last_fail() {
                 unique_value: 2000,
                 name: "yyy".to_string(),
             };
-            table.insert(valid_row2).unwrap();
+            table.insert(valid_row2).await.unwrap();
 
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -385,7 +385,7 @@ fn test_update_unsized_larger_last_fail() {
                 unique_value: 3000,
                 name: "zzz".to_string(),
             };
-            table.insert(valid_row3).unwrap();
+            table.insert(valid_row3).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await

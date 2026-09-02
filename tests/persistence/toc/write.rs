@@ -13,7 +13,7 @@ async fn test_persist_index_table_of_contents() {
     let mut toc = IndexTableOfContents::<u32, { INNER_PAGE_SIZE as u32 }>::new(0.into(), Arc::new(AtomicU32::new(1)));
     // Compile-time compatibility regression: the public API before PR #63
     // returned unit, including for callers that bind the expression's type.
-    let _: () = toc.insert(13, 1.into());
+    let _: () = toc.insert(13, 1.into()).await;
     let mut file = File::create("tests/data/persist_index_table_of_contents.wt.idx")
         .await
         .unwrap();

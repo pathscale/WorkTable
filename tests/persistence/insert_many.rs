@@ -59,12 +59,12 @@ fn batch_insert_survives_reload() {
             // Multi operations.
             for _ in 0..3 {
                 let id: u64 = table.get_next_pk().into();
-                table.insert(row(id, 10_000 + id as u128)).unwrap();
+                table.insert(row(id, 10_000 + id as u128)).await.unwrap();
             }
 
             let range = table.reserve_pks(200);
             let rows: Vec<_> = range.clone().map(|id| row(id, 20_000 + id as u128)).collect();
-            let pks = table.insert_many(rows).unwrap();
+            let pks = table.insert_many(rows).await.unwrap();
             assert_eq!(pks.len(), 200);
 
             // Read-your-writes before any persistence wait.
@@ -74,7 +74,7 @@ fn batch_insert_survives_reload() {
 
             // Singles after the batch too.
             let id: u64 = table.get_next_pk().into();
-            table.insert(row(id, 30_000 + id as u128)).unwrap();
+            table.insert(row(id, 30_000 + id as u128)).await.unwrap();
 
             table.wait_for_ops().await.unwrap();
         }
@@ -124,13 +124,13 @@ fn rejected_batch_leaves_no_trace_after_reload() {
             let engine = BatchPersistPersistenceEngine::new(config.clone()).await.unwrap();
             let table = BatchPersistWorkTable::load(engine).await.unwrap();
 
-            table.insert(row(0, 999)).unwrap();
+            table.insert(row(0, 999)).await.unwrap();
 
             // Last row collides on the unique wallet index.
             let mut rows: Vec<_> = (1..20u64).map(|id| row(id, 40_000 + id as u128)).collect();
             rows.last_mut().unwrap().wallet = 999;
 
-            let error = table.insert_many(rows).unwrap_err();
+            let error = table.insert_many(rows).await.unwrap_err();
             match error {
                 BatchInsertError::Row { row_index, source } => {
                     assert_eq!(row_index, 18);
@@ -145,7 +145,7 @@ fn rejected_batch_leaves_no_trace_after_reload() {
             table.wait_for_ops().await.unwrap();
 
             // The pipeline stays usable for later batches.
-            let pks = table.insert_many((100..110u64).map(|id| row(id, 50_000 + id as u128)).collect());
+            let pks = table.insert_many((100..110u64).map(|id| row(id, 50_000 + id as u128)).collect()).await;
             assert_eq!(pks.unwrap().len(), 10);
             table.wait_for_ops().await.unwrap();
         }
@@ -187,12 +187,12 @@ fn batches_and_singles_interleave_through_the_engine() {
             let mut expected = 0u64;
             for round in 0..10u64 {
                 let single: u64 = table.get_next_pk().into();
-                table.insert(row(single, 60_000 + single as u128)).unwrap();
+                table.insert(row(single, 60_000 + single as u128)).await.unwrap();
                 expected += 1;
 
                 let range = table.reserve_pks(25);
                 let rows: Vec<_> = range.map(|id| row(id, 60_000 + id as u128)).collect();
-                table.insert_many(rows).unwrap();
+                table.insert_many(rows).await.unwrap();
                 expected += 25;
 
                 if round % 3 == 0 {

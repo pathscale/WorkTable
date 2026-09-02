@@ -30,7 +30,7 @@ async fn table_whose_data_file_ends_on_an_exact_page_boundary_loads() {
                 id: table.get_next_pk().into(),
                 another: i,
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             expected.push(row);
         }
         table.wait_for_ops().await.unwrap();

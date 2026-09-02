@@ -30,7 +30,7 @@ fn insert_many_returns_pks_and_reads_see_every_row() {
     let table = BatchWorkTable::default();
     let rows: Vec<_> = (0..10).map(|i| row(i, 100 + i)).collect();
 
-    let pks = table.insert_many(rows).unwrap();
+    let pks = table.insert_many(rows).await.unwrap();
 
     assert_eq!(pks.len(), 10);
     assert_eq!(table.count(), 10);
@@ -47,7 +47,7 @@ fn insert_many_returns_pks_and_reads_see_every_row() {
 #[test]
 fn insert_many_of_no_rows_is_ok() {
     let table = BatchWorkTable::default();
-    assert!(table.insert_many(vec![]).unwrap().is_empty());
+    assert!(table.insert_many(vec![]).await.unwrap().is_empty());
     assert_eq!(table.count(), 0);
 }
 
@@ -64,7 +64,7 @@ fn assert_batch_fully_rejected(table: &BatchWorkTable, batch: &[BatchRow], preex
 
 fn collision_case(collide_at: usize) {
     let table = BatchWorkTable::default();
-    table.insert(row(1000, 999)).unwrap();
+    table.insert(row(1000, 999)).await.unwrap();
 
     let batch: Vec<_> = (0..5)
         .map(|i| {
@@ -73,7 +73,7 @@ fn collision_case(collide_at: usize) {
         })
         .collect();
 
-    let error = table.insert_many(batch.clone()).unwrap_err();
+    let error = table.insert_many(batch.clone()).await.unwrap_err();
     match error {
         BatchInsertError::Row { row_index, source } => {
             assert_eq!(row_index, collide_at, "the offending row must be named");
@@ -103,7 +103,7 @@ fn collision_case(collide_at: usize) {
     assert_eq!(table.select_by_unique_value(999).unwrap().id, 1000);
 
     // The table stays fully usable after the rollback.
-    table.insert_many((0..5).map(|i| row(i, 200 + i)).collect()).unwrap();
+    table.insert_many((0..5).map(|i| row(i, 200 + i)).collect()).await.unwrap();
     assert_eq!(table.count(), 6);
 }
 
@@ -130,7 +130,7 @@ fn unique_collision_between_two_batch_rows_rejects_the_batch() {
     // Rows 1 and 4 collide with each other inside the batch.
     batch[4].unique_value = batch[1].unique_value;
 
-    let error = table.insert_many(batch.clone()).unwrap_err();
+    let error = table.insert_many(batch.clone()).await.unwrap_err();
     match error {
         BatchInsertError::Row { row_index, source } => {
             assert_eq!(row_index, 4, "the later of the two colliding rows is the offender");
@@ -152,7 +152,7 @@ fn duplicate_primary_key_inside_the_batch_rejects_the_batch() {
     let mut batch: Vec<_> = (0..4).map(|i| row(i, 400 + i)).collect();
     batch[3].id = batch[1].id;
 
-    let error = table.insert_many(batch).unwrap_err();
+    let error = table.insert_many(batch).await.unwrap_err();
     match error {
         BatchInsertError::Row { row_index, source } => {
             assert_eq!(row_index, 3);
@@ -166,10 +166,10 @@ fn duplicate_primary_key_inside_the_batch_rejects_the_batch() {
 #[test]
 fn duplicate_primary_key_with_an_existing_row_rejects_the_batch() {
     let table = BatchWorkTable::default();
-    table.insert(row(7, 500)).unwrap();
+    table.insert(row(7, 500)).await.unwrap();
 
     let batch = vec![row(20, 501), row(21, 502), row(7, 503)];
-    let error = table.insert_many(batch).unwrap_err();
+    let error = table.insert_many(batch).await.unwrap_err();
     match error {
         BatchInsertError::Row { row_index, source } => {
             assert_eq!(row_index, 2);
@@ -193,7 +193,7 @@ fn reserve_pks_hands_out_contiguous_keys_that_interleave_with_get_next_pk() {
     assert_eq!(after, range.end, "get_next_pk continues after the reservation");
 
     let rows: Vec<_> = range.clone().map(|id| row(id, 600 + id)).collect();
-    let pks = table.insert_many(rows).unwrap();
+    let pks = table.insert_many(rows).await.unwrap();
     assert_eq!(pks.len(), 5);
     for id in range {
         assert_eq!(table.select(id).unwrap().unique_value, 600 + id);
@@ -210,7 +210,7 @@ fn concurrent_reader_never_observes_a_rejected_batch() {
 
     let table = Arc::new(BatchWorkTable::default());
     // The poison row that every batch's last row collides with.
-    table.insert(row(5000, 999)).unwrap();
+    table.insert(row(5000, 999)).await.unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
     let reader_table = table.clone();
@@ -233,7 +233,7 @@ fn concurrent_reader_never_observes_a_rejected_batch() {
     for _ in 0..ITERATIONS {
         let mut batch: Vec<_> = (0..BATCH).map(|id| row(id, 700 + id)).collect();
         batch.last_mut().unwrap().unique_value = 999;
-        let error = table.insert_many(batch).unwrap_err();
+        let error = table.insert_many(batch).await.unwrap_err();
         assert!(matches!(error, BatchInsertError::Row { row_index, .. } if row_index == BATCH as usize - 1));
     }
 
@@ -290,7 +290,7 @@ fn concurrent_reader_sees_successful_batches_in_prefix_order() {
         let start = batch_index * BATCH;
         published_start.store(start, Ordering::Release);
         let rows: Vec<_> = (start..start + BATCH).map(|id| row(id, 1_000_000 + id)).collect();
-        table.insert_many(rows).unwrap();
+        table.insert_many(rows).await.unwrap();
     }
 
     stop.store(true, Ordering::Release);

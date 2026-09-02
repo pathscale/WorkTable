@@ -55,8 +55,8 @@ async fn vacuum_never_loses_surviving_rows() {
             value: i,
             data: format!("{i:04}-{}", "d".repeat(4_000)),
         };
-        table.insert(row.clone()).unwrap();
-        all.insert(row.id, row);
+        table.insert(row.clone()).await.unwrap();
+        all.insert(row.id, row).await;
     }
 
     // Delete every other row to leave fragmented source pages.
@@ -67,7 +67,7 @@ async fn vacuum_never_loses_surviving_rows() {
         if n % 2 == 0 {
             table.delete(*id).await.unwrap();
         } else {
-            survivors.insert(*id, all[id].clone());
+            survivors.insert(*id, all[id].clone()).await;
         }
     }
 

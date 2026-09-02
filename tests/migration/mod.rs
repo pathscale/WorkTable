@@ -307,7 +307,7 @@ fn test_next_pk_and_indexes_after_migration() {
                 created_at: ctx.default_created_at + 1,
             };
 
-            table.insert(inserted.clone()).unwrap();
+            table.insert(inserted.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             assert_eq!(table.count(), 3);

@@ -44,13 +44,13 @@ fn test_space_update_query_pk_sync() {
                 field: "".to_string(),
                 id: "Some string before".to_string(),
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             let row = TestSyncRow {
                 another: 43,
                 field: "".to_string(),
                 id: "Some string before 2".to_string(),
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -102,13 +102,13 @@ fn test_space_update_query_pk_many_times_sync() {
                 field: "".to_string(),
                 id: "Some string before".to_string(),
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             let row = TestSyncRow {
                 another: 43,
                 field: "".to_string(),
                 id: "Some string before 2".to_string(),
             };
-            table.insert(row.clone()).unwrap();
+            table.insert(row.clone()).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };

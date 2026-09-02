@@ -244,7 +244,11 @@ where
         };
         let pos = self.operations.push(value);
         row.pos = pos;
-        self.queue_inner_wt.insert(row)?;
+        // The core insert, not the generated wrapper. `push` is synchronous
+        // and is on the path that queues a persistence operation, so it cannot
+        // await; the wrapper is async only to keep the public write surface
+        // uniform, and the work underneath it is the same sync call.
+        self.queue_inner_wt.0.insert(row)?;
         Ok(())
     }
 
@@ -392,7 +396,7 @@ where
         for (pos, (op, mut row)) in queued_ops.into_iter().enumerate() {
             row.pos = pos;
             row.op_type = op.operation_type();
-            info_wt.insert(row)?;
+            info_wt.insert(row).await?;
             ops.push(op);
         }
 

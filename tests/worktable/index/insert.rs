@@ -31,7 +31,7 @@ async fn insert() {
         attr3: 123456789,
         attr4: "Attribute4".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, row);
@@ -57,8 +57,8 @@ fn unique_point_read_revalidates_the_returned_row() {
         attr3: 2,
         attr4: "second-unique".to_string(),
     };
-    table.insert(first.clone()).unwrap();
-    table.insert(second.clone()).unwrap();
+    table.insert(first.clone()).await.unwrap();
+    table.insert(second.clone()).await.unwrap();
 
     let second_link = table
         .0
@@ -87,7 +87,7 @@ async fn insert_when_pk_exists() {
         attr3: 123456789,
         attr4: "Attribute4".to_string(),
     };
-    let pk = table.insert(row.clone()).unwrap();
+    let pk = table.insert(row.clone()).await.unwrap();
 
     let next_row = TestRow {
         id: pk.0,
@@ -97,7 +97,7 @@ async fn insert_when_pk_exists() {
         attr3: 0,
         attr4: "Attributee".to_string(),
     };
-    assert!(table.insert(next_row.clone()).is_err());
+    assert!(table.insert(next_row.clone()).await.is_err());
     assert_eq!(table.select(pk.clone()).unwrap(), row);
     assert!(
         table
@@ -124,7 +124,7 @@ fn insert_when_secondary_unique_exists() {
         attr3: 123456789,
         attr4: "Attribute4".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     let next_row = TestRow {
         id: table.get_next_pk().into(),
@@ -134,7 +134,7 @@ fn insert_when_secondary_unique_exists() {
         attr3: 0,
         attr4: "Attributeee".to_string(),
     };
-    assert!(table.insert(next_row.clone()).is_err());
+    assert!(table.insert(next_row.clone()).await.is_err());
     assert!(
         table
             .0
@@ -167,7 +167,7 @@ fn insert_when_secondary_unique_string_exists() {
         attr3: 123456789,
         attr4: "Attribute4".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     let next_row = TestRow {
         id: table.get_next_pk().into(),
@@ -177,7 +177,7 @@ fn insert_when_secondary_unique_string_exists() {
         attr3: 0,
         attr4: "Attribute4".to_string(),
     };
-    assert!(table.insert(next_row.clone()).is_err());
+    assert!(table.insert(next_row.clone()).await.is_err());
     assert!(
         table
             .0
@@ -212,7 +212,7 @@ async fn insert_when_unique_violated() {
         attr3: 123456789,
         attr4: "Attribute4".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     let row_new_attr_2 = 128;
     let row_new_attr_4 = row.attr4.clone();
@@ -228,7 +228,7 @@ async fn insert_when_unique_violated() {
                 attr3: 123456789,
                 attr4: row_new_attr_4.clone(),
             };
-            assert!(shared.insert(row).is_err());
+            assert!(shared.insert(row).await.is_err());
         }
     });
 
@@ -257,7 +257,7 @@ fn insert_after_unique_violated() {
         attr3: 123456789,
         attr4: "Attribute4".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     let row_new_attr_2 = 128;
     let row_new_attr_4 = row.attr4.clone();
@@ -271,7 +271,7 @@ fn insert_after_unique_violated() {
             attr3: 123456789,
             attr4: row_new_attr_4.clone(),
         };
-        assert!(table.insert(row).is_err());
+        assert!(table.insert(row).await.is_err());
     }
 
     for i in 2..5_000 {
@@ -284,7 +284,7 @@ fn insert_after_unique_violated() {
             attr3: 123456789,
             attr4: format!("{i}"),
         };
-        assert!(table.insert(row).is_ok());
+        assert!(table.insert(row).await.is_ok());
     }
 }
 
@@ -300,7 +300,7 @@ async fn insert_when_pk_violated() {
         attr3: 123456789,
         attr4: "Attribute4".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     let id = row.id;
 
@@ -315,7 +315,7 @@ async fn insert_when_pk_violated() {
                 attr3: 123456789,
                 attr4: "Attribute__4".to_string(),
             };
-            assert!(shared.insert(row).is_err());
+            assert!(shared.insert(row).await.is_err());
         }
     });
 
@@ -353,7 +353,7 @@ fn insert_after_unique_violated_strings() {
         attr2: "Attribute_2".to_string(),
         attr3: "Attribute_3".to_string(),
     };
-    let _ = table.insert(row.clone()).unwrap();
+    let _ = table.insert(row.clone()).await.unwrap();
 
     let row_new_attr_3 = row.attr3.clone();
     for _ in 0..5_000 {
@@ -363,7 +363,7 @@ fn insert_after_unique_violated_strings() {
             attr2: "Attribute_2_NEW".to_string(),
             attr3: row_new_attr_3.clone(),
         };
-        assert!(table.insert(row).is_err());
+        assert!(table.insert(row).await.is_err());
     }
     let row_new_attr_2 = row.attr2.clone();
     for i in 0..5_000 {
@@ -373,7 +373,7 @@ fn insert_after_unique_violated_strings() {
             attr2: row_new_attr_2.clone(),
             attr3: format!("Attribute_3_{i}"),
         };
-        assert!(table.insert(row).is_err());
+        assert!(table.insert(row).await.is_err());
     }
 
     for i in 0..5_000 {
@@ -383,6 +383,6 @@ fn insert_after_unique_violated_strings() {
             attr2: format!("Attribute_2_{i}"),
             attr3: format!("Attribute_3_{i}"),
         };
-        assert!(table.insert(row).is_ok());
+        assert!(table.insert(row).await.is_ok());
     }
 }

@@ -30,7 +30,7 @@ fn select_by_pk(c: &mut Criterion) {
                 id: table.get_next_pk().into(),
                 value: fastrand::u64(..),
             };
-            table.insert(row).unwrap()
+            table.insert(row).await.unwrap()
         })
         .collect();
 
@@ -53,7 +53,7 @@ fn update(c: &mut Criterion) {
                 id: table.get_next_pk().into(),
                 value: i,
             };
-            pks.push(table.insert(row).unwrap());
+            pks.push(table.insert(row).await.unwrap());
         }
         pks
     });
@@ -82,7 +82,7 @@ fn delete(c: &mut Criterion) {
                     id: table.get_next_pk().into(),
                     value: fastrand::u64(..),
                 };
-                table.insert(row).unwrap()
+                table.insert(row).await.unwrap()
             },
             |pk: SimplePrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
@@ -146,7 +146,7 @@ fn batch_insert(c: &mut Criterion) {
                             id: table.get_next_pk().into(),
                             value: i as u64,
                         };
-                        table.insert(black_box(row)).unwrap();
+                        table.insert(black_box(row)).await.unwrap();
                     }
                     black_box(table)
                 },
@@ -171,7 +171,7 @@ fn batch_select_pk(c: &mut Criterion) {
                     id: table.get_next_pk().into(),
                     value: fastrand::u64(..),
                 };
-                table.insert(row).unwrap()
+                table.insert(row).await.unwrap()
             })
             .collect();
 

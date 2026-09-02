@@ -597,7 +597,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
                 third: "third_3".to_string(),
                 second: "second_3".to_string(),
                 last: "last_3".to_string(),
-            });
+            }).await;
 
             assert!(result.is_ok(), "TOC entry is stale after update with same index value");
 
@@ -742,7 +742,7 @@ fn test_unique_index_same_value_link_changes() {
                 third: "third_2".to_string(),
                 second: "unique_second_2".to_string(),
                 last: "last_2".to_string(),
-            });
+            }).await;
 
             assert!(
                 result.is_ok(),

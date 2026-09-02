@@ -41,7 +41,7 @@ fn row(id: u64, unique_value: u64, generation: u32) -> EvictRow {
 fn table_with(rows: u64) -> EvictWorkTable {
     let table = EvictWorkTable::default();
     let batch: Vec<_> = (0..rows).map(|i| row(i, 1_000 + i, (i % 4) as u32)).collect();
-    table.insert_many(batch).expect("fixture inserts");
+    table.insert_many(batch).await.expect("fixture inserts");
     table
 }
 
@@ -168,7 +168,7 @@ async fn bulk_delete_then_insert_reuses_storage() {
         let refill: Vec<_> = (0..100)
             .map(|i| row(i, 500_000 + cycle * 1_000 + i, (i % 4) as u32))
             .collect();
-        table.insert_many(refill).expect("refill");
+        table.insert_many(refill).await.expect("refill");
         assert_eq!(table.count(), before);
     }
 
