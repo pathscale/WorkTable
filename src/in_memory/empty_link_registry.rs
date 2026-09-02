@@ -149,9 +149,70 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     }
 
     pub fn push(&self, link: Link) {
-        let mut index_ord_link = IndexOrdLink(link);
         let _g = self.op_lock.lock();
+        self.push_locked(IndexOrdLink(link));
+    }
 
+    /// Restores several freed links in one pass.
+    ///
+    /// Reclamation frees links in retirement order, and in the common case
+    /// those links are adjacent: a range delete, or any workload that deletes
+    /// in primary key order, frees a contiguous run of them. Pushed one at a
+    /// time each link pays its own coalesce, and a coalesce is up to two
+    /// removals and one insertion across three ordered containers, so freeing
+    /// `n` adjacent links costs `n` times that. Merging the batch against
+    /// itself first turns a whole run into a single insertion, and the lock is
+    /// taken once rather than `n` times.
+    pub fn push_many(&self, links: &[Link]) {
+        match links {
+            [] => return,
+            [link] => return self.push(*link),
+            _ => {}
+        }
+
+        let runs = Self::merge_runs(links);
+
+        let _g = self.op_lock.lock();
+        for run in runs {
+            self.push_locked(run);
+        }
+    }
+
+    /// Merges a batch of freed links against itself, so a contiguous run
+    /// becomes one link before the registry ever sees it.
+    ///
+    /// Separate from [`push_many`] and pure, because the saving it represents
+    /// is invisible in the registry's final state: coalescing per link and
+    /// coalescing per run leave exactly the same contents, and differ only in
+    /// how much work they did to get there. A test can only hold onto that
+    /// difference by looking at this directly.
+    ///
+    /// [`push_many`]: Self::push_many
+    fn merge_runs(links: &[Link]) -> Vec<IndexOrdLink<DATA_LENGTH>> {
+        let mut sorted: Vec<IndexOrdLink<DATA_LENGTH>> = links.iter().copied().map(IndexOrdLink).collect();
+        sorted.sort_unstable();
+
+        // `unite_with_right_neighbor` already encodes both the same-page
+        // requirement and the adjacency test, so merging the sorted batch is
+        // the same rule the registry applies against its own contents.
+        let mut runs: Vec<IndexOrdLink<DATA_LENGTH>> = Vec::with_capacity(sorted.len());
+        for link in sorted {
+            match runs.last().and_then(|last| last.unite_with_right_neighbor(&link)) {
+                Some(united) => {
+                    if let Some(last) = runs.last_mut() {
+                        *last = united;
+                    }
+                }
+                None => runs.push(link),
+            }
+        }
+        runs
+    }
+
+    /// The body of [`push`], for callers already holding `op_lock`.
+    ///
+    /// [`push`]: Self::push
+    fn push_locked(&self, mut index_ord_link: IndexOrdLink<DATA_LENGTH>) {
         {
             let mut iter = self.index_ord_links.range(..index_ord_link).rev();
             if let Some(possible_left_neighbor) = iter.next()
@@ -250,6 +311,14 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn link(page_id: u32, offset: u32, length: u32) -> Link {
+        Link {
+            page_id: page_id.into(),
+            offset,
+            length,
+        }
+    }
 
     #[test]
     fn test_unite_with_right_neighbor() {
@@ -410,6 +479,117 @@ mod tests {
 
         assert_eq!(pop1.length, 100);
         assert_eq!(pop2.length, 50);
+    }
+
+    /// The batch path must land the registry in exactly the state the
+    /// one-at-a-time path would, for every shape of input: adjacent, gapped,
+    /// out of order, spread across pages, and duplicated. Comparing the two
+    /// registries rather than asserting a hand-written expectation is what
+    /// gives this teeth: `push_many` merging a run that `push` would not, or
+    /// dropping a link at a page boundary, shows up as a difference here
+    /// without anyone having to predict it.
+    #[test]
+    fn push_many_agrees_with_pushing_one_at_a_time() {
+        let cases: Vec<Vec<Link>> = vec![
+            // A contiguous run in order: the case reclamation actually hits.
+            (0..8).map(|i| link(1, i * 32, 32)).collect(),
+            // The same run shuffled, because retirement order is not
+            // allocation order once inserts reuse links.
+            vec![
+                link(1, 96, 32),
+                link(1, 0, 32),
+                link(1, 224, 32),
+                link(1, 32, 32),
+                link(1, 160, 32),
+            ],
+            // Two runs with a live row between them.
+            vec![link(1, 0, 32), link(1, 32, 32), link(1, 128, 32), link(1, 160, 32)],
+            // Adjacent offsets on different pages must not merge.
+            vec![link(1, 0, 32), link(2, 32, 32), link(2, 0, 32), link(3, 0, 32)],
+            // Uneven lengths, so a wrong merge changes a length rather than
+            // just a count.
+            vec![link(4, 0, 16), link(4, 16, 48), link(4, 64, 8)],
+            // A repeated link. Neither path deduplicates, so neither may
+            // start.
+            vec![link(5, 0, 32), link(5, 0, 32)],
+        ];
+
+        for (case, links) in cases.iter().enumerate() {
+            let one_at_a_time = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+            for l in links {
+                one_at_a_time.push(*l);
+            }
+
+            let batched = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+            batched.push_many(links);
+
+            let expected: Vec<Link> = one_at_a_time.iter().collect();
+            let actual: Vec<Link> = batched.iter().collect();
+            assert_eq!(actual, expected, "case {case}: registries diverged");
+            assert_eq!(
+                batched.get_empty_links_size_bytes(),
+                one_at_a_time.get_empty_links_size_bytes(),
+                "case {case}: byte totals diverged"
+            );
+        }
+    }
+
+    /// The reason the batch path exists, asserted where it is observable.
+    ///
+    /// It cannot be asserted through the registry: pushing eight adjacent
+    /// links one at a time and pushing them as one run both leave a registry
+    /// holding a single 256-byte link. The saving is the work done to get
+    /// there, so the merge is tested as the pure function it is. Deleting the
+    /// self-merge leaves every registry-level test green and fails this one.
+    #[test]
+    fn merging_a_batch_collapses_runs_before_the_registry_sees_them() {
+        // A contiguous run in retirement order.
+        let run: Vec<Link> = (0..8).map(|i| link(7, i * 32, 32)).collect();
+        let merged = EmptyLinkRegistry::<DATA_INNER_LENGTH>::merge_runs(&run);
+        assert_eq!(merged.len(), 1, "eight adjacent links are one insertion, not eight");
+        assert_eq!(merged[0].0.offset, 0);
+        assert_eq!(merged[0].0.length, 8 * 32);
+
+        // Out of order, because retirement order is not allocation order.
+        let shuffled = vec![link(7, 96, 32), link(7, 0, 32), link(7, 64, 32), link(7, 32, 32)];
+        let merged = EmptyLinkRegistry::<DATA_INNER_LENGTH>::merge_runs(&shuffled);
+        assert_eq!(merged.len(), 1, "sorting is what makes an out-of-order run mergeable");
+        assert_eq!(merged[0].0.length, 128);
+
+        // A gap splits the batch, and nothing merges across pages however
+        // adjacent the offsets look.
+        let split = vec![link(7, 0, 32), link(7, 32, 32), link(7, 128, 32)];
+        assert_eq!(EmptyLinkRegistry::<DATA_INNER_LENGTH>::merge_runs(&split).len(), 2);
+        let across_pages = vec![link(7, 0, 32), link(8, 32, 32)];
+        assert_eq!(
+            EmptyLinkRegistry::<DATA_INNER_LENGTH>::merge_runs(&across_pages).len(),
+            2,
+            "a page boundary is not an adjacency"
+        );
+
+        // Nothing is invented or dropped: the merged bytes equal the input.
+        let total: u64 = run.iter().map(|l| u64::from(l.length)).sum();
+        let merged_total: u64 = EmptyLinkRegistry::<DATA_INNER_LENGTH>::merge_runs(&run)
+            .iter()
+            .map(|l| u64::from(l.0.length))
+            .sum();
+        assert_eq!(merged_total, total);
+    }
+
+    /// A batch merged against itself still has to coalesce with what the
+    /// registry already holds on both sides.
+    #[test]
+    fn push_many_coalesces_with_links_already_registered() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+        registry.push(link(1, 0, 32));
+        registry.push(link(1, 160, 32));
+
+        registry.push_many(&[link(1, 64, 32), link(1, 32, 32), link(1, 96, 32), link(1, 128, 32)]);
+
+        assert_eq!(registry.len(), 1, "the batch should bridge the two registered links");
+        let (popped, _guard) = registry.pop_max().unwrap();
+        assert_eq!(popped.offset, 0);
+        assert_eq!(popped.length, 192);
     }
 
     #[test]
