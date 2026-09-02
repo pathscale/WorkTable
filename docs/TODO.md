@@ -3,58 +3,74 @@
 What is known to be unfinished, and enough context to act on it without the
 conversation it came from. Ordered by whether it blocks a release.
 
-Last reviewed 2026-09-01, against `feat/ps-reclaim-beta16`.
+Last reviewed 2026-09-02, against `deps/caret-not-locked`.
 
-## Blocking beta.16
+## Closed, and how
 
-### Publish `ps-reclaim` 0.1.1 and bump the pin
+### `ps-reclaim` 0.1.1 is published and pinned
 
-`Cargo.toml` pins `ps-reclaim = "0.1.0"`, and 0.1.0 has two defects, both fixed
-on `pathscale/ps-reclaim` master at `d207d06` and **not yet published**:
+Was blocking beta.16 and did not stop it. 0.1.0 had two defects, both fixed on
+`pathscale/ps-reclaim` master at `d207d06` and published as 0.1.1:
 
-- **`Guard` is `Send`** in 0.1.0, and its own documentation says it is not.
-  Nothing enforced it: every field was `Send`, so the auto trait applied.
-  Dropping a sent guard stores `NO_DOMAIN` into the *originating* thread's pin
-  slot while that thread may still be reading, and decrements the wrong
-  thread's `DEPTH`. Both are use-after-free windows. 0.1.1 makes it `!Send` by
-  construction (the packed field is a raw pointer) with a `compile_fail`
-  doctest holding it.
+- **`Guard` was `Send`**, and its own documentation said it was not. Nothing
+  enforced it: every field was `Send`, so the auto trait applied. Dropping a
+  sent guard stores `NO_DOMAIN` into the *originating* thread's pin slot while
+  that thread may still be reading, and decrements the wrong thread's `DEPTH`.
+  Both are use-after-free windows. 0.1.1 makes it `!Send` by construction (the
+  packed field is a raw pointer) with a `compile_fail` doctest holding it.
 - **`Guard` was three words** (`&Domain`, `&'static Participant`, `usize`)
   against `crossbeam-epoch`'s one pointer. `partition_ref` returns a
   `PartRef { guard, &T }` per call, so it paid that size on every lookup: 16
   bytes became 32. 0.1.1 packs the entry into the participant pointer's spare
   alignment bits (`Participant` is `#[repr(align(128))]`) and is one word.
 
-0.1.1 removes `Guard::domain` and `Guard::retire`. That is a breaking change
-and would normally take a minor bump, but `worktable` is the only consumer and
-it already calls `Domain::retire` directly, which exists in both. Both call
-sites here already moved to `self.epoch.retire(...)`, which
-works against 0.1.0 and 0.1.1 alike, so this repo is ready for the bump.
+`pathscale/ps-reclaim` also had no workflows at all, which is why both defects
+were found by hand from a downstream measurement rather than by a check. It now
+runs build, test, doctests, fmt, clippy and Miri under strict provenance, and
+publishes from master, on Ubicloud runners.
 
-Publishing is irreversible and needs a human. After it lands:
-`ps-reclaim = "0.1.1"` in `Cargo.toml`, then re-run the benchmarks below.
+### CI has run on this branch
+
+`.github/workflows/rust.yml` triggers on push to master and on pull requests
+targeting master, so a branch with no PR is only ever checked on somebody's
+laptop. PR #82 opened, all six jobs passed, and master has been green since.
+
+## Blocking beta.17
 
 ### Re-measure the partition regression
+
+Unchanged from the beta.16 review, and still the reason to be careful about
+what this release claims.
 
 The claim in `82bfdf6` that `crossbeam-epoch` and `ps-reclaim` are "within
 noise of each other (3.37 against 3.42)" is disputed by an interleaved A/B run:
 `partition_ref` measured 3.16-3.35 ns on beta.15 and 3.60-3.68 ns here, in both
 passes, with the two cleanest samples of the run showing the widest gap. The
-guard size above is the likely cause and the reason 0.1.1 exists.
+guard size, now fixed in 0.1.1, is the likely cause, so this wants re-running
+against 0.1.1 rather than re-running the old comparison.
 
-Not yet confirmed. Every attempt so far ran on a machine at load 4 to 24, where
-the control (`partition_lookup/cached_handle`, a pure dereference that cannot
-differ between versions) varied 3.6x. Re-run on a quiet box, alternate the tree
-order between passes, and reject the run if the control moves more than a few
-percent. Full brief, including exact commits and setup, at
-`~/code/wt-beta16-perf-brief.md`.
+Not yet confirmed either way. Every attempt so far ran on a machine at load 4
+to 24, where the control (`partition_lookup/cached_handle`, a pure dereference
+that cannot differ between versions) varied 3.6x. Re-run on a quiet box,
+alternate the tree order between passes, and reject the run if the control
+moves more than a few percent. Full brief, including exact commits and setup,
+at `~/code/wt-beta16-perf-brief.md`.
 
-### CI has never run on this branch
+A second set of numbers circulated during the beta.16 release, reporting
+`partition_ref` at 7.78 ns on beta.15 falling to 3.31 ns flat. Do not use them.
+They were taken at `8699b07`, before `673869c` showed that the benchmark arm
+labelled `pinned_get` was calling `partition_ref`, and they were taken under
+load. They contradict the interleaved run above by roughly a factor of two on
+beta.15, and neither set has been reproduced on a quiet machine.
 
-`.github/workflows/rust.yml` triggers on push to master and on pull requests
-targeting master. There is no PR, so every green result is somebody's laptop.
-`./scripts/ci-local.sh` passes all five jobs (2816 test results, 0 failures) as
-of `8699b07`.
+### Decide what happens to beta.16 on crates.io
+
+1.0.0-beta.16 is published and resolves `ps-reclaim ^0.1.0`, so a lockfile
+written before 0.1.1 landed keeps the `Send` guard. A fresh resolve now picks
+0.1.1 on its own, since the requirement was always a caret and never an exact
+pin. The open question is whether to yank ps-reclaim 0.1.0, which is what makes
+the unsound version unreachable rather than merely unpreferred, and whether to
+yank beta.16 once beta.17 supersedes it.
 
 ## Not blocking, but wrong today
 
