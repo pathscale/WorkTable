@@ -165,3 +165,31 @@ fn the_same_index_is_accepted_once_its_column_exists() {
     );
     assert!(checked.is_acceptable(), "unexpected: {:?}", checked.diagnostics);
 }
+
+/// `page_size` values a person can actually type that are not a `u32`.
+///
+/// `Literal` accepts all of these; `u32::from_str` accepts none of them. The
+/// parser used to unwrap, which inside the macro was a poor error and in the
+/// public `check` API is a crash: an editor calling it per keystroke takes the
+/// panic rather than showing a squiggle.
+#[test]
+fn a_page_size_that_is_not_a_u32_is_a_diagnostic_not_a_panic() {
+    for bad in ["16384u32", "4294967296", "1.5", "0x4000"] {
+        let checked = worktable_dsl::check(&format!(
+            "name: T, columns: {{ id: u64 primary_key }}, config: {{ page_size: {bad} }},"
+        ));
+        assert!(!checked.is_acceptable(), "`{bad}` must be rejected");
+        assert!(
+            !checked.diagnostics.is_empty(),
+            "`{bad}` must produce a diagnostic rather than nothing"
+        );
+    }
+}
+
+/// The ordinary value still works, so the rule above rejects the literal form
+/// and not the option.
+#[test]
+fn a_plain_page_size_is_still_accepted() {
+    let checked = worktable_dsl::check("name: T, columns: { id: u64 primary_key }, config: { page_size: 16384 },");
+    assert!(checked.is_acceptable(), "unexpected: {:?}", checked.diagnostics);
+}

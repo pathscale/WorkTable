@@ -93,7 +93,19 @@ impl Parser {
                     let value = value.to_string();
                     let value = value.replace("_", "");
 
-                    config.page_size = Some(u32::from_str(value.as_str()).unwrap())
+                    // A literal token is not a `u32`. `16384u32`, `0x4000`,
+                    // `4294967296` and `1.5` are all things a person can type
+                    // that `Literal` accepts and `u32::from_str` rejects. This
+                    // used to unwrap, which inside a proc macro was a bad
+                    // error message and in the public `check` API is a crash:
+                    // an editor calling it on every keystroke would take the
+                    // panic, not a squiggle.
+                    config.page_size = Some(u32::from_str(value.as_str()).map_err(|_| {
+                        syn::Error::new(
+                            config.page_size_span.unwrap_or_else(|| self.input.span()),
+                            format!("`page_size` must be a plain unsuffixed integer that fits in a u32, not `{value}`"),
+                        )
+                    })?)
                 }
                 "row_derives" => {
                     const CONFIG_VARIANTS: [&str; 2] = ["page_size", "row_derives"];
