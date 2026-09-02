@@ -385,7 +385,10 @@ fn insert_throughput_should_scale_past_four_writers() {
                     let table = Arc::clone(&table);
                     scope.spawn(move || {
                         for i in (w * per)..((w + 1) * per) {
-                            let _ = table.insert(ScaleRow { id: i, payload: 1_000_000 + i });
+                            let _ = table.insert(ScaleRow {
+                                id: i,
+                                payload: 1_000_000 + i,
+                            });
                         }
                     });
                 }
