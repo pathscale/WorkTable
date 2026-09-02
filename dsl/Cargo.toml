@@ -36,3 +36,11 @@ serde = ["dep:serde"]
 # compiled for the host as part of `worktable_codegen` before anything else in
 # a dependent's build, and span tracking is a cost the compiler does not need.
 spans = ["proc-macro2/span-locations"]
+# Mermaid class diagrams, and the relation guessing they rest on. Off by
+# default because it is the one part of this crate that is not about the
+# `worktable!` grammar: the language has no foreign keys, so `infer_relations`
+# guesses links from a naming convention that WorkTable does not enforce and
+# has no opinion about. That mapping belongs to the application that draws the
+# diagram, next to whatever it does enforce. Kept here because it is written
+# and tested, behind a flag so that turning it on is a decision.
+uml = []
