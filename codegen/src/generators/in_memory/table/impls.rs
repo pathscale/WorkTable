@@ -17,6 +17,7 @@ impl InMemoryGenerator {
         let select_range_fn = self.gen_table_select_range_fn();
         let insert_fn = self.gen_table_insert_fn();
         let insert_many_fn = self.gen_table_insert_many_fn();
+        let delete_many_fn = self.gen_table_delete_many_fn();
         let reinsert_fn = self.gen_table_reinsert_fn();
         let upsert_fn = self.gen_table_upsert_fn();
         let get_next_fn = self.gen_table_get_next_fn();
@@ -35,6 +36,7 @@ impl InMemoryGenerator {
                 #select_range_fn
                 #insert_fn
                 #insert_many_fn
+                #delete_many_fn
                 #reinsert_fn
                 #upsert_fn
                 #count_fn
@@ -157,6 +159,54 @@ impl InMemoryGenerator {
             /// to reads.
             pub fn insert_many(&self, rows: Vec<#row_type>) -> core::result::Result<Vec<#primary_key_type>, BatchInsertError> {
                 self.0.insert_many(rows)
+            }
+        }
+    }
+
+    fn gen_table_delete_many_fn(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let primary_key_type = name_generator.get_primary_key_type_ident();
+
+        quote! {
+            /// Deletes every row named by `pks`, behind one grace marker.
+            ///
+            /// A delete is a bit flip: the row is marked deleted in place, its
+            /// index entries are removed, and its storage becomes reusable once
+            /// no reader can still reach it. `vacuum` is what later compacts
+            /// pages and hands whole ones back.
+            ///
+            /// Batching matters because the per-row cost is dominated by the
+            /// reclamation bookkeeping each retirement takes, not by the bit
+            /// flip: `n` deletes take `n` domain advances where a batch takes
+            /// one.
+            ///
+            /// Unlike `insert_many` this is **not** all-or-nothing. A delete
+            /// that fails partway has already ghosted rows and removed their
+            /// index entries, and those rows are genuinely gone, so the error
+            /// reports how many succeeded rather than pretending to rewind.
+            /// A key that is not present is skipped rather than failing the
+            /// batch.
+            ///
+            /// Returns the keys actually deleted, in the order given.
+            /// Deletes every row whose primary key falls in `range`.
+            ///
+            /// The shape bulk eviction has: a caller dropping a generation
+            /// knows the span it wants gone rather than the individual keys.
+            /// The span is collected from the primary index in one ordered
+            /// walk and then deleted exactly as `delete_many` would, keys
+            /// still resolved under their mutation guards.
+            pub fn delete_range<R>(&self, range: R)
+                -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
+            where R: core::ops::RangeBounds<#primary_key_type>
+            {
+                self.0.delete_range(range)
+            }
+
+            pub fn delete_many<Pk>(&self, pks: Vec<Pk>)
+                -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
+            where #primary_key_type: From<Pk>
+            {
+                self.0.delete_many(pks.into_iter().map(core::convert::Into::into).collect())
             }
         }
     }

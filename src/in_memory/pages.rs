@@ -315,19 +315,44 @@ where
     /// thread can later collect it; it executes only after every reader
     /// pinned right now has unpinned.
     fn retire(&self, item: Retired<DATA_LENGTH>) {
+        self.retire_many(std::iter::once(item));
+    }
+
+    /// Queue several retired items behind one grace marker.
+    ///
+    /// Retiring `n` items one at a time takes `n` domain advances, and an
+    /// advance is the expensive half: it is the only operation here that has to
+    /// decide what every reader can still reach. Retiring a batch behind a
+    /// single marker is the same guarantee, because the marker is stamped after
+    /// the whole batch is queued and therefore covers all of it.
+    ///
+    /// The lock is taken once for the batch rather than once per item, which
+    /// also stops a bulk delete interleaving its queue pushes with concurrent
+    /// mutations for no reason.
+    fn retire_many(&self, items: impl IntoIterator<Item = Retired<DATA_LENGTH>>) {
+        let mut queued = 0usize;
         let len = {
             let mut retired = self.retired.lock();
-            retired.push_back(item);
+            for item in items {
+                retired.push_back(item);
+                queued += 1;
+            }
             retired.len()
         };
-        self.pending_retirements.fetch_add(1, Ordering::Release);
+        if queued == 0 {
+            return;
+        }
+        self.pending_retirements.fetch_add(queued, Ordering::Release);
         if len >= RETIREMENT_BACKLOG_WARN_AT && len.is_power_of_two() {
             tracing::warn!(len, "versioned publication retirement backlog is growing");
         }
         let reclaimable = Arc::clone(&self.reclaimable);
         let guard = self.epoch.pin();
+        // One marker for the whole batch. It is stamped now, so it expires only
+        // after every reader pinned now has unpinned, which is exactly the
+        // condition each item would have waited for individually.
         self.epoch.retire(move || {
-            reclaimable.fetch_add(1, Ordering::Release);
+            reclaimable.fetch_add(queued, Ordering::Release);
         });
         drop(guard);
         self.epoch.advance();
@@ -847,6 +872,60 @@ where
         self.retire(Retired::Link(link));
         self.reclaim_retired();
         Ok(())
+    }
+
+    /// Ghost every link in `links`, behind one grace marker.
+    ///
+    /// Same per-row effect as calling [`Self::delete`] in a loop: each row is
+    /// marked deleted in place and its link is queued for reuse once no reader
+    /// can still reach it. The difference is that the batch takes one domain
+    /// advance and one reclaim pass instead of one of each per row, and an
+    /// advance is the expensive half of a retirement.
+    ///
+    /// Ghosting is done first, for all links, and the batch is retired only
+    /// after. A link must not become reusable while a later row in the same
+    /// batch is still being marked, or a concurrent insert could claim it and
+    /// be ghosted by this call.
+    ///
+    /// On error the links ghosted so far are still retired: they are genuinely
+    /// deleted, and dropping them from the queue would leak their storage for
+    /// the life of the table. The caller learns which link failed and how many
+    /// preceded it.
+    pub fn delete_many(&self, links: &[Link]) -> Result<(), ExecutionError>
+    where
+        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        if links.is_empty() {
+            return Ok(());
+        }
+
+        let mut ghosted = 0usize;
+        let mut failure = None;
+        for link in links {
+            match unsafe { self.with_mut_ref(*link, |r| r.delete()) } {
+                Ok(()) => ghosted += 1,
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+
+        if ghosted > 0 {
+            self.row_count.fetch_sub(ghosted as u64, Ordering::Relaxed);
+            self.retire_many(links[..ghosted].iter().map(|link| Retired::Link(*link)));
+            self.reclaim_retired();
+        }
+
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {

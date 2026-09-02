@@ -290,6 +290,184 @@ where
         Ok(pk)
     }
 
+    /// Deletes every row named by `pks`, ghosting them behind one grace marker.
+    ///
+    /// Deleting is already a bit flip rather than a move: the row is marked
+    /// deleted in place, its index entries are removed, and its storage becomes
+    /// reusable once no reader can still reach it. Vacuum is what later
+    /// compacts the pages and hands whole ones back. This batches that, and the
+    /// batching is worth having for one specific reason: the per-row cost is
+    /// dominated by the domain advance each retirement takes, not by the bit
+    /// flip, so `n` deletes cost `n` advances where a batch costs one.
+    ///
+    /// Unlike [`Self::insert_many`] this is **not** all-or-nothing, and the
+    /// difference is deliberate. A rejected insert has published nothing, so
+    /// unwinding restores a state that was real. A delete that fails partway
+    /// has already removed index entries and ghosted rows, and those rows are
+    /// genuinely gone; resurrecting them would mean re-publishing index entries
+    /// for storage that is queued for reuse. So the batch reports what it
+    /// deleted and stops at the first failure, rather than pretending it can
+    /// rewind.
+    ///
+    /// A primary key that is not present is skipped rather than failing the
+    /// batch. Callers evicting a generation do not generally know which of its
+    /// keys a concurrent writer has already removed, and making them find out
+    /// first would be a race they cannot win.
+    ///
+    /// Returns the keys actually deleted, in the order given.
+    pub fn delete_many(&self, pks: Vec<PrimaryKey>) -> Result<Vec<PrimaryKey>, BatchDeleteError<PrimaryKey>>
+    where
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        AvailableIndexes: AvailableIndex,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+        LockType: 'static,
+    {
+        if pks.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Stripe-ordered, exactly as `insert_many` takes them, so a batch
+        // delete and a batch insert cannot deadlock against each other.
+        let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+
+        let mut deleted: Vec<PrimaryKey> = Vec::with_capacity(pks.len());
+        let mut links: Vec<Link> = Vec::with_capacity(pks.len());
+
+        for pk in &pks {
+            let Some(link) = self.primary_index.pk_map.get_value(pk).map(Into::into) else {
+                // Already gone. Not an error: see above.
+                continue;
+            };
+            // Read at the link rather than by key: the link is already in
+            // hand, and `select` would spend a second primary-key lookup to
+            // find it again. `select_non_ghosted` keeps the check that matters,
+            // which is that low-level staged or hydrated state can publish
+            // index reachability before clearing a row's ghost bit.
+            let Ok(row) = self.data.select_non_ghosted(link) else {
+                continue;
+            };
+
+            // Index removals run BEFORE the rows are ghosted, and for the same
+            // reason the single-row path gives: insert publishes data first and
+            // indexes second, so tearing down in the reverse order guarantees
+            // no index entry ever resolves to storage that has been freed or
+            // reused.
+            if let Err(source) = self.indexes.delete_row(row, link) {
+                return Err(BatchDeleteError::Key {
+                    key: pk.clone(),
+                    deleted: deleted.len(),
+                    source: WorkTableError::from(source),
+                });
+            }
+            self.primary_index.remove(pk, link);
+            links.push(link);
+            deleted.push(pk.clone());
+        }
+
+        // One ghosting pass, one grace marker, one reclaim.
+        if let Err(source) = self.data.delete_many(&links) {
+            return Err(BatchDeleteError::Table(WorkTableError::PagesError(source)));
+        }
+
+        Ok(deleted)
+    }
+
+    /// Deletes every row whose primary key falls in `range`.
+    ///
+    /// The shape bulk eviction actually has. A caller dropping a generation
+    /// knows the span it wants gone, not the individual keys, and making them
+    /// enumerate the span first means walking the primary index by hand and
+    /// then handing the result straight back.
+    ///
+    /// The span is collected from the primary index in one ordered walk, and
+    /// the delete then runs exactly as [`Self::delete_many`]: keys are still
+    /// resolved under their mutation guards, because the set can change between
+    /// the walk and the delete and a key that has since gone is skipped rather
+    /// than failing the batch. So this is one walk instead of the caller's, not
+    /// a way to skip the per-key work that keeps the delete correct.
+    ///
+    /// Returns the keys actually deleted, in key order.
+    pub fn delete_range<R>(&self, range: R) -> Result<Vec<PrimaryKey>, BatchDeleteError<PrimaryKey>>
+    where
+        R: std::ops::RangeBounds<PrimaryKey>,
+        Row: Archive
+            + Clone
+            + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <Row as StorableRow>::WrappedRow:
+            Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper
+            + Portable
+            + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+        PrimaryKey: Clone,
+        AvailableTypes: 'static,
+        AvailableIndexes: AvailableIndex,
+        SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
+        LockType: 'static,
+    {
+        // Owned bounds, because the span is walked twice and `R` is consumed.
+        let start = range.start_bound().cloned();
+        let end = range.end_bound().cloned();
+
+        // First walk: learn which keys the span holds. Nothing is trusted from
+        // this pass except the key set, which is what the guards are for.
+        let keys: Vec<PrimaryKey> = self
+            .primary_index
+            .pk_map
+            .range_values((start.clone(), end.clone()))
+            .map(|(key, _)| key)
+            .collect();
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _mutation_guards = self.lock_manager.mutation_guards(keys.iter());
+
+        // Second walk, under the guards, so these links cannot move and can be
+        // used directly. This is the whole point: `k` individual lookups cost
+        // `k` times `O(log n)` in table size, one walk costs `O(log n + k)`, so
+        // the saving grows with both the batch and the table. A first version
+        // walked and then looked every key up again, which is strictly more
+        // work than `delete_many` and gave this no reason to exist.
+        let pinned: Vec<(PrimaryKey, Link)> = self
+            .primary_index
+            .pk_map
+            .range_values((start, end))
+            .map(|(key, link)| (key, link.into()))
+            .collect();
+
+        let mut deleted: Vec<PrimaryKey> = Vec::with_capacity(pinned.len());
+        let mut links: Vec<Link> = Vec::with_capacity(pinned.len());
+        for (key, link) in pinned {
+            // Read at the link, as above: the walk already produced it.
+            let Ok(row) = self.data.select_non_ghosted(link) else {
+                continue;
+            };
+            if let Err(source) = self.indexes.delete_row(row, link) {
+                return Err(BatchDeleteError::Key {
+                    key,
+                    deleted: deleted.len(),
+                    source: WorkTableError::from(source),
+                });
+            }
+            self.primary_index.remove(&key, link);
+            links.push(link);
+            deleted.push(key);
+        }
+
+        if let Err(source) = self.data.delete_many(&links) {
+            return Err(BatchDeleteError::Table(WorkTableError::PagesError(source)));
+        }
+
+        Ok(deleted)
+    }
+
     /// Inserts every row of `rows`, all or nothing.
     ///
     /// Rows are first staged ghosted (invisible to lock-free readers), every
@@ -1047,6 +1225,28 @@ pub enum BatchInsertError {
     },
     /// The batch failed for a reason not attributable to a single row, such
     /// as a persistence shutdown or an error while unwinding.
+    #[display("{_0}")]
+    Table(WorkTableError),
+}
+
+/// Why a [`WorkTable::delete_many`] stopped.
+///
+/// It carries how many keys were deleted before the failure, because a bulk
+/// delete does not roll back: those rows are gone, and a caller retrying the
+/// batch needs to know the prefix already succeeded rather than assume nothing
+/// happened.
+#[derive(Debug, Display, Error)]
+pub enum BatchDeleteError<PrimaryKey: std::fmt::Debug> {
+    /// One key could not be deleted. Everything before it was.
+    #[display("batch delete stopped at {key:?} after {deleted} deleted: {source}")]
+    Key {
+        /// The key that failed.
+        key: PrimaryKey,
+        /// How many keys were deleted before this one.
+        deleted: usize,
+        source: WorkTableError,
+    },
+    /// The batch failed for a reason not attributable to a single key.
     #[display("{_0}")]
     Table(WorkTableError),
 }
