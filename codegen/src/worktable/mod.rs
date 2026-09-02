@@ -1,7 +1,6 @@
 use proc_macro2::TokenStream;
 
 use crate::common::Parser;
-use crate::common::model::{Columns, IndexBackend, Persistence};
 use crate::common::name_generator::WorktableNameGenerator;
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
@@ -82,10 +81,10 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         columns.indexes = i
     }
 
-    validate_index_backends(&columns, persistence)?;
-    validate_page_size(config.as_ref(), persistence)?;
+    worktable_dsl::validate::validate_index_backends(&columns, persistence)?;
+    worktable_dsl::validate::validate_page_size(config.as_ref(), persistence)?;
     if let Some(q) = &queries {
-        validate_in_place_queries(&columns, q)?;
+        worktable_dsl::validate::validate_in_place_queries(&columns, q)?;
     }
 
     let mut generated = if persistence.is_persisted() {
@@ -132,137 +131,6 @@ fn gen_schema_const(schema: &worktable_dsl::Schema) -> TokenStream {
         #[allow(dead_code)]
         pub const #ident: &str = #text;
     }
-}
-
-/// data_bucket's on-disk layer seeks with its own hardcoded `PAGE_SIZE` of
-/// 16384 bytes (`seek_to_page_start`, `seek_by_link`, `persist_page`), while
-/// the generated table threads the user's `page_size` through its page-id and
-/// length arithmetic. Any other value therefore reads and writes the wrong
-/// file offsets as soon as the table persists, silently corrupting it.
-/// In-memory tables never seek a file: for them `page_size` only sizes index
-/// nodes and stays configurable.
-const DATA_BUCKET_PAGE_SIZE: u32 = 16384;
-
-fn validate_page_size(config: Option<&crate::common::model::Config>, persistence: Persistence) -> syn::Result<()> {
-    let Some(config) = config else { return Ok(()) };
-    let Some(page_size) = config.page_size else {
-        return Ok(());
-    };
-    if persistence.is_persisted() && page_size != DATA_BUCKET_PAGE_SIZE {
-        let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
-        return Err(syn::Error::new(
-            span,
-            format!(
-                "`page_size: {page_size}` cannot be combined with `persist: true`: the on-disk \
-                 layer (data_bucket) hardcodes {DATA_BUCKET_PAGE_SIZE}-byte pages in every file \
-                 seek, so a persisted table with any other page size reads and writes the wrong \
-                 pages and corrupts its files. Remove `page_size` (or set it to \
-                 {DATA_BUCKET_PAGE_SIZE}); custom page sizes remain available for in-memory \
-                 tables, where they only size index nodes"
-            ),
-        ));
-    }
-    Ok(())
-}
-
-/// `in_place` queries hand the caller a mutable reference to the archived
-/// column bytes and bypass all index maintenance, so a column that any index
-/// is built over cannot be mutated in place: the index would keep resolving
-/// the old value.
-fn validate_in_place_queries(columns: &Columns, queries: &crate::common::model::Queries) -> syn::Result<()> {
-    for (name, op) in &queries.in_place {
-        for column in &op.columns {
-            if columns.indexes.values().any(|index| &index.field == column) {
-                return Err(syn::Error::new(
-                    column.span(),
-                    format!(
-                        "in_place query `{name}` mutates column `{column}`, which is covered by an index; \
-                         indexed columns cannot be updated in place because secondary indexes are not \
-                         maintained on this path. Use an `update` query instead"
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_index_backends(columns: &Columns, persistence: Persistence) -> syn::Result<()> {
-    let explicit_backend = if columns.primary_index_backend.requires_explicit_persistence() {
-        Some((
-            columns.primary_index_backend,
-            columns.primary_keys.first().expect("primary key exists"),
-            true,
-        ))
-    } else {
-        columns
-            .indexes
-            .values()
-            .find(|index| index.backend.requires_explicit_persistence())
-            .map(|index| (index.backend, &index.name, false))
-    };
-
-    if let Some((backend, ident, is_primary)) = explicit_backend {
-        let kind = if is_primary { "primary index" } else { "index" };
-        match persistence {
-            Persistence::MemoryOnly => {}
-            Persistence::Omitted => {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    format!(
-                        "{kind} `{ident}` uses `{}`, which requires an explicit `persist: true` or `persist: false`",
-                        backend.name()
-                    ),
-                ));
-            }
-            Persistence::Persisted => {}
-        }
-    }
-
-    for index in columns.indexes.values().filter(|index| !index.is_unique) {
-        match index.backend {
-            IndexBackend::WorktablesIndex | IndexBackend::Arctic => {}
-            IndexBackend::Indexset | IndexBackend::Congee => {
-                return Err(syn::Error::new(
-                    index.name.span(),
-                    format!(
-                        "non-unique index `{}` cannot use `{}`; non-unique indexes currently require \
-                         `worktables_index` or `arctic`",
-                        index.name,
-                        index.backend.name()
-                    ),
-                ));
-            }
-        }
-    }
-
-    for (column, index) in &columns.indexes {
-        let key_type = columns
-            .columns_map
-            .get(column)
-            .expect("an index always references a validated column")
-            .to_string();
-        let supported = match index.backend {
-            IndexBackend::Congee => Some(&["u8", "u16", "u32", "u64", "usize"][..]),
-            IndexBackend::Arctic => Some(&["u16", "u32", "u64", "u128"][..]),
-            IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
-        };
-        if let Some(supported) = supported
-            && !supported.contains(&key_type.as_str())
-        {
-            return Err(syn::Error::new(
-                index.name.span(),
-                format!(
-                    "index `{}` uses `{}`, which does not support key type `{key_type}`; supported types: {}",
-                    index.name,
-                    index.backend.name(),
-                    supported.join(", ")
-                ),
-            ));
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
