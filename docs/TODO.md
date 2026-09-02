@@ -7,30 +7,32 @@ Last reviewed 2026-09-01, against `feat/ps-reclaim-beta16`.
 
 ## Blocking beta.16
 
-### Publish `ps-reclaim` 0.2.0 and bump the pin
+### Publish `ps-reclaim` 0.1.1 and bump the pin
 
 `Cargo.toml` pins `ps-reclaim = "0.1.0"`, and 0.1.0 has two defects, both fixed
-on `pathscale/ps-reclaim` master at `a3371bf` and **not yet published**:
+on `pathscale/ps-reclaim` master at `d207d06` and **not yet published**:
 
 - **`Guard` is `Send`** in 0.1.0, and its own documentation says it is not.
   Nothing enforced it: every field was `Send`, so the auto trait applied.
   Dropping a sent guard stores `NO_DOMAIN` into the *originating* thread's pin
   slot while that thread may still be reading, and decrements the wrong
-  thread's `DEPTH`. Both are use-after-free windows. 0.2.0 makes it `!Send` by
+  thread's `DEPTH`. Both are use-after-free windows. 0.1.1 makes it `!Send` by
   construction (the packed field is a raw pointer) with a `compile_fail`
   doctest holding it.
 - **`Guard` was three words** (`&Domain`, `&'static Participant`, `usize`)
   against `crossbeam-epoch`'s one pointer. `partition_ref` returns a
   `PartRef { guard, &T }` per call, so it paid that size on every lookup: 16
-  bytes became 32. 0.2.0 packs the entry into the participant pointer's spare
+  bytes became 32. 0.1.1 packs the entry into the participant pointer's spare
   alignment bits (`Participant` is `#[repr(align(128))]`) and is one word.
 
-0.2.0 removes `Guard::domain` and `Guard::retire`, which is why it is a minor
-bump. Both call sites here already moved to `self.epoch.retire(...)`, which
-works against 0.1.0 and 0.2.0 alike, so this repo is ready for the bump.
+0.1.1 removes `Guard::domain` and `Guard::retire`. That is a breaking change
+and would normally take a minor bump, but `worktable` is the only consumer and
+it already calls `Domain::retire` directly, which exists in both. Both call
+sites here already moved to `self.epoch.retire(...)`, which
+works against 0.1.0 and 0.1.1 alike, so this repo is ready for the bump.
 
 Publishing is irreversible and needs a human. After it lands:
-`ps-reclaim = "0.2.0"` in `Cargo.toml`, then re-run the benchmarks below.
+`ps-reclaim = "0.1.1"` in `Cargo.toml`, then re-run the benchmarks below.
 
 ### Re-measure the partition regression
 
@@ -38,7 +40,7 @@ The claim in `82bfdf6` that `crossbeam-epoch` and `ps-reclaim` are "within
 noise of each other (3.37 against 3.42)" is disputed by an interleaved A/B run:
 `partition_ref` measured 3.16-3.35 ns on beta.15 and 3.60-3.68 ns here, in both
 passes, with the two cleanest samples of the run showing the widest gap. The
-guard size above is the likely cause and the reason 0.2.0 exists.
+guard size above is the likely cause and the reason 0.1.1 exists.
 
 Not yet confirmed. Every attempt so far ran on a machine at load 4 to 24, where
 the control (`partition_lookup/cached_handle`, a pure dereference that cannot
