@@ -20,10 +20,15 @@ proc-macro = true
 [dependencies]
 # The schema language, extracted so consumers other than this macro can read
 # a declaration. See its crate docs for why that needed a separate crate.
+# Exact, deliberately, while these are pre-releases. A caret requirement does
+# not match a pre-release at all (`^1.0` will not resolve `1.0.0-beta.17`), and
+# these three crates are one release train: the macro generates code against a
+# specific runtime, so they must move together. Every other dependency here is
+# a caret at minor granularity.
 worktable_dsl = { path = "../dsl", version = "=1.0.0-beta.17" }
-rkyv = { version = "0.8.17" }
-syn = { version = "2.0.74", features = ["full"] }
-quote = "1.0.36"
-proc-macro2 = "1.0.86"
-convert_case = "0.6.0"
+rkyv = { version = "0.8" }
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+convert_case = "0.6"
 indexmap = "2"

@@ -490,54 +490,72 @@ impl PersistGenerator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
 
         quote! {
-            /// Deletes every row named by `pks`, behind one grace marker.
+            /// Deletes every row named by `pks`, in the order given.
             ///
-            /// `async` although it awaits nothing today. Every other write on
-            /// this table is async, because cell-level locking makes an update
-            /// wait on the readers of the cells it touches, and a write surface
-            /// where the caller has to know which operations happen to need
-            /// that is a surface where `let _ = table.upsert(row)` silently
-            /// drops a write. Uniformity is worth more here than the marginal
-            /// honesty of a sync signature, and the batch paths may need to
-            /// wait once they take cell locks rather than the striped gate.
-            ///
-            /// A delete is a bit flip: the row is marked deleted in place, its
-            /// index entries are removed, and its storage becomes reusable once
-            /// no reader can still reach it. `vacuum` is what later compacts
-            /// pages and hands whole ones back.
-            ///
-            /// Batching matters because the per-row cost is dominated by the
-            /// reclamation bookkeeping each retirement takes, not by the bit
-            /// flip: `n` deletes take `n` domain advances where a batch takes
-            /// one.
+            /// Returns the keys actually deleted. A key that is not present is
+            /// skipped rather than failing the batch.
             ///
             /// Unlike `insert_many` this is **not** all-or-nothing. A delete
-            /// that fails partway has already ghosted rows and removed their
-            /// index entries, and those rows are genuinely gone, so the error
-            /// reports how many succeeded rather than pretending to rewind.
-            /// A key that is not present is skipped rather than failing the
-            /// batch.
+            /// that fails partway has already removed earlier rows and they
+            /// are genuinely gone, so the error reports how many succeeded
+            /// rather than pretending to rewind.
             ///
-            /// Returns the keys actually deleted, in the order given.
+            /// On a persisted table each row is deleted through the same path
+            /// as a single `delete`, so every removal produces its own
+            /// persistence operation. That costs the batching the in-memory
+            /// generator gets, and it is not optional: routing these straight
+            /// at the in-memory batch left the rows gone from memory and
+            /// present on disk, so they came back on the next load. Durability
+            /// is not something to trade for a per-row constant.
+            pub async fn delete_many<Pk>(&self, pks: Vec<Pk>)
+                -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
+            where #primary_key_type: From<Pk>
+            {
+                let pks: Vec<#primary_key_type> = pks.into_iter().map(core::convert::Into::into).collect();
+                let mut deleted = Vec::with_capacity(pks.len());
+                for pk in pks {
+                    match self.delete::<#primary_key_type>(pk.clone()).await {
+                        core::result::Result::Ok(()) => deleted.push(pk),
+                        // Absent keys are skipped, matching the in-memory
+                        // contract; anything else stops the batch and reports
+                        // the prefix that did land.
+                        core::result::Result::Err(WorkTableError::NotFound) => {}
+                        core::result::Result::Err(source) => {
+                            return core::result::Result::Err(BatchDeleteError::Key {
+                                key: pk,
+                                deleted: deleted.len(),
+                                source,
+                            });
+                        }
+                    }
+                }
+                core::result::Result::Ok(deleted)
+            }
+
             /// Deletes every row whose primary key falls in `range`.
             ///
             /// The shape bulk eviction has: a caller dropping a generation
             /// knows the span it wants gone rather than the individual keys.
             /// The span is collected from the primary index in one ordered
-            /// walk and then deleted exactly as `delete_many` would, keys
-            /// still resolved under their mutation guards.
+            /// walk, then deleted exactly as `delete_many` would, which on a
+            /// persisted table means one persistence operation per row.
+            ///
+            /// Only the keys present when the range was walked are deleted. A
+            /// key inserted into the span afterwards is left alone rather than
+            /// removed without ever having been seen.
             pub async fn delete_range<R>(&self, range: R)
                 -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
             where R: core::ops::RangeBounds<#primary_key_type>
             {
-                self.0.delete_range(range)
-            }
-
-            pub async fn delete_many<Pk>(&self, pks: Vec<Pk>)
-                -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
-            where #primary_key_type: From<Pk>
-            {
-                self.0.delete_many(pks.into_iter().map(core::convert::Into::into).collect())
+                let start = range.start_bound().cloned();
+                let end = range.end_bound().cloned();
+                let keys: Vec<#primary_key_type> = self.0
+                    .primary_index
+                    .pk_map
+                    .range_values((start, end))
+                    .map(|(key, _)| key)
+                    .collect();
+                self.delete_many::<#primary_key_type>(keys).await
             }
         }
     }
