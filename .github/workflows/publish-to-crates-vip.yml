@@ -22,7 +22,7 @@ on:
 
 jobs:
   codegen:
-    uses: pathscale/api.crates.vip/.github/workflows/publish-crate.yml@master
+    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@master
     with:
       manifest-path: codegen/Cargo.toml
       dry-run: ${{ inputs.dry-run }}
@@ -34,7 +34,7 @@ jobs:
   # resolvable in the registry before this entry is written.
   worktable:
     needs: codegen
-    uses: pathscale/api.crates.vip/.github/workflows/publish-crate.yml@master
+    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@master
     with:
       manifest-path: Cargo.toml
       dry-run: ${{ inputs.dry-run }}
