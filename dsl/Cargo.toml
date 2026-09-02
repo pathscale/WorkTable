@@ -10,17 +10,17 @@ repository = "https://github.com/pathscale/WorkTable"
 # Exactly what `codegen/src/common` already used. The move adds no dependency
 # and drops none; anything else would have made it a rewrite rather than a lift.
 # `serde` came later, with the IR, and is optional for the reason given below.
-syn = { version = "2.0.74", features = ["full"] }
-quote = "1.0.36"
-proc-macro2 = "1.0.86"
-convert_case = "0.6.0"
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+convert_case = "0.6"
 indexmap = "2"
 serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 # The integration test builds as its own crate, which is what makes it evidence
 # that this one is consumable from outside.
-proc-macro2 = "1.0.86"
+proc-macro2 = "1"
 # Already in the workspace lock; used only by the `serde` feature test.
 serde_json = "1"
 
