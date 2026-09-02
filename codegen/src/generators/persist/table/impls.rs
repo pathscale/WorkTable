@@ -492,6 +492,15 @@ impl PersistGenerator {
         quote! {
             /// Deletes every row named by `pks`, behind one grace marker.
             ///
+            /// `async` although it awaits nothing today. Every other write on
+            /// this table is async, because cell-level locking makes an update
+            /// wait on the readers of the cells it touches, and a write surface
+            /// where the caller has to know which operations happen to need
+            /// that is a surface where `let _ = table.upsert(row)` silently
+            /// drops a write. Uniformity is worth more here than the marginal
+            /// honesty of a sync signature, and the batch paths may need to
+            /// wait once they take cell locks rather than the striped gate.
+            ///
             /// A delete is a bit flip: the row is marked deleted in place, its
             /// index entries are removed, and its storage becomes reusable once
             /// no reader can still reach it. `vacuum` is what later compacts
@@ -517,14 +526,14 @@ impl PersistGenerator {
             /// The span is collected from the primary index in one ordered
             /// walk and then deleted exactly as `delete_many` would, keys
             /// still resolved under their mutation guards.
-            pub fn delete_range<R>(&self, range: R)
+            pub async fn delete_range<R>(&self, range: R)
                 -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
             where R: core::ops::RangeBounds<#primary_key_type>
             {
                 self.0.delete_range(range)
             }
 
-            pub fn delete_many<Pk>(&self, pks: Vec<Pk>)
+            pub async fn delete_many<Pk>(&self, pks: Vec<Pk>)
                 -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
             where #primary_key_type: From<Pk>
             {
