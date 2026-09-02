@@ -1,6 +1,6 @@
 [package]
 name = "worktable_dsl"
-version = "1.0.0-beta.14"
+version = "1.0.0-beta.17"
 edition = "2024"
 license = "MIT"
 description = "The worktable! schema language: its model and parser, readable outside the proc macro"
