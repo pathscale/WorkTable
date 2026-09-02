@@ -193,3 +193,41 @@ fn a_plain_page_size_is_still_accepted() {
     let checked = worktable_dsl::check("name: T, columns: { id: u64 primary_key }, config: { page_size: 16384 },");
     assert!(checked.is_acceptable(), "unexpected: {:?}", checked.diagnostics);
 }
+
+/// Several indexes breaking the same rule must all be reported.
+///
+/// `index_backends_into` used to pick one offender: the primary if it
+/// qualified, otherwise the first secondary found. A declaration with three
+/// was reported as having one problem, which is the edit-check-fix-one loop
+/// that collecting every failure exists to remove.
+#[test]
+fn every_index_that_needs_explicit_persistence_is_reported() {
+    let checked = worktable_dsl::check(
+        r#"
+        name: Several,
+        columns: {
+            id: u64 primary_key,
+            a: u64,
+            b: u64,
+            c: u64,
+        },
+        indexes: {
+            a_idx: a unique using congee,
+            b_idx: b unique using congee,
+            c_idx: c unique using congee,
+        },
+        "#,
+    );
+
+    assert!(!checked.is_acceptable());
+    let reported = checked
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("persist"))
+        .count();
+    assert_eq!(
+        reported, 3,
+        "all three indexes break the same rule; got {reported}: {:?}",
+        checked.diagnostics
+    );
+}
