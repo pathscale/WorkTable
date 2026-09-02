@@ -46,6 +46,25 @@ const RETIREMENT_BACKLOG_WARN_AT: usize = 1_024;
 /// for the next caller.
 const RECLAIM_BATCH_LIMIT: usize = 256;
 
+/// How many retirements may wait before a *producer* of them absorbs a sweep.
+///
+/// Reclamation exists to hand storage back for reuse, and the consumer of that
+/// storage is `insert`, which already sweeps unconditionally before it looks
+/// for a free link. A delete that also sweeps is doing the consumer's work on
+/// the producer's thread, and doing it one item at a time, which is the
+/// expensive way: freeing links in a batch lets the registry merge a
+/// contiguous run into a single insertion instead of coalescing once per link.
+///
+/// So the delete paths sweep only to keep the queue bounded, not to make space
+/// available. This cap is what a delete-only workload accumulates before it
+/// pays, and a sweep drains up to [`RECLAIM_BATCH_LIMIT`] at once, so matching
+/// them means a triggered sweep clears the backlog it was triggered by.
+///
+/// Deliberately not applied to `mark_page_empty` or `retire_published_link`.
+/// Neither is a hot path, so deferring them would change when pages become
+/// allocatable for no measurable gain.
+const RECLAIM_BACKLOG_TRIGGER: usize = RECLAIM_BATCH_LIMIT;
+
 fn mix_publication_offset(mut value: u64) -> u64 {
     value ^= value >> 30;
     value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -379,6 +398,31 @@ where
     /// still active, that item (and everything after it) simply stays queued.
     /// Each call drains at most [`RECLAIM_BATCH_LIMIT`] items, so a mutation
     /// never absorbs an unbounded backlog inline.
+    /// Drains whatever retirements have expired, now.
+    ///
+    /// For consumers of freed storage that plan from the empty-link registry
+    /// rather than allocating through it. Vacuum is the one that matters:
+    /// it chooses which pages to compact from `get_per_page_info`, so with
+    /// reclamation deferred it would plan against a stale picture and skip
+    /// pages whose rows were deleted but not yet reclaimed.
+    ///
+    /// `insert` and `allocate_new_or_pop_free` do not need this. They already
+    /// sweep on their own path, because they are about to ask for storage
+    /// rather than to reason about it.
+    pub fn reclaim_pending(&self) {
+        self.reclaim_retired();
+    }
+
+    /// Reclaims only once the queue has grown past [`RECLAIM_BACKLOG_TRIGGER`].
+    ///
+    /// For paths that retire storage rather than consume it. See that constant
+    /// for why they should not be sweeping on every call.
+    fn reclaim_if_backlogged(&self) {
+        if self.pending_retirements.load(Ordering::Acquire) >= RECLAIM_BACKLOG_TRIGGER {
+            self.reclaim_retired();
+        }
+    }
+
     fn reclaim_retired(&self) {
         if self.pending_retirements.load(Ordering::Acquire) == 0 {
             return;
@@ -915,7 +959,7 @@ where
 
         self.row_count.fetch_sub(1, Ordering::Relaxed);
         self.retire(Retired::Link(link));
-        self.reclaim_retired();
+        self.reclaim_if_backlogged();
         Ok(())
     }
 
@@ -964,7 +1008,7 @@ where
         if ghosted > 0 {
             self.row_count.fetch_sub(ghosted as u64, Ordering::Relaxed);
             self.retire_many(links[..ghosted].iter().map(|link| Retired::Link(*link)));
-            self.reclaim_retired();
+            self.reclaim_if_backlogged();
         }
 
         match failure {
@@ -1878,12 +1922,15 @@ mod tests {
             "delete must decrement row_count"
         );
 
-        assert_eq!(pages.empty_links.pop_max().map(|(l, _)| l), Some(link));
-        pages.empty_links.push(link);
-
+        // The freed link is deliberately not registered for reuse yet:
+        // reclamation is driven by the consumer of the storage rather than the
+        // producer of it, so a delete queues the retirement and the next
+        // insert is what turns it back into free space. Asserting the
+        // registry's contents here would be asserting that timing rather than
+        // the guarantee, and the guarantee is the line below.
         let row = TestRow { a: 20, b: 20 };
         let new_link = pages.insert(row).unwrap();
-        assert_eq!(new_link, link);
+        assert_eq!(new_link, link, "the next insert must reuse the deleted row's storage");
         assert_eq!(
             pages.row_count.load(Ordering::Relaxed),
             1,

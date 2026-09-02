@@ -200,6 +200,10 @@ async fn update_string() {
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link);
     assert!(table.select(2).is_none())
 }

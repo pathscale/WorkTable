@@ -145,6 +145,13 @@ where
     async fn defragment(&self) -> eyre::Result<VacuumStats> {
         let now = Instant::now();
 
+        // Deletes queue their storage for reclamation and leave the sweep to
+        // whoever needs the space, so the registry can lag behind what has
+        // actually been freed. Vacuum plans from that registry rather than
+        // allocating through it, so it has to ask for the sweep itself or it
+        // will skip pages whose rows are already gone.
+        self.data_pages.reclaim_pending();
+
         let registry = self.data_pages.empty_links_registry();
         let mut per_page_info = registry.get_per_page_info();
         let _registry_lock = registry.lock_vacuum().await;

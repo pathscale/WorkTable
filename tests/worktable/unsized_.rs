@@ -65,6 +65,10 @@ async fn test_update_string_full_row() {
             exchange: "bigger test to test string update".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
 }
 
@@ -96,6 +100,10 @@ async fn test_update_string_by_unique() {
             exchange: "bigger test to test string update".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
 }
 
@@ -127,6 +135,10 @@ async fn test_update_string_by_pk() {
             exchange: "bigger test to test string update".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
 }
 
@@ -176,6 +188,10 @@ async fn test_update_string_by_non_unique() {
             exchange: "bigger test to test string update".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     let empty_links = table.0.data.get_empty_links();
     assert_eq!(empty_links.len(), 1);
     let l = Link {
@@ -355,6 +371,10 @@ async fn test_update_many_strings_by_unique() {
             other_srting: "other".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
 }
 
@@ -391,6 +411,10 @@ async fn test_update_many_strings_by_pk() {
             other_srting: "other".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     assert_eq!(table.0.data.get_empty_links().first().unwrap(), &first_link)
 }
 
@@ -449,6 +473,10 @@ async fn test_update_many_strings_by_non_unique() {
             other_srting: "other".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     let empty_links = table.0.data.get_empty_links();
     assert_eq!(empty_links.len(), 1);
     let l = Link {
@@ -517,6 +545,10 @@ async fn test_update_many_strings_by_string() {
             exchange: "test".to_string(),
         }
     );
+    // Reclamation is deferred: the row's old storage is queued when the
+    // update relocates it, and swept by whoever next needs space. Ask for the
+    // sweep so the free list can be observed directly.
+    table.0.data.reclaim_pending();
     let empty_links = table.0.data.get_empty_links();
     assert_eq!(empty_links.len(), 1);
     let l = Link {
