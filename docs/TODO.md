@@ -3,7 +3,7 @@
 What is known to be unfinished, and enough context to act on it without the
 conversation it came from. Ordered by whether it blocks a release.
 
-Last reviewed 2026-09-02, against `deps/caret-not-locked`.
+Last reviewed 2026-09-04, against `release/beta17`.
 
 ## Closed, and how
 
@@ -35,33 +35,64 @@ publishes from master, on Ubicloud runners.
 targeting master, so a branch with no PR is only ever checked on somebody's
 laptop. PR #82 opened, all six jobs passed, and master has been green since.
 
+### The `partition_ref` regression is measured and accepted for beta.17
+
+The beta.17 validation grid confirmed a small microbenchmark regression, and
+it is explicitly not a beta.17 release blocker. Three rotated-order passes,
+using local WorkTable trees for beta.13 (`48f250f`), beta.15 (`e4dcfdf`) and
+the beta.17 candidate, measured the median `partition_ref` cost as 0.69 ns,
+3.09 ns and 3.35 ns respectively. Beta.17 is 8.3% slower than beta.15, and its
+clean range (3.24-3.38 ns) did not overlap beta.15's (3.01-3.18 ns).
+
+This is isolated to a nanosecond-scale primitive benchmark. Regressions of
+roughly 1 ns to 3 ns can be stable without producing an application-level
+regression once the primitive is composed into work several times larger. The
+routed read `partition_ref_then_select` improved from 30.07 ns in beta.15 to
+27.67 ns in beta.17 (-8.0%), and the unchanged `cached_handle` and `contains`
+controls moved about 2%. CRUD was otherwise flat or faster. Do not describe
+the bare `partition_ref` result as noise, but treat it as implementation
+telemetry rather than a release gate: application-level impact was better.
+
+The older beta.16 measurements below remain invalid and must not be used: one
+set ran under severe host load, and another predates the fix for a benchmark
+arm labelled `pinned_get` that was actually calling `partition_ref`.
+
+The beta.17 grid also found and fixed a benchmark defect: insertion arms called
+the now-async `insert` without awaiting the returned future. Corrected insert
+results were rerun across all three local trees before drawing conclusions.
+
+### WT DSL expansion and trailing commas are deterministic
+
+The trailing-comma parser fix was already present on the beta.17 branch and is
+covered for `config`, `delete`, `in_place`, block order, and the no-comma form.
+
+Expansion is now deterministic too. `columns_map`, query maps, and generated
+unique-type sets preserve declaration order with `IndexMap`/`IndexSet`. The
+previously ignored repro is a normal release-gating test and includes multiple
+columns, indexes, update queries, and delete queries. This matters beyond
+cosmetics because generated enum variant order can determine discriminants.
+
+### The local beta.17 release-delta gate is green
+
+The complete evidence and beta.13/beta.15/beta.17 performance grids are in
+`docs/beta17-validation.md`. The exact local CI matrix passes in default,
+`versioned-row-publication`, and all-feature configurations. The independent
+benchmark workspace also passes its all-target test-mode gate against the
+local WorkTable/WTI/DataBucket/ps-reclaim stack.
+
+The placeholder ignored S3 probe still rejects its literal `test` endpoint
+before I/O, but configured runtime coverage is now complete through the local-
+source support.cafe consumer. Beta.17 downloaded the live Tigris dataset,
+recovered three legacy tables with missing secondary entries, rebuilt them into
+a rollback-safe prefix, strict-loaded all six tables, performed an S3-backed
+mutation and reloaded it after restart. ACME, HTTPS and WebSocket startup also
+passed on Fly. Full evidence is in `docs/beta17-validation.md`.
+
 ## Blocking beta.17
 
-### Re-measure the partition regression
-
-Unchanged from the beta.16 review, and still the reason to be careful about
-what this release claims.
-
-The claim in `82bfdf6` that `crossbeam-epoch` and `ps-reclaim` are "within
-noise of each other (3.37 against 3.42)" is disputed by an interleaved A/B run:
-`partition_ref` measured 3.16-3.35 ns on beta.15 and 3.60-3.68 ns here, in both
-passes, with the two cleanest samples of the run showing the widest gap. The
-guard size, now fixed in 0.1.1, is the likely cause, so this wants re-running
-against 0.1.1 rather than re-running the old comparison.
-
-Not yet confirmed either way. Every attempt so far ran on a machine at load 4
-to 24, where the control (`partition_lookup/cached_handle`, a pure dereference
-that cannot differ between versions) varied 3.6x. Re-run on a quiet box,
-alternate the tree order between passes, and reject the run if the control
-moves more than a few percent. Full brief, including exact commits and setup,
-at `~/code/wt-beta16-perf-brief.md`.
-
-A second set of numbers circulated during the beta.16 release, reporting
-`partition_ref` at 7.78 ns on beta.15 falling to 3.31 ns flat. Do not use them.
-They were taken at `8699b07`, before `673869c` showed that the benchmark arm
-labelled `pinned_get` was calling `partition_ref`, and they were taken under
-load. They contradict the interleaved run above by roughly a factor of two on
-beta.15, and neither set has been reproduced on a quiet machine.
+There is no unresolved locally testable correctness or application-level
+performance blocker. Branch/PR CI must still pass on the exact release commit
+before publishing.
 
 ### Decide what happens to beta.16 on crates.io
 
@@ -91,42 +122,6 @@ there plus the call sites here.
 to: a trie with short reads reaches quiescence constantly, which is the exact
 property that makes `seize` wrong for this crate, where `select` holds a read
 guard.
-
-### Expansion is not deterministic
-
-Expanding one `worktable!` declaration twice in one process produces different
-code. Several generators iterate `Columns::columns_map`, a `std::collections::
-HashMap`, to emit ordered constructs: the `RowFields` and `AvaiableTypes` enums
-among them. `RandomState` seeds each map instance differently, so the variant
-order differs between two expansions and can differ between two compilations of
-the same source.
-
-Recorded as an ignored test, `codegen/src/worktable/mod.rs`, module
-`generator_determinism`. Run it with `cargo test -p worktable_codegen --
---ignored`; it fails on unmodified code.
-
-The fix is to make `columns_map` an `IndexMap` built in declaration order,
-which `field_positions` already records. A trial produced 13 mechanical compile
-errors (`&Ident` not satisfying `Equivalent<Ident>`, and explicit `HashMap`
-annotations). It changes the generated code of every table, so it wants
-reviewing on its own.
-
-**Open question worth answering first:** both enums derive `rkyv::Archive` and
-`Serialize` with `#[repr(C)]`. If either discriminant reaches disk, this is a
-persistence hazard rather than a cosmetic one.
-
-### Trailing commas are accepted inconsistently
-
-`parse_updates`, `parse_indexes` and `parse_queries` consume a comma after
-their block; `parse_deletes`, `parse_in_place` and `parse_configs` do not. So
-`config: { .. },` reaches the top-level dispatch as a `,` token and dies as
-"Unexpected identifier", and the same for a `delete` block followed by another.
-`config` happens to be written last everywhere in this repo, which is why
-nobody has hit it.
-
-Three `try_parse_comma()` calls, strictly more permissive. While there, make
-the "Unexpected identifier" arms name the token they actually saw: a `,`
-reported as an unexpected identifier is what makes this cost an afternoon.
 
 ### Persistence stalls on a primary index event gap, rarely
 
