@@ -482,7 +482,10 @@ async fn logical_wti_recovers_concurrent_same_row_updates() {
     let engine = wti::ProviderSwitchPersistenceEngine::new(config.clone()).await.unwrap();
     let table = Arc::new(wti::ProviderSwitchWorkTable::load(engine).await.unwrap());
     let id: u64 = table.get_next_pk().into();
-    table.insert(wti::ProviderSwitchRow { id, unique_key: 1 }).unwrap();
+    table
+        .insert(wti::ProviderSwitchRow { id, unique_key: 1 })
+        .await
+        .unwrap();
 
     let barrier = Arc::new(Barrier::new(WORKERS as usize + 1));
     let mut workers = Vec::new();

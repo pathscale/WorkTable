@@ -51,6 +51,7 @@ fn test_s3_engine_compiles() {
                     id: table.get_next_pk().into(),
                     value: 0,
                 })
+                .await
                 .unwrap();
             assert!(!table.select_all().execute().unwrap().is_empty());
             table.wait_for_ops().await.unwrap();
