@@ -44,14 +44,29 @@ stopped and once with it running — with interleaved inserts and selects for tw
 seconds per arm. The delta between the two vacuum arms is the measurement; a
 single arm says nothing, which is why every cell is run twice.
 
+Re-run on an idle machine after the vacuum work landed. These are the numbers
+to trust; the first run is kept below only to show what contention did to it.
+
 | backend | fragmentation | inserts, vacuum off | vacuum on | delta | p50 off | p50 on | max off | max on |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| wti | 25% | 1,576,460 | 1,419,033 | -10.0% | 1000 ns | 1042 ns | 0.32 ms | 0.16 ms |
-| arctic | 25% | 1,654,493 | 1,610,965 | -2.6% | 875 ns | 916 ns | 0.15 ms | 0.37 ms |
-| congee | 25% | 1,610,771 | 1,614,120 | +0.2% | 917 ns | 917 ns | 0.16 ms | 0.14 ms |
-| wti | 60% | 1,530,270 | 855,401 | **-44.1%** | 1042 ns | 2125 ns | 32.56 ms | 0.14 ms |
-| arctic | 60% | 1,228,462 | 925,578 | **-24.7%** | 958 ns | 1958 ns | 41.75 ms | 3.95 ms |
-| congee | 60% | 1,824,310 | 922,399 | **-49.4%** | 917 ns | 1958 ns | 12.22 ms | 0.09 ms |
+| wti | 25% | 1,572,963 | 1,390,294 | -11.6% | 1000 ns | 1083 ns | 0.16 ms | 0.15 ms |
+| arctic | 25% | 1,766,008 | 1,582,590 | -10.4% | 875 ns | 917 ns | 0.20 ms | 0.28 ms |
+| congee | 25% | 1,589,229 | 1,555,932 | -2.1% | 958 ns | 958 ns | 0.17 ms | 0.27 ms |
+| wti | 60% | 1,606,719 | 827,927 | **-48.5%** | 1083 ns | 2208 ns | 0.13 ms | 0.12 ms |
+| arctic | 60% | 1,824,133 | 897,328 | **-50.8%** | 917 ns | 2041 ns | 0.24 ms | 6.92 ms |
+| congee | 60% | 1,818,984 | 869,964 | **-52.2%** | 958 ns | 2084 ns | 0.16 ms | 0.44 ms |
+
+The penalty at 60% is about 50% on all three backends. An earlier reading that
+arctic was cheaper there (-24.7%) came from a depressed baseline: its
+vacuum-off arm measured 1.23M under contention and 1.82M idle. No backend
+handles vacuum better than another.
+
+**Batching the exclusion did not reduce the penalty**, which is the other thing
+the clean run settles. At 25% the sweep still costs 2 to 12%, at 60% still
+about half. Releasing the lock more often does not reduce the work of moving
+rows, and at high fragmentation the work is the cost. That case needs a
+work-side bound -- how much one sweep moves, or how much is moved per page
+reclaimed -- not more yielding.
 
 Three things fall out of this, and they set the whole design.
 
@@ -61,11 +76,15 @@ median insert latency. Vacuuming early is not merely nicer, it is *cheaper by a
 factor of five*, which is an argument for reacting to fragmentation rather than
 waiting out an interval that lets it accumulate.
 
-**Not vacuuming has a tail.** Every vacuum-off arm at 60% carries a multi-
-millisecond worst case — 32 ms on wti, 41 ms on arctic — against 0.14 ms and
-3.95 ms with vacuum running. The sweep is not pure cost; it converts rare long
-stalls into steady overhead. p999 moves the same way on wti: 14.3 µs off
-against 5.3 µs on.
+**Retracted: "not vacuuming has a tail".** The first run showed multi-
+millisecond worst-case inserts in every vacuum-off arm at 60%, 32 ms on wti and
+41 ms on arctic, and this document argued from it. A clean re-run on an idle
+machine does not reproduce it: every vacuum-off arm is 0.13 to 0.24 ms. Those
+maxima were machine contention. The only multi-millisecond tail in the clean
+run is on the vacuum-*on* side, 6.92 ms for arctic at 60%.
+
+The cost curve below still stands and is still the argument for reacting early.
+The tail benefit was not real, and nothing should be built on it.
 
 **The mechanism is the exclusion, not the work.** `pop_max` takes the registry
 read side with `try_read_owned().ok()?`, so while a sweep holds the write side
