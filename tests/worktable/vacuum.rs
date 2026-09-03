@@ -208,6 +208,31 @@ async fn vacuum_parallel_with_upserts() {
 
     delete_task.await.unwrap();
 
+    // Every secondary entry must resolve to a row carrying its key.
+    //
+    // Checked before the per-row comparison below, because it fails closer to
+    // the cause. The per-row check reports "expected id 1501, got id 63",
+    // which is the damage; this reports which index entry points at storage
+    // holding something else, which is the defect.
+    {
+        let stale: Vec<_> = table
+            .0
+            .indexes
+            .value_idx
+            .iter()
+            .filter_map(|(key, link)| {
+                let at = table.0.data.select_non_ghosted(link.into());
+                match at {
+                    Ok(row) if row.value == key => None,
+                    Ok(row) => Some(format!("value_idx[{key}] -> link holding value {} (id {})", row.value, row.id)),
+                    Err(e) => Some(format!("value_idx[{key}] -> unreadable link: {e:?}")),
+                }
+            })
+            .take(5)
+            .collect();
+        assert!(stale.is_empty(), "secondary index entries do not match their rows:\n{}", stale.join("\n"));
+    }
+
     let g = row_state.lock();
 
     // Verify all inserted rows are accessible
