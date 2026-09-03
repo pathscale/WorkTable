@@ -72,6 +72,11 @@ walkdir = { version = "2", optional = true }
 # Exact for the same reason as `worktable_dsl` in codegen/Cargo.toml: carets do
 # not match pre-releases, and these move as one train.
 worktable_codegen = { path = "codegen", version = "=1.0.0-beta.17" }
+# Re-exported below. Each generated table carries its declaration as a const
+# whose documentation says to read it with `worktable_dsl::Schema::parse`; that
+# instruction is only true if a plain `worktable` dependency can reach the
+# crate. Exact for the same pre-release reason as codegen.
+worktable_dsl = { path = "dsl", version = "=1.0.0-beta.17" }
 
 [dev-dependencies]
 chrono = "0.4"
