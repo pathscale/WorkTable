@@ -247,3 +247,65 @@ async fn delete_range_honours_its_bounds() {
     assert!(empty.is_empty());
     assert_eq!(table.count(), 17);
 }
+
+/// A bulk delete spanning many guard chunks still removes exactly its keys.
+///
+/// Mutation guards are striped 64 ways, so a batch wider than that touches
+/// every stripe, and taking them all for the batch's whole duration makes a
+/// large delete a stop-the-world for every other write. They are taken a chunk
+/// at a time instead (`DELETE_CHUNK_KEYS`), which measurably helps: a
+/// concurrent writer landed 190 rows during a 20,000 row delete against 71
+/// with whole-batch guards.
+///
+/// That ratio is timing, so it is not what is asserted here. What is asserted
+/// is the thing chunking could plausibly break: each chunk drops its guards
+/// before the next takes them, so a row must not be left out of the indexes
+/// and un-ghosted across that boundary, and the batch must still be exact.
+#[test]
+fn a_bulk_delete_spanning_guard_chunks_removes_exactly_its_keys() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .build()
+        .unwrap();
+
+    let table = EvictWorkTable::default();
+    let mut victims = Vec::new();
+    let mut survivors = Vec::new();
+    // Several chunks' worth, with survivors interleaved so a chunk boundary
+    // cannot coincide with the victim/survivor split.
+    for i in 0..2_000u64 {
+        let row = EvictRow {
+            id: table.get_next_pk().into(),
+            unique_value: i,
+            generation: if i % 3 == 0 { 2 } else { 1 },
+        };
+        if i % 3 == 0 {
+            survivors.push((row.id, row.unique_value));
+        } else {
+            victims.push(row.id);
+        }
+        runtime.block_on(table.insert(row)).unwrap();
+    }
+
+    let deleted = runtime.block_on(table.delete_many(victims.clone())).unwrap();
+    assert_eq!(deleted.len(), victims.len(), "every victim must be reported deleted");
+
+    for id in &victims {
+        assert!(
+            table.select(*id).is_none(),
+            "victim {id:?} still readable after the batch"
+        );
+    }
+    for (id, unique_value) in &survivors {
+        assert!(table.select(*id).is_some(), "survivor {id:?} was taken by the batch");
+        assert!(
+            table.select_by_unique_value(*unique_value).is_some(),
+            "survivor {id:?} lost its unique index entry to a neighbouring chunk"
+        );
+    }
+    assert_eq!(
+        table.count(),
+        survivors.len(),
+        "row count must match the survivors exactly"
+    );
+}

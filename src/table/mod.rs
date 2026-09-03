@@ -30,6 +30,14 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
+/// Keys per chunk when a bulk delete takes its mutation guards.
+///
+/// Guards are striped 64 ways, so any batch wider than that holds every stripe
+/// and no other write on the table can proceed until it finishes. A range
+/// delete dropping a generation is exactly that shape. Taking the guards a
+/// chunk at a time bounds the exclusion to one chunk's work, which is the
+/// difference between a pause and a stall.
+const DELETE_CHUNK_KEYS: usize = 256;
 
 #[derive(Debug)]
 pub struct WorkTable<
@@ -375,61 +383,70 @@ where
         if pks.is_empty() {
             return Ok(Vec::new());
         }
-        // Stripe-ordered, exactly as `insert_many` takes them, so a batch
-        // delete and a batch insert cannot deadlock against each other.
-        let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
-
         let mut deleted: Vec<PrimaryKey> = Vec::with_capacity(pks.len());
-        let mut links: Vec<Link> = Vec::with_capacity(pks.len());
 
-        for pk in &pks {
-            let Some(link) = self.primary_index.pk_map.get_value(pk).map(Into::into) else {
-                // Already gone. Not an error: see above.
-                continue;
-            };
-            // Read at the link rather than by key: the link is already in
-            // hand, and `select` would spend a second primary-key lookup to
-            // find it again. `select_non_ghosted` keeps the check that matters,
-            // which is that low-level staged or hydrated state can publish
-            // index reachability before clearing a row's ghost bit.
-            let Ok(row) = self.data.select_non_ghosted(link) else {
-                continue;
-            };
+        // Guards are taken a chunk at a time rather than over the whole batch.
+        // See `DELETE_CHUNK_KEYS`. Each chunk is self-contained: its rows leave
+        // every index, are ghosted, and are queued for reclaim before its
+        // guards drop, so no row is ever left out of the indexes and un-ghosted
+        // while a guard it needed has been released.
+        for chunk in pks.chunks(DELETE_CHUNK_KEYS) {
+            // Stripe-ordered, exactly as `insert_many` takes them, so a batch
+            // delete and a batch insert cannot deadlock against each other. Chunks
+            // release before the next is taken, so that ordering holds across them.
+            let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
 
-            // Index removals run BEFORE the rows are ghosted, and for the same
-            // reason the single-row path gives: insert publishes data first and
-            // indexes second, so tearing down in the reverse order guarantees
-            // no index entry ever resolves to storage that has been freed or
-            // reused.
-            if let Err(source) = self.indexes.delete_row(row, link) {
-                // Finish the rows that already succeeded before leaving.
-                //
-                // Each of them is out of every index but not yet ghosted,
-                // because ghosting is deferred to one pass below. Returning
-                // here without it would leave them allocated, live in the page
-                // layer, and unreachable through any index: leaked for the
-                // lifetime of the table, and contradicting the documented
-                // promise that a failed batch's earlier rows are genuinely
-                // gone and queued for reuse.
-                //
-                // A failure here is reported in preference to a failure in the
-                // cleanup: the caller's key is the more useful diagnosis, and
-                // the cleanup failing means the pages were already unusable.
-                let _ = self.data.delete_many(&links);
-                return Err(BatchDeleteError::Key {
-                    key: pk.clone(),
-                    deleted: deleted.len(),
-                    source: WorkTableError::from(source),
-                });
+            let mut links: Vec<Link> = Vec::with_capacity(chunk.len());
+
+            for pk in chunk {
+                let Some(link) = self.primary_index.pk_map.get_value(pk).map(Into::into) else {
+                    // Already gone. Not an error: see above.
+                    continue;
+                };
+                // Read at the link rather than by key: the link is already in
+                // hand, and `select` would spend a second primary-key lookup to
+                // find it again. `select_non_ghosted` keeps the check that matters,
+                // which is that low-level staged or hydrated state can publish
+                // index reachability before clearing a row's ghost bit.
+                let Ok(row) = self.data.select_non_ghosted(link) else {
+                    continue;
+                };
+
+                // Index removals run BEFORE the rows are ghosted, and for the same
+                // reason the single-row path gives: insert publishes data first and
+                // indexes second, so tearing down in the reverse order guarantees
+                // no index entry ever resolves to storage that has been freed or
+                // reused.
+                if let Err(source) = self.indexes.delete_row(row, link) {
+                    // Finish the rows that already succeeded before leaving.
+                    //
+                    // Each of them is out of every index but not yet ghosted,
+                    // because ghosting is deferred to one pass below. Returning
+                    // here without it would leave them allocated, live in the page
+                    // layer, and unreachable through any index: leaked for the
+                    // lifetime of the table, and contradicting the documented
+                    // promise that a failed batch's earlier rows are genuinely
+                    // gone and queued for reuse.
+                    //
+                    // A failure here is reported in preference to a failure in the
+                    // cleanup: the caller's key is the more useful diagnosis, and
+                    // the cleanup failing means the pages were already unusable.
+                    let _ = self.data.delete_many(&links);
+                    return Err(BatchDeleteError::Key {
+                        key: pk.clone(),
+                        deleted: deleted.len(),
+                        source: WorkTableError::from(source),
+                    });
+                }
+                self.primary_index.remove(pk, link);
+                links.push(link);
+                deleted.push(pk.clone());
             }
-            self.primary_index.remove(pk, link);
-            links.push(link);
-            deleted.push(pk.clone());
-        }
 
-        // One ghosting pass, one grace marker, one reclaim.
-        if let Err(source) = self.data.delete_many(&links) {
-            return Err(BatchDeleteError::Table(WorkTableError::PagesError(source)));
+            // One ghosting pass, one grace marker, one reclaim, per chunk.
+            if let Err(source) = self.data.delete_many(&links) {
+                return Err(BatchDeleteError::Table(WorkTableError::PagesError(source)));
+            }
         }
 
         Ok(deleted)
@@ -482,62 +499,73 @@ where
         if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let _mutation_guards = self.lock_manager.mutation_guards(keys.iter());
+        let mut deleted: Vec<PrimaryKey> = Vec::with_capacity(keys.len());
 
-        // Second walk, under the guards. Links for guarded keys cannot move
-        // and are used directly; keys that appeared since the first walk are
-        // filtered out below, because no guard covers them. This is the whole
-        // point: `k` individual lookups cost
-        // `k` times `O(log n)` in table size, one walk costs `O(log n + k)`, so
-        // the saving grows with both the batch and the table. A first version
-        // walked and then looked every key up again, which is strictly more
-        // work than `delete_many` and gave this no reason to exist.
-        let pinned: Vec<(PrimaryKey, Link)> = self
-            .primary_index
-            .pk_map
-            .range_values((start, end))
-            .map(|(key, link)| (key, link.into()))
-            .collect();
+        // Guards a chunk at a time, as in `delete_many`: see
+        // `DELETE_CHUNK_KEYS`. A range delete is the widest batch this table
+        // takes, so it is the one that most needs not to hold every stripe.
+        for chunk in keys.chunks(DELETE_CHUNK_KEYS) {
+            let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
 
-        let mut deleted: Vec<PrimaryKey> = Vec::with_capacity(pinned.len());
-        let mut links: Vec<Link> = Vec::with_capacity(pinned.len());
-        for (key, link) in pinned {
-            // Only keys the guards actually cover.
-            //
-            // The guards were taken over the first walk's key set. A key
-            // inserted into the span between the two walks appears in this one
-            // while hashing to a stripe nobody locked, so deleting it would
-            // tear down its indexes and storage with none of the mutation
-            // serialisation every other write on this table has, racing the
-            // publication that is still in flight.
-            //
-            // `keys` came from an ordered walk, so it is sorted and this is a
-            // binary search rather than a set allocation.
-            if keys.binary_search(&key).is_err() {
-                continue;
+            // Second walk, under the guards. Links for guarded keys cannot move
+            // and are used directly; keys that appeared since the first walk are
+            // filtered out below, because no guard covers them. This is the whole
+            // point: `k` individual lookups cost
+            // `k` times `O(log n)` in table size, one walk costs `O(log n + k)`, so
+            // the saving grows with both the batch and the table. A first version
+            // walked and then looked every key up again, which is strictly more
+            // work than `delete_many` and gave this no reason to exist.
+            // Narrowed to this chunk's span, so the walk stays proportional to the
+            // chunk rather than repeating the whole range for each one.
+            let pinned: Vec<(PrimaryKey, Link)> = self
+                .primary_index
+                .pk_map
+                .range_values((
+                    std::ops::Bound::Included(chunk[0].clone()),
+                    std::ops::Bound::Included(chunk[chunk.len() - 1].clone()),
+                ))
+                .map(|(key, link)| (key, link.into()))
+                .collect();
+
+            let mut links: Vec<Link> = Vec::with_capacity(chunk.len());
+            for (key, link) in pinned {
+                // Only keys the guards actually cover.
+                //
+                // The guards were taken over the first walk's key set. A key
+                // inserted into the span between the two walks appears in this one
+                // while hashing to a stripe nobody locked, so deleting it would
+                // tear down its indexes and storage with none of the mutation
+                // serialisation every other write on this table has, racing the
+                // publication that is still in flight.
+                //
+                // `keys` came from an ordered walk, so it is sorted and this is a
+                // binary search rather than a set allocation.
+                if chunk.binary_search(&key).is_err() {
+                    continue;
+                }
+                // Read at the link, as above: the walk already produced it.
+                let Ok(row) = self.data.select_non_ghosted(link) else {
+                    continue;
+                };
+                if let Err(source) = self.indexes.delete_row(row, link) {
+                    // As in `delete_many`: ghost what already succeeded rather
+                    // than leaving those rows out of every index and still
+                    // allocated.
+                    let _ = self.data.delete_many(&links);
+                    return Err(BatchDeleteError::Key {
+                        key,
+                        deleted: deleted.len(),
+                        source: WorkTableError::from(source),
+                    });
+                }
+                self.primary_index.remove(&key, link);
+                links.push(link);
+                deleted.push(key);
             }
-            // Read at the link, as above: the walk already produced it.
-            let Ok(row) = self.data.select_non_ghosted(link) else {
-                continue;
-            };
-            if let Err(source) = self.indexes.delete_row(row, link) {
-                // As in `delete_many`: ghost what already succeeded rather
-                // than leaving those rows out of every index and still
-                // allocated.
-                let _ = self.data.delete_many(&links);
-                return Err(BatchDeleteError::Key {
-                    key,
-                    deleted: deleted.len(),
-                    source: WorkTableError::from(source),
-                });
-            }
-            self.primary_index.remove(&key, link);
-            links.push(link);
-            deleted.push(key);
-        }
 
-        if let Err(source) = self.data.delete_many(&links) {
-            return Err(BatchDeleteError::Table(WorkTableError::PagesError(source)));
+            if let Err(source) = self.data.delete_many(&links) {
+                return Err(BatchDeleteError::Table(WorkTableError::PagesError(source)));
+            }
         }
 
         Ok(deleted)
