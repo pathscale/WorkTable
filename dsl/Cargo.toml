@@ -16,6 +16,9 @@ proc-macro2 = "1.0.86"
 convert_case = "0.6.0"
 indexmap = "2"
 serde = { version = "1", features = ["derive"], optional = true }
+# Only ever reached through the `json` feature, which only the `worktable-schemas` binary
+# needs. Kept out of `serde` so that turning the IR into data does not also pull a parser in.
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 # The integration test builds as its own crate, which is what makes it evidence
@@ -44,3 +47,18 @@ spans = ["proc-macro2/span-locations"]
 # diagram, next to whatever it does enforce. Kept here because it is written
 # and tested, behind a flag so that turning it on is a decision.
 uml = []
+# The `worktable-schemas` binary, which dumps every declaration in a tree as JSON so an emitter
+# in another language can be checked against real schemas. Separate from `serde` because
+# serialising the IR and shipping a JSON writer are different costs to ask of a dependent.
+json = ["serde", "dep:serde_json"]
+
+[[bin]]
+name = "worktable-schemas"
+path = "src/bin/worktable-schemas.rs"
+required-features = ["json"]
+
+[[bin]]
+# Needs nothing beyond the default build: it is the binary a cross-implementation test runs on
+# every case, so anything it required would be a thing that test could be missing.
+name = "worktable-parse"
+path = "src/bin/worktable-parse.rs"
