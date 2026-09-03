@@ -87,6 +87,42 @@ macro_rules! impl_arctic_key {
 
 impl_arctic_key!(u16, u32, u64, u128);
 
+/// Signed keys, mapped onto the unsigned key space by flipping the sign bit.
+///
+/// An ART orders keys by the bytes of the key, and two's complement puts that
+/// ordering the wrong way round: a negative has its high bit set, so it sorts
+/// *after* every positive. XOR with the sign bit corrects exactly that. It is a
+/// bijection over the full width and strictly monotonic, which is the only
+/// property the tree needs, so `i64::MIN` lands at `0`, `-1` at `0x7fff_..._ffff`,
+/// `0` at `0x8000_..._0000` and `i64::MAX` at `u64::MAX`.
+///
+/// Being a bijection over the *whole* width is also what makes the exclusive
+/// bounds in `raw_inclusive_bounds` correct: `next`/`previous` run in the raw
+/// space, and adjacency is preserved because no raw value is unreachable.
+///
+/// There is no `i8`, because Arctic's narrowest raw key is `u16`.
+macro_rules! impl_arctic_signed_key {
+    ($($ty:ty => $raw:ty),* $(,)?) => {
+        $(
+            impl ArcticKey for $ty {
+                type Raw = $raw;
+
+                #[inline]
+                fn to_arctic(&self) -> Self::Raw {
+                    (*self as $raw) ^ ((1 as $raw) << (<$raw>::BITS - 1))
+                }
+
+                #[inline]
+                fn from_arctic(value: Self::Raw) -> Self {
+                    (value ^ ((1 as $raw) << (<$raw>::BITS - 1))) as Self
+                }
+            }
+        )*
+    };
+}
+
+impl_arctic_signed_key!(i16 => u16, i32 => u32, i64 => u64, i128 => u128);
+
 /// Arctic's lock-free adaptive radix tree with WorkTable's unique-index
 /// contract.
 ///
@@ -284,6 +320,75 @@ mod tests {
     use std::sync::{Arc, Barrier};
 
     use super::{ArcticIndex, UniqueIndex};
+
+    /// Two's complement puts negatives after positives when ordered by their
+    /// bytes, which is how an ART orders. If the sign-bit flip were missing or
+    /// applied on one side only, this is what would break, and it would break
+    /// silently: point lookups would still work.
+    #[test]
+    fn signed_keys_iterate_in_signed_order() {
+        let index = ArcticIndex::<i64, u64>::default();
+        let keys = [i64::MIN, -1_000, -1, 0, 1, 1_000, i64::MAX];
+        // Inserted out of order, so passing cannot come from insertion order.
+        for key in [0, i64::MAX, -1, 1_000, i64::MIN, 1, -1_000] {
+            index.insert_value(key, key as u64);
+        }
+
+        let seen: Vec<i64> = index.iter_values().map(|(key, _)| key).collect();
+        assert_eq!(
+            seen, keys,
+            "an ART orders by key bytes, so signed order has to be built in"
+        );
+    }
+
+    /// The case a half-applied transform passes: a range that stays on one side
+    /// of zero is fine even when the mapping is wrong, so the range has to
+    /// cross the sign boundary to be evidence.
+    #[test]
+    fn signed_ranges_cross_the_sign_boundary() {
+        let index = ArcticIndex::<i32, u64>::default();
+        for key in -5..=5 {
+            index.insert_value(key, key as u64);
+        }
+
+        let spanning: Vec<i32> = index.range_values(-2..=2).map(|(key, _)| key).collect();
+        assert_eq!(spanning, vec![-2, -1, 0, 1, 2]);
+
+        let below: Vec<i32> = index.range_values(..0).map(|(key, _)| key).collect();
+        assert_eq!(
+            below,
+            vec![-5, -4, -3, -2, -1],
+            "zero must not sort below the negatives"
+        );
+
+        // Exclusive bounds are resolved by `next`/`previous` in the raw space.
+        // They are only correct because the mapping is onto the whole width.
+        let exclusive: Vec<i32> = index
+            .range_values((Bound::Excluded(-1), Bound::Excluded(1)))
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(exclusive, vec![0], "stepping across the sign boundary must land on 0");
+    }
+
+    /// The extremes are where an off-by-one in the flip shows up, and where a
+    /// `next`/`previous` that ran outside the mapping's image would.
+    #[test]
+    fn signed_keys_round_trip_at_the_extremes() {
+        let index = ArcticIndex::<i64, u64>::default();
+        for key in [i64::MIN, i64::MIN + 1, -1, 0, 1, i64::MAX - 1, i64::MAX] {
+            index.insert_value(key, 7);
+            assert_eq!(index.get_value(&key), Some(7), "{key} did not survive the mapping");
+        }
+
+        let from_min: Vec<i64> = index
+            .range_values(i64::MIN..=i64::MIN + 1)
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(from_min, vec![i64::MIN, i64::MIN + 1]);
+
+        let to_max: Vec<i64> = index.range_values(i64::MAX - 1..).map(|(key, _)| key).collect();
+        assert_eq!(to_max, vec![i64::MAX - 1, i64::MAX]);
+    }
 
     #[test]
     fn implements_unique_index_contract() {

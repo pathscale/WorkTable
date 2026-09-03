@@ -91,6 +91,44 @@ macro_rules! impl_art_persistence_key {
 
 impl_art_persistence_key!(u8, u16, u32, u64, u128, usize);
 
+/// Signed keys, encoded through the same sign-bit flip the in-memory ART uses.
+///
+/// Signed types have `to_be_bytes` of their own, so a plain round trip would
+/// work and the flip is **not load-bearing today**: every use of this trait is
+/// a WAL record encoded and decoded whole, and nothing sorts or ranges over the
+/// encoded bytes.
+///
+/// It is here for consistency with why the unsigned encoding is big-endian at
+/// all. Endianness is irrelevant to a pure round trip; big-endian was chosen so
+/// byte order is numeric order, and two's complement breaks that for signed
+/// keys because a negative has its high bit set. Flipping the sign bit keeps
+/// the stated property true for signed keys too, so a future reader who relies
+/// on it is not caught out by a gap that only exists for half the key types.
+macro_rules! impl_art_persistence_key_signed {
+    ($($type:ty => $raw:ty),+ $(,)?) => {
+        $(
+            impl ArtPersistenceKey for $type {
+                const WIDTH: u8 = std::mem::size_of::<Self>() as u8;
+
+                fn encode_art_key(&self, output: &mut Vec<u8>) {
+                    let raw = (*self as $raw) ^ ((1 as $raw) << (<$raw>::BITS - 1));
+                    output.extend_from_slice(&raw.to_be_bytes());
+                }
+
+                fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+                    let bytes: [u8; std::mem::size_of::<Self>()] = bytes
+                        .try_into()
+                        .map_err(|_| eyre!("invalid {}-byte ART key", Self::WIDTH))?;
+                    let raw = <$raw>::from_be_bytes(bytes) ^ ((1 as $raw) << (<$raw>::BITS - 1));
+                    Ok(raw as Self)
+                }
+            }
+        )+
+    };
+}
+
+impl_art_persistence_key_signed!(i8 => u8, i16 => u16, i32 => u32, i64 => u64, i128 => u128, isize => usize);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WalOp {
     /// Unique files: associate the key with this link. Multi files: add one
