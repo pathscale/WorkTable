@@ -25,9 +25,10 @@
 //! # What it is not
 //!
 //! Building a `Schema` runs the *parser*, not the *validator*. The rules that
-//! reject, say, a `congee` index over a `String` key live in `worktable_codegen`
-//! next to the code that would have been generated, because that is where the
-//! explanation belongs. A `Schema` can therefore describe a declaration that
+//! reject, say, a `congee` index over a `String` key live in
+//! [`crate::validate`], and `worktable_codegen` reads the same lists from
+//! there, so the macro and an editor calling [`crate::check`] cannot disagree
+//! about what is legal. A `Schema` can therefore describe a declaration that
 //! the macro would refuse to expand. That is deliberate: a designer needs to
 //! hold a half-finished schema while the user is still typing it, and a
 //! migration planner needs to read an old one whose rules have since changed.
