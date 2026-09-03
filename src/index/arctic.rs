@@ -125,6 +125,22 @@ where
     K::Raw: arctic::topology::Key,
     V: Clone + Debug + Send + Sync + 'static,
 {
+    /// Every entry, ascending.
+    ///
+    /// An inherent alias for [`UniqueIndex::iter_values`], so this reads the
+    /// same as the general-purpose backend does. Without it, code written
+    /// against that backend's inherent `iter` does not compile against this
+    /// one: a difference in spelling rather than in capability, which costs
+    /// the reader a detour and quietly pushes tests towards the one backend
+    /// whose name they already know. It caught out the vacuum invariant tests
+    /// twice.
+    ///
+    /// Materialises, exactly as `iter_values` does: the underlying map hands
+    /// out entries borrowed from a guard, so they are cloned rather than lent.
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {
+        <Self as UniqueIndex<K, V>>::iter_values(self)
+    }
+
     pub(crate) fn export_topology<T>(
         &mut self,
         mut encode: impl FnMut(&V) -> T,
