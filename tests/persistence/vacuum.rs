@@ -208,3 +208,136 @@ fn test_vacuum_on_persisted_table_survives_reload() {
         }
     })
 }
+
+/// Batching the sweep lets a concurrent insert reuse freed space *while*
+/// vacuum runs. On a persisted table that means an insert can claim a link on
+/// a page the sweep is still working through, and both the insert and the
+/// sweep's row moves go through the same CDC event stream.
+///
+/// Before the sweep was batched this could not happen at all: vacuum held the
+/// registry for its whole duration, so no insert could reuse anything. Nothing
+/// on the persistence path had ever seen this interleaving.
+///
+/// The deletes here are one contiguous block, which is also what makes the
+/// freed links coalesce, so this exercises the ranged path rather than a
+/// scattered one.
+///
+/// What this does not pin down: whether a given run hits the window where an
+/// insert reuses a link on a page the sweep is mid-way through. That is
+/// scheduling-dependent. The test creates the opportunity and asserts the
+/// durable outcome; it is not a proof that the window was entered.
+#[test]
+fn test_persisted_vacuum_survives_inserts_reusing_space_mid_sweep() {
+    let config = DiskConfig::new_with_table_name(
+        "tests/data/vacuum/persisted_reuse",
+        VacuumPersistWorkTable::name_snake_case(),
+        VacuumPersistWorkTable::version(),
+    );
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+
+    runtime.block_on(async {
+        remove_dir_if_exists("tests/data/vacuum/persisted_reuse".to_string()).await;
+
+        let mut rows = HashMap::new();
+        let deleted: Vec<u64>;
+        {
+            let engine = VacuumPersistPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = std::sync::Arc::new(VacuumPersistWorkTable::load(engine).await.unwrap());
+
+            for i in 0..2_000i64 {
+                let row = VacuumPersistRow {
+                    id: table.get_next_pk().into(),
+                    test: i,
+                    another: i as u64,
+                    exchange: format!("test{i}"),
+                };
+                rows.insert(row.id, row.clone());
+                table.insert(row).await.unwrap();
+            }
+
+            // One contiguous block, well past the reclamation backlog so the
+            // freed links actually reach the registry before the sweep.
+            let mut ids: Vec<_> = rows.keys().copied().collect();
+            ids.sort_unstable();
+            deleted = ids.into_iter().skip(400).take(800).collect();
+            for id in &deleted {
+                table.delete(*id).await.unwrap();
+            }
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .expect("persistence should catch up before vacuum")
+                .expect("persistence engine failed");
+
+            // Inserts run against the table for the whole sweep, so they land
+            // in the windows between batches where reuse is possible again.
+            let inserting = tokio::spawn({
+                let table = std::sync::Arc::clone(&table);
+                async move {
+                    let mut inserted = Vec::new();
+                    for i in 2_000..2_600i64 {
+                        let row = VacuumPersistRow {
+                            id: table.get_next_pk().into(),
+                            test: i,
+                            another: i as u64,
+                            exchange: format!("test{i}"),
+                        };
+                        inserted.push(row.clone());
+                        table.insert(row).await.unwrap();
+                        tokio::task::yield_now().await;
+                    }
+                    inserted
+                }
+            });
+
+            let stats = table.vacuum().vacuum().await.unwrap();
+            assert!(
+                stats.pages_freed > 0,
+                "the sweep must actually reclaim pages, or this test proves nothing about \
+                 interleaving with it"
+            );
+            for row in inserting.await.unwrap() {
+                rows.insert(row.id, row);
+            }
+
+            timeout(Duration::from_secs(30), table.wait_for_ops())
+                .await
+                .expect("persistence stalled after a sweep interleaved with inserts")
+                .expect("persistence engine failed");
+
+            for id in &deleted {
+                rows.remove(id);
+            }
+            for (id, expected) in &rows {
+                assert_eq!(
+                    table.select(*id).as_ref(),
+                    Some(expected),
+                    "row {id} lost or corrupted by a sweep running alongside inserts"
+                );
+            }
+            let table = std::sync::Arc::into_inner(table).expect("the inserting task has finished");
+            table.close().await.unwrap();
+        }
+
+        // The reload is the part that a mid-sweep reuse would break: an insert
+        // writing through a link the sweep also relocated leaves the on-disk
+        // state describing two different rows at one address.
+        let engine = VacuumPersistPersistenceEngine::new(config.clone()).await.unwrap();
+        let table = VacuumPersistWorkTable::load(engine).await.unwrap();
+        for (id, expected) in &rows {
+            assert_eq!(
+                table.select(*id).as_ref(),
+                Some(expected),
+                "row {id} did not survive the reload after a sweep interleaved with inserts"
+            );
+        }
+        for id in &deleted {
+            assert!(table.select(*id).is_none(), "deleted row {id} came back after reload");
+        }
+    });
+}

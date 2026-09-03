@@ -20,6 +20,8 @@ use crate::vacuum::VacuumPersistence;
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
+use crate::vacuum::pacing::BatchDemand;
+use crate::vacuum::{VacuumGate, VacuumPacing};
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
     UniqueIndex,
@@ -70,6 +72,13 @@ pub struct EmptyDataVacuum<
     /// tables must set it so index updates go through CDC and reach disk.
     #[debug(ignore)]
     persistence: Option<Arc<dyn VacuumPersistence<PrimaryKey, SecondaryEvents>>>,
+
+    /// How the sweep is cut up and when it stands down. See
+    /// [`VacuumPacing`].
+    pacing: VacuumPacing,
+
+    /// The bit a caller flips to hold the sweep off.
+    gate: Arc<VacuumGate>,
 
     phantom_data: PhantomData<(SecondaryEvents, AvailableTypes, AvailableIndexes)>,
 }
@@ -130,8 +139,29 @@ where
             primary_index,
             secondary_indexes,
             persistence: None,
+            pacing: VacuumPacing::default(),
+            gate: Arc::new(VacuumGate::default()),
             phantom_data: PhantomData,
         }
+    }
+
+    /// Replaces the pacing policy. See [`VacuumPacing`] for what each knob
+    /// trades away.
+    pub fn with_pacing(mut self, pacing: VacuumPacing) -> Self {
+        self.pacing = pacing;
+        self
+    }
+
+    /// Shares the gate, so a caller holding the same `Arc` can hold vacuum
+    /// off across a bulk load or a latency-sensitive window.
+    pub fn with_gate(mut self, gate: Arc<VacuumGate>) -> Self {
+        self.gate = gate;
+        self
+    }
+
+    /// The gate this vacuum stands down on.
+    pub fn gate(&self) -> &Arc<VacuumGate> {
+        &self.gate
     }
 
     /// Attaches a persistence sink. Index updates for moved rows then use the
@@ -154,9 +184,14 @@ where
 
         let registry = self.data_pages.empty_links_registry();
         let mut per_page_info = registry.get_per_page_info();
-        let _registry_lock = registry.lock_vacuum().await;
+        let mut registry_lock = Some(registry.lock_vacuum().await);
 
-        per_page_info.sort_by_key(|l| OrderedFloat(l.filled_empty_ratio));
+        // Pages named by a batched or ranged delete go first. They are where
+        // the freed space is concentrated, so they are the pages most likely
+        // to empty out entirely, and a sweep that stands down partway through
+        // will have done the valuable work before it did.
+        let targeted = registry.take_targeted_pages();
+        per_page_info.sort_by_key(|l| (!targeted.contains(&l.page_id), OrderedFloat(l.filled_empty_ratio)));
         let initial_bytes_freed: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
         let additional_allocated_page = self.data_pages.allocate_new_or_pop_free();
 
@@ -168,7 +203,29 @@ where
         let pages_processed = per_page_info.len();
 
         let info_iter = per_page_info.into_iter();
+
+        // The exclusion is released every `batch_pages` sources. It is held
+        // for the whole sweep otherwise, and while it is held every insert
+        // asking for reclaimable space is turned away and allocates instead —
+        // which is why a whole-table sweep shows up as doubled insert latency
+        // for its entire duration rather than as a brief stall.
+        let mut pages_since_yield = 0usize;
+        let mut batch_demand = BatchDemand::start(registry);
+
         for info in info_iter {
+            pages_since_yield += 1;
+            if self.pacing.batch_pages > 0 && pages_since_yield > self.pacing.batch_pages {
+                pages_since_yield = 1;
+
+                // Measured across the batch that just ran, so asking the
+                // question costs nothing that was not already being spent.
+                let demand = batch_demand.per_ms(registry);
+                drop(registry_lock.take());
+                self.pacing.wait_until_quiet(registry, &self.gate, demand).await;
+                registry_lock = Some(registry.lock_vacuum().await);
+                batch_demand = BatchDemand::start(registry);
+            }
+
             let page_from = info.page_id;
             if self.data_pages.current_page_id() == page_from {
                 // don't touch current page or else inserts will be broken
@@ -270,6 +327,7 @@ where
         // vacuum itself as scratch destinations; handing them back is not
         // freeing table pages, so they do not count towards `pages_freed`.
         self.finalize_staged_pages(free_pages, defragmented_pages)?;
+        drop(registry_lock);
 
         Ok(VacuumStats {
             pages_processed,
@@ -553,12 +611,21 @@ where
     async fn vacuum(&self) -> eyre::Result<VacuumStats> {
         self.defragment().await
     }
+
+    fn arm_wake(&self, bytes: u64) {
+        self.data_pages.empty_links_registry().set_vacuum_wake_threshold(bytes);
+    }
+
+    async fn wait_until_worth_running(&self) {
+        self.data_pages.empty_links_registry().wait_for_fragmentation().await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use data_bucket::Link;
     use data_bucket::page::PageId;
@@ -566,7 +633,10 @@ mod tests {
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;
+    use std::time::Duration;
+
     use crate::vacuum::vacuum::{CandidateMove, EmptyDataVacuum};
+    use crate::vacuum::{VacuumGate, VacuumPacing, WorkTableVacuum};
 
     worktable!(
         name: Test,
@@ -582,6 +652,168 @@ mod tests {
             another_idx: another,
         }
     );
+
+    /// While a sweep holds the registry's write side, every insert that wants
+    /// reclaimable space is turned away and allocates a fresh page instead.
+    /// Cutting the sweep into batches gives that space back between them.
+    ///
+    /// Both arms run here because only the pair is evidence: the unbatched arm
+    /// is what the code did before, and it cannot reuse anything.
+    #[tokio::test]
+    async fn vacuum_releases_the_registry_between_batches() {
+        async fn reuses_during_sweep(batch_pages: usize) -> usize {
+            let table = TestWorkTable::default();
+            let mut ids = Vec::new();
+            for i in 0..2_000 {
+                let row = TestRow {
+                    id: table.get_next_pk().into(),
+                    test: i,
+                    another: i as u64,
+                    exchange: format!("test{}", i),
+                };
+                ids.push(row.id);
+                table.insert(row).await.unwrap();
+            }
+            // Every other row, so the free space is spread over every page
+            // rather than concentrated in one.
+            for id in ids.iter().step_by(2) {
+                table.delete(*id).await.unwrap();
+            }
+
+            let vacuum = create_vacuum(&table).with_pacing(VacuumPacing {
+                batch_pages,
+                // The poller's own attempts read as foreground demand. Backing
+                // off is a separate behaviour with its own test; this one is
+                // about the exclusion being released at all.
+                busy_demand_per_ms: u64::MAX,
+                ..Default::default()
+            });
+
+            let pages = Arc::clone(&table.0.data);
+            let stop = Arc::new(AtomicBool::new(false));
+            let reuses = Arc::new(AtomicUsize::new(0));
+            let poller = tokio::spawn({
+                let (stop, reuses) = (Arc::clone(&stop), Arc::clone(&reuses));
+                async move {
+                    while !stop.load(Ordering::Relaxed) {
+                        if pages.empty_links_registry().pop_max().is_some() {
+                            reuses.fetch_add(1, Ordering::Relaxed);
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                }
+            });
+
+            vacuum.defragment().await.unwrap();
+            stop.store(true, Ordering::Relaxed);
+            poller.await.unwrap();
+            reuses.load(Ordering::Relaxed)
+        }
+
+        assert_eq!(
+            reuses_during_sweep(0).await,
+            0,
+            "a sweep that never releases the registry cannot let anything reuse space"
+        );
+        assert!(
+            reuses_during_sweep(1).await > 0,
+            "a batched sweep must hand the registry back between batches"
+        );
+    }
+
+    /// The gate holds the sweep off at batch boundaries, and the bound on
+    /// consecutive stand-downs means a permanently gated table still gets
+    /// vacuumed rather than fragmenting without limit.
+    #[tokio::test]
+    async fn a_paused_gate_makes_vacuum_stand_down_without_stalling_it() {
+        let table = TestWorkTable::default();
+        let mut ids = Vec::new();
+        for i in 0..1_000 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            ids.push(row.id);
+            table.insert(row).await.unwrap();
+        }
+        for id in ids.iter().step_by(2) {
+            table.delete(*id).await.unwrap();
+        }
+
+        let gate = Arc::new(VacuumGate::default());
+        gate.pause();
+        let vacuum = create_vacuum(&table)
+            .with_gate(Arc::clone(&gate))
+            .with_pacing(VacuumPacing {
+                batch_pages: 1,
+                backoff: Duration::from_millis(1),
+                max_consecutive_backoffs: 2,
+                ..Default::default()
+            });
+
+        vacuum.defragment().await.unwrap();
+
+        assert!(
+            gate.stand_downs() > 0,
+            "a paused gate must make the sweep stand down at its batch boundaries"
+        );
+        assert!(
+            !table.0.data.get_empty_pages().is_empty(),
+            "the bound on consecutive stand-downs must let a gated sweep finish anyway"
+        );
+    }
+
+    /// Deletes wake a parked sweep, so vacuum arrives because the table got
+    /// fragmented rather than because a minute elapsed.
+    ///
+    /// The unreachable-threshold arm is the "before": that is what a sweep
+    /// parked on a table that never wakes it looks like, and it is what every
+    /// sweep looked like when the only trigger was the interval.
+    #[tokio::test]
+    async fn freeing_space_wakes_a_parked_sweep() {
+        async fn woke(threshold: u64, within: Duration) -> bool {
+            let table = TestWorkTable::default();
+            let mut ids = Vec::new();
+            // Deletes queue their storage for reclamation and only push it to
+            // the registry once the backlog is worth a sweep, so the wake
+            // cannot be finer-grained than that batch. Delete well past it.
+            for i in 0..2_000 {
+                let row = TestRow {
+                    id: table.get_next_pk().into(),
+                    test: i,
+                    another: i as u64,
+                    exchange: format!("test{}", i),
+                };
+                ids.push(row.id);
+                table.insert(row).await.unwrap();
+            }
+
+            let vacuum = create_vacuum(&table);
+            vacuum.arm_wake(threshold);
+
+            let (parked, _) = tokio::join!(tokio::time::timeout(within, vacuum.wait_until_worth_running()), async {
+                // Let the wait park before anything is freed, so a pass
+                // means the notification arrived and not that the threshold
+                // was already met when it was called.
+                tokio::task::yield_now().await;
+                for id in ids.iter().step_by(2) {
+                    table.delete(*id).await.unwrap();
+                }
+            });
+            parked.is_ok()
+        }
+
+        assert!(
+            !woke(u64::MAX, Duration::from_millis(300)).await,
+            "a threshold the table cannot reach must leave the sweep parked"
+        );
+        assert!(
+            woke(1024, Duration::from_secs(5)).await,
+            "freeing past the threshold must wake the sweep"
+        );
+    }
 
     /// Creates an EmptyDataVacuum instance from a WorkTable
     #[allow(clippy::type_complexity)]
