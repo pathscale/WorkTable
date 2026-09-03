@@ -15,6 +15,21 @@ use crate::persistence::task::{LastEventIds, QueueInnerRow};
 use crate::prelude::*;
 use crate::prelude::{From, Order, SelectQueryExecutor};
 
+/// Cycles of a persistently gapped event stream before the engine gives up and
+/// fails the table.
+///
+/// A gap is usually transient: the operation carrying the missing id has been
+/// pushed but not yet batched, or its producer has not reached its push. Each
+/// deferral sleeps 500ms in the worker loop, so this is about a minute of
+/// waiting. The previous value of eight was about four seconds, which a
+/// producer descheduled under load can lose, and the engine then blamed a
+/// permanent bug for what was a slow thread.
+///
+/// Widening the collection is a *separate* decision, taken far sooner and
+/// tracked by the analyzer's own no-progress counter. This one only decides
+/// when to stop hoping.
+const GIVE_UP_AFTER_ATTEMPTS: usize = 120;
+
 // Ephemeral metadata rebuilt for every persistence batch, not a persisted
 // schema. One Multi operation deliberately owns several rows, so operation_id
 // is non-unique while pos is the unique association back to the ops vector.
@@ -342,7 +357,7 @@ where
                 // assigned — only non-CDC index mutations do that — so a gap
                 // that persists is a bug upstream of the analyzer; report it
                 // loudly instead of force-applying and corrupting the file.
-                if attempts > 8 {
+                if attempts > GIVE_UP_AFTER_ATTEMPTS {
                     return Err(eyre::eyre!(
                         "persistence stalled on primary index event gap: last applied {:?}, next available {:?} (attempt {attempts}); an event id was likely consumed without its event being queued",
                         last_ids.primary_id,
@@ -364,7 +379,7 @@ where
                     // Same rule as the primary index above: never apply a gapped
                     // stream, defer until the missing event arrives, and report
                     // a persistent gap as the bug it is.
-                    if attempts > 8 {
+                    if attempts > GIVE_UP_AFTER_ATTEMPTS {
                         return Err(eyre::eyre!(
                             "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} (attempt {attempts}); an event id was likely consumed without its event being queued"
                         ));
