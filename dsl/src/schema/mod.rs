@@ -359,23 +359,15 @@ fn indexes_from_model(model: &Columns) -> Vec<IndexSpec> {
 }
 
 fn queries_from_model(queries: Queries) -> QueriesSpec {
-    fn convert(
-        operations: std::collections::HashMap<proc_macro2::Ident, crate::model::Operation>,
-    ) -> Vec<OperationSpec> {
-        let mut converted: Vec<_> = operations
+    fn convert(operations: indexmap::IndexMap<proc_macro2::Ident, crate::model::Operation>) -> Vec<OperationSpec> {
+        operations
             .into_values()
             .map(|operation| OperationSpec {
                 name: operation.name.to_string(),
                 columns: operation.columns.iter().map(ToString::to_string).collect(),
                 by: operation.by.to_string(),
             })
-            .collect();
-        // The model stores these in a `HashMap`, so this is the only place an
-        // order can be imposed at all. Sorted by name is not the declaration
-        // order, but it is the same on every run, which is what a consumer
-        // rendering them needs.
-        converted.sort_by(|a, b| a.name.cmp(&b.name));
-        converted
+            .collect()
     }
 
     QueriesSpec {

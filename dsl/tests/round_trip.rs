@@ -101,11 +101,8 @@ fn every_declaration_in_the_repository_survives_a_round_trip() {
 
 #[test]
 fn reading_the_same_declaration_twice_gives_the_same_schema() {
-    // `Columns::columns_map` and the query maps are `HashMap`s, whose iteration
-    // order Rust randomises per process. Within one process that randomisation
-    // is fixed, so this catches an ordering mistake only if the schema is built
-    // from two independently-hashed maps; the ordering guarantee that matters
-    // across processes is the one `columns_are_in_declaration_order` states.
+    // Columns and query maps retain declaration order, so independently parsed
+    // schemas and their emitted text must agree exactly.
     let source = "
         name: Repeatable,
         columns: { id: u64 primary_key, a: u64, b: u64, c: String },

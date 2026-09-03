@@ -5,9 +5,8 @@ use crate::common::model::Operation;
 use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::persist::PersistGenerator;
 use convert_case::{Case, Casing};
+use indexmap::IndexMap;
 use proc_macro2::{Ident, Span};
-use std::collections::HashMap;
-
 impl PersistGenerator {
     pub fn gen_query_in_place_impl(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
@@ -29,7 +28,7 @@ impl PersistGenerator {
         })
     }
 
-    fn gen_in_place_queries(&self, in_place_queries: HashMap<Ident, Operation>) -> TokenStream {
+    fn gen_in_place_queries(&self, in_place_queries: IndexMap<Ident, Operation>) -> TokenStream {
         let defs = in_place_queries
             .iter()
             .map(|(name, op)| {

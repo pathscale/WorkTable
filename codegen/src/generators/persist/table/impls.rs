@@ -512,6 +512,13 @@ impl PersistGenerator {
             where #primary_key_type: From<Pk>
             {
                 let pks: Vec<#primary_key_type> = pks.into_iter().map(core::convert::Into::into).collect();
+                if pks.is_empty() {
+                    return core::result::Result::Ok(Vec::new());
+                }
+                // Persisted deletes run one row at a time for durability, so
+                // keep a cheap operation-wide activity signal across the gaps
+                // between those row mutations. It holds no row or stripe lock.
+                let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
                 let mut deleted = Vec::with_capacity(pks.len());
                 for pk in pks {
                     match self.delete::<#primary_key_type>(pk.clone()).await {
@@ -547,6 +554,8 @@ impl PersistGenerator {
                 -> core::result::Result<Vec<#primary_key_type>, BatchDeleteError<#primary_key_type>>
             where R: core::ops::RangeBounds<#primary_key_type>
             {
+                // Cover the range walk as well as the per-row deletes below.
+                let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
                 let start = range.start_bound().cloned();
                 let end = range.end_bound().cloned();
                 let keys: Vec<#primary_key_type> = self.0

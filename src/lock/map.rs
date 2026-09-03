@@ -29,6 +29,17 @@ pub struct MutationGuard {
     stripe: usize,
 }
 
+/// Operation-wide activity signal for a chunked bulk mutation.
+///
+/// It does not hold a row or stripe lock. Its only job is to keep background
+/// vacuum out while a bulk operation deliberately releases locks between
+/// chunks, so those gaps are not mistaken for the table becoming idle.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct BulkMutationGuard {
+    active: Arc<AtomicUsize>,
+}
+
 #[derive(Debug)]
 struct LockEntry<LockType> {
     lock: Arc<tokio::sync::RwLock<LockType>>,
@@ -98,6 +109,12 @@ impl Drop for MutationGuard {
     }
 }
 
+impl Drop for BulkMutationGuard {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::Release);
+    }
+}
+
 /// Registry for per-row async locks and synchronous mutation stripes.
 ///
 /// # Sync/async lock boundary
@@ -113,6 +130,7 @@ pub struct LockMap<LockType, PrimaryKey> {
     map: RwLock<HashMap<PrimaryKey, LockEntry<LockType>>>,
     next_id: AtomicU16,
     mutation_stripes: Arc<[MutationStripe; MUTATION_STRIPE_COUNT]>,
+    bulk_mutations: Arc<AtomicUsize>,
 }
 
 impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey> {
@@ -121,6 +139,7 @@ impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey> {
             map: RwLock::new(HashMap::new()),
             next_id: AtomicU16::default(),
             mutation_stripes: Arc::new(std::array::from_fn(|_| MutationStripe::default())),
+            bulk_mutations: Arc::default(),
         }
     }
 }
@@ -282,10 +301,38 @@ where
     /// Each stripe is a ticket lock, so a handed-out ticket that is not yet
     /// being served is a writer either inside the gate or queued for it.
     pub fn mutations_in_flight(&self) -> usize {
-        self.mutation_stripes
+        let striped = self
+            .mutation_stripes
             .iter()
             .filter(|stripe| stripe.next_ticket.load(Ordering::Acquire) != stripe.serving.load(Ordering::Acquire))
-            .count()
+            .count();
+        striped + usize::from(self.bulk_mutations.load(Ordering::Acquire) > 0)
+    }
+
+    /// Monotonic-with-wrap count of completed mutation-stripe entries.
+    ///
+    /// Vacuum samples this between polls so a continuous mutation stream
+    /// cannot look idle merely because both polls landed between operations.
+    /// It is derived from the ticket locks' existing counters and adds no
+    /// atomic operation to the foreground path.
+    #[doc(hidden)]
+    pub fn mutation_epoch(&self) -> u64 {
+        self.mutation_stripes.iter().fold(0u64, |epoch, stripe| {
+            epoch.wrapping_add(stripe.serving.load(Ordering::Acquire))
+        })
+    }
+
+    /// Keeps vacuum out for the duration of a chunked bulk mutation without
+    /// holding any row or mutation-stripe lock.
+    ///
+    /// One increment and one decrement are paid per whole operation, not per
+    /// row or chunk.
+    #[doc(hidden)]
+    pub fn bulk_mutation_guard(&self) -> BulkMutationGuard {
+        self.bulk_mutations.fetch_add(1, Ordering::AcqRel);
+        BulkMutationGuard {
+            active: Arc::clone(&self.bulk_mutations),
+        }
     }
 
     fn mutation_guard_for_stripe(&self, stripe: usize) -> MutationGuard {
@@ -330,6 +377,37 @@ mod tests {
         for key in 0..1000u64 {
             let _guard = lock_map.mutation_guard(&key);
         }
+    }
+
+    #[test]
+    fn bulk_mutation_guard_spans_chunk_gaps_without_holding_a_stripe() {
+        let lock_map: LockMap<FullRowLock, u64> = LockMap::default();
+        assert_eq!(lock_map.mutations_in_flight(), 0);
+
+        let first = lock_map.bulk_mutation_guard();
+        assert_eq!(lock_map.mutations_in_flight(), 1);
+        {
+            let second = lock_map.bulk_mutation_guard();
+            assert_eq!(lock_map.mutations_in_flight(), 1);
+            drop(second);
+        }
+        assert_eq!(lock_map.mutations_in_flight(), 1);
+
+        drop(first);
+        assert_eq!(lock_map.mutations_in_flight(), 0);
+    }
+
+    #[test]
+    fn mutation_epoch_detects_work_that_finished_between_checks() {
+        let lock_map: LockMap<FullRowLock, u64> = LockMap::default();
+        let before = lock_map.mutation_epoch();
+
+        let guard = lock_map.mutation_guard(&17);
+        assert_eq!(lock_map.mutations_in_flight(), 1);
+        drop(guard);
+
+        assert_eq!(lock_map.mutations_in_flight(), 0);
+        assert_ne!(lock_map.mutation_epoch(), before);
     }
 
     /// Two threads acquiring overlapping key sets in opposite caller order

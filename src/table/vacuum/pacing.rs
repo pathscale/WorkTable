@@ -10,9 +10,10 @@
 //! So the cost is not a constant to be scheduled around, it is a function of
 //! how much of the table vacuum holds at once and of how busy the table is
 //! while it does. Both are addressed here: the sweep is cut into batches that
-//! release the exclusion between them, and between batches vacuum looks at how
-//! much foreground demand it turned away and stands down when the answer is
-//! "a lot".
+//! release the exclusion between them, and before every batch vacuum asks the
+//! mutation stripes whether foreground work is active or has completed since
+//! the preceding check. Every insert, delete and upsert passes through those
+//! stripes, including mutations that never ask for reclaimable space.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -21,9 +22,9 @@ use smart_default::SmartDefault;
 
 /// A bit a caller flips to hold vacuum off entirely.
 ///
-/// Separate from the automatic backoff below: that one reacts to measured
-/// demand, this one is for a caller who knows something the table cannot see —
-/// a bulk load about to start, a latency-sensitive window, a benchmark.
+/// Separate from the automatic backoff below: that one reacts to live mutation
+/// activity, this one is for a caller who knows something the table cannot see
+/// — a bulk load about to start, a latency-sensitive window, a benchmark.
 #[derive(Debug, Default)]
 pub struct VacuumGate {
     paused: AtomicBool,
@@ -103,6 +104,12 @@ pub struct VacuumPacing {
 pub trait ForegroundActivity {
     /// Writers currently inside a mutation gate or queued for one.
     fn mutations_in_flight(&self) -> usize;
+
+    /// Aggregate completion counter for the mutation gates.
+    ///
+    /// If this changes between polls, foreground work happened even when both
+    /// instantaneous reads happened to land between operations.
+    fn mutation_epoch(&self) -> u64;
 }
 
 impl<LockType, PrimaryKey> ForegroundActivity for crate::lock::LockMap<LockType, PrimaryKey>
@@ -111,6 +118,10 @@ where
 {
     fn mutations_in_flight(&self) -> usize {
         crate::lock::LockMap::mutations_in_flight(self)
+    }
+
+    fn mutation_epoch(&self) -> u64 {
+        crate::lock::LockMap::mutation_epoch(self)
     }
 }
 
@@ -125,10 +136,13 @@ impl VacuumPacing {
 
         let mut backoff = self.backoff;
         let mut quiet = 0;
+        let mut observed_epoch = activity.mutation_epoch();
         loop {
-            if gate.is_paused() || activity.mutations_in_flight() > 0 {
+            let current_epoch = activity.mutation_epoch();
+            if gate.is_paused() || activity.mutations_in_flight() > 0 || current_epoch != observed_epoch {
                 gate.note_stand_down();
                 quiet = 0;
+                observed_epoch = current_epoch;
                 tokio::time::sleep(backoff).await;
                 // Doubling, so a table busy for a long time is asked about
                 // cheaply rather than every couple of milliseconds.
@@ -144,5 +158,66 @@ impl VacuumPacing {
             // together, before believing it.
             tokio::time::sleep(self.backoff).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct ActivityBetweenChecks {
+        active: AtomicBool,
+        epoch: AtomicU64,
+    }
+
+    impl ForegroundActivity for ActivityBetweenChecks {
+        fn mutations_in_flight(&self) -> usize {
+            0
+        }
+
+        fn mutation_epoch(&self) -> u64 {
+            if self.active.load(Ordering::Acquire) {
+                self.epoch.fetch_add(1, Ordering::AcqRel) + 1
+            } else {
+                self.epoch.load(Ordering::Acquire)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_work_between_checks_resets_the_quiet_buffer() {
+        let activity = Arc::new(ActivityBetweenChecks::default());
+        activity.active.store(true, Ordering::Release);
+        let gate = Arc::new(VacuumGate::default());
+        let pacing = VacuumPacing {
+            backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+            quiet_samples: 3,
+            ..Default::default()
+        };
+
+        let waiting = {
+            let activity = Arc::clone(&activity);
+            let gate = Arc::clone(&gate);
+            tokio::spawn(async move {
+                pacing.wait_until_quiet(activity.as_ref(), gate.as_ref()).await;
+            })
+        };
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(
+            !waiting.is_finished(),
+            "activity between snapshots must keep vacuum out"
+        );
+
+        activity.active.store(false, Ordering::Release);
+        tokio::time::timeout(Duration::from_millis(20), waiting)
+            .await
+            .expect("vacuum should enter after the recheck buffer stays quiet")
+            .unwrap();
     }
 }

@@ -8,12 +8,8 @@ fn parse(source: &str) -> Schema {
 
 #[test]
 fn columns_are_in_declaration_order() {
-    // The model stores columns in a `HashMap`, whose iteration order Rust
-    // randomises per process: the same input has been observed producing
-    // `["answered", "project_id", "id"]` and `["project_id", "answered", "id"]`
-    // on two runs. A consumer walking that draws a different table every time.
-    // `field_positions` carries the declaration order, and this is the claim
-    // that the IR sorts by it.
+    // Declaration order is part of the public model contract. A consumer
+    // walking the model or schema must see the same layout the author wrote.
     let schema = parse(
         "
         name: Answer,
@@ -29,11 +25,9 @@ fn columns_are_in_declaration_order() {
 }
 
 #[test]
-fn queries_are_sorted_because_the_model_cannot_order_them() {
-    // Unlike columns, queries have no recorded declaration order to recover:
-    // the model holds them in a `HashMap` and nothing else. Sorted by name is
-    // not the order they were written in, but it is the same on every run,
-    // which is what a consumer rendering them needs.
+fn queries_are_in_declaration_order() {
+    // Query order is preserved as well, so schema tools and generated macro
+    // output are both deterministic without rewriting the author's order.
     let schema = parse(
         "
         name: Sorted,
@@ -42,7 +36,7 @@ fn queries_are_sorted_because_the_model_cannot_order_them() {
         ",
     );
     let names: Vec<&str> = schema.queries.updates.iter().map(|q| q.name.as_str()).collect();
-    assert_eq!(names, ["Alpha", "Bravo", "Charlie"]);
+    assert_eq!(names, ["Charlie", "Alpha", "Bravo"]);
 }
 
 #[test]

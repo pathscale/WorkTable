@@ -18,6 +18,15 @@ worktable!(
         },
         delete: {
             ByVal1() by val1,
+            ByVal2() by val2,
         }
     }
 );
+
+#[test]
+fn brute_force_delete_future_is_send() {
+    fn assert_send<T: Send>(_: T) {}
+
+    let table = DeleteTestWorkTable::default();
+    assert_send(table.delete_by_val_2(1));
+}

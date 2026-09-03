@@ -19,7 +19,7 @@ fn insert(c: &mut Criterion) {
                     another: format!("another_{}", fastrand::u64(..)),
                     something: fastrand::u64(..),
                 };
-                table.insert(black_box(row))
+                futures::executor::block_on(table.insert(black_box(row)))
             },
             BatchSize::SmallInput,
         )

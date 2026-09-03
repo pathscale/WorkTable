@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use convert_case::{Case, Casing};
+use indexmap::IndexMap;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
@@ -57,7 +56,7 @@ impl PersistGenerator {
     fn gen_unique_index_fn(
         i: &Ident,
         idx: &Index,
-        columns_map: &HashMap<Ident, TokenStream>,
+        columns_map: &IndexMap<Ident, TokenStream>,
         row_ident: Ident,
     ) -> syn::Result<TokenStream> {
         let type_ = columns_map.get(i).ok_or(syn::Error::new(i.span(), "Row not found"))?;
@@ -116,7 +115,7 @@ impl PersistGenerator {
     fn gen_non_unique_index_fn(
         i: &Ident,
         idx: &Index,
-        columns_map: &HashMap<Ident, TokenStream>,
+        columns_map: &IndexMap<Ident, TokenStream>,
         row_ident: Ident,
         column_range_type: &Ident,
         row_fields_ident: &Ident,
@@ -161,7 +160,7 @@ impl PersistGenerator {
     fn gen_range_index_fn(
         i: &Ident,
         idx: &Index,
-        columns_map: &HashMap<Ident, TokenStream>,
+        columns_map: &IndexMap<Ident, TokenStream>,
         row_ident: Ident,
         column_range_type: &Ident,
         row_fields_ident: &Ident,

@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use proc_macro2::Ident;
 
 use crate::model::Operation;
 
 #[derive(Debug, Default)]
 pub struct Queries {
-    pub updates: HashMap<Ident, Operation>,
-    pub deletes: HashMap<Ident, Operation>,
-    pub in_place: HashMap<Ident, Operation>,
+    pub updates: IndexMap<Ident, Operation>,
+    pub deletes: IndexMap<Ident, Operation>,
+    pub in_place: IndexMap<Ident, Operation>,
 }

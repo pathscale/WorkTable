@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use convert_case::{Case, Casing};
+use indexmap::IndexMap;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
@@ -156,7 +155,7 @@ impl InMemoryGenerator {
         }
     }
 
-    fn gen_custom_deletes(&mut self, deleted: HashMap<Ident, Operation>) -> TokenStream {
+    fn gen_custom_deletes(&mut self, deleted: IndexMap<Ident, Operation>) -> TokenStream {
         let defs = deleted
             .iter()
             .map(|(name, op)| {
@@ -186,17 +185,22 @@ impl InMemoryGenerator {
     fn gen_brute_force_delete_field(field: &Ident, type_: &TokenStream, name: &Ident) -> TokenStream {
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
-                self.iter_with_async(|row| {
+                let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
+                let pks = std::cell::RefCell::new(Vec::new());
+                self.iter_with(|row| {
                     if row.#field == by {
-                        futures::future::Either::Left(async move {
-                            self.delete::<_>(row.get_primary_key()).await
-                        })
-                    } else {
-                        futures::future::Either::Right(async {
-                            Ok(())
-                        })
+                        pks.borrow_mut().push(row.get_primary_key());
                     }
-                }).await?;
+                    Ok(())
+                })?;
+                let pks = pks.into_inner();
+                for pk in pks {
+                    match self.delete(pk).await {
+                        core::result::Result::Ok(()) => {}
+                        core::result::Result::Err(WorkTableError::NotFound) => {}
+                        core::result::Result::Err(e) => return core::result::Result::Err(e),
+                    }
+                }
                 core::result::Result::Ok(())
             }
         }
@@ -216,6 +220,9 @@ impl InMemoryGenerator {
         };
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
+                // A non-unique predicate can delete many rows. Signal the
+                // whole operation without holding its row locks all at once.
+                let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
                 // Snapshot the matching rows as validated primary keys before
                 // deleting anything. Storage links are not stable identities:
                 // a concurrent delete can free a slot and an insert can reuse
@@ -276,8 +283,11 @@ impl InMemoryGenerator {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 let row_to_update = self.0.indexes.#index.get_value(#by).map(Into::into);
                 if let Some(link) = row_to_update {
-                    let row = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
-                    self.delete(row.get_primary_key()).await?;
+                    let pk = {
+                        let row = self.0.data.select_non_ghosted(link).map_err(WorkTableError::PagesError)?;
+                        row.get_primary_key()
+                    };
+                    self.delete(pk).await?;
                 }
                 core::result::Result::Ok(())
             }

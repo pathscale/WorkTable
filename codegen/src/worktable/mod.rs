@@ -637,10 +637,8 @@ mod position_tests {
 /// is a declaration *this* macro accepts, because it cannot call this macro:
 /// that check has to live on the near side of the proc-macro boundary.
 ///
-/// The stronger claim — that the emitted declaration generates the *same code*
-/// — is not asserted here, and cannot be until the generator is deterministic.
-/// See `the_same_declaration_expands_the_same_way_twice` below, which is
-/// ignored because it currently fails on unmodified code.
+/// The stronger claim — that repeated expansion generates the *same code* —
+/// is asserted separately by `the_same_declaration_expands_the_same_way_twice`.
 #[cfg(test)]
 mod emitted_declarations {
     use quote::quote;
@@ -759,24 +757,10 @@ mod generator_determinism {
 
     use super::expand;
 
-    /// Expanding one declaration twice must produce one program. It does not.
-    ///
-    /// `Columns::columns_map` is a `std::collections::HashMap`, and several
-    /// generators iterate it directly to emit an ordered construct: the
-    /// `RowFields` enum and the `AvaiableTypes` enum among them. `RandomState`
-    /// seeds each map instance differently, so two expansions of the same
-    /// declaration in the same process emit those variants in different
-    /// orders, and two compilations of the same source can too.
-    ///
-    /// This is ignored rather than deleted because it is the evidence. It is
-    /// ignored rather than failing because the fix — ordering `columns_map`,
-    /// which `field_positions` already records the order for — changes the
-    /// generated code of every table and is a change to review on its own,
-    /// not a side effect of adding an emitter.
-    ///
-    /// Run it with `cargo test -p worktable_codegen -- --ignored`.
+    /// Expansion order is part of the generated program. This fixture includes
+    /// columns, indexes and multiple query blocks so a randomized collection in
+    /// any of those paths changes the output and fails the test.
     #[test]
-    #[ignore = "records a known generator bug: columns_map is a HashMap, so expansion is not deterministic"]
     fn the_same_declaration_expands_the_same_way_twice() {
         let declaration = quote! {
             name: Twice,
@@ -787,11 +771,39 @@ mod generator_determinism {
                 tenant: u64,
                 balance: f64,
             },
+            indexes: {
+                email_idx: email unique,
+                tenant_idx: tenant,
+            },
+            queries: {
+                update: {
+                    SetBalance(balance) by id,
+                    MoveTenant(tenant) by email,
+                },
+                delete: {
+                    ByEmail() by email,
+                    ByTenant() by tenant,
+                },
+            },
         };
 
         let first = expand(declaration.clone()).expect("expands").to_string();
         let second = expand(declaration).expect("expands").to_string();
-        assert_eq!(first, second);
+        if first != second {
+            let at = first
+                .bytes()
+                .zip(second.bytes())
+                .position(|(left, right)| left != right)
+                .unwrap_or_else(|| first.len().min(second.len()));
+            let start = at.saturating_sub(120);
+            let first_end = (at + 240).min(first.len());
+            let second_end = (at + 240).min(second.len());
+            panic!(
+                "expansions first differ at byte {at}\nfirst:  {}\nsecond: {}",
+                &first[start..first_end],
+                &second[start..second_end],
+            );
+        }
     }
 }
 

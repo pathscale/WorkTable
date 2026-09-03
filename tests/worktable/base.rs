@@ -44,6 +44,15 @@ fn table_name() {
     assert_eq!(name, "Test");
 }
 
+#[test]
+fn generated_delete_futures_are_send() {
+    fn assert_send<T: Send>(_: T) {}
+
+    let table = TestWorkTable::default();
+    assert_send(table.delete_by_test(1));
+    assert_send(table.delete_by_another(1));
+}
+
 #[tokio::test]
 async fn iter_with() {
     let table = TestWorkTable::default();

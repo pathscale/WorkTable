@@ -15,7 +15,7 @@ fn insert(c: &mut Criterion) {
                     id: table.get_next_pk().into(),
                     value: fastrand::u64(..),
                 };
-                table.insert(black_box(row))
+                futures::executor::block_on(table.insert(black_box(row)))
             },
             BatchSize::SmallInput,
         )
