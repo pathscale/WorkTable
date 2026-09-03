@@ -44,8 +44,40 @@ stopped and once with it running — with interleaved inserts and selects for tw
 seconds per arm. The delta between the two vacuum arms is the measurement; a
 single arm says nothing, which is why every cell is run twice.
 
-Re-run on an idle machine after the vacuum work landed. These are the numbers
-to trust; the first run is kept below only to show what contention did to it.
+**Superseded by the real-stack run below.** Every number in this section was
+measured against *published* WorkTablesIndex 0.0.9, data_bucket 0.5.5 and
+ps-reclaim 0.1.1, because the local `[patch.crates-io]` was silently not
+applying: a patch does not force re-resolution when the lockfile already pins
+the published versions.
+
+On the release stack (WorkTablesIndex 0.0.10, data_bucket 0.5.6, ps-reclaim
+0.1.2) the picture at 25% fragmentation changes completely:
+
+| backend | frag | vacuum off | vacuum on | penalty |
+| --- | --- | --- | --- | --- |
+| wti | 25% | 1,363,533 | 1,347,376 | -1.2% |
+| arctic | 25% | 1,552,868 | 1,569,468 | +1.1% |
+| congee | 25% | 1,531,567 | 1,541,972 | +0.7% |
+| wti | 60% | 1,560,569 | 820,215 | **-47.4%** |
+| arctic | 60% | 1,860,372 | 914,282 | **-50.9%** |
+| congee | 60% | 1,811,127 | 898,042 | **-50.4%** |
+
+At 25% the penalty is **within noise on all three backends**, straddling zero:
+two arms report vacuum-on faster than vacuum-off, which is not physically
+meaningful and is the signature of an effect below the measurement floor. On
+the published stack the same cell measured 2 to 12%. The sweep is effectively
+free at low fragmentation on the stack that will actually ship.
+
+At 60% nothing moves: still about half, on every backend. That is the case
+batching did not help and still does not, and it is the one needing a
+work-side bound.
+
+Machine load was 8.1 during this run against 4.4 for the published-stack one,
+so the absolute throughputs are not comparable across the two tables. The
+penalty is paired within a single run, which is why it is the column to read.
+
+The older published-stack numbers follow, kept only to show what the wrong
+dependency graph and contention did to them.
 
 | backend | fragmentation | inserts, vacuum off | vacuum on | delta | p50 off | p50 on | max off | max on |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
