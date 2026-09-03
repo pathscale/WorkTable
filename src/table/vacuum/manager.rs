@@ -18,6 +18,17 @@ use crate::vacuum::WorkTableVacuum;
 /// every wake and neither the threshold nor the settle does anything.
 const FALLBACK_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Consecutive sweeps of one table before the manager moves on.
+///
+/// Reclamation continues until the table is clean, but not without bound: on a
+/// persisted table each reclaimed page queues a durable-free barrier, and an
+/// unbounded run queues them faster than the persistence worker drains them.
+const MAX_CONSECUTIVE_PASSES: u32 = 32;
+
+/// Pause between consecutive sweeps, so the persistence worker gets a turn and
+/// the on-disk state does not fall behind the table in memory.
+const BETWEEN_PASSES: Duration = Duration::from_millis(5);
+
 /// Configuration for [`VacuumManager`].
 #[derive(Debug, Clone, SmartDefault)]
 pub struct VacuumManagerConfig {
@@ -121,39 +132,82 @@ impl VacuumManager {
                     };
 
                     if let Some(vacuum) = vacuum_opt {
-                        let info = vacuum.analyze_fragmentation();
+                        // Sweep until there is nothing left worth reclaiming,
+                        // rather than once per wake.
+                        //
+                        // The wake fires when a table *frees* space, so a table
+                        // that has gone quiet produces no more of them. Doing a
+                        // single pass and going back to waiting therefore left
+                        // whatever that pass could not finish sitting there
+                        // forever: measured, a table holding 393 pages where 196
+                        // would do, half its memory never returned, with the
+                        // sweep reporting success. A partial return is not a
+                        // return.
+                        //
+                        // Three exits, so this cannot spin or run away:
+                        // fragmentation falling below the threshold, a pass that
+                        // frees no pages, and a bound on consecutive passes.
+                        //
+                        // That bound is not defensive tidiness. On a persisted
+                        // table every reclaimed page queues a durable-free
+                        // barrier, so sweeping back to back queues work faster
+                        // than the persistence worker drains it and the on-disk
+                        // state falls behind the table in memory. The pause
+                        // between passes hands the worker its turn, and the cap
+                        // ends the run rather than letting one table's
+                        // reclamation monopolise the queue. Whatever is left is
+                        // picked up by the next wake or the fallback.
+                        let mut passes = 0u32;
+                        loop {
+                            let info = vacuum.analyze_fragmentation();
 
-                        log::debug!("vacuum info: {:?}", info);
-                        // println!("vacuum info: {:?}", info);
-                        if info.overall_fragmentation_ratio < self.config.low_fragmentation_threshold
-                            && info.overall_fragmentation_ratio != 0.0
-                        {
-                            log::debug!("Vacuuming {}", info.table_name);
-                            match vacuum.vacuum().await {
-                                Ok(stats) => {
-                                    self.stats.sweeps.fetch_add(1, Ordering::Relaxed);
-                                    self.stats
-                                        .pages_freed
-                                        .fetch_add(stats.pages_freed as u64, Ordering::Relaxed);
-                                    self.stats.bytes_freed.fetch_add(stats.bytes_freed, Ordering::Relaxed);
-                                    // println!(
-                                    //     "Vacuum completed for table '{}': {} pages processed, {} bytes freed in {:.2}ms",
-                                    //     table_name,
-                                    //     stats.pages_processed,
-                                    //     stats.bytes_freed,
-                                    //     stats.duration_ns as f64 / 1_000_000.0
-                                    // );
-                                    log::debug!(
-                                        "Vacuum completed for table '{}': {} pages processed, {} bytes freed in {:.2}ms",
-                                        table_name,
-                                        stats.pages_processed,
-                                        stats.bytes_freed,
-                                        stats.duration_ns as f64 / 1_000_000.0
-                                    );
-                                }
-                                Err(e) => {
-                                    // println!("Vacuum failed for table '{}': {}", table_name, e);
-                                    log::debug!("Vacuum failed for table '{}': {}", table_name, e);
+                            log::debug!("vacuum info: {:?}", info);
+                            // println!("vacuum info: {:?}", info);
+                            if !(info.overall_fragmentation_ratio < self.config.low_fragmentation_threshold
+                                && info.overall_fragmentation_ratio != 0.0)
+                            {
+                                break;
+                            }
+                            {
+                                log::debug!("Vacuuming {}", info.table_name);
+                                match vacuum.vacuum().await {
+                                    Ok(stats) => {
+                                        self.stats.sweeps.fetch_add(1, Ordering::Relaxed);
+                                        self.stats
+                                            .pages_freed
+                                            .fetch_add(stats.pages_freed as u64, Ordering::Relaxed);
+                                        self.stats.bytes_freed.fetch_add(stats.bytes_freed, Ordering::Relaxed);
+                                        let freed_nothing = stats.pages_freed == 0;
+                                        // println!(
+                                        //     "Vacuum completed for table '{}': {} pages processed, {} bytes freed in {:.2}ms",
+                                        //     table_name,
+                                        //     stats.pages_processed,
+                                        //     stats.bytes_freed,
+                                        //     stats.duration_ns as f64 / 1_000_000.0
+                                        // );
+                                        log::debug!(
+                                            "Vacuum completed for table '{}': {} pages processed, {} bytes freed in {:.2}ms",
+                                            table_name,
+                                            stats.pages_processed,
+                                            stats.bytes_freed,
+                                            stats.duration_ns as f64 / 1_000_000.0
+                                        );
+                                        if freed_nothing {
+                                            break;
+                                        }
+                                        passes += 1;
+                                        if passes >= MAX_CONSECUTIVE_PASSES {
+                                            break;
+                                        }
+                                        // The persistence worker's turn. See the
+                                        // note above the loop.
+                                        tokio::time::sleep(BETWEEN_PASSES).await;
+                                    }
+                                    Err(e) => {
+                                        // println!("Vacuum failed for table '{}': {}", table_name, e);
+                                        log::debug!("Vacuum failed for table '{}': {}", table_name, e);
+                                        break;
+                                    }
                                 }
                             }
                         }
