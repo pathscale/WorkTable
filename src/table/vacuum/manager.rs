@@ -38,10 +38,36 @@ pub struct VacuumManagerConfig {
     pub critical_fragmentation_threshold: f64,
 }
 
+/// What the manager has actually done, cumulatively.
+///
+/// Cost is unreadable without it. A sweep that stands down so hard it never
+/// runs reports no overhead at all, which looks like a win and is a
+/// regression in the thing vacuum exists for. This is also how you tell a
+/// reactive sweep that keeps firing from one that fired once and never
+/// again, which a snapshot of the table cannot distinguish.
+#[derive(Debug, Default)]
+pub struct VacuumManagerStats {
+    pub sweeps: AtomicU64,
+    pub pages_freed: AtomicU64,
+    pub bytes_freed: AtomicU64,
+}
+
+impl VacuumManagerStats {
+    pub fn snapshot(&self) -> (u64, u64, u64) {
+        (
+            self.sweeps.load(Ordering::Relaxed),
+            self.pages_freed.load(Ordering::Relaxed),
+            self.bytes_freed.load(Ordering::Relaxed),
+        )
+    }
+}
+
 #[derive(derive_more::Debug, Default)]
 pub struct VacuumManager {
     pub config: VacuumManagerConfig,
     pub id_gen: AtomicU64,
+    /// Cumulative record of sweeps run. See [`VacuumManagerStats`].
+    pub stats: VacuumManagerStats,
     #[debug(ignore)]
     pub vacuums: Arc<RwLock<HashMap<u64, Arc<dyn WorkTableVacuum + Send + Sync>>>>,
 }
@@ -57,6 +83,7 @@ impl VacuumManager {
         Self {
             config,
             id_gen: Default::default(),
+            stats: Default::default(),
             vacuums: Arc::default(),
         }
     }
@@ -104,6 +131,11 @@ impl VacuumManager {
                             log::debug!("Vacuuming {}", info.table_name);
                             match vacuum.vacuum().await {
                                 Ok(stats) => {
+                                    self.stats.sweeps.fetch_add(1, Ordering::Relaxed);
+                                    self.stats
+                                        .pages_freed
+                                        .fetch_add(stats.pages_freed as u64, Ordering::Relaxed);
+                                    self.stats.bytes_freed.fetch_add(stats.bytes_freed, Ordering::Relaxed);
                                     // println!(
                                     //     "Vacuum completed for table '{}': {} pages processed, {} bytes freed in {:.2}ms",
                                     //     table_name,
