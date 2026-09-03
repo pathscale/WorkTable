@@ -150,7 +150,8 @@ macro_rules! vacuum_invariant_suite {
                 let manager = Arc::new(VacuumManager::with_config(VacuumManagerConfig {
                     // Aggressive on purpose: the defects only appear when
                     // reclamation overlaps mutation.
-                    check_interval: Duration::from_millis(5),
+        // No interval any more; wake on any freed byte instead.
+        wake_threshold_bytes: 1,
                     ..Default::default()
                 }));
                 let table = Arc::new(VacInvWorkTable::default());

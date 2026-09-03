@@ -27,7 +27,11 @@ worktable!(
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn vacuum_parallel_with_selects() {
     let config = VacuumManagerConfig {
-        check_interval: Duration::from_millis(5),
+        // Wake on any freed byte. The reactive equivalent of "run vacuum
+        // eagerly": there is no interval to turn down any more, because a
+        // short one made the fallback timer win every wake and neither the
+        // threshold nor the settle did anything.
+        wake_threshold_bytes: 1,
         ..Default::default()
     };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));
@@ -77,7 +81,11 @@ async fn vacuum_parallel_with_selects() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn vacuum_parallel_with_inserts() {
     let config = VacuumManagerConfig {
-        check_interval: Duration::from_millis(5),
+        // Wake on any freed byte. The reactive equivalent of "run vacuum
+        // eagerly": there is no interval to turn down any more, because a
+        // short one made the fallback timer win every wake and neither the
+        // threshold nor the settle did anything.
+        wake_threshold_bytes: 1,
         ..Default::default()
     };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));
@@ -145,7 +153,11 @@ async fn vacuum_parallel_with_inserts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn vacuum_parallel_with_upserts() {
     let config = VacuumManagerConfig {
-        check_interval: Duration::from_millis(5),
+        // Wake on any freed byte. The reactive equivalent of "run vacuum
+        // eagerly": there is no interval to turn down any more, because a
+        // short one made the fallback timer win every wake and neither the
+        // threshold nor the settle did anything.
+        wake_threshold_bytes: 1,
         ..Default::default()
     };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));
@@ -251,7 +263,8 @@ async fn vacuum_loop_test() {
     const SOAK_DURATION: Duration = Duration::from_secs(10);
 
     let config = VacuumManagerConfig {
-        check_interval: Duration::from_millis(1_000),
+        // No interval any more; wake on any freed byte instead.
+        wake_threshold_bytes: 1,
         ..Default::default()
     };
     let vacuum_manager = Arc::new(VacuumManager::with_config(config));

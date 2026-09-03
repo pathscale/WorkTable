@@ -9,19 +9,18 @@ use smart_default::SmartDefault;
 
 use crate::vacuum::WorkTableVacuum;
 
+/// How long a sweep waits before checking a table nothing has woken it about.
+///
+/// Not configurable, and deliberately so. Sweeps are triggered by tables
+/// actually freeing space; this only bounds how long a table whose threshold is
+/// never reached goes unlooked-at. Exposing it invited callers to turn it down
+/// and get the polling behaviour this design replaced, where the timer wins
+/// every wake and neither the threshold nor the settle does anything.
+const FALLBACK_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Configuration for [`VacuumManager`].
 #[derive(Debug, Clone, SmartDefault)]
 pub struct VacuumManagerConfig {
-    /// Fallback interval, not the primary trigger.
-    ///
-    /// Sweeps are woken by tables actually freeing space
-    /// ([`Self::wake_threshold_bytes`]); this bounds how long a table whose
-    /// threshold is never reached goes unchecked. A timer alone made vacuum
-    /// arrive up to a minute after the fragmentation that warranted it, and
-    /// arrive regardless of whether any had accumulated.
-    #[default(Duration::from_secs(60))]
-    pub check_interval: Duration,
-
     /// Reclaimable bytes at which a table wakes the sweep task.
     ///
     /// Small enough to react while the fragmentation is still cheap to
@@ -142,14 +141,14 @@ impl VacuumManager {
             vacuums.values().cloned().collect()
         };
         if registered.is_empty() {
-            tokio::time::sleep(self.config.check_interval).await;
+            tokio::time::sleep(FALLBACK_INTERVAL).await;
             return;
         }
 
         let waits: Vec<_> = registered.iter().map(|v| v.wait_until_worth_running()).collect();
         tokio::select! {
             _ = futures::future::select_all(waits) => {}
-            _ = tokio::time::sleep(self.config.check_interval) => {}
+            _ = tokio::time::sleep(FALLBACK_INTERVAL) => {}
         }
     }
 }
