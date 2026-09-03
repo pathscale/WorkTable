@@ -231,3 +231,71 @@ fn every_index_that_needs_explicit_persistence_is_reported() {
         checked.diagnostics
     );
 }
+
+/// `check` must refuse a primary key its backend cannot hold.
+///
+/// It used to accept `id: String primary_key using congee` with no diagnostic
+/// at all, and the macro then refused it at expansion. The key-type rule was
+/// applied in a loop over `columns.indexes`, which holds the *secondary*
+/// indexes; the primary backend was only ever checked against the persistence
+/// rule. So an editor showed nothing and the build failed.
+#[test]
+fn a_primary_key_backend_is_checked_against_its_key_type() {
+    let refused = worktable_dsl::check(
+        "name: Probe, persist: false, columns: { id: String primary_key using congee, label: String },",
+    );
+    assert!(!refused.is_acceptable(), "congee cannot hold a String primary key");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("congee") && d.message.contains("String")),
+        "the diagnostic must name the backend and the key type: {:?}",
+        refused.diagnostics
+    );
+
+    // arctic has the same shape with a different list.
+    assert!(
+        !worktable_dsl::check("name: P, persist: false, columns: { id: u8 primary_key using arctic },").is_acceptable(),
+        "arctic does not hold u8"
+    );
+
+    // And a key type the backend does hold is still accepted.
+    assert!(
+        worktable_dsl::check("name: P, persist: false, columns: { id: u32 primary_key using congee },").is_acceptable()
+    );
+}
+
+/// `check` must refuse an `autoincrement` key type that cannot be generated.
+///
+/// `usize` is the case worth naming: it is an integer, it reads like one of
+/// the accepted set, and there is no `AtomicUsize` in codegen's mapping. This
+/// also passed `check` and failed to build.
+#[test]
+fn autoincrement_is_checked_against_its_key_type() {
+    for bad in ["usize", "String", "u128", "i128", "isize", "bool"] {
+        let checked = worktable_dsl::check(&format!(
+            "name: Probe, persist: false, columns: {{ id: {bad} primary_key autoincrement }},"
+        ));
+        assert!(!checked.is_acceptable(), "`{bad}` cannot be autoincremented");
+    }
+}
+
+/// The two lists are one list.
+///
+/// `worktable_codegen` maps exactly these types to atomics. If the set ever
+/// grows on one side only, `check` starts accepting declarations that do not
+/// build, which is the failure this module exists to prevent.
+#[test]
+fn every_autoincrement_type_is_accepted_by_check() {
+    for good in worktable_dsl::AUTOINCREMENT_TYPES {
+        let checked = worktable_dsl::check(&format!(
+            "name: Probe, persist: false, columns: {{ id: {good} primary_key autoincrement }},"
+        ));
+        assert!(
+            checked.is_acceptable(),
+            "`{good}` is in AUTOINCREMENT_TYPES but check refuses it: {:?}",
+            checked.diagnostics
+        );
+    }
+}

@@ -85,3 +85,7 @@ pub use schema::{
 };
 #[cfg(feature = "uml")]
 pub use schema::{Relation, infer_relations, schemas_to_mermaid};
+/// The key types `autoincrement` can generate, and the key types each index
+/// backend can hold. Exported so `worktable_codegen` uses the same lists
+/// `check` does, rather than a second copy that can drift.
+pub use validate::{AUTOINCREMENT_TYPES, supported_key_types};
