@@ -269,6 +269,25 @@ where
         (hasher.finish() as usize) % MUTATION_STRIPE_COUNT
     }
 
+    /// Mutation stripes currently held or being waited on.
+    ///
+    /// A live read of "is anything writing to this table right now", which is
+    /// what a background job needs before it takes an exclusion. Every insert,
+    /// delete and upsert passes through one of these gates, so unlike counting
+    /// requests for reclaimable space it cannot miss a workload: deletes never
+    /// ask for space at all, and an upsert that fits in place does not either,
+    /// so a sweep watching that signal saw an idle table under a load of
+    /// exactly those and walked straight in.
+    ///
+    /// Each stripe is a ticket lock, so a handed-out ticket that is not yet
+    /// being served is a writer either inside the gate or queued for it.
+    pub fn mutations_in_flight(&self) -> usize {
+        self.mutation_stripes
+            .iter()
+            .filter(|stripe| stripe.next_ticket.load(Ordering::Acquire) != stripe.serving.load(Ordering::Acquire))
+            .count()
+    }
+
     fn mutation_guard_for_stripe(&self, stripe: usize) -> MutationGuard {
         let gate = &self.mutation_stripes[stripe];
         let ticket = gate.next_ticket.fetch_add(1, Ordering::Relaxed);

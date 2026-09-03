@@ -29,7 +29,6 @@ use crate::vacuum::VacuumPersistence;
 use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
-use crate::vacuum::pacing::BatchDemand;
 use crate::vacuum::{VacuumGate, VacuumPacing};
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
@@ -246,20 +245,20 @@ where
         // which is why a whole-table sweep shows up as doubled insert latency
         // for its entire duration rather than as a brief stall.
         let mut pages_since_yield = 0usize;
-        let mut batch_demand = BatchDemand::start(registry);
 
         for info in info_iter {
             pages_since_yield += 1;
             if self.pacing.batch_pages > 0 && pages_since_yield > self.pacing.batch_pages {
                 pages_since_yield = 1;
 
-                // Measured across the batch that just ran, so asking the
-                // question costs nothing that was not already being spent.
-                let demand = batch_demand.per_ms(registry);
+                // Ask the table whether anyone is writing, rather than
+                // inferring it from demand for reclaimable space. Deletes never
+                // ask for space and an upsert that fits in place does not
+                // either, so under a load of exactly those the old signal read
+                // idle and the sweep went in on top of the workload.
                 drop(registry_lock.take());
-                self.pacing.wait_until_quiet(registry, &self.gate, demand).await;
+                self.pacing.wait_until_quiet(&*self.lock_manager, &self.gate).await;
                 registry_lock = Some(registry.lock_vacuum().await);
-                batch_demand = BatchDemand::start(registry);
             }
 
             let page_from = info.page_id;
@@ -719,10 +718,6 @@ mod tests {
 
             let vacuum = create_vacuum(&table).with_pacing(VacuumPacing {
                 batch_pages,
-                // The poller's own attempts read as foreground demand. Backing
-                // off is a separate behaviour with its own test; this one is
-                // about the exclusion being released at all.
-                busy_demand_per_ms: u64::MAX,
                 ..Default::default()
             });
 
@@ -786,19 +781,31 @@ mod tests {
             .with_pacing(VacuumPacing {
                 batch_pages: 1,
                 backoff: Duration::from_millis(1),
-                max_consecutive_backoffs: 2,
                 ..Default::default()
             });
 
-        vacuum.defragment().await.unwrap();
-
+        // A paused gate holds the sweep until it is resumed, rather than
+        // delaying it a fixed number of tries and then going in anyway. That
+        // was the old behaviour and it is what made "stand down" meaningless
+        // under sustained pressure: the budget ran out and the sweep took its
+        // cut regardless.
+        let sweeping = tokio::spawn(async move { vacuum.defragment().await });
+        tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(
-            gate.stand_downs() > 0,
-            "a paused gate must make the sweep stand down at its batch boundaries"
+            !sweeping.is_finished(),
+            "a paused gate must actually hold the sweep, not merely delay it"
         );
         assert!(
+            gate.stand_downs() > 0,
+            "and it should be standing down while it waits, not spinning"
+        );
+
+        gate.resume();
+        sweeping.await.unwrap().unwrap();
+
+        assert!(
             !table.0.data.get_empty_pages().is_empty(),
-            "the bound on consecutive stand-downs must let a gated sweep finish anyway"
+            "and once resumed it must finish the work it was holding"
         );
     }
 

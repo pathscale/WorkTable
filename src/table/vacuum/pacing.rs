@@ -15,11 +15,9 @@
 //! "a lot".
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use smart_default::SmartDefault;
-
-use crate::in_memory::EmptyLinkRegistry;
 
 /// A bit a caller flips to hold vacuum off entirely.
 ///
@@ -72,54 +70,47 @@ pub struct VacuumPacing {
     #[default = 8]
     pub batch_pages: usize,
 
-    /// Foreground space requests per millisecond above which vacuum stands
-    /// down instead of taking the exclusion again.
-    ///
-    /// An idle table reads zero. A table under the insert load in
-    /// `wt-benchmarks` reads in the hundreds, so the threshold does not need
-    /// to be delicate to separate the two.
-    #[default = 50]
-    pub busy_demand_per_ms: u64,
-
-    /// How long to stand down for when the table is busy.
+    /// How long to stand down for when the table is busy. Doubles on each
+    /// consecutive stand-down, up to [`Self::max_backoff`], so a table under
+    /// sustained load is polled cheaply rather than every couple of
+    /// milliseconds.
     #[default(Duration::from_millis(2))]
     pub backoff: Duration,
 
-    /// How many times in a row to stand down before proceeding anyway.
+    /// Ceiling for the doubling.
+    #[default(Duration::from_millis(128))]
+    pub max_backoff: Duration,
+
+    /// Consecutive samples that must all find the table idle before a sweep
+    /// takes the exclusion.
     ///
-    /// Without this a permanently busy table would never be vacuumed, which
-    /// trades a bounded slowdown for an unbounded one: fragmentation that is
-    /// never reclaimed makes every later insert allocate.
-    #[default = 16]
-    pub max_consecutive_backoffs: u32,
+    /// One sample is not enough: under a heavy write load the stripes are free
+    /// for most of any given instant, so a single look finds a gap almost
+    /// immediately and the sweep goes in on top of the workload anyway. A short
+    /// run of quiet samples distinguishes a gap between two writes from a table
+    /// that has actually stopped.
+    #[default = 3]
+    pub quiet_samples: u32,
 }
 
-/// Demand measured across one batch.
+/// What a sweep asks before taking the exclusion.
 ///
-/// Sampling is free: the counter is read at both ends of work that was
-/// happening anyway, so deciding costs no added latency. A separate
-/// observation window would have added its own delay to every batch.
-pub(crate) struct BatchDemand {
-    started: Instant,
-    attempts_at_start: u64,
+/// Deliberately a live question rather than a budget. A sweep that defers for
+/// a fixed span and then forces itself in is not waiting its turn, it is
+/// queueing, and it takes its cut from every burst that outlasts the span:
+/// measured against a null arm, 3.8 to 12.5% of foreground throughput. Asking
+/// the table what it is doing has no such span to run out.
+pub trait ForegroundActivity {
+    /// Writers currently inside a mutation gate or queued for one.
+    fn mutations_in_flight(&self) -> usize;
 }
 
-impl BatchDemand {
-    pub(crate) fn start<const N: usize>(registry: &EmptyLinkRegistry<N>) -> Self {
-        Self {
-            started: Instant::now(),
-            attempts_at_start: registry.pop_attempts(),
-        }
-    }
-
-    /// Foreground space requests per millisecond over the batch.
-    pub(crate) fn per_ms<const N: usize>(&self, registry: &EmptyLinkRegistry<N>) -> u64 {
-        let attempts = registry.pop_attempts().saturating_sub(self.attempts_at_start);
-        let elapsed_ms = self.started.elapsed().as_secs_f64() * 1_000.0;
-        if elapsed_ms <= 0.0 {
-            return 0;
-        }
-        (attempts as f64 / elapsed_ms) as u64
+impl<LockType, PrimaryKey> ForegroundActivity for crate::lock::LockMap<LockType, PrimaryKey>
+where
+    PrimaryKey: Clone + std::fmt::Debug + Eq + std::hash::Hash,
+{
+    fn mutations_in_flight(&self) -> usize {
+        crate::lock::LockMap::mutations_in_flight(self)
     }
 }
 
@@ -129,27 +120,29 @@ impl VacuumPacing {
     /// Returns once vacuum should take the exclusion again. Yields at least
     /// once even on an idle table, so a waiting insert gets the registry
     /// before vacuum asks for it back.
-    pub(crate) async fn wait_until_quiet<const N: usize>(
-        &self,
-        registry: &EmptyLinkRegistry<N>,
-        gate: &VacuumGate,
-        demand_per_ms: u64,
-    ) {
+    pub(crate) async fn wait_until_quiet(&self, activity: &impl ForegroundActivity, gate: &VacuumGate) {
         tokio::task::yield_now().await;
 
-        let mut busy = demand_per_ms >= self.busy_demand_per_ms;
-        let mut stood_down = 0;
-        while (busy || gate.is_paused()) && stood_down < self.max_consecutive_backoffs {
-            gate.note_stand_down();
-            stood_down += 1;
+        let mut backoff = self.backoff;
+        let mut quiet = 0;
+        loop {
+            if gate.is_paused() || activity.mutations_in_flight() > 0 {
+                gate.note_stand_down();
+                quiet = 0;
+                tokio::time::sleep(backoff).await;
+                // Doubling, so a table busy for a long time is asked about
+                // cheaply rather than every couple of milliseconds.
+                backoff = backoff.saturating_mul(2).min(self.max_backoff);
+                continue;
+            }
 
-            // The backoff doubles as the observation window, so re-measuring
-            // costs nothing beyond the wait already being taken. Trusting the
-            // reading that sent us here instead would keep standing down long
-            // after a burst had passed.
-            let sample = BatchDemand::start(registry);
+            quiet += 1;
+            if quiet >= self.quiet_samples {
+                return;
+            }
+            // Idle once is a gap between two writes. Look again, close
+            // together, before believing it.
             tokio::time::sleep(self.backoff).await;
-            busy = sample.per_ms(registry) >= self.busy_demand_per_ms;
         }
     }
 }
