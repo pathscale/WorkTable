@@ -51,6 +51,69 @@ because **there is no vacuum benchmark**. That is the first gap.
 - Planning re-reads `get_per_page_info()` from scratch each pass and sorts it.
 - A pass is not resumable and carries no work budget.
 
+## The shape that fits: non-blocking, reactive, range-detecting
+
+Before reaching for the literature, note that most of this design's machinery
+already exists in `EmptyLinkRegistry` and planning does not use it.
+
+### Range detection: the structure is already built and ignored
+
+`index_ord_links` is a `BTreeSet` of free links **ordered by absolute position
+and coalesced on insert**: pushing a run of adjacent freed links merges them
+into one entry. `length_ord_links` orders the same runs by size.
+
+`get_per_page_info` uses neither. It takes the `op_lock`, iterates every entry
+in `page_links_map`, rebuilds a per-page `HashMap` from scratch, and produces
+a fragmentation ratio per page. Planning is therefore O(all free links) per
+pass and its output is page granular.
+
+Planning from runs instead changes what vacuum does, not just how it decides:
+
+- **Today**: to reclaim a page, move *every* live row on it. The work is
+  proportional to how full the page is, and a mostly-full page is skipped as
+  poor value even if one row is stranding a large gap.
+- **From runs**: find the rows standing *between* two adjacent runs and move
+  only those. One move merges two runs into one. The work is proportional to
+  the number of stranding rows, which is usually small, and the value is the
+  size of the run it creates.
+
+That is a different cost curve, not a tuning change.
+
+### Reactive: the signal is already maintained
+
+The trigger today is a 60 second timer plus a fragmentation ratio. The registry
+already keeps `sum_links_len` (free bytes) and `item_count` (free runs), both
+updated on every registration and removal and both free to read.
+
+After coalescing, **the ratio between them is the fragmentation measure**. The
+same free bytes in one run is a healthy table; in five hundred runs it is a
+fragmented one. No scan is needed to know which.
+
+So vacuum can wake when that ratio crosses a threshold rather than on a clock,
+and can decline to run at all when `length_ord_links` already holds a run big
+enough for the allocations being made. Today it wakes every 60 seconds and
+scans regardless.
+
+### Non-blocking: the lock is the whole pass
+
+`defragment` holds `lock_vacuum()`'s write side for its entire duration, and
+`pop_max` takes the read side. So for the length of a pass no insert can reuse
+a freed link; every insert appends. Vacuum and space reuse are mutually
+exclusive, which is close to self-defeating for a pass whose purpose is to make
+space reusable.
+
+Working a bounded range at a time and taking the lock per range rather than per
+pass removes that. It is the same fix shape as review finding WT-6, which is
+about bulk delete holding every stripe it touches for the whole batch.
+
+### What this does not fix
+
+It reduces how much relocation happens and how long anything is held, which is
+worth doing on its own. It does not remove the class of bug that has been
+recurring, because a relocation still rewrites index entries that hold physical
+addresses. Fewer relocations means fewer chances to get it wrong, not a
+guarantee. That distinction is what the rest of this note is about.
+
 ## The literature, and what each idea would actually change
 
 ### Indirection: the one that removes the class
@@ -159,11 +222,18 @@ whose only backend is congee.
    cost is inference. Foreground insert and select p99.9 *during* a pass, over
    fragmentation levels, is the measurement that decides everything else. This
    is also what the review asked for and what `wt-benchmarks` does not cover.
-2. **Add the page-level skip bit.** Cheapest real win, no addressing change.
-3. **Bound the pass.** A work budget and a resumable cursor, so vacuum can
-   never hold the registry lock for an unbounded interval. This is also review
-   finding WT-6 for bulk delete, and the same fix shape.
-4. **Then decide on indirection**, with the numbers from step 1 in hand. It is
+2. **Plan from runs, not pages.** `index_ord_links` is already a coalesced,
+   position-ordered set of free runs and planning ignores it. This is the
+   change with the best ratio of value to risk, because the structure exists
+   and the current planner is the thing being replaced rather than extended.
+3. **Make the trigger reactive.** `item_count` against `sum_links_len` is a
+   fragmentation measure that costs nothing to read, so vacuum can wake on
+   fragmentation and decline when a large enough run already exists.
+4. **Take the lock per range, not per pass**, so vacuum stops excluding the
+   space reuse it exists to enable. Same fix shape as WT-6.
+5. **Add the page-level skip bit**, or a generational split, so planning is
+   proportional to what changed rather than to the table.
+6. **Then decide on indirection**, with the numbers from step 1 in hand. It is
    the only option that removes the bug class rather than narrowing it, and it
    is the only one that costs something on every read. That tradeoff should be
    made against a measurement, not against an intuition about which is faster.
