@@ -227,27 +227,27 @@ fn test_vacuum_on_persisted_table_survives_reload() {
 /// scheduling-dependent. The test creates the opportunity and asserts the
 /// durable outcome; it is not a proof that the window was entered.
 ///
-/// # Ignored: it fails about half the time, on a real bug
+/// # This is the test that found the CDC event-id gap
+///
+/// It failed about half of runs with:
 ///
 /// ```text
-/// persistence stalled on secondary index AnotherIdx event gap:
-/// last applied Id(3969), next available Id(3972) (attempt 9);
-/// an event id was likely consumed without its event being queued
+/// persistence stalled on primary index event gap:
+/// last applied Id(2938), next available Id(2940) (attempt 9)
 /// ```
 ///
-/// Two secondary-index event ids are consumed without their events reaching
-/// the stream, and the batch validator then defers on the gap forever. It
-/// stalls persistence for the rest of the table's life, so it is not a test
-/// artefact.
+/// Nothing was lost. Event ids are allocated during the index mutations while
+/// an operation id is minted later, at the push site, so two concurrent
+/// writers can invert the two orders; vacuum did it systematically because its
+/// update lands on the destination page while inserts append to the current
+/// one. Page-grouped batch collection then never visited the page holding the
+/// missing id, rebuilt the same gapped batch every retry, and failed the
+/// engine for that table permanently.
 ///
-/// **This is not caused by batching the sweep.** Setting `batch_pages` to 0,
-/// which restores the whole-table exclusion, reproduces it at the same rate
-/// (5 of 10 against 5 of 12). Concurrent inserts during a sweep on a
-/// persisted table were simply never covered before, so nothing had run this
-/// interleaving.
-///
-/// Un-ignore this when the gap is fixed. It is the reproduction.
-#[ignore = "reproduces a pre-existing CDC event-id gap; see the doc comment"]
+/// Fixed by the whole-queue fallback in `collect_batch_from_op_id`. The
+/// deterministic version lives in `persistence::task`; this one is the
+/// integration case that surfaced it, and it is kept because the race it
+/// creates is the one that mattered.
 #[test]
 fn test_persisted_vacuum_survives_inserts_reusing_space_mid_sweep() {
     let config = DiskConfig::new_with_table_name(
