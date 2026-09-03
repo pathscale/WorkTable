@@ -16,6 +16,10 @@ proc-macro2 = "1"
 convert_case = "0.6"
 indexmap = "2"
 serde = { version = "1", features = ["derive"], optional = true }
+# Only ever reached through the `json` feature, which only `worktable-schemas`
+# needs. Kept out of `serde` so that turning the IR into data does not also
+# pull a JSON writer in.
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 # The integration test builds as its own crate, which is what makes it evidence
@@ -24,13 +28,25 @@ proc-macro2 = "1"
 # Already in the workspace lock; used only by the `serde` feature test.
 serde_json = "1"
 
-# The schema language from a shell. Requires `spans`, because a diagnostic
-# without a location is most of the value gone: the reason this exists is to
-# be piped at by an editor and by a second implementation's conformance test.
+# The schema language from a shell.
+#
+# Deliberately needs nothing beyond the default build. It is the binary a
+# cross-implementation test runs on every case, so anything it required would
+# be a thing that test could quietly be missing. Byte ranges on diagnostics
+# appear when built with `spans` and are absent otherwise, which degrades the
+# message rather than the check.
 [[bin]]
 name = "wt-dsl"
 path = "src/bin/wt-dsl.rs"
-required-features = ["spans"]
+
+# Every declaration under a directory, as JSON plus the canonical text this
+# crate emits for it, so a cross-implementation check runs against the tables
+# people actually wrote rather than a hand-written corpus that only covers what
+# its author already understood.
+[[bin]]
+name = "worktable-schemas"
+path = "src/bin/worktable-schemas.rs"
+required-features = ["json"]
 
 [features]
 # The IR derives serde only on request. `worktable_codegen` depends on this
@@ -39,6 +55,10 @@ required-features = ["spans"]
 # macro in front of every WorkTable user's first compile to serve consumers
 # who are not the compiler. The designer and the migration planner turn it on.
 serde = ["dep:serde"]
+# `worktable-schemas` dumps declarations as JSON. Separate from `serde` because
+# serialising the IR and shipping a JSON writer are different costs to ask of a
+# dependent.
+json = ["serde", "dep:serde_json"]
 # Byte ranges on diagnostics, for an editor that wants to underline the
 # offending token. Off by default for the same reason `serde` is: this crate is
 # compiled for the host as part of `worktable_codegen` before anything else in

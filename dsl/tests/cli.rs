@@ -66,3 +66,39 @@ fn scan_finds_declarations_in_a_function_body() {
     assert_eq!(found.schemas[0].name, "Inner");
     assert!(found.is_complete());
 }
+
+/// `wt-dsl parse` must answer "would the macro accept this", not "is this a
+/// declaration".
+///
+/// The difference is not academic and this test exists because the first
+/// version of the binary got it wrong. `page_size: 4096` beside
+/// `persist: true` parses perfectly: it is a well-formed declaration. The
+/// macro refuses it, because the on-disk layer hardcodes 16384-byte pages and
+/// any other value reads and writes the wrong file offsets.
+///
+/// A round trip built on `Schema::parse` therefore reports success for output
+/// that does not compile, which is precisely the mistake a second
+/// implementation would then ship, and the cross-implementation check exists
+/// to stop.
+#[test]
+fn a_declaration_the_macro_refuses_is_not_a_successful_round_trip() {
+    let refused = "name: T, persist: true, columns: { id: u64 primary_key }, config: { page_size: 4096 },";
+
+    // It parses. That is the trap.
+    assert!(
+        worktable_dsl::Schema::parse(refused).is_ok(),
+        "the fixture must be a well-formed declaration, or it tests nothing"
+    );
+
+    // And the macro would refuse it, which is what the binary reports.
+    let checked = worktable_dsl::check(refused);
+    assert!(
+        !checked.is_acceptable(),
+        "the macro refuses this and so must the binary"
+    );
+    assert!(
+        checked.diagnostics.iter().any(|d| d.message.contains("page_size")),
+        "the diagnostic must name the offending option: {:?}",
+        checked.diagnostics
+    );
+}
