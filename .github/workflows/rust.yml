@@ -62,9 +62,43 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets ${{ matrix.args }} -- -D warnings
 
+  duplicate_index_crates:
+    name: One version of each shared index crate
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+          add-job-id-key: "false"
+      # Two versions of WorkTablesIndex in one graph split the type identity of
+      # `Pair` and `ChangeEvent`, and the build then fails with "expected
+      # ChangeEvent<Pair<T, Link>>, found a different ChangeEvent<Pair<T,
+      # Link>>" across dozens of unrelated-looking lines. It happens whenever
+      # data_bucket and worktable disagree about which version they want, which
+      # is every time one is bumped and released without the other.
+      #
+      # The caret requirements are correct and stay. This turns the mismatch
+      # into one named failure instead of a wall of trait errors, which is the
+      # guard WT-8 asked for.
+      - name: Refuse a duplicated WorkTablesIndex or data_bucket
+        run: |
+          duplicates=$(cargo tree --duplicates --edges normal 2>/dev/null \
+            | grep -E '^(WorkTablesIndex|data_bucket) v' | sort -u)
+          if [ -n "$duplicates" ]; then
+            echo "More than one version of a shared index crate is in the graph:"
+            echo "$duplicates"
+            echo
+            echo "WorkTablesIndex, data_bucket and worktable move as one train."
+            echo "Publish them in lockstep, or pin them to agree."
+            exit 1
+          fi
+          echo "one version of each: ok"
+
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [build, clippy_check]
+    needs: [build, clippy_check, duplicate_index_crates]
     runs-on: ubicloud-standard-2
     timeout-minutes: 45
     steps:
