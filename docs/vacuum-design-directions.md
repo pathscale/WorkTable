@@ -113,6 +113,46 @@ not a specific algorithm but the discipline: pick a target for space
 amplification, derive the work rate from it, and give the pass a budget it
 cannot exceed. Today the policy is a 60 second timer and a fragmentation ratio.
 
+## Three backends, not one
+
+Everything above says "the index" as though there were one. There are three,
+they do not have the same shape, and any change here has to hold for all of
+them.
+
+| backend | keys | non-unique | value storage |
+| --- | --- | --- | --- |
+| `worktables_index` (WTI) | any | yes | the fork of `indexset` |
+| `arctic` | u16, u32, u64, u128 | yes, via `ArcticMultiIndex` | `ConcurrentMap<K::Raw, Box<V>>`, and `Box<RwLock<LinkSlot<V>>>` for the multi variant |
+| `congee` | u8, u16, u32, u64, usize | **no** | `CongeeIndex<K, V>` |
+
+Two things follow, and one of them cuts in favour of indirection.
+
+**Indirection is a value-type change, not a key-type change.** All three store
+the `Link` as an opaque `V`. Replacing it with a stable row id touches nothing
+about congee's and arctic's key constraints, which is where their restrictions
+live. That is cheaper than the note above implied.
+
+**The per-write cost differs and is not small.** Arctic boxes every value and
+its multi variant puts each behind an `RwLock`, so an index write is an
+allocation and a lock rather than a slot store. A scheme that reduces the
+*number* of index writes per relocation therefore pays off more on arctic than
+on WTI, and a scheme that adds a read dereference pays differently again.
+
+**Measured this session, so the ranking is not a guess:**
+
+| workload | result |
+| --- | --- |
+| mixed read/write, 8 threads, all ratios | arctic fastest, congee close, WTI 13 to 15% behind |
+| delete grid, all APIs and distributions | congee fastest, WTI 20 to 48% behind |
+| AgentCode generation write, in memory | arctic and congee about 20% ahead of WTI |
+
+WTI is last on every axis measured, and it is the default. That is worth
+knowing before optimising the layer above it.
+
+**Congee cannot hold a non-unique index at all.** Any design that wants a
+secondary mapping from row id to location has to say what happens on a table
+whose only backend is congee.
+
 ## What I would do, in order
 
 1. **Benchmark it.** There is no vacuum benchmark, so every claim above about
