@@ -85,6 +85,19 @@ pub struct VacuumPacing {
     #[default(Duration::from_millis(2))]
     pub backoff: Duration,
 
+    /// Ceiling for the stand-down, which doubles each consecutive time.
+    ///
+    /// A fixed backoff is the wrong shape for sustained load. Sixteen 2ms
+    /// stand-downs is a 32ms pause and then a batch regardless, so a table
+    /// under a writer doing hundreds of inserts per millisecond still gets a
+    /// steady grind of row moves and pays for them. Doubling turns sustained
+    /// pressure into a low duty cycle instead: a burst costs a few
+    /// milliseconds, an hour of load costs a sweep every fraction of a second,
+    /// and the bound on consecutive stand-downs still guarantees the sweep
+    /// eventually proceeds.
+    #[default(Duration::from_millis(128))]
+    pub max_backoff: Duration,
+
     /// How many times in a row to stand down before proceeding anyway.
     ///
     /// Without this a permanently busy table would never be vacuumed, which
@@ -124,6 +137,15 @@ impl BatchDemand {
 }
 
 impl VacuumPacing {
+    /// The nth consecutive stand-down, doubling and capped.
+    ///
+    /// Saturating rather than shifting by `n`, so a long stand-down streak
+    /// cannot overflow the duration into something absurd.
+    fn backoff_for(&self, consecutive: u32) -> Duration {
+        let doublings = consecutive.saturating_sub(1).min(20);
+        self.backoff.saturating_mul(1u32 << doublings).min(self.max_backoff)
+    }
+
     /// Called at a batch boundary, with the exclusion already released.
     ///
     /// Returns once vacuum should take the exclusion again. Yields at least
@@ -148,7 +170,7 @@ impl VacuumPacing {
             // reading that sent us here instead would keep standing down long
             // after a burst had passed.
             let sample = BatchDemand::start(registry);
-            tokio::time::sleep(self.backoff).await;
+            tokio::time::sleep(self.backoff_for(stood_down)).await;
             busy = sample.per_ms(registry) >= self.busy_demand_per_ms;
         }
     }
