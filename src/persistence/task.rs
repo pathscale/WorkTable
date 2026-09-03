@@ -38,6 +38,24 @@ worktable! (
 
 const MAX_PAGE_AMOUNT: usize = 16;
 
+/// Attempts after which batch collection stops grouping by data page and takes
+/// the whole queue.
+///
+/// Grouping by page is a write-batching optimisation, and it cannot always
+/// assemble a gapless event stream. Event ids are allocated during the index
+/// mutations, while an operation id is minted later, at the push site, so two
+/// concurrent writers can invert the two orders. Vacuum makes that systematic:
+/// its update lands on the destination page while inserts append to the current
+/// page, so the operation holding the missing id sits on a page this collection
+/// never visits. Every retry then rebuilds the same gapped batch, and the
+/// attempt budget eventually fails the engine for that table permanently.
+///
+/// Taking the whole queue breaks the loop. It gives up the grouping and keeps
+/// the guarantee that matters: `validate_events` still refuses to apply a
+/// stream with a hole, so a complete collection can only ever apply more of the
+/// contiguous prefix than a partial one, never something unsafe.
+const COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS: usize = 4;
+
 #[derive(Debug)]
 struct PersistenceLifecycle {
     state: ParkingMutex<PersistenceState>,
@@ -283,8 +301,18 @@ where
         let mut ops_set = HashSet::new();
         let mut used_page_ids = HashSet::new();
 
+        // See `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`: page grouping can wedge on a
+        // stream whose event order and operation order disagree, so after a few
+        // failed attempts the batch is assembled from everything queued.
+        let took_whole_queue = self.attempts >= COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS;
+        if took_whole_queue {
+            for (queued_op_id, _) in self.queue_inner_wt.0.indexes.operation_id_idx.iter() {
+                ops_set.insert(queued_op_id);
+            }
+        }
+
         let mut next_op_id = op_id;
-        let mut no_more_ops = false;
+        let mut no_more_ops = took_whole_queue;
         while used_page_ids.len() < self.page_limit && !no_more_ops {
             let ops_rows = self.queue_inner_wt.select_by_operation_id(next_op_id).execute()?;
             match next_op_id {
@@ -561,6 +589,87 @@ mod lifecycle_tests {
                 length: 1,
             },
         })
+    }
+
+    /// A single-row insert on `page`, carrying one primary event with
+    /// `event_id`. The two ids are independent on purpose: that is the whole
+    /// point of the regression below.
+    fn insert_operation_with_event(id: u128, page: u32, event_id: u64) -> Operation<(), u64, TestEvents> {
+        let link = Link {
+            page_id: page.into(),
+            offset: 0,
+            length: 1,
+        };
+        Operation::Insert(InsertOperation {
+            id: OperationId::Single(uuid::Uuid::from_u128(id)),
+            pk_gen_state: (),
+            primary_key_events: vec![indexset::cdc::change::ChangeEvent::InsertAt {
+                event_id: event_id.into(),
+                max_value: indexset::core::pair::Pair {
+                    key: event_id,
+                    value: link,
+                },
+                value: indexset::core::pair::Pair {
+                    key: event_id,
+                    value: link,
+                },
+                index: 0,
+            }],
+            secondary_keys_events: TestEvents,
+            bytes: vec![id as u8],
+            link,
+        })
+    }
+
+    /// Regression: collection could not assemble a gapless event stream when
+    /// event order and operation order disagree, and never recovered.
+    ///
+    /// Event ids are allocated during the index mutations; an operation id is
+    /// minted later, at the push site. Two concurrent writers can therefore
+    /// invert the two orders, and vacuum does it systematically, because its
+    /// update lands on the destination page while inserts append to the
+    /// current page. Observed in the field as 110 inversions in one run, in a
+    /// regular alternating pattern.
+    ///
+    /// Page-grouped collection then never visits the page holding the missing
+    /// id, so every retry rebuilt the same gapped batch until the attempt
+    /// budget failed the engine and persistence for that table stopped for
+    /// good. Before the whole-queue fallback this panics on the ninth attempt
+    /// with "persistence stalled on primary index event gap".
+    #[tokio::test]
+    async fn collection_recovers_when_event_order_and_operation_order_disagree() {
+        let queue_inner_wt = Arc::new(QueueInnerWorkTable::default());
+        let mut analyzer: QueueAnalyzer<(), u64, TestEvents, TestIndex> = QueueAnalyzer::new(queue_inner_wt);
+        analyzer.last_events_ids.primary_id = 1.into();
+
+        // Collecting page 5 from operation 1 also takes operation 3, and
+        // advances past it. Operation 2 sits between them in operation order,
+        // on another page, and carries the event the stream needs next, so it
+        // is skipped and then the walk runs out of operations entirely. The
+        // page-limit growth that normally widens a stuck collection cannot
+        // help here: the loop ended because it ran out, not because it was
+        // full.
+        analyzer.push(insert_operation_with_event(1, 5, 3)).unwrap();
+        analyzer.push(insert_operation_with_event(2, 9, 2)).unwrap();
+        analyzer.push(insert_operation_with_event(3, 5, 4)).unwrap();
+
+        let start = OperationId::Single(uuid::Uuid::from_u128(1));
+        for attempt in 0..12 {
+            if analyzer
+                .collect_batch_from_op_id(start)
+                .await
+                .expect("collection must not fail the engine over an ordering it can recover from")
+                .is_some()
+            {
+                assert!(
+                    attempt >= 1,
+                    "the first attempt is expected to defer; progress on attempt 0 would mean \
+                     the inversion was not reproduced"
+                );
+                return;
+            }
+        }
+        panic!("collection never made progress: the gapped batch was rebuilt every time");
     }
 
     fn multi_insert_operation(id: u128, offset: u32, byte: u8) -> Operation<(), u64, TestEvents> {
