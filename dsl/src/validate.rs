@@ -131,6 +131,54 @@ fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut
         }
     }
 
+    // The primary key's own backend and generator.
+    //
+    // Both used to be skipped entirely: the loop below walks `columns.indexes`,
+    // which holds the *secondary* indexes, and the primary backend was pushed
+    // into `explicit_backends` above for the persistence rule only. So
+    // `id: String primary_key using congee` and `id: usize primary_key
+    // autoincrement` both passed `check` and then failed to build, which is the
+    // exact failure this module exists to prevent: an editor shows nothing and
+    // the compiler refuses.
+    if let Some(primary) = columns.primary_keys.first() {
+        let key_type = columns.columns_map.get(primary).map(ToString::to_string);
+        if let Some(key_type) = key_type {
+            if let Some(supported) = supported_key_types(columns.primary_index_backend)
+                && !supported.contains(&key_type.as_str())
+            {
+                errors.push(syn::Error::new(
+                    primary.span(),
+                    // Word for word what the macro says when it reaches the
+                    // same conclusion at expansion. `check` exists to answer
+                    // "would the macro accept this", so a caller reading the
+                    // two side by side should not have to work out that they
+                    // are the same refusal. The alias note matters: a key
+                    // declared through a type alias reads as unsupported here
+                    // because neither this nor the macro can resolve it.
+                    format!(
+                        "`using {}` requires a directly named primitive primary-key type; found `{key_type}`; \
+                         supported types: {} (type aliases cannot be resolved by the macro)",
+                        columns.primary_index_backend.name(),
+                        supported.join(", ")
+                    ),
+                ));
+            }
+
+            if columns.generator_type == crate::model::GeneratorType::Autoincrement
+                && !AUTOINCREMENT_TYPES.contains(&key_type.as_str())
+            {
+                errors.push(syn::Error::new(
+                    primary.span(),
+                    format!(
+                        "primary key `{primary}` is `autoincrement` over key type `{key_type}`, which cannot \
+                         be generated; supported types: {}",
+                        AUTOINCREMENT_TYPES.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+
     for (column, index) in &columns.indexes {
         // An index over a column that does not exist. The macro never reaches
         // this: its own parse fails first, which is why this used to be an
@@ -153,11 +201,7 @@ fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut
             continue;
         };
         let key_type = key_type.to_string();
-        let supported = match index.backend {
-            IndexBackend::Congee => Some(&["u8", "u16", "u32", "u64", "usize"][..]),
-            IndexBackend::Arctic => Some(&["u16", "u32", "u64", "u128"][..]),
-            IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
-        };
+        let supported = supported_key_types(index.backend);
         if let Some(supported) = supported
             && !supported.contains(&key_type.as_str())
         {
@@ -171,6 +215,28 @@ fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut
                 ),
             ));
         }
+    }
+}
+
+/// The key types `autoincrement` can generate.
+///
+/// One list, exported, because `worktable_codegen` maps exactly these to
+/// atomics and errors on anything else. Two copies of this would drift, and
+/// the way it would show is `check` accepting a declaration that then fails to
+/// build, which is the whole failure this module exists to prevent.
+///
+/// `usize` is the case worth knowing: it reads like one of the accepted set
+/// and there is no `AtomicUsize` in the mapping.
+pub const AUTOINCREMENT_TYPES: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"];
+
+/// The key types an index backend can hold.
+///
+/// `None` means the backend takes any key type.
+pub fn supported_key_types(backend: IndexBackend) -> Option<&'static [&'static str]> {
+    match backend {
+        IndexBackend::Congee => Some(&["u8", "u16", "u32", "u64", "usize"]),
+        IndexBackend::Arctic => Some(&["u16", "u32", "u64", "u128"]),
+        IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
     }
 }
 

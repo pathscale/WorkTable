@@ -141,8 +141,28 @@ impl ReadOnlyGenerator {
             "i16" => quote! { std::sync::atomic::AtomicI16 },
             "i32" => quote! { std::sync::atomic::AtomicI32 },
             "i64" => quote! { std::sync::atomic::AtomicI64 },
+            // The accepted set is `worktable_dsl::AUTOINCREMENT_TYPES`, and the
+            // arms above must stay equal to it. `check` uses that list to
+            // answer "would the macro accept this", so a second copy drifting
+            // shows up as `check` passing a declaration that then fails to
+            // build, which is the failure it exists to prevent.
+            //
+            // Asserted rather than commented: the debug assertion below fires
+            // during any codegen build if the two ever disagree.
             _ => {
-                return Err(syn::Error::new(i.span(), "Type is not supported for autoincrement"));
+                debug_assert!(
+                    !worktable_dsl::AUTOINCREMENT_TYPES.contains(&type_.to_string().as_str()),
+                    "`{}` is in worktable_dsl::AUTOINCREMENT_TYPES but has no atomic here; `check` \
+                     will accept a declaration this refuses",
+                    type_
+                );
+                return Err(syn::Error::new(
+                    i.span(),
+                    format!(
+                        "type is not supported for autoincrement; supported types: {}",
+                        worktable_dsl::AUTOINCREMENT_TYPES.join(", ")
+                    ),
+                ));
             }
         })
     }
