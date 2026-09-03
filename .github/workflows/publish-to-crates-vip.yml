@@ -10,6 +10,13 @@ name: publish-to-crates.vip
 # Publishing is manual on purpose. A published version is immutable, and
 # `cargo package` embeds the git sha, so a version republished from a different
 # commit is refused rather than silently replaced.
+#
+# The reusable workflow is pinned to a commit sha rather than `@master`. This
+# job hands it the registry's Tigris credentials, so whoever can move that
+# branch can read the secrets; a sha is the only ref that cannot be moved under
+# us. Updating it is deliberate: read the diff on the pinned range first, then
+# bump the three `uses:` lines together, since they are one workflow and a
+# split pin means two versions publishing one workspace.
 
 on:
   workflow_dispatch:
@@ -25,7 +32,7 @@ jobs:
   # `worktable_dsl` by path *and* version, so the DSL entry has to exist in the
   # registry before codegen's is written, exactly as it does on crates.io.
   dsl:
-    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@master
+    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@017e29a705cb8b4780dd6079b3739b4b5a84fda5
     with:
       manifest-path: dsl/Cargo.toml
       dry-run: ${{ inputs.dry-run }}
@@ -35,7 +42,7 @@ jobs:
 
   codegen:
     needs: dsl
-    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@master
+    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@017e29a705cb8b4780dd6079b3739b4b5a84fda5
     with:
       manifest-path: codegen/Cargo.toml
       dry-run: ${{ inputs.dry-run }}
@@ -47,7 +54,7 @@ jobs:
   # resolvable in the registry before this entry is written.
   worktable:
     needs: codegen
-    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@master
+    uses: pathscale/crates.vip-backend/.github/workflows/publish-crate.yml@017e29a705cb8b4780dd6079b3739b4b5a84fda5
     with:
       manifest-path: Cargo.toml
       dry-run: ${{ inputs.dry-run }}
