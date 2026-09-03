@@ -80,9 +80,9 @@ impl Schema {
                 // key, so it has to be written last of the two.
                 let _ = writeln!(out, "{INDENT}row_derives: {},", self.config.row_derives.join(", "));
             }
-            // No comma: `parse_configs` does not consume one after its block, so a
-            // trailing comma here reaches the top-level dispatch as a `,` token.
-            // `config` is emitted last, so nothing needs to follow it.
+            // No comma. `parse_configs` ends with `try_parse_comma`, so one here
+            // would be accepted too; it is omitted because `config` is emitted
+            // last and nothing follows it.
             let _ = writeln!(out, "}}");
         }
 
