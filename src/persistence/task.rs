@@ -195,7 +195,18 @@ pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availabl
     last_events_ids: LastEventIds<AvailableIndexes>,
     last_invalid_batch_size: usize,
     page_limit: usize,
+    /// Cycles since the engine last declared a batch failed. Drives only the
+    /// give-up condition.
     attempts: usize,
+    /// Cycles since the applied watermark last moved.
+    ///
+    /// Separate from `attempts` because the two questions are different. A
+    /// batch can be valid and still apply nothing: everything in it sat behind
+    /// a gap and was trimmed, and validation returns an empty batch rather than
+    /// a deferral. That is a success, so it resets `attempts`, and widening the
+    /// collection off `attempts` therefore never happened in exactly the case
+    /// that needed it. Progress is what should widen the search.
+    no_progress: usize,
 }
 
 #[derive(Debug)]
@@ -248,6 +259,7 @@ where
             last_invalid_batch_size: 0,
             page_limit: MAX_PAGE_AMOUNT,
             attempts: 0,
+            no_progress: 0,
         }
     }
 
@@ -304,7 +316,7 @@ where
         // See `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`: page grouping can wedge on a
         // stream whose event order and operation order disagree, so after a few
         // failed attempts the batch is assembled from everything queued.
-        let took_whole_queue = self.attempts >= COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS;
+        let took_whole_queue = self.no_progress >= COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS;
         if took_whole_queue {
             for (queued_op_id, _) in self.queue_inner_wt.0.indexes.operation_id_idx.iter() {
                 ops_set.insert(queued_op_id);
@@ -432,17 +444,25 @@ where
         let invalid_for_this_batch_ops = op.validate(&self.last_events_ids, self.attempts).await?;
         if let Some(invalid_for_this_batch_ops) = invalid_for_this_batch_ops {
             self.extend_from_iter(invalid_for_this_batch_ops.into_iter())?;
+            let previous_primary = self.last_events_ids.primary_id;
             let last_ids = op.get_last_event_ids();
+            let advanced = last_ids.primary_id > previous_primary;
             self.last_events_ids.merge(last_ids);
             self.last_invalid_batch_size = 0;
             self.page_limit = MAX_PAGE_AMOUNT;
             self.attempts = 0;
+            if advanced {
+                self.no_progress = 0;
+            } else {
+                self.no_progress += 1;
+            }
 
             Ok(Some(op))
         } else {
             // can't collect batch for now
             let ops = op.ops();
             self.attempts += 1;
+            self.no_progress += 1;
             if self.last_invalid_batch_size == ops.len() {
                 self.page_limit += 8;
             } else {
