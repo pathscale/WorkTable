@@ -24,6 +24,14 @@ proc-macro2 = "1"
 # Already in the workspace lock; used only by the `serde` feature test.
 serde_json = "1"
 
+# The schema language from a shell. Requires `spans`, because a diagnostic
+# without a location is most of the value gone: the reason this exists is to
+# be piped at by an editor and by a second implementation's conformance test.
+[[bin]]
+name = "wt-dsl"
+path = "src/bin/wt-dsl.rs"
+required-features = ["spans"]
+
 [features]
 # The IR derives serde only on request. `worktable_codegen` depends on this
 # crate and is a proc macro, so it is compiled for the host before anything
