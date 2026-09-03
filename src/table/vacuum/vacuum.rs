@@ -2,7 +2,16 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// How long retirements have to stop arriving for a delete burst to count as
+/// over. Short enough that a sweep still follows a delete promptly, long
+/// enough that the gaps inside one ranged delete do not read as its end.
+const SETTLE_INTERVAL: Duration = Duration::from_millis(25);
+
+/// The longest a sweep waits for a burst to settle, since under continuous
+/// delete load it never does.
+const MAX_SETTLE: Duration = Duration::from_millis(500);
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -162,6 +171,33 @@ where
     /// The gate this vacuum stands down on.
     pub fn gate(&self) -> &Arc<VacuumGate> {
         &self.gate
+    }
+
+    /// Wait for the burst that woke the sweep to finish before running it.
+    ///
+    /// The wake fires on the *first* crossing of the threshold, which during a
+    /// ranged delete is near its start. Sweeping there means competing with the
+    /// workload producing the garbage, and compacting pages that are still
+    /// being emptied behind it: a moving target, and the worst moment to take
+    /// the exclusion.
+    ///
+    /// The signal is queued retirements rather than the registry's byte total.
+    /// Deletes queue their storage and only reach the registry when the backlog
+    /// flushes, so between flushes the bytes sit still while deletes stream,
+    /// and a settle watching them would call the burst over in every gap.
+    ///
+    /// The cap is what keeps a table under continuous delete load from
+    /// deferring its sweep forever: there, retirements never stop arriving, and
+    /// a bounded wait is the right answer rather than an unbounded one.
+    async fn settle_after_wake(&self) {
+        let deadline = Instant::now() + MAX_SETTLE;
+        loop {
+            let before = self.data_pages.pending_retirements();
+            tokio::time::sleep(SETTLE_INTERVAL).await;
+            if self.data_pages.pending_retirements() == before || Instant::now() >= deadline {
+                return;
+            }
+        }
     }
 
     /// Attaches a persistence sink. Index updates for moved rows then use the
@@ -617,7 +653,8 @@ where
     }
 
     async fn wait_until_worth_running(&self) {
-        self.data_pages.empty_links_registry().wait_for_fragmentation().await
+        self.data_pages.empty_links_registry().wait_for_fragmentation().await;
+        self.settle_after_wake().await;
     }
 }
 
@@ -813,6 +850,57 @@ mod tests {
             woke(1024, Duration::from_secs(5)).await,
             "freeing past the threshold must wake the sweep"
         );
+    }
+
+    /// The wake fires on the *first* crossing of the threshold, which during a
+    /// ranged delete is near its start. Reporting work there sends the sweep in
+    /// while the delete is still streaming, to compete with the workload
+    /// producing the garbage and compact pages that are still being emptied
+    /// behind it.
+    ///
+    /// So it settles first. This asserts the sweep is not told to run until the
+    /// burst that woke it has stopped.
+    #[tokio::test]
+    async fn a_woken_sweep_waits_for_the_delete_burst_to_settle() {
+        let table = Arc::new(TestWorkTable::default());
+        let mut ids = Vec::new();
+        for i in 0..4_000 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{}", i),
+            };
+            ids.push(row.id);
+            table.insert(row).await.unwrap();
+        }
+
+        let vacuum = create_vacuum(&table);
+        vacuum.arm_wake(1024);
+
+        let burst_done = Arc::new(AtomicBool::new(false));
+        let deleting = tokio::spawn({
+            let (table, burst_done) = (Arc::clone(&table), Arc::clone(&burst_done));
+            let victims: Vec<_> = ids.iter().step_by(2).copied().collect();
+            async move {
+                // Spread over well past one settle interval, in the chunks a
+                // ranged delete actually arrives in.
+                for chunk in victims.chunks(100) {
+                    for id in chunk {
+                        table.delete(*id).await.unwrap();
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                burst_done.store(true, Ordering::Release);
+            }
+        });
+
+        vacuum.wait_until_worth_running().await;
+        assert!(
+            burst_done.load(Ordering::Acquire),
+            "the sweep was told to run while deletes were still streaming"
+        );
+        deleting.await.unwrap();
     }
 
     /// Creates an EmptyDataVacuum instance from a WorkTable

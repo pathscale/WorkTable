@@ -403,10 +403,9 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     /// between.
     pub async fn wait_for_fragmentation(&self) {
         let threshold = self.vacuum_wake_threshold.load(Ordering::Acquire);
-        if threshold != 0 && self.sum_links_len.load(Ordering::Acquire) >= threshold {
-            return;
+        if threshold == 0 || self.sum_links_len.load(Ordering::Acquire) < threshold {
+            self.vacuum_wake.notified().await;
         }
-        self.vacuum_wake.notified().await
     }
 
     /// Records the pages a batch freed *contiguously*.

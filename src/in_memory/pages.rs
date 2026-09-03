@@ -1221,6 +1221,16 @@ where
         self.empty_links.len()
     }
 
+    /// Retirements queued but not yet swept into the registry.
+    ///
+    /// This moves on every delete, where the registry only moves when the
+    /// backlog flushes, so it is the signal for "is a delete burst still
+    /// running" and the registry's byte total is not: between flushes the
+    /// bytes sit still while deletes are streaming.
+    pub fn pending_retirements(&self) -> usize {
+        self.pending_retirements.load(Ordering::Acquire)
+    }
+
     pub fn empty_links_registry(&self) -> &EmptyLinkRegistry<DATA_LENGTH> {
         &self.empty_links
     }
