@@ -124,6 +124,35 @@ control exactly: 196 in-use pages and 100,000 live rows in all 18 of 18
 backend/repetition cells. `off` retains 392 pages. This satisfies the 100%
 reclamation requirement, not merely an approximate percentage.
 
+## Reactive-maintenance precedent
+
+The design has precedent in principle, but the exact gate appears unusual.
+MySQL documents that InnoDB merges buffered secondary-index changes when the
+server is nearly idle. RocksDB assigns user I/O higher priority than compaction
+I/O and offers a rate limiter specifically to reserve bandwidth for online
+queries. PostgreSQL autovacuum instead uses accumulated I/O cost and a timed
+delay, and conflicting lock acquisition can interrupt a non-wraparound
+autovacuum. InnoDB purge is driven by a periodic history list and can delay
+foreground writes when purge lag grows too large.
+
+Those systems establish the general policy that reclaim/merge work should
+yield resources to foreground traffic. None of their official documentation
+describes WorkTable's exact mechanism: one operation-wide mutation lease,
+including bulk-operation chunk gaps, plus a completed-mutation epoch and a
+check/recheck quiet buffer before the first vacuum batch. RocksDB in particular
+does not simply block compaction while writes are active; when compaction falls
+behind, its write controller can slow or stop the writes so maintenance catches
+up.
+
+Primary references:
+
+- [InnoDB change-buffer merging](https://dev.mysql.com/doc/refman/8.4/en/innodb-change-buffer.html)
+- [InnoDB purge scheduling and lag](https://dev.mysql.com/doc/refman/8.0/en/innodb-purge-configuration.html)
+- [PostgreSQL cost-based vacuum delay](https://www.postgresql.org/docs/17/runtime-config-resource.html#RUNTIME-CONFIG-RESOURCE-VACUUM-COST)
+- [PostgreSQL autovacuum lock interaction](https://www.postgresql.org/docs/15/routine-vacuuming.html)
+- [RocksDB I/O priority and rate limiting](https://github.com/facebook/rocksdb/wiki/Rate-Limiter)
+- [RocksDB write stalls when compaction falls behind](https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide)
+
 ## Beta.13 / beta.15 / beta.17 performance grid
 
 Every version is a local WorkTable tree: beta.13 `48f250f`, beta.15 `e4dcfdf`,
@@ -256,20 +285,24 @@ as noise and not allowed to override the better application-level result.
   local stack: 29 unit/invariant tests plus smoke execution of every Criterion
   target, including all-backend KV/JSON, deletes, concurrency, PGO and YCSB.
 
-## Remaining release TODO
+## Release closeout
 
-1. Review and commit the WorkTable and `wt-benchmarks` changes, including the
-   WT DSL determinism fix, async benchmark correction, vacuum fix/stress and
-   validation documentation.
-2. Write the beta.17 release notes from the coverage matrix above. The root
-   `CHANGELOG.md` still stops at 0.4.1 and does not describe the 1.0 beta line.
-3. Run normal branch/PR CI on that committed candidate. Local CI is green, but
-   it is not a substitute for the repository's clean checkout and runner.
-4. Decide the release-administration question in `docs/TODO.md`: whether to
-   yank ps-reclaim 0.1.0 and beta.16 after beta.17 supersedes them.
-5. Publish the local dependency train in the required order, then perform the
-   post-publication consumer-resolution smoke test. Do not replace any of the
-   pre-release validation above with registry packages.
+The locally validated candidate was rebased and merged through
+[WorkTable PR 87](https://github.com/pathscale/WorkTable/pull/87); all six CI
+jobs passed on the exact release commit. The benchmark instruments and raw
+summaries were rebased and merged through
+[wt-benchmarks PR 6](https://github.com/pathscale/wt-benchmarks/pull/6).
+WorkTable 1.0.0-beta.17 and its dependency train are published on crates.io.
+
+Post-publication consumer resolution and persisted-data checks also pass.
+support.cafe compiled and ran against the beta.17 train with its production S3
+data, and [AgencyZero PR 205](https://github.com/pathscale/agencyzero/pull/205)
+resolved beta.17 from a clean checkout, passed frontend and Rust CI, rebuilt
+the complete 18-table QA profile, and strict-opened its 248 projects, 155 items,
+and 2,212 messages.
 
 No unresolved beta.17 correctness or application-level performance blocker
-was found in the locally testable release surface.
+was found. The remaining work is release administration: decide whether to
+yank the superseded unsound `ps-reclaim` 0.1.0 and WorkTable beta.16 releases,
+and eventually restore release-note continuity because the root `CHANGELOG.md`
+still stops at 0.4.1.

@@ -3,7 +3,7 @@
 What is known to be unfinished, and enough context to act on it without the
 conversation it came from. Ordered by whether it blocks a release.
 
-Last reviewed 2026-09-04, against `release/beta17`.
+Last reviewed 2026-09-04, against `master` after beta.17 publication.
 
 ## Closed, and how
 
@@ -72,7 +72,7 @@ previously ignored repro is a normal release-gating test and includes multiple
 columns, indexes, update queries, and delete queries. This matters beyond
 cosmetics because generated enum variant order can determine discriminants.
 
-### The local beta.17 release-delta gate is green
+### The beta.17 release-delta gate is green and published
 
 The complete evidence and beta.13/beta.15/beta.17 performance grids are in
 `docs/beta17-validation.md`. The exact local CI matrix passes in default,
@@ -88,11 +88,17 @@ a rollback-safe prefix, strict-loaded all six tables, performed an S3-backed
 mutation and reloaded it after restart. ACME, HTTPS and WebSocket startup also
 passed on Fly. Full evidence is in `docs/beta17-validation.md`.
 
-## Blocking beta.17
+WorkTable PR #87 merged after all six clean-checkout CI jobs passed, and
+`worktable` 1.0.0-beta.17 plus its local dependency train are available on
+crates.io. The benchmark changes and summaries merged through wt-benchmarks PR
+#6. Post-publication resolution passed in AgencyZero PR #205; that consumer also
+rebuilt and strict-opened the complete 18-table QA profile under beta.17.
 
-There is no unresolved locally testable correctness or application-level
-performance blocker. Branch/PR CI must still pass on the exact release commit
-before publishing.
+## Post-release administration
+
+There is no unresolved beta.17 correctness or application-level performance
+blocker. The release is published and its clean-checkout consumer smoke test
+passes.
 
 ### Decide what happens to beta.16 on crates.io
 
