@@ -124,22 +124,22 @@ macro_rules! vacuum_invariant_suite {
                     }
                 }
 
-                // Probed by key rather than iterated: arctic and congee
-                // expose no iterator, and a check written against WTI's does
-                // not compile against them. Probing is also the stronger
-                // property, because it asserts the entry points at *this*
-                // row's storage rather than merely at some readable row.
-                for (link, pk) in table.0.primary_index.reverse_pk_map.iter() {
+                // Iterated directly on every backend. Arctic and congee
+                // exposed no inherent `iter` until this suite needed one, so
+                // the first version of this check probed by key to stay
+                // portable. The alias makes the backends interchangeable here,
+                // which is the point: a check that only reads one of them is
+                // a check that only guards one of them.
+                for (uniq, link) in table.0.indexes.uniq_idx.iter() {
                     let link: Link = link.into();
-                    let key: u64 = pk.into();
-                    let Ok(row) = table.0.data.select_non_ghosted(link) else {
-                        continue; // already reported above
-                    };
-                    let entry: Option<Link> = table.0.indexes.uniq_idx.get_value(&row.uniq).map(Into::into);
+                    let row = table
+                        .0
+                        .data
+                        .select_non_ghosted(link)
+                        .unwrap_or_else(|e| panic!("{phase}: uniq_idx[{uniq}] points at unreadable storage: {e:?}"));
                     assert_eq!(
-                        entry,
-                        Some(link),
-                        "{phase}: row {key} holds uniq {} but uniq_idx points that value at {entry:?}, not {link:?}",
+                        row.uniq, uniq,
+                        "{phase}: uniq_idx[{uniq}] resolves to a row holding {}",
                         row.uniq
                     );
                 }

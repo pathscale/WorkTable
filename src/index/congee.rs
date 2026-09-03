@@ -89,6 +89,21 @@ where
     K: CongeeKey,
     V: Clone + Debug + Send + Sync + 'static,
 {
+    /// Every entry, ascending.
+    ///
+    /// An inherent alias for [`UniqueIndex::iter_values`], so this reads the
+    /// same as the general-purpose backend does. Without it, code written
+    /// against that backend's inherent `iter` does not compile against this
+    /// one: a difference in spelling rather than in capability, which costs
+    /// the reader a detour and quietly pushes tests towards the one backend
+    /// whose name they already know. It caught out the vacuum invariant tests
+    /// twice.
+    ///
+    /// Materialises, exactly as `iter_values` does.
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {
+        <Self as UniqueIndex<K, V>>::iter_values(self)
+    }
+
     #[inline]
     unsafe fn arc_from_pointer(pointer: usize) -> Arc<V> {
         // SAFETY: callers guarantee that `pointer` was produced by
