@@ -76,7 +76,7 @@ worktable_codegen = { path = "codegen", version = "=1.0.0-beta.17" }
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
 # crate. Exact for the same pre-release reason as codegen.
-worktable_dsl = { path = "dsl", version = "=1.0.0-beta.17" }
+worktable_dsl = { path = "dsl", version = "=1.0.0-beta.18" }
 
 [dev-dependencies]
 chrono = "0.4"
