@@ -362,6 +362,35 @@ where
             from_page_will_be_moved = false;
         }
 
+        if from_page_will_be_moved {
+            // Re-read the page's rows after the moves.
+            //
+            // The candidate list above is a snapshot: the range is collected
+            // and dropped before any row is moved, because each move takes
+            // that row's lock and holding an index iterator across an await
+            // would pin the index for the whole drain. So an insert landing on
+            // this page after the snapshot is not in `links`, is never moved,
+            // and used to leave the page reported fully moved with a live row
+            // on it. `defragment` then reclaimed the page, an allocator reused
+            // it, and index entries pointing into it resolved to whatever row
+            // took their storage.
+            //
+            // That is the defect behind `value_idx[792]` resolving to a row
+            // holding 2703, and behind `upsert` returning `PrimaryUpdateTry`
+            // when a primary entry resolved to a row with another key. It
+            // needed a delete to free the space, an insert to take it, and
+            // vacuum to reclaim underneath, which is why it only ever appeared
+            // with all three running.
+            let occupied = self
+                .primary_index
+                .reverse_pk_map
+                .range(page_start..page_end)
+                .any(|(link, _)| link.0.page_id == from);
+            if occupied {
+                from_page_will_be_moved = false;
+            }
+        }
+
         Ok((from_page_will_be_moved, to_page_will_be_filled))
     }
 
