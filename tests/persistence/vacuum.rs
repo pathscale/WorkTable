@@ -310,7 +310,14 @@ fn test_persisted_vacuum_survives_inserts_reusing_space_mid_sweep() {
                             exchange: format!("test{i}"),
                         };
                         inserted.push(row.clone());
-                        table.insert(row).await.unwrap();
+                        let pk = row.id;
+                        if let Err(error) = table.insert(row).await {
+                            panic!(
+                                "insert of fresh autoincrement pk {pk:?} failed: {error:?}; \
+                                 already present in table: {}",
+                                table.select(pk).is_some()
+                            );
+                        }
                         tokio::task::yield_now().await;
                     }
                     inserted
@@ -327,7 +334,10 @@ fn test_persisted_vacuum_survives_inserts_reusing_space_mid_sweep() {
                 rows.insert(row.id, row);
             }
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            // Longer than the engine's own give-up budget, so a stall surfaces
+            // as its diagnostic naming the missing event id rather than as a
+            // bare timeout here, which says nothing.
+            timeout(Duration::from_secs(90), table.wait_for_ops())
                 .await
                 .expect("persistence stalled after a sweep interleaved with inserts")
                 .expect("persistence engine failed");

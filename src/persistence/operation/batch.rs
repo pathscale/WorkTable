@@ -359,9 +359,10 @@ where
                 // loudly instead of force-applying and corrupting the file.
                 if attempts > GIVE_UP_AFTER_ATTEMPTS {
                     return Err(eyre::eyre!(
-                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?} (attempt {attempts}); an event id was likely consumed without its event being queued",
+                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?} after {attempts} attempts, with {} operations queued. Every one of them was collected and the stream is still gapped, so the operation carrying the missing id never reached the queue: an event id was consumed without its event being pushed. The producer is upstream of the analyzer, not here.",
                         last_ids.primary_id,
-                        id
+                        id,
+                        self.ops.len()
                     ));
                 }
                 self.ops.extend(ops_to_remove);
@@ -381,7 +382,8 @@ where
                     // a persistent gap as the bug it is.
                     if attempts > GIVE_UP_AFTER_ATTEMPTS {
                         return Err(eyre::eyre!(
-                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} (attempt {attempts}); an event id was likely consumed without its event being queued"
+                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} after {attempts} attempts, with {} operations queued. All of them were collected and the stream is still gapped, so the operation carrying the missing id never reached the queue.",
+                            self.ops.len()
                         ));
                     }
                     self.ops.extend(ops_to_remove);
