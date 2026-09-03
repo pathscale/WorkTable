@@ -28,17 +28,28 @@ fn fail(message: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Parse, then emit the canonical text.
+/// Check, then emit the canonical text.
 ///
-/// The round trip rather than a bare parse: a second implementation needs
+/// `check` rather than `Schema::parse`, which is the whole point and is easy
+/// to get wrong: `parse` answers "is this a declaration", `check` answers
+/// "would the macro accept it". `page_size: 4096` beside `persist: true`
+/// parses perfectly and the macro refuses it, so a parse-only round trip
+/// reports success for output that does not compile, which is exactly the
+/// mistake a second implementation would then ship.
+///
+/// The round trip rather than a bare check: a second implementation needs
 /// bytes to compare against, and `to_dsl` is that target.
 fn parse() -> ExitCode {
-    match worktable_dsl::Schema::parse(&read_stdin()) {
-        Ok(schema) => {
+    let checked = worktable_dsl::check(&read_stdin());
+    for diagnostic in &checked.diagnostics {
+        let _ = writeln!(std::io::stderr(), "{:?}: {}", diagnostic.stage, diagnostic.message);
+    }
+    match (&checked.schema, checked.is_acceptable()) {
+        (Some(schema), true) => {
             print!("{}", schema.to_dsl());
             ExitCode::SUCCESS
         }
-        Err(error) => fail(&format!("parse failed: {error}")),
+        _ => ExitCode::FAILURE,
     }
 }
 
