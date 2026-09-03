@@ -24,6 +24,9 @@ pub use data_bucket;
 pub use worktable_codegen::migration_engine;
 pub use worktable_codegen::worktable;
 pub use worktable_codegen::worktable_version;
+/// The schema language, so the declaration each table embeds can be read
+/// without taking a second dependency and matching its version by hand.
+pub use worktable_dsl;
 
 #[cfg(feature = "s3-support")]
 pub use worktable_codegen::s3_sync_persistence;
