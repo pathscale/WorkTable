@@ -1221,6 +1221,23 @@ where
         self.empty_links.len()
     }
 
+    /// Data pages allocated, including any currently on the empty list.
+    ///
+    /// The table's memory is its pages, so this times `DATA_LENGTH` is what it
+    /// is holding from the allocator. It is the measure that verifies a
+    /// vacuum: reclaiming memory is the whole point of a sweep, and a cost
+    /// figure without it cannot be checked, because a sweep that never runs
+    /// looks exactly like a sweep that is free.
+    pub fn allocated_pages(&self) -> usize {
+        self.pages.read().len()
+    }
+
+    /// Pages allocated but currently on the empty list, so reusable without
+    /// asking the allocator for more.
+    pub fn reusable_pages(&self) -> usize {
+        self.empty_pages.read().len()
+    }
+
     /// Retirements queued but not yet swept into the registry.
     ///
     /// This moves on every delete, where the registry only moves when the
