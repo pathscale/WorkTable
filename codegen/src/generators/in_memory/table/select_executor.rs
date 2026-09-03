@@ -1,4 +1,5 @@
 use convert_case::{Case, Casing};
+use indexmap::IndexSet;
 use proc_macro2::Ident;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
@@ -23,7 +24,7 @@ impl InMemoryGenerator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let column_range_type = name_generator.get_column_range_type_ident();
 
-        let unique_types: std::collections::HashSet<String> = self
+        let unique_types: IndexSet<String> = self
             .columns
             .columns_map
             .values()

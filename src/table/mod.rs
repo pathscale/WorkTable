@@ -383,6 +383,10 @@ where
         if pks.is_empty() {
             return Ok(Vec::new());
         }
+        // The stripe guards below are intentionally chunked so foreground
+        // writers get a turn. Keep only the cheap operation-wide activity bit
+        // across those gaps, so vacuum does not mistake one for quiescence.
+        let _bulk_mutation = self.lock_manager.bulk_mutation_guard();
         let mut deleted: Vec<PrimaryKey> = Vec::with_capacity(pks.len());
 
         // Guards are taken a chunk at a time rather than over the whole batch.
@@ -484,6 +488,10 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
         LockType: 'static,
     {
+        // Covers both index walks and every chunk without holding a row or
+        // stripe lock across the operation.
+        let _bulk_mutation = self.lock_manager.bulk_mutation_guard();
+
         // Owned bounds, because the span is walked twice and `R` is consumed.
         let start = range.start_bound().cloned();
         let end = range.end_bound().cloned();

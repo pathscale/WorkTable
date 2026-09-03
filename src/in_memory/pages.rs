@@ -1265,6 +1265,21 @@ where
     pub fn current_page_id(&self) -> PageId {
         self.current_page_id.load(Ordering::Acquire).into()
     }
+
+    /// Makes an already allocated page the append target for a vacuum pass.
+    ///
+    /// Vacuum uses this only when the old current page is itself fragmented.
+    /// Rotating first lets that old page become a normal source while the new
+    /// current page serves as the sweep's first destination. Concurrent
+    /// inserts are safe: the insert path rechecks `current_page_id` under the
+    /// page barrier before writing and retries if the target changed.
+    pub(crate) fn rotate_current_for_vacuum(&self, page_id: PageId) {
+        debug_assert!(
+            self.get_page(page_id).is_some(),
+            "vacuum current page must be allocated"
+        );
+        self.current_page_id.store(page_id.into(), Ordering::Release);
+    }
 }
 
 #[derive(Debug, Display, Error, From, PartialEq)]

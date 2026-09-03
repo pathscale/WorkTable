@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use proc_macro2::{Ident, TokenTree};
 use syn::spanned::Spanned;
 
@@ -7,7 +6,7 @@ use crate::Parser;
 use crate::model::Operation;
 
 impl Parser {
-    pub fn _parse_selects(&mut self) -> syn::Result<HashMap<Ident, Operation>> {
+    pub fn _parse_selects(&mut self) -> syn::Result<IndexMap<Ident, Operation>> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
             "Expected `select` field in declaration",

@@ -1,10 +1,9 @@
-use proc_macro2::Literal;
-use std::collections::HashMap;
-
 use crate::common::model::{Index, Operation};
 use crate::common::name_generator::{WorktableNameGenerator, is_float};
 use crate::generators::in_memory::InMemoryGenerator;
 use convert_case::{Case, Casing};
+use indexmap::IndexMap;
+use proc_macro2::Literal;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
@@ -172,7 +171,7 @@ impl InMemoryGenerator {
         }
     }
 
-    fn gen_custom_updates(&mut self, updates: HashMap<Ident, Operation>) -> TokenStream {
+    fn gen_custom_updates(&mut self, updates: IndexMap<Ident, Operation>) -> TokenStream {
         let defs = updates
             .iter()
             .map(|(name, op)| {
@@ -196,7 +195,7 @@ impl InMemoryGenerator {
                     let fields = op
                         .columns
                         .iter()
-                        .filter(|c| self.columns.columns_map.get(c).unwrap().to_string() == "String")
+                        .filter(|c| self.columns.columns_map.get(*c).unwrap().to_string() == "String")
                         .collect::<Vec<_>>();
                     if fields.is_empty() { None } else { Some(fields) }
                 };
@@ -801,6 +800,10 @@ impl InMemoryGenerator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
+                // This query may update many rows. Keep vacuum out across the
+                // snapshot, lock acquisition, and per-row mutation gaps
+                // without adding work to each row.
+                let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
                 // Snapshot the matching rows' primary keys once; the same set
                 // is locked and then processed. Locking one index scan and
                 // processing a fresh second scan would let rows that joined the
@@ -1019,7 +1022,7 @@ impl InMemoryGenerator {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
 
     use proc_macro2::{Ident, Span};
     use quote::quote;
@@ -1057,7 +1060,7 @@ mod tests {
             queries: None,
             config: None,
         };
-        let mut updates = HashMap::new();
+        let mut updates = IndexMap::new();
         let name = Ident::new("CodeById", Span::call_site());
         updates.insert(
             name.clone(),
@@ -1069,8 +1072,8 @@ mod tests {
         );
         generator.queries = Some(Queries {
             updates,
-            deletes: HashMap::new(),
-            in_place: HashMap::new(),
+            deletes: IndexMap::new(),
+            in_place: IndexMap::new(),
         });
         generator.gen_primary_key_def().unwrap();
 

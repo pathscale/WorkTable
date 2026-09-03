@@ -50,23 +50,8 @@ fn a_declaration_parses_into_a_model() {
     );
 }
 
-/// Declaration order comes from `field_positions`, never from `columns_map`.
-///
-/// `columns_map` is a `std::collections::HashMap`, whose iteration order Rust
-/// randomises per process. Running the suite twice produced
-/// `["answered", "project_id", "id"]` and then
-/// `["project_id", "answered", "id"]` from the same input, so a consumer that
-/// iterates it renders a different table on every run.
-///
-/// Nothing in this repository had noticed, and nothing needed to: the macro
-/// does not care what order it sees columns in, and the parser's own tests
-/// collect `columns_map` into another `HashMap` and assert membership. The
-/// property was never specified because no caller existed to depend on it.
-///
-/// `field_positions` is the answer and is already there — it maps each column
-/// to its position in the declaration. A diagram, a documentation page, or an
-/// editor should sort by it. This test exists so the next consumer finds that
-/// out here rather than by shipping a table that reorders itself.
+/// Both public views retain declaration order. `columns_map` is directly
+/// iterable by consumers; `field_positions` remains the explicit numeric view.
 #[test]
 fn declaration_order_is_recovered_from_field_positions() {
     let tokens: proc_macro2::TokenStream = r#"
@@ -83,6 +68,9 @@ fn declaration_order_is_recovered_from_field_positions() {
     let mut parser = Parser::new(tokens);
     parser.parse_name().expect("a name is declared");
     let columns = parser.parse_columns().expect("columns are declared");
+
+    let map_names: Vec<String> = columns.columns_map.keys().map(ToString::to_string).collect();
+    assert_eq!(map_names, ["id", "project_id", "answered"]);
 
     let mut ordered: Vec<(usize, String)> = columns
         .field_positions

@@ -1,13 +1,13 @@
+use indexmap::IndexMap;
 use proc_macro2::{Ident, TokenTree};
-use std::collections::HashMap;
 use syn::spanned::Spanned;
 
 use crate::model::Operation;
 use crate::parser::Parser;
 
 impl Parser {
-    pub fn parse_operations(&mut self) -> syn::Result<HashMap<Ident, Operation>> {
-        let mut ops = HashMap::new();
+    pub fn parse_operations(&mut self) -> syn::Result<IndexMap<Ident, Operation>> {
+        let mut ops = IndexMap::new();
         while self.has_next() {
             let row = self.parse_operation()?;
             if ops.contains_key(&row.name) {

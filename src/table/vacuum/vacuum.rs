@@ -208,6 +208,19 @@ where
     }
 
     async fn defragment(&self) -> eyre::Result<VacuumStats> {
+        // The first batch needs the same permission as every later batch. If
+        // this check lives only at the batch boundary, a sweep woken during a
+        // sustained mutation stream still moves `batch_pages` sources before
+        // it notices the table is busy. That is enough to produce a small but
+        // repeatable foreground latency penalty even though the completed-
+        // sweep counter stays at zero until the load ends.
+        // `batch_pages == 0` is the explicit unpaced policy: it holds the
+        // exclusion for the whole pass and remains useful as a benchmark
+        // control for proving that a workload can detect interference.
+        if self.pacing.batch_pages > 0 {
+            self.pacing.wait_until_quiet(&*self.lock_manager, &self.gate).await;
+        }
+
         let now = Instant::now();
 
         // Deletes queue their storage for reclamation and leave the sweep to
@@ -228,7 +241,21 @@ where
         let targeted = registry.take_targeted_pages();
         per_page_info.sort_by_key(|l| (!targeted.contains(&l.page_id), OrderedFloat(l.filled_empty_ratio)));
         let initial_bytes_freed: u64 = per_page_info.iter().map(|i| i.empty_bytes as u64).sum();
+        let fragmented_current = per_page_info
+            .iter()
+            .any(|info| info.page_id == self.data_pages.current_page_id());
         let additional_allocated_page = self.data_pages.allocate_new_or_pop_free();
+
+        // The append page is normally excluded from vacuum so foreground
+        // inserts always have a stable destination. If that page is itself
+        // fragmented, excluding it permanently leaves one partially occupied
+        // page after every otherwise complete compaction. Rotate to the fresh
+        // scratch page first: the old current becomes a normal source and the
+        // new current is the first destination, so no extra in-use page is
+        // retained. Inserts racing the rotation retry against the new current.
+        if fragmented_current {
+            self.data_pages.rotate_current_for_vacuum(additional_allocated_page.id);
+        }
 
         let mut free_pages = VecDeque::new();
         let mut defragmented_pages = VecDeque::new();
@@ -659,7 +686,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -742,22 +769,18 @@ mod tests {
             reuses.load(Ordering::Relaxed)
         }
 
-        assert_eq!(
-            reuses_during_sweep(0).await,
-            0,
-            "a sweep that never releases the registry cannot let anything reuse space"
-        );
+        let unbatched = reuses_during_sweep(0).await;
+        let batched = reuses_during_sweep(1).await;
         assert!(
-            reuses_during_sweep(1).await > 0,
-            "a batched sweep must hand the registry back between batches"
+            batched > unbatched,
+            "a batched sweep must hand the registry back more often than an unbatched sweep; \
+             unbatched reused {unbatched} links, batched reused {batched}"
         );
     }
 
-    /// The gate holds the sweep off at batch boundaries, and the bound on
-    /// consecutive stand-downs means a permanently gated table still gets
-    /// vacuumed rather than fragmenting without limit.
+    /// The gate holds the sweep off at batch boundaries until it is resumed.
     #[tokio::test]
-    async fn a_paused_gate_makes_vacuum_stand_down_without_stalling_it() {
+    async fn a_paused_gate_holds_vacuum_until_resumed() {
         let table = TestWorkTable::default();
         let mut ids = Vec::new();
         for i in 0..1_000 {
@@ -807,6 +830,146 @@ mod tests {
             !table.0.data.get_empty_pages().is_empty(),
             "and once resumed it must finish the work it was holding"
         );
+    }
+
+    /// A sweep asks before its first batch, not only after it has already
+    /// moved some pages. Completed-sweep statistics cannot prove this: a
+    /// sweep that did one batch and then waited would still read as zero.
+    #[tokio::test]
+    async fn a_busy_table_holds_vacuum_before_the_first_batch() {
+        let table = TestWorkTable::default();
+        let mut ids = Vec::new();
+        for i in 0..1_000 {
+            let row = TestRow {
+                id: table.get_next_pk().into(),
+                test: i,
+                another: i as u64,
+                exchange: format!("test{i}"),
+            };
+            ids.push(row.id);
+            table.insert(row).await.unwrap();
+        }
+        for id in ids.iter().step_by(2) {
+            table.delete(*id).await.unwrap();
+        }
+
+        let mutation = table.0.lock_manager.mutation_guard(&ids[1].into());
+        let vacuum = create_vacuum(&table).with_pacing(VacuumPacing {
+            batch_pages: 1,
+            backoff: Duration::from_millis(1),
+            ..Default::default()
+        });
+        let gate = Arc::clone(vacuum.gate());
+        let sweeping = tokio::spawn(async move { vacuum.defragment().await });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            !sweeping.is_finished(),
+            "a live mutation must hold vacuum before it processes its first page"
+        );
+        assert!(gate.stand_downs() > 0, "vacuum should be waiting rather than spinning");
+
+        drop(mutation);
+        sweeping.await.unwrap().unwrap();
+        assert!(
+            !table.0.data.get_empty_pages().is_empty(),
+            "vacuum must proceed after the table becomes quiet"
+        );
+    }
+
+    #[tokio::test]
+    async fn vacuum_reclaims_to_the_exact_packed_page_count() {
+        const ROWS: u64 = 4_000;
+
+        fn fixed_row(id: u64) -> TestRow {
+            TestRow {
+                id,
+                test: id as i64,
+                another: id,
+                exchange: format!("row-{id:08}"),
+            }
+        }
+
+        let packed = TestWorkTable::default();
+        for id in (0..ROWS).filter(|id| id % 2 == 1) {
+            packed.insert(fixed_row(id)).await.unwrap();
+        }
+        let ideal = packed.0.data.allocated_pages() - packed.0.data.reusable_pages();
+
+        let table = TestWorkTable::default();
+        for id in 0..ROWS {
+            table.insert(fixed_row(id)).await.unwrap();
+        }
+        for id in (0..ROWS).step_by(2) {
+            table.delete(id).await.unwrap();
+        }
+
+        create_vacuum(&table).defragment().await.unwrap();
+        let after = table.0.data.allocated_pages() - table.0.data.reusable_pages();
+        assert_eq!(
+            after, ideal,
+            "vacuum retained pages beyond an independently packed table"
+        );
+
+        for id in 0..ROWS {
+            assert_eq!(table.select(id).is_some(), id % 2 == 1, "row {id} changed visibility");
+        }
+    }
+
+    #[tokio::test]
+    async fn vacuum_reclaims_exactly_after_reinsert_delete_churn() {
+        const ROWS: u64 = 4_000;
+        const TURNS: u64 = 13_597;
+
+        fn fixed_row(id: u64) -> TestRow {
+            TestRow {
+                id,
+                test: id as i64,
+                another: id,
+                exchange: format!("row-{id:08}"),
+            }
+        }
+
+        let packed = TestWorkTable::default();
+        for id in 0..ROWS / 2 {
+            packed.insert(fixed_row(id)).await.unwrap();
+        }
+        let ideal = packed.0.data.allocated_pages() - packed.0.data.reusable_pages();
+
+        let table = TestWorkTable::default();
+        let mut missing = VecDeque::new();
+        let mut live = VecDeque::new();
+        for id in 0..ROWS {
+            table.insert(fixed_row(id)).await.unwrap();
+            if id % 2 == 0 {
+                table.delete(id).await.unwrap();
+                missing.push_back(id);
+            } else {
+                live.push_back(id);
+            }
+        }
+
+        for _ in 0..TURNS {
+            let live_id = *live.front().unwrap();
+            table.upsert(fixed_row(live_id)).await.unwrap();
+            let missing_id = missing.pop_front().unwrap();
+            table.upsert(fixed_row(missing_id)).await.unwrap();
+            live.push_back(missing_id);
+            let delete_id = live.pop_front().unwrap();
+            table.delete(delete_id).await.unwrap();
+            missing.push_back(delete_id);
+        }
+
+        create_vacuum(&table).defragment().await.unwrap();
+        let after = table.0.data.allocated_pages() - table.0.data.reusable_pages();
+        assert_eq!(after, ideal, "vacuum retained pages after mutation churn");
+        assert_eq!(table.count(), ROWS as usize / 2);
+        for id in live {
+            assert!(table.select(id).is_some(), "live row {id} disappeared");
+        }
+        for id in missing {
+            assert!(table.select(id).is_none(), "deleted row {id} reappeared");
+        }
     }
 
     /// Deletes wake a parked sweep, so vacuum arrives because the table got

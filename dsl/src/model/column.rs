@@ -1,5 +1,6 @@
-use indexmap::IndexMap;
 use std::collections::HashMap;
+
+use indexmap::IndexMap;
 
 use crate::model::index::Index;
 use crate::model::{GeneratorType, IndexBackend};
@@ -14,7 +15,13 @@ fn is_sized(ident: &Ident) -> bool {
 #[derive(Debug, Clone)]
 pub struct Columns {
     pub is_sized: bool,
-    pub columns_map: HashMap<Ident, TokenStream>,
+    /// Column types in declaration order.
+    ///
+    /// Code generation iterates this map to emit ordered Rust constructs,
+    /// including archived enums. A randomized `HashMap` made two expansions
+    /// of the same declaration produce different variant order and therefore
+    /// potentially different discriminants.
+    pub columns_map: IndexMap<Ident, TokenStream>,
     pub field_positions: HashMap<Ident, usize>,
     pub indexes: IndexMap<Ident, Index>,
     pub primary_keys: Vec<Ident>,
@@ -34,7 +41,7 @@ pub struct Row {
 
 impl Columns {
     pub fn try_from_rows(rows: Vec<Row>, input: &TokenStream) -> syn::Result<Self> {
-        let mut columns_map = HashMap::new();
+        let mut columns_map = IndexMap::new();
         let mut field_positions = HashMap::new();
         let mut sized = true;
         let mut pk = vec![];

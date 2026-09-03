@@ -144,9 +144,10 @@ impl VacuumManager {
                         // sweep reporting success. A partial return is not a
                         // return.
                         //
-                        // Three exits, so this cannot spin or run away:
-                        // fragmentation falling below the threshold, a pass that
-                        // frees no pages, and a bound on consecutive passes.
+                        // Three exits, so this cannot spin or run away: a final
+                        // consolidation pass after fragmentation crosses the
+                        // threshold, a pass that frees no pages, and a bound on
+                        // consecutive passes.
                         //
                         // That bound is not defensive tidiness. On a persisted
                         // table every reclaimed page queues a durable-free
@@ -158,15 +159,28 @@ impl VacuumManager {
                         // reclamation monopolise the queue. Whatever is left is
                         // picked up by the next wake or the fallback.
                         let mut passes = 0u32;
+                        let mut final_consolidation_ran = false;
                         loop {
                             let info = vacuum.analyze_fragmentation();
 
                             log::debug!("vacuum info: {:?}", info);
                             // println!("vacuum info: {:?}", info);
-                            if !(info.overall_fragmentation_ratio < self.config.low_fragmentation_threshold
-                                && info.overall_fragmentation_ratio != 0.0)
-                            {
+                            let above_sweep_threshold = info.overall_fragmentation_ratio
+                                < self.config.low_fragmentation_threshold
+                                && info.overall_fragmentation_ratio != 0.0;
+                            if !above_sweep_threshold && (passes == 0 || final_consolidation_ran) {
                                 break;
+                            }
+                            // A productive pass can cross the manager's
+                            // threshold while still leaving a handful of
+                            // pages that another packing pass can eliminate.
+                            // Give that residual exactly one pass. Rechecking
+                            // only the threshold here left 200 pages where an
+                            // independently packed table needed 196; looping
+                            // without this bit could churn a fully packed
+                            // table forever because it still has tail gaps.
+                            if !above_sweep_threshold {
+                                final_consolidation_ran = true;
                             }
                             {
                                 log::debug!("Vacuuming {}", info.table_name);

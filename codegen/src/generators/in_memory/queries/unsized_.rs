@@ -61,7 +61,7 @@ impl InMemoryGenerator {
                     let unsized_fields: Vec<_> = op
                         .columns
                         .iter()
-                        .filter(|c| self.columns.columns_map.get(c).unwrap().to_string() == "String")
+                        .filter(|c| self.columns.columns_map.get(*c).unwrap().to_string() == "String")
                         .map(|c| {
                             let fn_ident = Ident::new(format!("get_{c}_size").as_str(), Span::call_site());
                             quote! {

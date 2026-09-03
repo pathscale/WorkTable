@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use convert_case::{Case, Casing};
+use indexmap::IndexMap;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
@@ -28,7 +27,7 @@ impl PersistGenerator {
         }
     }
 
-    fn gen_in_place_update_query_locks(updates: &HashMap<Ident, Operation>) -> TokenStream {
+    fn gen_in_place_update_query_locks(updates: &IndexMap<Ident, Operation>) -> TokenStream {
         let fns = updates
             .keys()
             .map(|name| {
@@ -50,7 +49,7 @@ impl PersistGenerator {
         }
     }
 
-    fn gen_update_query_locks(updates: &HashMap<Ident, Operation>) -> TokenStream {
+    fn gen_update_query_locks(updates: &IndexMap<Ident, Operation>) -> TokenStream {
         let fns = updates
             .keys()
             .map(|name| {
