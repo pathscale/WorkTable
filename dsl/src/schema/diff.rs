@@ -132,6 +132,22 @@ pub enum Change {
         to: String,
     },
     /// A column gained or lost `optional`.
+    /// A primary key's generator changed.
+    ///
+    /// Not cosmetic: the generator decides how identities are assigned, so
+    /// moving between `autoincrement` and a caller-supplied key changes who is
+    /// responsible for uniqueness and what generator state a persisted table
+    /// has to carry. `ColumnSpec` has always recorded it; the diff used to
+    /// compare type, optionality and position only, so this migration planned
+    /// as no change at all.
+    PrimaryKeyGeneratorChanged {
+        /// The column whose generator changed.
+        name: String,
+        /// What it was.
+        from: String,
+        /// What it is now.
+        to: String,
+    },
     ColumnOptionalityChanged {
         /// Column name.
         name: String,
@@ -213,7 +229,8 @@ impl Change {
             Self::Renamed { .. }
             | Self::PersistenceChanged { .. }
             | Self::PartitionKeyChanged { .. }
-            | Self::PrimaryKeyChanged { .. } => Cost::NeedsIntent,
+            | Self::PrimaryKeyChanged { .. }
+            | Self::PrimaryKeyGeneratorChanged { .. } => Cost::NeedsIntent,
         }
     }
 
@@ -460,6 +477,9 @@ fn describe_change(change: &Change) -> String {
         Change::PrimaryKeyChanged { from, to } => {
             format!("primary key ({}) -> ({})", from.join(", "), to.join(", "))
         }
+        Change::PrimaryKeyGeneratorChanged { name, from, to } => {
+            format!("primary key `{name}` generator {from} -> {to}")
+        }
         Change::ColumnAdded(column) => format!(
             "column added: {}: {}{}",
             column.name,
@@ -507,6 +527,13 @@ fn diff_columns(stored: &Schema, declared: &Schema, changes: &mut Vec<Change>) {
                         name: column.name.clone(),
                         from: before.ty.clone(),
                         to: column.ty.clone(),
+                    });
+                }
+                if before.generator != column.generator {
+                    changes.push(Change::PrimaryKeyGeneratorChanged {
+                        name: column.name.clone(),
+                        from: format!("{:?}", before.generator),
+                        to: format!("{:?}", column.generator),
                     });
                 }
                 if before.optional != column.optional {
