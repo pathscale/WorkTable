@@ -10,10 +10,12 @@ use crate::vacuum::fragmentation_info::FragmentationInfo;
 
 mod fragmentation_info;
 mod manager;
+mod pacing;
 #[allow(clippy::module_inception)]
 mod vacuum;
 
 pub use manager::{VacuumManager, VacuumManagerConfig};
+pub use pacing::{VacuumGate, VacuumPacing};
 pub use vacuum::EmptyDataVacuum;
 
 /// Sink for persisting vacuum row moves.
@@ -57,6 +59,18 @@ pub trait WorkTableVacuum {
     fn analyze_fragmentation(&self) -> FragmentationInfo;
     /// Run vacuum operation
     async fn vacuum(&self) -> eyre::Result<VacuumStats>;
+
+    /// Wake a waiting sweep once this table has freed `bytes` worth of
+    /// reclaimable space. `0` disables the wake and leaves only the fallback
+    /// interval.
+    fn arm_wake(&self, bytes: u64);
+
+    /// Park until this table is fragmented enough to be worth sweeping.
+    ///
+    /// A timer cannot know when that happened; the table can, because it is
+    /// the thing that got fragmented. Callers still want a fallback interval
+    /// alongside this, for a table whose threshold is never reached.
+    async fn wait_until_worth_running(&self);
 }
 
 /// Represents vacuum statistics after a vacuum operation

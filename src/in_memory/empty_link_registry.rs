@@ -7,7 +7,7 @@ use derive_more::Into;
 use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::concurrent::set::BTreeSet;
 use parking_lot::FairMutex;
-use tokio::sync::OwnedRwLockReadGuard;
+use tokio::sync::{Notify, OwnedRwLockReadGuard};
 
 use crate::in_memory::DATA_INNER_LENGTH;
 
@@ -110,6 +110,35 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     /// while any popped link is still being written through, and no new link
     /// can be popped while vacuum runs.
     vacuum_lock: Arc<tokio::sync::RwLock<()>>,
+
+    /// How many times a caller has asked this registry for reclaimable space.
+    ///
+    /// This is what vacuum samples to answer "is now a good time". While
+    /// vacuum holds the exclusion every one of these attempts fails and the
+    /// caller allocates a fresh page instead, so the *rate* of attempts is
+    /// precisely the rate at which vacuum is making foreground inserts more
+    /// expensive. Counting demand rather than instrumenting the insert path
+    /// costs nothing extra: `pop_max` already loads an atomic here.
+    pop_attempts: AtomicU64,
+
+    /// Reclaimable bytes at which a parked vacuum is woken, or `0` when
+    /// nothing is waiting.
+    ///
+    /// A timer cannot know when a table became fragmented; the registry can,
+    /// because it is the thing that grew.
+    vacuum_wake_threshold: AtomicU64,
+
+    /// Wakes a vacuum parked in [`Self::wait_for_fragmentation`].
+    vacuum_wake: Arc<Notify>,
+
+    /// Pages named by a *batched* delete, for the next sweep to look at first.
+    ///
+    /// A ranged or batched delete concentrates its freed space, so its pages
+    /// are the ones most likely to empty out entirely — the cheapest possible
+    /// reclamation, and the most valuable. A scattered single-row delete says
+    /// nothing about where to look, so [`Self::push`] does not record
+    /// anything and only [`Self::push_many`] does.
+    targeted_pages: FairMutex<std::collections::BTreeSet<PageId>>,
 }
 
 /// A [`Link`] popped from the registry, together with the read guard that
@@ -127,6 +156,10 @@ impl<const DATA_LENGTH: usize> Default for EmptyLinkRegistry<DATA_LENGTH> {
             item_count: Default::default(),
             op_lock: Default::default(),
             vacuum_lock: Default::default(),
+            pop_attempts: Default::default(),
+            vacuum_wake_threshold: Default::default(),
+            vacuum_wake: Default::default(),
+            targeted_pages: Default::default(),
         }
     }
 }
@@ -166,7 +199,8 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 
         if is_new {
             self.item_count.fetch_add(1, Ordering::AcqRel);
-            self.sum_links_len.fetch_add(u64::from(link.length), Ordering::AcqRel);
+            let freed = self.sum_links_len.fetch_add(u64::from(link.length), Ordering::AcqRel) + u64::from(link.length);
+            self.wake_vacuum_if_fragmented(freed);
         }
     }
 
@@ -201,6 +235,10 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         }
 
         let runs = Self::merge_runs(links);
+
+        // Recorded before the links are registered, so a sweep woken by the
+        // registration below already sees where to look.
+        self.note_coalesced_pages(links, &runs);
 
         let _g = self.op_lock.lock();
         for run in runs {
@@ -297,6 +335,10 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
         // instruction earlier, and the link stays registered for the next
         // insert. The reverse cannot happen: the counter is only non-zero when
         // a link was registered, and the locked path below re-checks anyway.
+        // Counted before the early return, because an attempt that finds the
+        // registry empty is still a caller that wanted space.
+        self.pop_attempts.fetch_add(1, Ordering::Relaxed);
+
         if self.item_count.load(Ordering::Relaxed) == 0 {
             return None;
         }
@@ -335,6 +377,86 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     /// popped link's read guard is dropped, and blocks new pops while held.
     pub async fn lock_vacuum(&self) -> tokio::sync::RwLockWriteGuard<'_, ()> {
         self.vacuum_lock.write().await
+    }
+
+    /// How many times a caller has asked for reclaimable space since the
+    /// registry was created. Monotonic; callers compare two samples.
+    pub fn pop_attempts(&self) -> u64 {
+        self.pop_attempts.load(Ordering::Relaxed)
+    }
+
+    /// Reclaimable bytes currently registered.
+    pub fn reclaimable_bytes(&self) -> u64 {
+        self.sum_links_len.load(Ordering::Relaxed)
+    }
+
+    /// Wake a vacuum parked in [`Self::wait_for_fragmentation`] once
+    /// reclaimable space reaches `bytes`. Passing `0` disables the wake.
+    pub fn set_vacuum_wake_threshold(&self, bytes: u64) {
+        self.vacuum_wake_threshold.store(bytes, Ordering::Release);
+    }
+
+    /// Park until enough space has been freed to be worth reclaiming.
+    ///
+    /// Returns immediately when the threshold is already met, so a caller that
+    /// checks and then waits cannot miss the crossing that happened in
+    /// between.
+    pub async fn wait_for_fragmentation(&self) {
+        let threshold = self.vacuum_wake_threshold.load(Ordering::Acquire);
+        if threshold != 0 && self.sum_links_len.load(Ordering::Acquire) >= threshold {
+            return;
+        }
+        self.vacuum_wake.notified().await
+    }
+
+    /// Records the pages a batch freed *contiguously*.
+    ///
+    /// Every deferred reclamation arrives through [`Self::push_many`], so the
+    /// batch alone does not say a delete was ranged — a scattered delete is
+    /// batched too. Coalescing does say it: a run only forms when freed links
+    /// were adjacent on the same page, which is what a ranged delete produces
+    /// and a scattered one does not. So a page whose links merged is a page a
+    /// ranged delete emptied part of, and it is where a sweep should look
+    /// first.
+    fn note_coalesced_pages(&self, links: &[Link], runs: &[IndexOrdLink<DATA_LENGTH>]) {
+        let mut links_per_page: std::collections::BTreeMap<PageId, usize> = Default::default();
+        for link in links {
+            *links_per_page.entry(link.page_id).or_default() += 1;
+        }
+        let mut runs_per_page: std::collections::BTreeMap<PageId, usize> = Default::default();
+        for run in runs {
+            *runs_per_page.entry(run.0.page_id).or_default() += 1;
+        }
+
+        let coalesced: Vec<PageId> = links_per_page
+            .into_iter()
+            .filter(|(page, count)| runs_per_page.get(page).copied().unwrap_or(0) < *count)
+            .map(|(page, _)| page)
+            .collect();
+        if coalesced.is_empty() {
+            return;
+        }
+        self.targeted_pages.lock().extend(coalesced);
+    }
+
+    /// Takes the pages named by batched deletes since the last call.
+    ///
+    /// Draining rather than reading: a sweep that has taken them is
+    /// responsible for them, and leaving them would make every later sweep
+    /// re-prioritise pages that are already compact.
+    pub fn take_targeted_pages(&self) -> std::collections::BTreeSet<PageId> {
+        std::mem::take(&mut *self.targeted_pages.lock())
+    }
+
+    /// Wakes a parked vacuum when freeing crossed the configured threshold.
+    ///
+    /// Called on the delete path, so it must stay to a relaxed load in the
+    /// common case where nothing is waiting.
+    fn wake_vacuum_if_fragmented(&self, reclaimable: u64) {
+        let threshold = self.vacuum_wake_threshold.load(Ordering::Relaxed);
+        if threshold != 0 && reclaimable >= threshold {
+            self.vacuum_wake.notify_one();
+        }
     }
 }
 
@@ -846,6 +968,34 @@ mod tests {
         // A second remove of the same link must not underflow the aggregate.
         registry.remove_link(link);
         assert_eq!(registry.get_empty_links_size_bytes(), 0);
+    }
+
+    /// A ranged delete frees adjacent links, which coalesce; a scattered one
+    /// frees links that do not. Only the first says anything about where the
+    /// next sweep should look, and every deferred reclamation arrives batched
+    /// either way — so the batch alone cannot be the signal.
+    #[test]
+    fn only_a_contiguous_batch_marks_its_pages_for_the_next_sweep() {
+        let registry = EmptyLinkRegistry::<DATA_INNER_LENGTH>::default();
+
+        registry.push_many(&[link(1, 0, 10), link(1, 50, 10), link(1, 100, 10)]);
+        assert!(
+            registry.take_targeted_pages().is_empty(),
+            "a scattered batch names no page: nothing about it says where space is concentrated"
+        );
+
+        registry.push_many(&[link(2, 0, 10), link(2, 10, 10), link(2, 20, 10)]);
+        assert_eq!(
+            registry.take_targeted_pages().into_iter().collect::<Vec<_>>(),
+            vec![PageId::from(2)],
+            "adjacent links coalesce, which is what a ranged delete leaves behind"
+        );
+
+        assert!(
+            registry.take_targeted_pages().is_empty(),
+            "taking must drain: a sweep that took a page owns it, and leaving it would \
+             make every later sweep re-prioritise a page that is already compact"
+        );
     }
 
     #[tokio::test]

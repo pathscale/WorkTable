@@ -38,8 +38,43 @@ Vacuum is where both bite at once, because it relocates *and* frees.
 
 ## What vacuum costs today
 
-Measured properties, from reading the code rather than from a benchmark,
-because **there is no vacuum benchmark**. That is the first gap.
+Measured 2026-09-03 with `wt-benchmarks`' `vacuum-stress-worktable`: three
+index backends, two fragmentation levels, each run twice — once with vacuum
+stopped and once with it running — with interleaved inserts and selects for two
+seconds per arm. The delta between the two vacuum arms is the measurement; a
+single arm says nothing, which is why every cell is run twice.
+
+| backend | fragmentation | inserts, vacuum off | vacuum on | delta | p50 off | p50 on | max off | max on |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| wti | 25% | 1,576,460 | 1,419,033 | -10.0% | 1000 ns | 1042 ns | 0.32 ms | 0.16 ms |
+| arctic | 25% | 1,654,493 | 1,610,965 | -2.6% | 875 ns | 916 ns | 0.15 ms | 0.37 ms |
+| congee | 25% | 1,610,771 | 1,614,120 | +0.2% | 917 ns | 917 ns | 0.16 ms | 0.14 ms |
+| wti | 60% | 1,530,270 | 855,401 | **-44.1%** | 1042 ns | 2125 ns | 32.56 ms | 0.14 ms |
+| arctic | 60% | 1,228,462 | 925,578 | **-24.7%** | 958 ns | 1958 ns | 41.75 ms | 3.95 ms |
+| congee | 60% | 1,824,310 | 922,399 | **-49.4%** | 917 ns | 1958 ns | 12.22 ms | 0.09 ms |
+
+Three things fall out of this, and they set the whole design.
+
+**The cost is not a constant.** At 25% fragmentation a sweep is between free
+and 10%. At 60% it costs a quarter to half of insert throughput and doubles
+median insert latency. Vacuuming early is not merely nicer, it is *cheaper by a
+factor of five*, which is an argument for reacting to fragmentation rather than
+waiting out an interval that lets it accumulate.
+
+**Not vacuuming has a tail.** Every vacuum-off arm at 60% carries a multi-
+millisecond worst case — 32 ms on wti, 41 ms on arctic — against 0.14 ms and
+3.95 ms with vacuum running. The sweep is not pure cost; it converts rare long
+stalls into steady overhead. p999 moves the same way on wti: 14.3 µs off
+against 5.3 µs on.
+
+**The mechanism is the exclusion, not the work.** `pop_max` takes the registry
+read side with `try_read_owned().ok()?`, so while a sweep holds the write side
+every insert wanting reclaimable space is turned away *immediately* and
+allocates a fresh page instead. Inserts do not block on vacuum; they lose
+free-space reuse for the sweep's entire duration. That is why the p50 doubles
+and stays doubled, and it is what the batching below addresses.
+
+The rest of this section is from reading the code.
 
 - `defragment` holds `lock_vacuum()`'s write side for the **whole pass**.
   `pop_max` takes the read side, so for the duration no insert can reuse a
