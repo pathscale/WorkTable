@@ -66,7 +66,7 @@ pub(crate) fn primary_key_backend_impl(
     match backend {
         IndexBackend::WorktablesIndex | IndexBackend::Indexset => Ok((quote! {}, quote! {})),
         IndexBackend::Congee => {
-            let field = single_supported_field(backend, fields, &["u8", "u16", "u32", "u64", "usize"])?;
+            let field = single_supported_field(backend, fields, supported_types(backend))?;
             let width_guard = if primitive_name(field).as_deref() == Some("u64") {
                 quote! {
                     #[cfg(not(target_pointer_width = "64"))]
@@ -83,12 +83,12 @@ pub(crate) fn primary_key_backend_impl(
                     impl CongeeKey for #primary_key {
                         #[inline]
                         fn into_congee(self) -> usize {
-                            self.0 as usize
+                            CongeeKey::into_congee(self.0)
                         }
 
                         #[inline]
                         fn from_congee(value: usize) -> Self {
-                            Self(value as #field)
+                            Self(<#field as CongeeKey>::from_congee(value))
                         }
                     }
 
@@ -107,21 +107,21 @@ pub(crate) fn primary_key_backend_impl(
             ))
         }
         IndexBackend::Arctic => {
-            let field = single_supported_field(backend, fields, &["u16", "u32", "u64", "u128"])?;
+            let field = single_supported_field(backend, fields, supported_types(backend))?;
             Ok((
                 quote! { Copy, },
                 quote! {
                     impl ArcticKey for #primary_key {
-                        type Raw = #field;
+                        type Raw = <#field as ArcticKey>::Raw;
 
                         #[inline]
                         fn to_arctic(&self) -> Self::Raw {
-                            self.0
+                            ArcticKey::to_arctic(&self.0)
                         }
 
                         #[inline]
                         fn from_arctic(value: Self::Raw) -> Self {
-                            Self(value)
+                            Self(<#field as ArcticKey>::from_arctic(value))
                         }
                     }
 
@@ -140,6 +140,15 @@ pub(crate) fn primary_key_backend_impl(
             ))
         }
     }
+}
+
+/// The key types a backend accepts, from `worktable_dsl` so the macro and the
+/// editor-facing check cannot drift. They were two hand-maintained lists, and
+/// widening one without the other produced a check that accepted a
+/// declaration the macro then refused.
+fn supported_types(backend: IndexBackend) -> &'static [&'static str] {
+    worktable_dsl::validate::supported_key_types(backend)
+        .expect("a backend reaching this point declares a key-type list")
 }
 
 fn single_supported_field<'a>(

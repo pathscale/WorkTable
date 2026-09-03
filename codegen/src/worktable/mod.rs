@@ -412,7 +412,11 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains("supported types: u16, u32, u64, u128"));
+        assert!(
+            error
+                .to_string()
+                .contains("supported types: u16, u32, u64, u128, i16, i32, i64, i128")
+        );
     }
 
     #[test]
@@ -473,7 +477,11 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains("supported types: u16, u32, u64, u128"));
+        assert!(
+            error
+                .to_string()
+                .contains("supported types: u16, u32, u64, u128, i16, i32, i64, i128")
+        );
     }
 
     #[test]
