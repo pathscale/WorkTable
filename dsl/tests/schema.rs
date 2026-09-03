@@ -198,3 +198,46 @@ fn the_scanner_sets_templates_aside_and_reports_real_failures() {
         "the rejection should name the block it did not recognise, got: {reason}"
     );
 }
+
+/// A primary key's generator changing is a migration, not a no-op.
+///
+/// `ColumnSpec` has always recorded the generator, but `diff_columns` compared
+/// type, optionality and position only. Moving a key between `autoincrement`
+/// and caller-supplied therefore planned as no change at all, while it changes
+/// who is responsible for uniqueness and what generator state a persisted
+/// table has to carry. A migration tool would have reported nothing to do.
+#[test]
+fn a_primary_key_generator_change_is_planned() {
+    let with_gen = worktable_dsl::Schema::parse("name: T, columns: { id: u64 primary_key autoincrement },")
+        .expect("schema with a generator");
+    let without =
+        worktable_dsl::Schema::parse("name: T, columns: { id: u64 primary_key },").expect("schema without one");
+
+    let changes = worktable_dsl::plan(std::slice::from_ref(&with_gen), std::slice::from_ref(&without));
+    assert!(
+        !changes.is_empty(),
+        "dropping the generator planned as no change at all"
+    );
+
+    let described = format!("{changes:?}");
+    assert!(
+        described.contains("PrimaryKeyGeneratorChanged"),
+        "the change must name the generator: {described}"
+    );
+
+    // And it needs a human decision rather than being applied silently.
+    let worktable_dsl::TableChange::Changed(diff) = &changes[0] else {
+        panic!("expected a changed table, got {:?}", changes[0]);
+    };
+    assert_eq!(
+        diff.cost(),
+        worktable_dsl::Cost::NeedsIntent,
+        "changing how identities are assigned cannot be a mechanical migration"
+    );
+
+    // Symmetric: adding one is equally a change.
+    assert!(
+        !worktable_dsl::plan(std::slice::from_ref(&without), std::slice::from_ref(&with_gen)).is_empty(),
+        "adding a generator planned as no change either"
+    );
+}
