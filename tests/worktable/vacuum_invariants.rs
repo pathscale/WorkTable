@@ -82,40 +82,20 @@ macro_rules! vacuum_invariant_suite {
             /// would hide exactly the failure being looked for, because it
             /// revalidates and retries.
             fn assert_indexes_resolve_to_their_own_rows(table: &VacInvWorkTable, phase: &str) {
-                // Enumerated through the reverse index, which is always the
-                // general-purpose map whatever the primary backend is. Arctic
-                // and congee expose no iterator, which is the three-backend
-                // difference in miniature: a check written against one of them
-                // does not compile against the others.
                 let mut seen_links: HashMap<u64, u64> = HashMap::new();
 
-                for (link, pk) in table.0.primary_index.reverse_pk_map.iter() {
-                    let link: Link = link.into();
+                for (pk, offset_link) in table.0.primary_index.pk_map.iter_values() {
+                    let link: Link = offset_link.into();
                     let key: u64 = pk.clone().into();
                     let row = table
                         .0
                         .data
                         .select_non_ghosted(link)
-                        .unwrap_or_else(|e| panic!("{phase}: reverse entry {key} points at unreadable storage: {e:?}"));
+                        .unwrap_or_else(|e| panic!("{phase}: primary entry {key} points at unreadable storage: {e:?}"));
                     assert_eq!(
                         row.id, key,
-                        "{phase}: reverse entry {key} resolves to a row whose id is {}",
+                        "{phase}: primary entry {key} resolves to a row whose id is {}",
                         row.id
-                    );
-
-                    // Forward and reverse must agree, and must agree on the
-                    // same storage. Vacuum plans from the reverse map, so a
-                    // disagreement is a page drained against a stale picture.
-                    let forward: Option<Link> = table
-                        .0
-                        .primary_index
-                        .pk_map
-                        .get_value(&pk)
-                        .map(Into::into);
-                    assert_eq!(
-                        forward,
-                        Some(link),
-                        "{phase}: key {key} is at {link:?} in the reverse index and {forward:?} in the forward one"
                     );
 
                     let packed = (u32::from(link.page_id) as u64) << 32 | link.offset as u64;

@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
 use parking_lot::Mutex;
@@ -11,20 +12,17 @@ use rkyv::{
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
 use std::{
     fmt::Debug,
     sync::Arc,
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
-use crate::in_memory::publication::{DELETED, GHOSTED, PublishedRow, VACUUMED};
 use crate::prelude::ArchivedRowWrapper;
-use crate::util::OffsetEqLink;
 use crate::util::epoch::EpochDomain;
 use crate::{
     in_memory::{
@@ -38,7 +36,11 @@ fn page_id_mapper(page_id: usize) -> usize {
     page_id - 1usize
 }
 
-const PUBLICATION_SHARD_COUNT: usize = 64;
+const PAGE_DIRECTORY_CHUNK_SIZE: usize = 64;
+const PAGE_DIRECTORY_ROOTS: usize = 64;
+const GHOSTED: u8 = 1 << 0;
+const DELETED: u8 = 1 << 1;
+const VACUUMED: u8 = 1 << 2;
 const RETIREMENT_BACKLOG_WARN_AT: usize = 1_024;
 
 /// Most retired items one reclaim call may recycle inline. Bounds the latency
@@ -60,58 +62,86 @@ const RECLAIM_BATCH_LIMIT: usize = 256;
 /// pays, and a sweep drains up to [`RECLAIM_BATCH_LIMIT`] at once, so matching
 /// them means a triggered sweep clears the backlog it was triggered by.
 ///
-/// Deliberately not applied to `mark_page_empty` or `retire_published_link`.
-/// Neither is a hot path, so deferring them would change when pages become
-/// allocatable for no measurable gain.
+/// Deliberately not applied to `mark_page_empty`. It is not a hot path, so
+/// deferring it would change when pages become allocatable for no measurable
+/// gain.
 const RECLAIM_BACKLOG_TRIGGER: usize = RECLAIM_BATCH_LIMIT;
 
-fn mix_publication_offset(mut value: u64) -> u64 {
-    value ^= value >> 30;
-    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    value ^= value >> 27;
-    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
-    value ^ (value >> 31)
+#[derive(Debug)]
+struct PageDirectoryChunk<T> {
+    pages: [AtomicPtr<T>; PAGE_DIRECTORY_CHUNK_SIZE],
 }
 
-/// `OffsetEqLink` already reduces publication keys to a trusted internal u64
-/// storage offset. Avalanche that offset so both hash-table bucket bits and
-/// SIMD control bits remain distributed for aligned, monotonically allocated
-/// row positions.
-struct PublicationHasher(u64);
-
-impl Default for PublicationHasher {
-    fn default() -> Self {
-        Self(0xcbf2_9ce4_8422_2325)
-    }
-}
-
-impl Hasher for PublicationHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        let mut hash = self.0;
-        for byte in bytes {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+impl<T> PageDirectoryChunk<T> {
+    fn new() -> Self {
+        Self {
+            pages: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
         }
-        self.0 = mix_publication_offset(hash);
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.0 = mix_publication_offset(self.0 ^ value);
     }
 }
 
-type PublicationMap<Row, const DATA_LENGTH: usize> =
-    HashMap<OffsetEqLink<DATA_LENGTH>, Arc<PublishedRow<Row>>, BuildHasherDefault<PublicationHasher>>;
+/// Non-owning, stable page pointers for the first 4,096 pages (64 MiB at the
+/// default page size). `DataPages::pages` owns every allocation; this directory
+/// exists solely to avoid shared ArcSwap snapshot accounting on point access.
+#[derive(Debug)]
+struct PageDirectory<T> {
+    roots: [AtomicPtr<PageDirectoryChunk<T>>; PAGE_DIRECTORY_ROOTS],
+    chunks: Mutex<Vec<Box<PageDirectoryChunk<T>>>>,
+}
 
-type PublicationShards<Row, const DATA_LENGTH: usize> =
-    [RwLock<PublicationMap<Row, DATA_LENGTH>>; PUBLICATION_SHARD_COUNT];
+impl<T> PageDirectory<T> {
+    fn new(pages: &[Arc<T>]) -> Self {
+        let directory = Self {
+            roots: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            chunks: Mutex::new(Vec::new()),
+        };
+        for (index, page) in pages.iter().enumerate() {
+            directory.publish(index, page);
+        }
+        directory
+    }
 
-fn publication_shard<const DATA_LENGTH: usize>(key: &OffsetEqLink<DATA_LENGTH>) -> usize {
-    mix_publication_offset(key.absolute_index()) as usize & (PUBLICATION_SHARD_COUNT - 1)
+    fn publish(&self, index: usize, page: &Arc<T>) {
+        let root_index = index / PAGE_DIRECTORY_CHUNK_SIZE;
+        let Some(root) = self.roots.get(root_index) else {
+            return;
+        };
+        let mut chunk = root.load(Ordering::Acquire);
+        if chunk.is_null() {
+            let mut chunks = self.chunks.lock();
+            chunk = root.load(Ordering::Acquire);
+            if chunk.is_null() {
+                let mut owned = Box::new(PageDirectoryChunk::new());
+                chunk = (&mut *owned) as *mut PageDirectoryChunk<T>;
+                chunks.push(owned);
+                root.store(chunk, Ordering::Release);
+            }
+        }
+
+        // SAFETY: `chunk` points into one of the Boxes retained in `chunks`.
+        // Boxes are never removed, so the allocation remains stable.
+        unsafe { &*chunk }.pages[index % PAGE_DIRECTORY_CHUNK_SIZE]
+            .store(Arc::as_ptr(page).cast_mut(), Ordering::Release);
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        let root = self.roots.get(index / PAGE_DIRECTORY_CHUNK_SIZE)?;
+        let chunk = root.load(Ordering::Acquire);
+        if chunk.is_null() {
+            return None;
+        }
+        // SAFETY: `publish` retains this chunk's Box for this directory's
+        // lifetime and stores page pointers only after their owning Arc is in
+        // the immutable-snapshot directory.
+        let page = unsafe { &*chunk }.pages[index % PAGE_DIRECTORY_CHUNK_SIZE].load(Ordering::Acquire);
+        if page.is_null() {
+            None
+        } else {
+            // SAFETY: page entries are appended but never removed or replaced,
+            // and every future `pages` snapshot retains the same Arc.
+            Some(unsafe { &*page })
+        }
+    }
 }
 
 /// A read-side grace-period guard: an epoch pin in the table's own
@@ -132,25 +162,21 @@ pub struct ReadGuard<'a> {
 }
 
 /// One unit of retired state waiting out its grace period. Reclamation is
-/// *recycling*, not just freeing: links return to `empty_links`, pages return
-/// to `empty_pages`, and publication slots leave their shard map.
+/// *recycling*, not just freeing: links return to `empty_links` and pages
+/// return to `empty_pages`.
 #[derive(Debug, Clone, Copy)]
-enum Retired<const DATA_LENGTH: usize> {
-    /// A freed row slot: remove its publication, then hand the slot back to
-    /// the empty-link allocator (unless a whole-page retirement supersedes
-    /// it).
+enum Retired {
+    /// A freed row slot: hand the slot back to the empty-link allocator unless
+    /// a whole-page retirement supersedes it.
     Link(Link),
     /// A wholly emptied page: purge any of its stale empty links, then hand
     /// the page back to the empty-page allocator.
     Page(PageId),
-    /// A publication whose row bytes moved elsewhere (vacuum): remove the
-    /// shard entry only, the physical slot stays owned by its page.
-    Publication(OffsetEqLink<DATA_LENGTH>),
 }
 
-/// Page storage with immutable row publication.
+/// Page storage with row-granular read/write exclusion.
 ///
-/// # Versioned-publication synchronization
+/// # Read synchronization
 ///
 /// Generated readers enter the grace period before resolving an index link by
 /// pinning the table's epoch domain. Writers must remove or replace every
@@ -187,33 +213,28 @@ enum Retired<const DATA_LENGTH: usize> {
 ///
 /// 1. generated row/lock-manager locks (outside this type, always first);
 /// 2. `empty_pages` (only the insert page-switch path holds it into 3/4);
-/// 3. `pages` (the vector lock; its write side is only taken for growth,
-///    with no page lock held);
+/// 3. `pages_write` (only for appending a page, with no page lock held);
 /// 4. one or two per-page `Data::access` locks — two only in the vacuum row
 ///    move, always in ascending page-id order;
-/// 5. one `published_rows` shard, or the empty-link registry's `op_lock`.
+/// 5. one exact cell lock, or the empty-link registry's `op_lock`.
 ///
-/// Reclamation holds the retirement queue, then briefly acquires individual
-/// publication shards and the empty-link/page registries; nothing acquires
-/// the retirement queue while holding any of those (or any page lock), so
-/// the order is acyclic. Callers must not invoke reclamation while retaining
-/// the retirement-queue guard.
+/// Reclamation holds the retirement queue, then briefly acquires the
+/// empty-link/page registries; nothing acquires the retirement queue while
+/// holding either registry (or any page/row lock), so the order is acyclic.
+/// Callers must not invoke reclamation while retaining the retirement-queue
+/// guard.
 #[derive(Debug)]
 pub struct DataPages<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH>
 where
     Row: StorableRow,
 {
-    /// Immutable application-visible row versions. Published readers never
-    /// borrow the mutable archived page image.
-    published_rows: PublicationShards<Row, DATA_LENGTH>,
-
     /// Read-side grace periods protecting the interval from index lookup
     /// until an immutable row version has been acquired. Owned by this table:
     /// a reader of another table never delays reclamation here.
     epoch: EpochDomain,
 
     /// Retired items in retirement order, awaiting grace expiry.
-    retired: Mutex<VecDeque<Retired<DATA_LENGTH>>>,
+    retired: Mutex<VecDeque<Retired>>,
 
     /// How many queued retirements' grace periods have expired. Incremented
     /// by deferred epoch markers; consumed (front-of-queue) by reclaimers.
@@ -233,8 +254,13 @@ where
     /// one relaxed load in the case that matters.
     queued_page_retirements: AtomicUsize,
 
-    /// Pages vector. Currently, not lock free.
-    pages: RwLock<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
+    /// Immutable page-directory snapshots. Reads load one snapshot without a
+    /// shared read-modify-write; rare growth copies and swaps the short vector.
+    pages: ArcSwap<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
+    /// Stable pointers for point access without ArcSwap's shared snapshot
+    /// accounting. The corresponding `Arc`s remain owned by `pages`.
+    page_directory: PageDirectory<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>,
+    pages_write: Mutex<()>,
 
     empty_links: EmptyLinkRegistry<DATA_LENGTH>,
 
@@ -263,6 +289,31 @@ where
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
+    fn page_ref(
+        &self,
+        page_id: PageId,
+    ) -> Result<&Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>, ExecutionError> {
+        let index = page_id_mapper(page_id.into());
+        if let Some(page) = self.page_directory.get(index) {
+            return Ok(page);
+        }
+
+        let page = {
+            let pages = self.pages.load();
+            pages.get(index).map(Arc::as_ptr)
+        }
+        .ok_or(ExecutionError::PageNotFound(page_id))?;
+
+        // SAFETY: as above, the current directory retains this allocation and
+        // all future directory snapshots clone its Arc.
+        Ok(unsafe { &*page })
+    }
+
+    fn publish_page(&self, page: &Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>) {
+        let index = page_id_mapper(page.id.into());
+        self.page_directory.publish(index, page);
+    }
+
     fn publication_flags(row: &<Row as StorableRow>::WrappedRow) -> u8 {
         let mut flags = 0;
         if row.is_ghosted() {
@@ -277,56 +328,16 @@ where
         flags
     }
 
-    fn publish_wrapped_row(&self, link: Link, wrapped: <Row as StorableRow>::WrappedRow) {
-        let flags = Self::publication_flags(&wrapped);
-        let row = wrapped.get_inner();
-        let key = OffsetEqLink(link);
-
-        let mut published_rows = self.published_rows[publication_shard(&key)].write();
-        if let Some(slot) = published_rows.get(&key).cloned() {
-            drop(published_rows);
-            slot.replace(row, flags);
-        } else {
-            published_rows.insert(key, Arc::new(PublishedRow::new(row, flags)));
-        }
-    }
-
-    fn stage_published_row(&self, link: Link, row: Row) {
-        let wrapped = <Row as StorableRow>::WrappedRow::from_inner(row);
-        self.publish_wrapped_row(link, wrapped);
-    }
-
-    fn published_slot(&self, link: Link) -> Option<Arc<PublishedRow<Row>>> {
-        let key = OffsetEqLink(link);
-        self.published_rows[publication_shard(&key)].read().get(&key).cloned()
-    }
-
-    fn published_slot_or_hydrate(&self, link: Link) -> Result<Arc<PublishedRow<Row>>, ExecutionError>
+    fn page_row(&self, link: Link) -> Result<(Row, u8), ExecutionError>
     where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
-            Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
+            Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        if let Some(slot) = self.published_slot(link) {
-            return Ok(slot);
-        }
-
-        let pages = self.pages.read();
-        let page = pages
-            .get(page_id_mapper(link.page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let _page_guard = page.access.read();
-        // Re-check under the page barrier: a writer publishing this row holds
-        // the exclusive side, so once we hold the shared side the publication
-        // map is current for this page's rows.
-        if let Some(slot) = self.published_slot(link) {
-            return Ok(slot);
-        }
+        let page = self.page_ref(link.page_id)?;
+        let _cell_guard = page.read_cell(link).map_err(ExecutionError::DataPageError)?;
         let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
         let flags = Self::publication_flags(&wrapped);
-        let slot = Arc::new(PublishedRow::new(wrapped.get_inner(), flags));
-        let key = OffsetEqLink(link);
-        let mut published_rows = self.published_rows[publication_shard(&key)].write();
-        Ok(published_rows.entry(key).or_insert(slot).clone())
+        Ok((wrapped.get_inner(), flags))
     }
 
     pub fn read_guard(&self) -> ReadGuard<'_> {
@@ -341,7 +352,7 @@ where
     /// The marker is flushed to the domain's global queue immediately so any
     /// thread can later collect it; it executes only after every reader
     /// pinned right now has unpinned.
-    fn retire(&self, item: Retired<DATA_LENGTH>) {
+    fn retire(&self, item: Retired) {
         self.retire_many(std::iter::once(item));
     }
 
@@ -356,7 +367,7 @@ where
     /// The lock is taken once for the batch rather than once per item, which
     /// also stops a bulk delete interleaving its queue pushes with concurrent
     /// mutations for no reason.
-    fn retire_many(&self, items: impl IntoIterator<Item = Retired<DATA_LENGTH>>) {
+    fn retire_many(&self, items: impl IntoIterator<Item = Retired>) {
         let mut queued = 0usize;
         let mut queued_pages = 0usize;
         let len = {
@@ -394,7 +405,7 @@ where
             return;
         }
         if len >= RETIREMENT_BACKLOG_WARN_AT && len.is_power_of_two() {
-            tracing::warn!(len, "versioned publication retirement backlog is growing");
+            tracing::warn!(len, "row retirement backlog is growing");
         }
         let reclaimable = Arc::clone(&self.reclaimable);
         let guard = self.epoch.pin();
@@ -524,14 +535,9 @@ where
             };
             match item {
                 Retired::Link(link) => {
-                    let key = OffsetEqLink(link);
-                    self.published_rows[publication_shard(&key)].write().remove(&key);
                     if !queued_pages.contains(&link.page_id) {
                         freed.push(link);
                     }
-                }
-                Retired::Publication(key) => {
-                    self.published_rows[publication_shard(&key)].write().remove(&key);
                 }
                 Retired::Page(page_id) => {
                     // `queued_pages` has already kept this page's links out of
@@ -557,15 +563,18 @@ where
     }
 
     pub fn new() -> Self {
+        let page = Arc::new(Data::new(1.into()));
+        let pages = vec![page];
         Self {
-            published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
             epoch: EpochDomain::new(),
             retired: Mutex::new(VecDeque::new()),
             reclaimable: Arc::new(AtomicUsize::new(0)),
             pending_retirements: AtomicUsize::new(0),
             queued_page_retirements: AtomicUsize::new(0),
             // We are starting ID's from `1` because `0`'s page in file is info page.
-            pages: RwLock::new(vec![Arc::new(Data::new(1.into()))]),
+            page_directory: PageDirectory::new(&pages),
+            pages: ArcSwap::from_pointee(pages),
+            pages_write: Mutex::new(()),
             empty_links: EmptyLinkRegistry::<DATA_LENGTH>::default(),
             empty_pages: Default::default(),
             row_count: AtomicU64::new(0),
@@ -580,14 +589,16 @@ where
             Self::new()
         } else {
             let last_page_id = vec.len();
+            let page_directory = PageDirectory::new(&vec);
             Self {
-                published_rows: std::array::from_fn(|_| RwLock::new(PublicationMap::default())),
                 epoch: EpochDomain::new(),
                 retired: Mutex::new(VecDeque::new()),
                 reclaimable: Arc::new(AtomicUsize::new(0)),
                 pending_retirements: AtomicUsize::new(0),
                 queued_page_retirements: AtomicUsize::new(0),
-                pages: RwLock::new(vec),
+                page_directory,
+                pages: ArcSwap::from_pointee(vec),
+                pages_write: Mutex::new(()),
                 empty_links: EmptyLinkRegistry::default(),
                 empty_pages: Default::default(),
                 row_count: AtomicU64::new(0),
@@ -614,9 +625,7 @@ where
             // until the write through the link below has completed. Hold it
             // for the whole block.
             let _vacuum_guard = vacuum_guard;
-            let pages = self.pages.read();
-            let current_page: usize = page_id_mapper(link.page_id.into());
-            let page = &pages[current_page];
+            let page = self.page_ref(link.page_id)?;
             let _page_guard = page.access.write();
 
             match unsafe { page.try_save_row_by_link(&general_row, link) } {
@@ -624,7 +633,6 @@ where
                     if let Some(l) = left_link {
                         self.empty_links.push(l);
                     }
-                    self.stage_published_row(link, row);
                     self.row_count.fetch_add(1, Ordering::Relaxed);
                     return Ok(link);
                 }
@@ -642,9 +650,9 @@ where
 
         loop {
             let (link, tried_page) = {
-                let pages = self.pages.read();
-                let current_page = page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize);
-                let page = &pages[current_page];
+                let current_page_id = self.current_page_id.load(Ordering::Acquire);
+                let current_page = page_id_mapper(current_page_id as usize);
+                let page = self.page_ref(current_page_id.into())?;
                 let _page_guard = page.access.write();
                 // Re-check under the page barrier. A switch may have completed
                 // between the load above and the lock; in the worst case the
@@ -664,7 +672,6 @@ where
             };
             match link {
                 Ok(link) => {
-                    self.stage_published_row(link, row);
                     self.row_count.fetch_add(1, Ordering::Relaxed);
                     return Ok(link);
                 }
@@ -685,8 +692,7 @@ where
                                 // the read-side grace period completes. Reset
                                 // only after reclamation made the page
                                 // available for reuse.
-                                let pages = self.pages.read();
-                                let page = &pages[page_id_mapper(page_id.into())];
+                                let page = self.page_ref(page_id)?;
                                 let _page_guard = page.access.write();
                                 page.reset();
                                 self.current_page_id.store(page_id.into(), Ordering::Release);
@@ -725,11 +731,15 @@ where
     }
 
     fn add_next_page(&self, tried_page: usize) {
-        let mut pages = self.pages.write();
+        let _write = self.pages_write.lock();
         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
             let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
-
-            pages.push(Arc::new(Data::new(index.into())));
+            let pages = self.pages.load_full();
+            let mut next = (*pages).clone();
+            let page = Arc::new(Data::new(index.into()));
+            next.push(page.clone());
+            self.pages.store(Arc::new(next));
+            self.publish_page(&page);
             self.current_page_id.store(index, Ordering::Release);
         }
     }
@@ -745,7 +755,7 @@ where
         };
 
         if let Some(page_id) = page_id {
-            let pages = self.pages.read();
+            let pages = self.pages.load();
             let index = page_id_mapper(page_id.into());
             let page = pages[index].clone();
             {
@@ -756,10 +766,14 @@ where
             return page;
         }
 
-        let mut pages = self.pages.write();
+        let _write = self.pages_write.lock();
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
         let page = Arc::new(Data::new(index.into()));
-        pages.push(page.clone());
+        let pages = self.pages.load_full();
+        let mut next = (*pages).clone();
+        next.push(page.clone());
+        self.pages.store(Arc::new(next));
+        self.publish_page(&page);
 
         page
     }
@@ -774,8 +788,7 @@ where
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let link = link.into();
-        let slot = self.published_slot_or_hydrate(link)?;
-        Ok(slot.snapshot().as_ref().clone())
+        self.page_row(link).map(|(row, _)| row)
     }
 
     pub fn select_non_ghosted(&self, link: Link) -> Result<Row, ExecutionError>
@@ -786,15 +799,14 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let slot = self.published_slot_or_hydrate(link)?;
-        let (row, flags) = slot.load();
+        let (row, flags) = self.page_row(link)?;
         if flags & GHOSTED != 0 {
             return Err(ExecutionError::Ghosted);
         }
         if flags & DELETED != 0 {
             return Err(ExecutionError::Deleted);
         }
-        Ok(row.as_ref().clone())
+        Ok(row)
     }
 
     /// Loads one persisted row through rkyv validation without publishing it.
@@ -807,7 +819,7 @@ where
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>
             + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read();
+        let pages = self.pages.load();
         let page_id: usize = link.page_id.into();
         let page_index = page_id
             .checked_sub(1)
@@ -833,8 +845,7 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let slot = self.published_slot_or_hydrate(link)?;
-        let (row, flags) = slot.load();
+        let (row, flags) = self.page_row(link)?;
         if flags & GHOSTED != 0 {
             return Err(ExecutionError::Ghosted);
         }
@@ -844,7 +855,7 @@ where
         if flags & DELETED != 0 {
             return Err(ExecutionError::Deleted);
         }
-        Ok(row.as_ref().clone())
+        Ok(row)
     }
 
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataPages"))]
@@ -853,11 +864,8 @@ where
         Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
         Op: Fn(&<<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let pages = self.pages.read();
-        let page = pages
-            .get::<usize>(page_id_mapper(link.page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let _page_guard = page.access.read();
+        let page = self.page_ref(link.page_id)?;
+        let _cell_guard = page.read_cell(link).map_err(ExecutionError::DataPageError)?;
         let gen_row = page.get_row_ref(link).map_err(ExecutionError::DataPageError)?;
         let res = op(gen_row);
         Ok(res)
@@ -873,11 +881,8 @@ where
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
         Op: FnMut(&mut <<Row as StorableRow>::WrappedRow as Archive>::Archived) -> Res,
     {
-        let pages = self.pages.read();
-        let page = pages
-            .get(page_id_mapper(link.page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let _page_guard = page.access.write();
+        let page = self.page_ref(link.page_id)?;
+        let _cell_guard = page.write_cell(link).map_err(ExecutionError::DataPageError)?;
         let res = {
             let gen_row = unsafe {
                 page.get_mut_row_ref(link)
@@ -886,11 +891,6 @@ where
             };
             op(gen_row)
         };
-
-        {
-            let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
-            self.publish_wrapped_row(link, wrapped);
-        }
 
         Ok(res)
     }
@@ -907,24 +907,19 @@ where
         <Row as StorableRow>::WrappedRow:
             Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read();
-        let page = pages
-            .get(page_id_mapper(link.page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let _page_guard = page.access.write();
+        let page = self.page_ref(link.page_id)?;
+        let _cell_guard = page.write_cell(link).map_err(ExecutionError::DataPageError)?;
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
         let result = unsafe {
-            page.save_row_by_link(&gen_row, link)
+            page.save_row_by_link_preserving_cell_state(&gen_row, link)
                 .map_err(ExecutionError::DataPageError)
         }?;
-        self.stage_published_row(link, row);
         Ok(result)
     }
 
     /// In-place update of an already-live row at `link`: re-serialize the full
-    /// row into the SAME slot and republish it as LIVE (unghosted). Unlike
-    /// [`Self::update`], this does not stage the row as a new (ghosted)
-    /// publication — a live row that is edited must stay visible to readers.
+    /// row into the SAME slot and leave it LIVE (unghosted). A live row that is
+    /// edited must stay visible to readers.
     /// The caller must guarantee the new row serializes to the same length as
     /// the current slot (so it fits exactly).
     ///
@@ -938,10 +933,8 @@ where
     /// this reason.
     ///
     /// Serialization and the exact-length check finish before any page byte is
-    /// changed. The page's write barrier excludes low-level archived-page
-    /// readers during the copy, while generated reads continue from the old immutable
-    /// publication until [`Self::publish_wrapped_row`] replaces the complete
-    /// owned row and flags together.
+    /// changed. The exact cell guard excludes readers of this cell during the
+    /// copy while unrelated cells proceed independently.
     ///
     /// # Safety
     /// Same contract as [`Self::update`]: `link` must be valid and no other
@@ -955,12 +948,9 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived:
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read();
-        let page = pages
-            .get(page_id_mapper(link.page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let _page_guard = page.access.write();
-        // Write the new bytes into the slot. `save_row_by_link` requires the
+        let page = self.page_ref(link.page_id)?;
+        let _cell_guard = page.write_cell(link).map_err(ExecutionError::DataPageError)?;
+        // Write the new bytes into the slot. The preserving variant requires the
         // serialized wrapped row to be EXACTLY the slot length; the caller only
         // guaranteed equal *field* sizes, which need not imply equal total
         // serialized length (alignment/padding). If it does not fit, report it
@@ -968,20 +958,17 @@ where
         // `row` is consumed by the wrapper here (no clone): it is not used again.
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         unsafe {
-            page.save_row_by_link(&gen_row, link)
+            page.save_row_by_link_preserving_cell_state(&gen_row, link)
                 .map_err(ExecutionError::DataPageError)?;
         }
-        // Clear the ghost bit on the stored row and republish the LIVE image
-        // from the page, exactly like `with_mut_ref` — so the publication cache
-        // is not left ghosted (a fresh `from_inner` wrapper is ghosted).
+        // Clear the ghost bit on the stored row. A fresh `from_inner` wrapper
+        // is ghosted, but this is an update of an already-live cell.
         unsafe {
             page.get_mut_row_ref(link)
                 .map_err(ExecutionError::DataPageError)?
                 .unseal_unchecked()
                 .unghost();
         }
-        let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
-        self.publish_wrapped_row(link, wrapped);
         Ok(())
     }
 
@@ -995,6 +982,7 @@ where
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         unsafe { self.with_mut_ref(link, |r| r.delete())? }
+        self.remove_cell(link)?;
 
         self.row_count.fetch_sub(1, Ordering::Relaxed);
         self.retire(Retired::Link(link));
@@ -1036,7 +1024,10 @@ where
         let mut failure = None;
         for link in links {
             match unsafe { self.with_mut_ref(*link, |r| r.delete()) } {
-                Ok(()) => ghosted += 1,
+                Ok(()) => {
+                    self.remove_cell(*link)?;
+                    ghosted += 1;
+                }
                 Err(error) => {
                     failure = Some(error);
                     break;
@@ -1057,12 +1048,10 @@ where
     }
 
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
-        let pages = self.pages.read();
-        let page = pages
-            .get(page_id_mapper(link.page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let _page_guard = page.access.read();
-        page.get_raw_row(link).map_err(ExecutionError::DataPageError)
+        let page = self.page_ref(link.page_id)?;
+        let _cell_guard = page.read_cell(link).map_err(ExecutionError::DataPageError)?;
+        page.get_raw_row_without_cell_state(link)
+            .map_err(ExecutionError::DataPageError)
     }
 
     pub fn mark_page_empty(&self, page_id: PageId) {
@@ -1082,10 +1071,7 @@ where
             return;
         }
 
-        let pages = self.pages.read();
-        let index = page_id_mapper(page_id.into());
-
-        if let Some(page) = pages.get(index) {
+        if let Ok(page) = self.page_ref(page_id) {
             let free_offset = page.free_offset.load(Ordering::Acquire);
             let remaining = DATA_LENGTH.saturating_sub(free_offset as usize);
 
@@ -1108,9 +1094,35 @@ where
     }
 
     pub fn get_page(&self, page_id: PageId) -> Option<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>> {
-        let pages = self.pages.read();
+        let pages = self.pages.load();
         let page = pages.get(page_id_mapper(page_id.into()))?;
         Some(page.clone())
+    }
+
+    /// Registers an already-indexed cell while rebuilding runtime metadata
+    /// for a persisted table.
+    pub fn register_cell(&self, link: Link) -> Result<(), ExecutionError> {
+        let page = self.page_ref(link.page_id)?;
+        let _page_guard = page.access.read();
+        page.reset_cell_state(link).map_err(ExecutionError::DataPageError)?;
+        page.register_cell(link);
+        Ok(())
+    }
+
+    fn remove_cell(&self, link: Link) -> Result<(), ExecutionError> {
+        let page = self.page_ref(link.page_id)?;
+        let _page_guard = page.access.read();
+        page.remove_cell(link);
+        Ok(())
+    }
+
+    pub(crate) fn page_has_cells(&self, page_id: PageId) -> Result<bool, ExecutionError> {
+        let page = self.page_ref(page_id)?;
+        Ok(page.has_live_cells())
+    }
+
+    pub(crate) fn remove_moved_cell(&self, link: Link) -> Result<(), ExecutionError> {
+        self.remove_cell(link)
     }
 
     /// Bytes actually occupied across every page.
@@ -1123,7 +1135,7 @@ where
     /// Approximate under concurrency: a failing `save_row`'s transient
     /// reservation may be counted before its rollback. Metrics only.
     pub fn used_bytes(&self) -> u64 {
-        let pages = self.pages.read();
+        let pages = self.pages.load();
         pages
             .iter()
             .map(|p| u64::from(p.free_offset.load(Ordering::Relaxed)))
@@ -1152,28 +1164,16 @@ where
             + Portable
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
-        let pages = self.pages.read();
-        let from_page = pages
-            .get(page_id_mapper(from_link.page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(from_link.page_id))?;
-        let to_page = pages
-            .get(page_id_mapper(to_page_id.into()))
-            .ok_or(ExecutionError::PageNotFound(to_page_id))?;
-        // The one genuinely multi-page mutation: both barriers are needed,
-        // taken in ascending page-id order so no lock cycle can form with a
-        // concurrent pair.
-        let _page_guards = if from_link.page_id == to_page_id {
-            (from_page.access.write(), None)
-        } else if u32::from(from_link.page_id) < u32::from(to_page_id) {
-            let first = from_page.access.write();
-            (first, Some(to_page.access.write()))
-        } else {
-            let first = to_page.access.write();
-            (first, Some(from_page.access.write()))
-        };
+        let from_page = self.page_ref(from_link.page_id)?;
+        let to_page = self.page_ref(to_page_id)?;
+        // Only the source is reachable from an index while this copy runs.
+        // Its exact-cell guard prevents a reader from borrowing the bytes
+        // while the vacuum flag is changed. Destination bytes are published
+        // only after the complete copy and index swing.
+        let _cell_guard = from_page.write_cell(from_link).map_err(ExecutionError::DataPageError)?;
 
         let raw_data = from_page
-            .get_raw_row(from_link)
+            .get_raw_row_without_cell_state(from_link)
             .map_err(ExecutionError::DataPageError)?;
         // Copy to the destination BEFORE flagging the source. The vacuumed
         // flag used to be set first, so a failing destination save returned
@@ -1190,23 +1190,11 @@ where
         };
         archived.set_in_vacuum_process();
 
-        {
-            let old_wrapped = from_page.get_row(from_link).map_err(ExecutionError::DataPageError)?;
-            self.publish_wrapped_row(from_link, old_wrapped);
-            let new_wrapped = to_page.get_row(new_link).map_err(ExecutionError::DataPageError)?;
-            self.publish_wrapped_row(new_link, new_wrapped);
-        }
-
         Ok((raw_data, new_link))
     }
 
-    pub(crate) fn retire_published_link(&self, link: Link) {
-        self.retire(Retired::Publication(OffsetEqLink(link)));
-        self.reclaim_retired();
-    }
-
     pub fn get_page_count(&self) -> usize {
-        self.pages.read().len()
+        self.pages.load().len()
     }
 
     pub fn get_empty_links(&self) -> Vec<Link> {
@@ -1229,7 +1217,12 @@ where
     /// figure without it cannot be checked, because a sweep that never runs
     /// looks exactly like a sweep that is free.
     pub fn allocated_pages(&self) -> usize {
-        self.pages.read().len()
+        self.pages.load().len()
+    }
+
+    /// Heap bytes reserved by the fixed-size data-page allocations.
+    pub fn allocated_bytes(&self) -> usize {
+        self.pages.load().len() * std::mem::size_of::<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>()
     }
 
     /// Pages allocated but currently on the empty list, so reusable without
@@ -1316,21 +1309,21 @@ impl ExecutionError {
 
 #[cfg(test)]
 mod tests {
+    use super::{DELETED, GHOSTED, VACUUMED};
     use std::collections::HashSet;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
     use std::time::Instant;
 
     use parking_lot::RwLock;
-    use rkyv::with::{AtomicLoad, Relaxed};
     use rkyv::{Archive, Deserialize, Serialize};
 
     use crate::in_memory::data::Data;
     use crate::in_memory::pages::{DataPages, ExecutionError};
-    use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
+    use crate::in_memory::{CellState, DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::ArchivedRowWrapper;
     use data_bucket::Link;
 
@@ -1343,21 +1336,14 @@ mod tests {
     /// General `Row` wrapper that is used to append general data for every `Inner`
     /// `Row`.
     #[derive(Archive, Deserialize, Debug, Serialize)]
+    #[rkyv(attr(repr(C)))]
     pub struct GeneralRow<Inner> {
         /// Inner generic `Row`.
         pub inner: Inner,
 
-        /// Indicator for ghosted rows.
-        #[rkyv(with = AtomicLoad<Relaxed>)]
-        pub is_ghosted: AtomicBool,
+        pub publication_flags: u8,
 
-        /// Indicator for vacuumed rows.
-        #[rkyv(with = AtomicLoad<Relaxed>)]
-        pub is_vacuumed: AtomicBool,
-
-        /// Indicator for deleted rows.
-        #[rkyv(with = AtomicLoad<Relaxed>)]
-        pub deleted: AtomicBool,
+        pub cell_state: CellState,
     }
 
     impl<Inner> RowWrapper<Inner> for GeneralRow<Inner> {
@@ -1366,24 +1352,23 @@ mod tests {
         }
 
         fn is_ghosted(&self) -> bool {
-            self.is_ghosted.load(Ordering::Relaxed)
+            self.publication_flags & GHOSTED != 0
         }
 
         fn is_vacuumed(&self) -> bool {
-            self.is_vacuumed.load(Ordering::Relaxed)
+            self.publication_flags & VACUUMED != 0
         }
 
         fn is_deleted(&self) -> bool {
-            self.deleted.load(Ordering::Relaxed)
+            self.publication_flags & DELETED != 0
         }
 
         /// Creates new [`GeneralRow`] from `Inner`.
         fn from_inner(inner: Inner) -> Self {
             Self {
                 inner,
-                is_ghosted: AtomicBool::new(true),
-                is_vacuumed: AtomicBool::new(false),
-                deleted: AtomicBool::new(false),
+                publication_flags: GHOSTED,
+                cell_state: CellState,
             }
         }
     }
@@ -1396,17 +1381,20 @@ mod tests {
     where
         T: Archive,
     {
+        unsafe fn cell_state_ptr(this: *mut Self) -> *mut std::sync::atomic::AtomicU8 {
+            unsafe { std::ptr::addr_of_mut!((*this).cell_state).cast() }
+        }
         fn unghost(&mut self) {
-            self.is_ghosted = false
+            self.publication_flags &= !GHOSTED
         }
         fn set_in_vacuum_process(&mut self) {
-            self.is_vacuumed = true
+            self.publication_flags |= VACUUMED
         }
         fn delete(&mut self) {
-            self.deleted = true
+            self.publication_flags |= DELETED
         }
         fn is_deleted(&self) -> bool {
-            self.deleted
+            self.publication_flags & DELETED != 0
         }
     }
 
@@ -1473,11 +1461,13 @@ mod tests {
     }
 
     #[test]
-    fn versioned_reader_observes_old_row_while_page_update_is_incomplete() {
+    fn same_row_reader_waits_while_update_is_incomplete() {
         let pages = Arc::new(DataPages::<TestRow>::new());
         let link = pages.insert(TestRow { a: 0, b: 0 }).unwrap();
+        let other_link = pages.insert(TestRow { a: 9, b: 9 }).unwrap();
         unsafe {
             pages.with_mut_ref(link, |row| row.unghost()).unwrap();
+            pages.with_mut_ref(other_link, |row| row.unghost()).unwrap();
         }
 
         let (first_field_written_tx, first_field_written_rx) = mpsc::channel();
@@ -1501,20 +1491,35 @@ mod tests {
             read_tx.send(reader_pages.select_non_ghosted(link)).unwrap();
         });
 
-        assert_eq!(
-            read_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            Ok(TestRow { a: 0, b: 0 }),
-            "reader must use the old immutable version instead of page bytes"
+        assert!(
+            matches!(
+                read_rx.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "same-cell reader must wait instead of observing a torn row"
         );
+
+        let (other_tx, other_rx) = mpsc::channel();
+        let other_pages = pages.clone();
+        let other_reader = thread::spawn(move || {
+            other_tx.send(other_pages.select_non_ghosted(other_link)).unwrap();
+        });
+        assert_eq!(
+            other_rx.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Ok(TestRow { a: 9, b: 9 }),
+            "a writer on one cell must not block a different cell on the same page"
+        );
+        other_reader.join().unwrap();
 
         finish_update_tx.send(()).unwrap();
         writer.join().unwrap();
+        assert_eq!(read_rx.recv().unwrap(), Ok(TestRow { a: 1, b: 1 }));
         reader.join().unwrap();
         assert_eq!(pages.select_non_ghosted(link), Ok(TestRow { a: 1, b: 1 }));
     }
 
     #[test]
-    fn failed_exact_length_update_preserves_page_bytes_and_publication() {
+    fn failed_exact_length_update_preserves_page_bytes() {
         let pages = DataPages::<TestRow>::new();
         let old_row = TestRow { a: 10, b: 20 };
         let link = pages.insert(old_row).unwrap();
@@ -1537,28 +1542,6 @@ mod tests {
         ));
         assert_eq!(pages.select_raw(link).unwrap(), old_bytes);
         assert_eq!(pages.select_non_ghosted(link), Ok(old_row));
-    }
-
-    #[test]
-    fn retired_version_survives_link_reuse_for_in_flight_reader() {
-        let pages = DataPages::<TestRow>::new();
-        let link = pages.insert(TestRow { a: 1, b: 1 }).unwrap();
-        unsafe {
-            pages.with_mut_ref(link, |row| row.unghost()).unwrap();
-        }
-        let old_slot = pages.published_slot(link).unwrap();
-        let old_version = old_slot.snapshot();
-
-        pages.delete(link).unwrap();
-        let reused_link = pages.insert(TestRow { a: 2, b: 2 }).unwrap();
-        assert_eq!(reused_link, link);
-        assert_eq!(pages.select_non_ghosted(reused_link), Err(ExecutionError::Ghosted));
-        unsafe {
-            pages.with_mut_ref(reused_link, |row| row.unghost()).unwrap();
-        }
-
-        assert_eq!(old_version.as_ref(), &TestRow { a: 1, b: 1 });
-        assert_eq!(pages.select_non_ghosted(reused_link), Ok(TestRow { a: 2, b: 2 }));
     }
 
     /// A helper thread that holds (or releases) one `ReadGuard` on command,
@@ -1698,7 +1681,6 @@ mod tests {
         pages.current_page_id.store(3, Ordering::Release);
 
         let read_guard = pages.read_guard();
-        pages.retire_published_link(old_link);
         pages.mark_page_empty(old_link.page_id);
 
         let temporary_page = pages.allocate_new_or_pop_free();
@@ -1709,7 +1691,7 @@ mod tests {
         assert_eq!(
             pages.select_non_ghosted(old_link),
             Ok(TestRow { a: 1, b: 1 }),
-            "the old publication must survive until the reader leaves"
+            "the old page must survive until the reader leaves"
         );
 
         drop(read_guard);
@@ -1719,7 +1701,6 @@ mod tests {
         let reused_page = pages.allocate_new_or_pop_free();
         assert_eq!(reused_page.id, old_link.page_id);
         assert_eq!(reused_page.free_offset.load(Ordering::Acquire), 0);
-        assert!(pages.published_slot(old_link).is_none());
     }
 
     #[test]
@@ -1929,7 +1910,7 @@ mod tests {
         // The source row must NOT be left flagged as in-vacuum-process: that
         // flag is written into the persisted page image, and with no copy on
         // the destination it would mean durable row loss after a restart.
-        let vacuumed = pages.with_ref(link, |r| r.is_vacuumed).unwrap();
+        let vacuumed = pages.with_ref(link, |r| r.publication_flags & VACUUMED != 0).unwrap();
         assert!(!vacuumed, "failed move must not leave the source marked vacuumed");
         assert_eq!(pages.select_non_vacuumed(link), Ok(row));
     }

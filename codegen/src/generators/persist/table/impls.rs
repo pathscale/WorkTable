@@ -252,40 +252,37 @@ impl PersistGenerator {
         } else {
             quote! { IndexMap }
         };
-        let index_setup = if pk_types_unsized {
+        let index_setup = if self.columns.primary_index_backend == crate::common::model::IndexBackend::Arctic {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                    pk_map: #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name),
-                    reverse_pk_map: IndexMap::new(),
-                });
+                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    PersistentArcticIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
+                ));
+            }
+        } else if pk_types_unsized {
+            quote! {
+                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name)
+                ));
             }
         } else {
             match self.columns.primary_index_backend {
                 crate::common::model::IndexBackend::WorktablesIndex => quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                        pk_map: #wti_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
-                        reverse_pk_map: IndexMap::new(),
-                    });
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                        #wti_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
+                    ));
                 },
                 crate::common::model::IndexBackend::Indexset => quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                        pk_map: UpstreamIndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size),
-                        reverse_pk_map: IndexMap::new(),
-                    });
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                        UpstreamIndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
+                    ));
                 },
-                crate::common::model::IndexBackend::Arctic => quote! {
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                        pk_map: PersistentArcticIndex::<#pk_type, OffsetEqLink<#const_name>>::default(),
-                        reverse_pk_map: IndexMap::new(),
-                    });
-                },
+                crate::common::model::IndexBackend::Arctic => unreachable!("handled before variable-size dispatch"),
                 crate::common::model::IndexBackend::Congee => quote! {
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex {
-                        pk_map: PersistentCongeeIndex::<#pk_type, OffsetEqLink<#const_name>>::default(),
-                        reverse_pk_map: IndexMap::new(),
-                    });
+                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                        PersistentCongeeIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
+                    ));
                 },
             }
         };

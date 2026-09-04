@@ -13,6 +13,7 @@ pub struct PersistTableAttributes {
     pub read_only: bool,
     pub pk_upstream: bool,
     pub pk_arctic: bool,
+    pub pk_arctic_string: bool,
     pub pk_congee: bool,
     pub pk_wti_logical: bool,
     pub row_schema: Vec<(String, String)>,

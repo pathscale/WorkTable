@@ -14,6 +14,7 @@ impl ReadOnlyGenerator {
         let page_size_consts = self.gen_page_size_consts();
         let version_const = self.gen_version_const();
         let type_ = self.gen_table_type()?;
+        let mem_stat_impl = self.gen_table_mem_stat_impl();
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
         let select_query_executor_impl = self.gen_table_select_query_executor_impl();
@@ -23,11 +24,27 @@ impl ReadOnlyGenerator {
             #page_size_consts
             #version_const
             #type_
+            #mem_stat_impl
             #impl_
             #index_fns
             #select_query_executor_impl
             #column_range_type
         })
+    }
+
+    fn gen_table_mem_stat_impl(&self) -> TokenStream {
+        let ident = WorktableNameGenerator::from_table_name(self.name.to_string()).get_work_table_ident();
+        quote! {
+            impl MemStat for #ident {
+                fn heap_size(&self) -> usize {
+                    self.0.heap_size()
+                }
+
+                fn used_size(&self) -> usize {
+                    self.0.used_size()
+                }
+            }
+        }
     }
 
     fn gen_page_size_consts(&self) -> TokenStream {
@@ -84,20 +101,32 @@ impl ReadOnlyGenerator {
         // shape of the table (no persistence engine or task, sync `into_worktable`), the
         // second selects the unsized primary index. A read-only table with an unsized key
         // needs both, so `read_only` is unconditional here.
-        let derive = match (pk_types_unsized, pk_upstream) {
-            (true, true) => quote! {
+        let derive = match (pk_types_unsized, self.columns.primary_index_backend, pk_upstream) {
+            (true, crate::common::model::IndexBackend::Arctic, _) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(read_only, pk_arctic_string)]
+            },
+            (false, crate::common::model::IndexBackend::Arctic, _) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(read_only, pk_arctic)]
+            },
+            (false, crate::common::model::IndexBackend::Congee, _) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(read_only, pk_congee)]
+            },
+            (true, _, true) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(read_only, pk_unsized, pk_upstream)]
             },
-            (true, false) => quote! {
+            (true, _, false) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(read_only, pk_unsized)]
             },
-            (false, true) => quote! {
+            (false, _, true) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(read_only, pk_upstream)]
             },
-            (false, false) => quote! {
+            (false, _, false) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(read_only)]
             },

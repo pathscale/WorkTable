@@ -16,12 +16,19 @@ pub use operation::{
 };
 pub use readonly_engine::ReadOnlyPersistenceEngine;
 pub use space::{
-    ArtPersistenceKey, IndexTableOfContents, SpaceArcticIndex, SpaceArcticMultiIndex, SpaceCongeeIndex, SpaceData,
-    SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized,
-    SpaceSecondaryIndexOps, TocEntryOversizedError, map_index_pages_to_toc_and_general,
+    ArtPersistenceKey, IndexTableOfContents, SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex,
+    SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex,
+    SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, map_index_pages_to_toc_and_general,
     map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
 };
 pub use task::{PersistenceMonitor, PersistenceTask};
+
+/// Result of retiring one Arc-owned persisted table generation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnloadReport {
+    /// Memory attributed to the generation immediately before it was dropped.
+    pub released_bytes: usize,
+}
 
 mod engine;
 mod error;

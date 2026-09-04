@@ -1,6 +1,45 @@
 Change Log
 ==========
 
+## [1.0.0-beta.18]
+
+### Added
+
+- Selectable `worktables_index`, `arctic`, and `congee` backends for generated
+  primary and supported secondary indexes, including persisted topology load.
+- Async and batched insert/delete paths, with bulk-mutation signaling used by
+  reactive vacuum scheduling.
+- `MemStat` for generated persisted/read-only tables and Arc-owned
+  `unload_gracefully` for generation swaps.
+- Strict persisted-state validation, schema metadata, recovery loading, and
+  Arctic string/non-unique index support.
+
+### Changed
+
+- WorkTable row/page reclamation uses the local `ps-reclaim` domain for every
+  index backend; the WorkTable Arctic adapter also selects Arctic's
+  `ps-reclaim` SMR exclusively.
+- Readers now synchronize on the exact physical cell. Unrelated rows cannot
+  block because of a hashed lock collision.
+- Vacuum discovers move candidates from a transient primary-index snapshot and
+  keeps only one live-cell counter per page, removing the previous four-byte
+  per-row directory.
+- Vacuum waits for two quiet observations after mutation activity and yields
+  throughout a bulk mutation instead of competing with foreground work.
+- The archived wrapper retains the beta.17 inner-row position so legacy stores
+  without bundled schema metadata remain readable.
+
+### Fixed
+
+- Torn reads and premature physical-link reuse during concurrent update,
+  delete, and vacuum activity.
+- In-place replacement now preserves the embedded cell lock byte while copying
+  the rest of the archived row.
+- Whole-map Arctic destruction uses an unordered physical drain instead of
+  repeatedly searching for the next logical key.
+- Persisted primary/secondary index reconstruction and validation failures that
+  could otherwise expose missing, duplicate, or mismatched rows.
+
 ## [0.4.1]
 
 ### Added

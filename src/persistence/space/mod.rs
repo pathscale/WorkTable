@@ -13,7 +13,9 @@ use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use tokio::fs::{File, OpenOptions};
 
-pub use art_index::{ArtPersistenceKey, SpaceArcticIndex, SpaceArcticMultiIndex, SpaceCongeeIndex};
+pub use art_index::{
+    ArtPersistenceKey, SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex,
+};
 pub use data::SpaceData;
 pub use index::{
     IndexTableOfContents, SpaceIndex, SpaceIndexUnsized, TocEntryOversizedError, map_index_pages_to_toc_and_general,

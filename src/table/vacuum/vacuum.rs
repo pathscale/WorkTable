@@ -264,6 +264,23 @@ where
 
         let pages_processed = per_page_info.len();
 
+        // The primary index is the authoritative position-to-key mapping.
+        // Group one weakly-consistent snapshot by page for this sweep instead
+        // of retaining a reverse entry beside every row for the table's whole
+        // lifetime. Each candidate is revalidated under its row mutation lock
+        // before moving, and the per-page live counter below is the final
+        // defense against reclaiming a row missed by the snapshot.
+        let mut candidates_by_page: Vec<VecDeque<(Link, PrimaryKey)>> = (0..=self.data_pages.allocated_pages())
+            .map(|_| VecDeque::new())
+            .collect();
+        for (pk, offset_link) in self.primary_index.pk_map.iter_values() {
+            let link = offset_link.0;
+            let page_index = usize::from(link.page_id);
+            if let Some(candidates) = candidates_by_page.get_mut(page_index) {
+                candidates.push_back((link, pk));
+            }
+        }
+
         let info_iter = per_page_info.into_iter();
 
         // The exclusion is released every `batch_pages` sources. It is held
@@ -314,7 +331,11 @@ where
                     page_from, page_to,
                     "vacuum destination must differ from the source being reclaimed"
                 );
-                let move_result = match self.move_data_from(page_from, page_to).await {
+                let page_index = usize::from(page_from);
+                let candidates = candidates_by_page
+                    .get_mut(page_index)
+                    .expect("an allocated page id should have a candidate bucket");
+                let move_result = match self.move_data_from_candidates(page_from, page_to, candidates).await {
                     Ok(result) => result,
                     Err(error) => {
                         // Register every staged page before propagating, or
@@ -423,38 +444,35 @@ where
         Ok(())
     }
 
+    #[cfg(test)]
     async fn move_data_from(&self, from: PageId, to: PageId) -> eyre::Result<(bool, bool)> {
+        let mut candidates = self
+            .primary_index
+            .pk_map
+            .iter_values()
+            .filter_map(|(pk, offset_link)| {
+                let link = offset_link.0;
+                (link.page_id == from).then_some((link, pk))
+            })
+            .collect();
+        self.move_data_from_candidates(from, to, &mut candidates).await
+    }
+
+    async fn move_data_from_candidates(
+        &self,
+        from: PageId,
+        to: PageId,
+        candidates: &mut VecDeque<(Link, PrimaryKey)>,
+    ) -> eyre::Result<(bool, bool)> {
         let to_page = self.data_pages.get_page(to).expect("should exist as link exists");
         let to_free_space = to_page.free_space();
 
-        let page_start = OffsetEqLink::<_>(Link {
-            page_id: from,
-            offset: 0,
-            length: 0,
-        });
-
-        let page_end = OffsetEqLink::<_>(Link {
-            page_id: from.next(),
-            offset: 0,
-            length: 0,
-        });
-
-        let mut range = self.primary_index.reverse_pk_map.range(page_start..page_end);
         let mut sum_links_len = 0;
         let mut links = vec![];
         let mut from_page_will_be_moved = false;
         let mut to_page_will_be_filled = false;
 
-        loop {
-            let Some((next, pk)) = range.next() else {
-                from_page_will_be_moved = true;
-                break;
-            };
-
-            if next.page_id != from {
-                continue;
-            }
-
+        while let Some((next, _)) = candidates.front() {
             if sum_links_len + next.length > to_free_space as u32 {
                 // This candidate stays on the source page, so the page must
                 // never be reported fully moved in this pass — even when the
@@ -465,14 +483,15 @@ where
                 break;
             }
             sum_links_len += next.length;
-            links.push((next, pk));
+            links.push(candidates.pop_front().expect("front candidate exists"));
         }
-
-        drop(range);
+        if !to_page_will_be_filled {
+            from_page_will_be_moved = true;
+        }
 
         let mut any_move_failed = false;
         for (from_link, pk) in links {
-            if self.move_candidate_if_current(from_link.0, pk, to).await? == CandidateMove::Failed {
+            if self.move_candidate_if_current(from_link, pk, to).await? == CandidateMove::Failed {
                 any_move_failed = true;
             }
         }
@@ -501,12 +520,7 @@ where
             // needed a delete to free the space, an insert to take it, and
             // vacuum to reclaim underneath, which is why it only ever appeared
             // with all three running.
-            let occupied = self
-                .primary_index
-                .reverse_pk_map
-                .range(page_start..page_end)
-                .any(|(link, _)| link.0.page_id == from);
-            if occupied {
+            if self.data_pages.page_has_cells(from)? {
                 from_page_will_be_moved = false;
             }
         }
@@ -562,7 +576,7 @@ where
             }
         };
         self.update_index_after_move(pk, from_link, new_link, raw_data)?;
-        self.data_pages.retire_published_link(from_link);
+        self.data_pages.remove_moved_cell(from_link)?;
 
         Ok(CandidateMove::Moved)
     }

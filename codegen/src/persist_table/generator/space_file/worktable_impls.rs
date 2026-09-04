@@ -12,6 +12,7 @@ impl Generator {
         let wait_for_ops_fn = self.gen_worktable_wait_for_ops_fn();
         let persistence_monitor_fn = self.gen_worktable_persistence_monitor_fn();
         let close_fn = self.gen_worktable_close_fn();
+        let unload_fn = self.gen_worktable_unload_fn();
         let persisted_data_file_size_fn = self.gen_persisted_data_file_size_fn();
 
         quote! {
@@ -21,7 +22,43 @@ impl Generator {
                 #wait_for_ops_fn
                 #persistence_monitor_fn
                 #close_fn
+                #unload_fn
                 #persisted_data_file_size_fn
+            }
+        }
+    }
+
+    fn gen_worktable_unload_fn(&self) -> TokenStream {
+        quote! {
+            /// Retires an Arc-owned table generation after the caller's
+            /// quiesce barrier has stopped new leases and drained old ones.
+            pub async fn unload_gracefully<F, Fut>(
+                self: std::sync::Arc<Self>,
+                timeout: std::time::Duration,
+                quiesce: F,
+            ) -> eyre::Result<UnloadReport>
+            where
+                F: FnOnce() -> Fut,
+                Fut: std::future::Future<Output = ()>,
+            {
+                let released_bytes = self.heap_size();
+                tokio::time::timeout(timeout, quiesce())
+                    .await
+                    .map_err(|_| eyre::eyre!("timed out waiting for generation leases to quiesce"))?;
+
+                let outstanding = std::sync::Arc::strong_count(&self).saturating_sub(1);
+                if outstanding != 0 {
+                    return Err(eyre::eyre!(
+                        "cannot unload generation: {outstanding} Arc lease(s) remain after quiesce"
+                    ));
+                }
+
+                let owned = std::sync::Arc::try_unwrap(self).map_err(|arc| {
+                    let outstanding = std::sync::Arc::strong_count(&arc).saturating_sub(1);
+                    eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain")
+                })?;
+                owned.close().await?;
+                Ok(UnloadReport { released_bytes })
             }
         }
     }
@@ -138,7 +175,7 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
-        if self.attributes.pk_arctic || self.attributes.pk_congee {
+        if self.attributes.pk_arctic || self.attributes.pk_arctic_string || self.attributes.pk_congee {
             // ART durability is maintained incrementally by its native
             // checkpoint/WAL file rather than materialized as DataBucket pages.
             quote! {}

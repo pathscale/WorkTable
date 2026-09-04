@@ -31,6 +31,7 @@ impl Parser {
             read_only: false,
             pk_upstream: false,
             pk_arctic: false,
+            pk_arctic_string: false,
             pk_congee: false,
             pk_wti_logical: false,
             row_schema: vec![],
@@ -55,6 +56,10 @@ impl Parser {
                     }
                     if meta.path.is_ident("pk_arctic") {
                         res.pk_arctic = true;
+                        return Ok(());
+                    }
+                    if meta.path.is_ident("pk_arctic_string") {
+                        res.pk_arctic_string = true;
                         return Ok(());
                     }
                     if meta.path.is_ident("pk_congee") {

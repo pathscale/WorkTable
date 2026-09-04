@@ -21,13 +21,13 @@
 //!
 //! Cheaper than `crossbeam` and flat, but it reclaims only when no reader at
 //! all is live. `select` holds a read guard, so under continuous read traffic
-//! that instant never arrives and retired links, pages and publications queue
+//! that instant never arrives and retired links and pages queue
 //! forever. That is the property `reclamation_progresses_under_continuous_reader_overlap`
 //! in `in_memory::pages` asserts, and it is the reason the global reader
 //! counter was replaced in the first place.
 //!
-//! `arctic` reclaims through `seize` and is right to: a trie with short reads
-//! reaches quiescence constantly. This does not.
+//! WorkTable's Arctic adapter now also selects `ps-reclaim`; Arctic supports
+//! other SMRs for its general users, but WorkTable keeps one progress model.
 //!
 //! # crossbeam is still in the tree
 //!

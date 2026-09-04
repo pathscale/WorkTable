@@ -100,8 +100,8 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
     }
 
     // Force a deterministic final state, then audit every layer used to reach
-    // the row. A liveness-only test would miss a stale reverse entry, a ghost
-    // publication, or a primary link that points at unrelated data.
+    // the row. A liveness-only test would miss a ghosted cell or a primary
+    // link that points at unrelated data.
     let expected = UpsertChurnRow { id: KEY, val: 424_242 };
     table.upsert(expected.clone()).await.unwrap();
 
@@ -113,17 +113,6 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
         .get_value(&pk)
         .expect("final row must have one primary-index entry");
     assert_eq!(table.0.primary_index.pk_map.len(), 1);
-    assert_eq!(table.0.primary_index.reverse_pk_map.len(), 1);
-    assert_eq!(
-        table
-            .0
-            .primary_index
-            .reverse_pk_map
-            .get(&link)
-            .map(|entry| entry.get().value.clone()),
-        Some(pk),
-        "reverse index must point back to the final primary key"
-    );
     assert_eq!(
         table.0.data.select_non_ghosted(link.0),
         Ok(expected.clone()),
@@ -132,7 +121,7 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
     assert_eq!(table.select(KEY), Some(expected));
 }
 
-/// Pins the exact publication schedule that used to let delete unwrap a
+/// Pins the exact row schedule that used to let delete unwrap a
 /// ghosted row: data and primary-index reachability exist, but insert has not
 /// yet cleared the lifecycle bit. Delete must linearize before publication and
 /// leave the staged insert intact.
