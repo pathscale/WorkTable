@@ -3,7 +3,7 @@ members = ["codegen", "dsl", "examples", "performance_measurement", "performance
 
 [package]
 name = "worktable"
-version = "1.0.0-beta.17"
+version = "1.0.0-beta.18"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -15,7 +15,11 @@ keywords = ["database", "embedded", "in-memory", "index", "storage"]
 categories = ["database-implementations", "data-structures", "caching"]
 
 [features]
-default = ["wti-predictable-search"]
+default = ["wti-predictable-search", "arctic-ps-reclaim"]
+# Compatibility name: WorkTable's Arctic adapter always uses ps-reclaim. Keep
+# this feature so existing manifests do not break, but do not allow a
+# `--no-default-features` build to silently select Arctic's no-op SMR.
+arctic-ps-reclaim = []
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
 s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
@@ -33,34 +37,31 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+arc-swap = "1"
 async-trait = "0.1"
-arctic = { package = "arctic-wt", version = "0.1" }
-congee = { package = "congee-wt", version = "0.4" }
+arctic = { package = "arctic-wt", version = "^0.1", path = "../arctic-wt", default-features = false, features = ["smr-ps-reclaim"] }
+congee = { package = "congee-wt", version = "^0.4", path = "../congee-wt" }
 convert_case = "0.6"
 crc32fast = "1"
-# Already in the dependency graph transitively (indexset's concurrent
-# structures); used directly for read-side grace periods.
-data_bucket = "0.5"
-# data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "page_cdc_correction", version = "0.2.7" }
-# data_bucket = { path = "../DataBucket", version = "0.3.14" }
+data_bucket = { version = "^0.5", path = "../DataBucket" }
 derive_more = { version = "2", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6"
 fastrand = "2"
 futures = "0.3"
-indexset = { package = "WorkTablesIndex", version = "0.0", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "^0.0", path = "../WorkTablesIndex", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 vanilla_indexset = { package = "indexset", version = "0.15", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
-# indexset = { package = "wt-indexset", version = "=0.12.12", features = ["concurrent", "cdc", "multimap"] }
+# indexset = { package = "wt-indexset", version = "^0.12", features = ["concurrent", "cdc", "multimap"] }
 log = "0.4"
 ordered-float = "5"
 parking_lot = "0.12"
-performance_measurement = { path = "performance_measurement", version = "0.1.0", optional = true }
-performance_measurement_codegen = { path = "performance_measurement/codegen", version = "0.1.0", optional = true }
+performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
+performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
 prettytable-rs = "0.10"
 psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
 rkyv = { version = "0.8", features = ["uuid-1"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
-ps-reclaim = "0.1"
+ps-reclaim = { version = "^0.1", path = "../ps-reclaim" }
 rustc-hash = "2"
 rusty-s3 = { version = "0.10", optional = true }
 smart-default = "0.7"
@@ -69,14 +70,15 @@ tracing = "0.1"
 url = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
-# Exact for the same reason as `worktable_dsl` in codegen/Cargo.toml: carets do
-# not match pre-releases, and these move as one train.
-worktable_codegen = { path = "codegen", version = "=1.0.0-beta.17" }
+# These pre-release workspace crates move as one train. The explicit caret
+# keeps the dependency policy consistent while the local path selects this
+# checkout during validation.
+worktable_codegen = { path = "codegen", version = "^1.0.0-beta.18" }
 # Re-exported below. Each generated table carries its declaration as a const
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
-# crate. Exact for the same pre-release reason as codegen.
-worktable_dsl = { path = "dsl", version = "=1.0.0-beta.18" }
+# crate.
+worktable_dsl = { path = "dsl", version = "^1.0.0-beta.18" }
 
 [dev-dependencies]
 chrono = "0.4"
