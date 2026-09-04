@@ -1,6 +1,6 @@
 [package]
 name = "worktable_codegen"
-version = "1.0.0-beta.17"
+version = "1.0.0-beta.18"
 edition = "2024"
 license = "MIT"
 description = "Proc-macro companion crate for worktable: the worktable! macro and its derives."
@@ -25,7 +25,7 @@ proc-macro = true
 # these three crates are one release train: the macro generates code against a
 # specific runtime, so they must move together. Every other dependency here is
 # a caret at minor granularity.
-worktable_dsl = { path = "../dsl", version = "=1.0.0-beta.18" }
+worktable_dsl = { path = "../dsl", version = "^1.0.0-beta.18" }
 rkyv = { version = "0.8" }
 syn = { version = "2", features = ["full"] }
 quote = "1"
