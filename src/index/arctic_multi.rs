@@ -47,13 +47,13 @@
 
 use std::borrow::Borrow;
 use std::fmt::{self, Debug};
-use std::ops::{ControlFlow, RangeBounds};
+use std::ops::{Bound, ControlFlow, RangeBounds};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use arctic::{ConcurrentMap, Key as ArcticNativeKey, Order};
 use parking_lot::RwLock;
 
-use super::arctic::{ArcticKey, raw_inclusive_bounds};
+use super::arctic::ArcticKey;
 
 /// Links of a single key, guarded by the slot's `RwLock`.
 struct LinkSlot<V> {
@@ -219,8 +219,13 @@ where
     where
         R: RangeBounds<K> + 'a,
     {
-        let Some((lower, upper)) = raw_inclusive_bounds(&range) else {
-            return Vec::new().into_iter();
+        let lower = match range.start_bound() {
+            Bound::Included(key) | Bound::Excluded(key) => Some(key.to_arctic()),
+            Bound::Unbounded => None,
+        };
+        let upper = match range.end_bound() {
+            Bound::Included(key) | Bound::Excluded(key) => Some(key.to_arctic()),
+            Bound::Unbounded => None,
         };
 
         // `EntryIter` only implements `Iterator` for cloneable payloads, so
@@ -238,7 +243,7 @@ where
                         links
                             .links
                             .iter()
-                            .map(|value| (K::from_arctic(raw), value.clone())),
+                            .map(|value| (K::from_arctic(raw.clone()), value.clone())),
                     );
                 }
                 pairs
@@ -253,7 +258,10 @@ where
             (Some(lower), None) => collect_range!(self.inner.range(lower.borrow()..)),
             (None, Some(upper)) => collect_range!(self.inner.range(..=upper.borrow())),
             (None, None) => collect_range!(self.inner.all()),
-        };
+        }
+        .into_iter()
+        .filter(move |(key, _)| range.contains(key))
+        .collect::<Vec<_>>();
         values.into_iter()
     }
 

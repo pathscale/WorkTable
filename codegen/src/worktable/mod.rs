@@ -400,14 +400,14 @@ mod tests {
     #[test]
     fn non_unique_arctic_rejects_unsupported_key_types() {
         let error = expand(quote! {
-            name: StringNonUniqueArctic,
+            name: BoolNonUniqueArctic,
             persist: false,
             columns: {
                 id: u64 primary_key,
-                name: String,
+                enabled: bool,
             },
             indexes: {
-                name_idx: name using arctic,
+                enabled_idx: enabled using arctic,
             },
         })
         .unwrap_err();
@@ -415,7 +415,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("supported types: u16, u32, u64, u128, i16, i32, i64, i128")
+                .contains("supported types: String, u16, u32, u64, u128, i16, i32, i64, i128")
         );
     }
 
@@ -480,7 +480,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("supported types: u16, u32, u64, u128, i16, i32, i64, i128")
+                .contains("supported types: String, u16, u32, u64, u128, i16, i32, i64, i128")
         );
     }
 

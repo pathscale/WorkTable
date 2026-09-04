@@ -17,18 +17,57 @@ use uuid::Uuid;
 use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
+use crate::in_memory::{RowWrapper, StorableRow};
 use crate::persistence::OperationType;
 use crate::prelude::OperationId;
 use crate::util::OffsetEqLink;
 use crate::{
-    ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, IndexMultiMap, PersistentArtIndex,
-    PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
+    ArcticIndex, ArcticKey, ArcticMultiIndex, ArcticValue, CongeeIndex, CongeeKey, IndexMultiMap, PersistentArtIndex,
+    PersistentWtiIndex, UniqueIndex, UpstreamIndexMap, WorkTable,
 };
 use crate::{IndexMap, impl_memstat_zero};
 
 pub trait MemStat {
     fn heap_size(&self) -> usize;
     fn used_size(&self) -> usize;
+}
+
+impl<
+    Row,
+    PrimaryKey,
+    AvailableTypes,
+    AvailableIndexes,
+    SecondaryIndexes,
+    LockType,
+    PkGen,
+    const DATA_LENGTH: usize,
+    PkMap,
+> MemStat
+    for WorkTable<
+        Row,
+        PrimaryKey,
+        AvailableTypes,
+        AvailableIndexes,
+        SecondaryIndexes,
+        LockType,
+        PkGen,
+        DATA_LENGTH,
+        PkMap,
+    >
+where
+    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    Row: StorableRow + Send + Clone + 'static,
+    <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
+    PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>> + MemStat,
+    SecondaryIndexes: MemStat,
+{
+    fn heap_size(&self) -> usize {
+        self.data.allocated_bytes() + self.primary_index.pk_map.heap_size() + self.indexes.heap_size()
+    }
+
+    fn used_size(&self) -> usize {
+        self.data.used_bytes() as usize + self.primary_index.pk_map.used_size() + self.indexes.used_size()
+    }
 }
 
 impl<T: MemStat> MemStat for Option<T> {
@@ -121,7 +160,7 @@ where
 impl<K, V> MemStat for ArcticIndex<K, V>
 where
     K: ArcticKey,
-    V: Clone + Debug + Send + Sync + 'static,
+    V: ArcticValue,
 {
     fn heap_size(&self) -> usize {
         self.len() * std::mem::size_of::<(K, V)>()

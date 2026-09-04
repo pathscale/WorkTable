@@ -40,6 +40,8 @@ enum Backend {
     Congee = 2,
     /// Non-unique Arctic: one record per `(key, link)` pair.
     ArcticMulti = 3,
+    /// Unique Arctic with a flat key/link checkpoint for variable-width keys.
+    ArcticVariable = 4,
 }
 
 impl Backend {
@@ -48,6 +50,7 @@ impl Backend {
             1 => Ok(Self::Arctic),
             2 => Ok(Self::Congee),
             3 => Ok(Self::ArcticMulti),
+            4 => Ok(Self::ArcticVariable),
             _ => bail!("unknown ART backend tag {byte}"),
         }
     }
@@ -58,7 +61,8 @@ impl Backend {
 /// Generated single-column primary-key newtypes delegate this contract to
 /// their supported unsigned integer field.
 pub trait ArtPersistenceKey: Clone + Debug + Eq + Hash + Ord + Send + Sync + 'static {
-    /// Number of key bytes written to the WAL.
+    /// Number of key bytes written to the WAL, or zero for a variable-width
+    /// key whose records carry a `u32` byte length.
     const WIDTH: u8;
 
     /// Appends exactly [`Self::WIDTH`] bytes in big-endian order.
@@ -128,6 +132,18 @@ macro_rules! impl_art_persistence_key_signed {
 }
 
 impl_art_persistence_key_signed!(i8 => u8, i16 => u16, i32 => u32, i64 => u64, i128 => u128, isize => usize);
+
+impl ArtPersistenceKey for String {
+    const WIDTH: u8 = 0;
+
+    fn encode_art_key(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(self.as_bytes())
+    }
+
+    fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+        String::from_utf8(bytes.to_vec()).map_err(|error| eyre!("invalid UTF-8 ART key: {error}"))
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WalOp {
@@ -260,8 +276,12 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
                 bail!("ART WAL frame at byte {position} has an invalid magic");
             }
             let payload_len = u32::from_le_bytes(bytes[position + 4..position + 8].try_into().unwrap()) as usize;
-            let expected_len = 9usize + K::WIDTH as usize + 12;
-            if payload_len != expected_len {
+            let valid_payload_len = if K::WIDTH == 0 {
+                payload_len >= 9 + 4 + 12
+            } else {
+                payload_len == 9 + K::WIDTH as usize + 12
+            };
+            if !valid_payload_len {
                 bail!("ART WAL frame at byte {position} has invalid payload length {payload_len}");
             }
             let payload_crc = u32::from_le_bytes(bytes[position + 8..position + 12].try_into().unwrap());
@@ -356,14 +376,22 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
 }
 
 fn encode_wal_record<K: ArtPersistenceKey>(record: &WalRecord<K>) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(9 + K::WIDTH as usize + 12);
+    let mut key = Vec::new();
+    record.key.encode_art_key(&mut key);
+    let variable_prefix = usize::from(K::WIDTH == 0) * std::mem::size_of::<u32>();
+    let mut bytes = Vec::with_capacity(9 + variable_prefix + key.len() + 12);
     bytes.extend_from_slice(&record.event_id.to_le_bytes());
     match record.op {
         WalOp::Set(_) => bytes.push(1),
         WalOp::Remove => bytes.push(2),
         WalOp::RemovePair(_) => bytes.push(3),
     }
-    record.key.encode_art_key(&mut bytes);
+    if K::WIDTH == 0 {
+        bytes.extend_from_slice(&(key.len() as u32).to_le_bytes());
+    } else {
+        debug_assert_eq!(key.len(), K::WIDTH as usize);
+    }
+    bytes.extend_from_slice(&key);
     let link = match record.op {
         WalOp::Set(link) | WalOp::RemovePair(link) => link,
         WalOp::Remove => Link::default(),
@@ -376,14 +404,26 @@ fn encode_wal_record<K: ArtPersistenceKey>(record: &WalRecord<K>) -> Vec<u8> {
 }
 
 fn decode_wal_record<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<WalRecord<K>> {
-    let expected_len = 9 + K::WIDTH as usize + 12;
-    if bytes.len() != expected_len {
+    let fixed_prefix = 9usize;
+    let link_len = 12usize;
+    let (key_start, key_len) = if K::WIDTH == 0 {
+        if bytes.len() < fixed_prefix + 4 + link_len {
+            bail!("invalid variable-key ART WAL payload length {}", bytes.len());
+        }
+        let key_len = u32::from_le_bytes(bytes[9..13].try_into().unwrap()) as usize;
+        (13usize, key_len)
+    } else {
+        (9usize, K::WIDTH as usize)
+    };
+    let key_end = key_start
+        .checked_add(key_len)
+        .ok_or_else(|| eyre!("ART WAL key length overflow"))?;
+    if key_end.checked_add(link_len) != Some(bytes.len()) {
         bail!("invalid ART WAL payload length {}", bytes.len());
     }
     let event_id = u64::from_le_bytes(bytes[..8].try_into().unwrap());
     let operation = bytes[8];
-    let key_end = 9 + K::WIDTH as usize;
-    let key = K::decode_art_key(&bytes[9..key_end])?;
+    let key = K::decode_art_key(&bytes[key_start..key_end])?;
     let page_id = u32::from_le_bytes(bytes[key_end..key_end + 4].try_into().unwrap());
     let offset = u32::from_le_bytes(bytes[key_end + 4..key_end + 8].try_into().unwrap());
     let length = u32::from_le_bytes(bytes[key_end + 8..key_end + 12].try_into().unwrap());
@@ -503,7 +543,14 @@ fn encode_multi_pairs<K: ArtPersistenceKey>(pairs: impl Iterator<Item = (K, Link
     let mut body = Vec::new();
     let mut count: u64 = 0;
     for (key, link) in pairs {
-        key.encode_art_key(&mut body);
+        let mut encoded = Vec::new();
+        key.encode_art_key(&mut encoded);
+        if K::WIDTH == 0 {
+            body.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+        } else {
+            debug_assert_eq!(encoded.len(), K::WIDTH as usize);
+        }
+        body.extend_from_slice(&encoded);
         encode_link(link, &mut body);
         count += 1;
     }
@@ -518,7 +565,12 @@ fn decode_multi_pairs<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<Vec<(K
     let count = decoder.u64()?;
     let mut pairs = Vec::with_capacity(usize::try_from(count).map_err(|_| eyre!("ART pair count overflow"))?);
     for _ in 0..count {
-        let key = K::decode_art_key(decoder.take(K::WIDTH as usize)?)?;
+        let key_len = if K::WIDTH == 0 {
+            decoder.u32()? as usize
+        } else {
+            K::WIDTH as usize
+        };
+        let key = K::decode_art_key(decoder.take(key_len)?)?;
         let link = decoder.link()?;
         pairs.push((key, link));
     }
@@ -585,6 +637,120 @@ impl<K, const INNER_PAGE_SIZE: u32> SpaceIndexOps<K> for SpaceArcticIndex<K, INN
 where
     K: ArtPersistenceKey + ArcticKey,
     K::Raw: arctic::topology::Key,
+{
+    async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
+        Self::new(
+            PathBuf::from(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION)),
+            version,
+        )
+        .await
+    }
+
+    async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
+        path: S1,
+        name: S2,
+        version: u32,
+    ) -> eyre::Result<Self> {
+        Self::new(
+            PathBuf::from(format!("{}/{}{}", path.as_ref(), name.as_ref(), WT_INDEX_EXTENSION)),
+            version,
+        )
+        .await
+    }
+
+    async fn bootstrap(_: &mut File, _: String, _: u32) -> eyre::Result<()> {
+        Ok(())
+    }
+
+    async fn process_change_event(&mut self, event: ChangeEvent<Pair<K, Link>>) -> eyre::Result<()> {
+        self.file.append(&[logical_record(event)?]).await?;
+        if self.file.should_compact() {
+            self.compact().await?;
+        }
+        Ok(())
+    }
+
+    async fn process_change_event_batch(&mut self, events: BatchChangeEvent<K>) -> eyre::Result<()> {
+        let records = events
+            .into_iter()
+            .map(logical_record)
+            .collect::<eyre::Result<Vec<_>>>()?;
+        self.file.append(&records).await?;
+        if self.file.should_compact() {
+            self.compact().await?;
+        }
+        Ok(())
+    }
+}
+
+/// Disk-side Arctic state for variable-width unique keys.
+///
+/// Arctic's pointer-free topology interchange is intentionally restricted to
+/// fixed-width keys. Variable keys therefore checkpoint as sorted logical
+/// `(key, link)` pairs and rebuild the native tree on cold load. WAL operation
+/// and crash semantics are otherwise identical to [`SpaceArcticIndex`].
+#[derive(Debug)]
+pub struct SpaceArcticStringIndex<K: ArtPersistenceKey, const INNER_PAGE_SIZE: u32> {
+    file: ArtFile<K>,
+}
+
+impl<K, const INNER_PAGE_SIZE: u32> SpaceArcticStringIndex<K, INNER_PAGE_SIZE>
+where
+    K: ArtPersistenceKey + ArcticKey,
+{
+    async fn new(path: PathBuf, table_version: u32) -> eyre::Result<Self> {
+        Ok(Self {
+            file: ArtFile::open(
+                path,
+                Backend::ArcticVariable,
+                table_version,
+                encode_multi_pairs(std::iter::empty::<(K, Link)>()),
+            )
+            .await?,
+        })
+    }
+
+    pub async fn load_index<const N: usize>(
+        path: impl AsRef<Path>,
+        table_version: u32,
+    ) -> eyre::Result<PersistentArcticIndex<K, OffsetEqLink<N>>> {
+        let image = ArtFile::<K>::read_image(path.as_ref(), Backend::ArcticVariable, table_version).await?;
+        let index = PersistentArcticIndex::<K, OffsetEqLink<N>>::default();
+        for (key, link) in decode_multi_pairs(&image.snapshot)? {
+            if index.insert_value_checked(key, OffsetEqLink(link)).is_none() {
+                bail!("variable-key Arctic checkpoint contains a duplicate key");
+            }
+        }
+        apply_wal(&index, &image.wal, OffsetEqLink)?;
+        Ok(index)
+    }
+
+    pub async fn write_checkpoint<const N: usize>(
+        path: impl AsRef<Path>,
+        table_version: u32,
+        index: &PersistentArcticIndex<K, OffsetEqLink<N>>,
+    ) -> eyre::Result<()> {
+        let snapshot = encode_multi_pairs(index.iter_values().map(|(key, link)| (key, link.0)));
+        ArtFile::<K>::write_file_atomically(path.as_ref(), Backend::ArcticVariable, table_version, &snapshot).await
+    }
+
+    async fn compact(&mut self) -> eyre::Result<()> {
+        let image = ArtFile::<K>::read_image(&self.file.path, Backend::ArcticVariable, self.file.table_version).await?;
+        let index = ArcticIndex::<K, Link>::default();
+        for (key, link) in decode_multi_pairs(&image.snapshot)? {
+            if index.insert_value_checked(key, link).is_none() {
+                bail!("variable-key Arctic checkpoint contains a duplicate key");
+            }
+        }
+        apply_wal(&index, &image.wal, |link| link)?;
+        let snapshot = encode_multi_pairs(index.iter_values());
+        self.file.rewrite(&snapshot).await
+    }
+}
+
+impl<K, const INNER_PAGE_SIZE: u32> SpaceIndexOps<K> for SpaceArcticStringIndex<K, INNER_PAGE_SIZE>
+where
+    K: ArtPersistenceKey + ArcticKey,
 {
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
@@ -874,6 +1040,10 @@ impl<'a> Decoder<'a> {
         Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
     }
 
+    fn u32(&mut self) -> eyre::Result<u32> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
     fn u64(&mut self) -> eyre::Result<u64> {
         Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
     }
@@ -1104,7 +1274,7 @@ mod tests {
         }
     }
 
-    fn set_event(id: u64, key: u64, value: Link) -> ChangeEvent<Pair<u64, Link>> {
+    fn set_event<K: Clone>(id: u64, key: K, value: Link) -> ChangeEvent<Pair<K, Link>> {
         let pair = Pair { key, value };
         ChangeEvent::InsertAt {
             event_id: id.into(),
@@ -1337,6 +1507,35 @@ mod tests {
             .unwrap();
         assert_eq!(reloaded.len(), 50);
         assert_eq!(reloaded.get(&(u128::MAX - 3)).len(), 10);
+        tokio::fs::remove_file(path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn variable_string_keys_survive_wal_and_checkpoint() {
+        let path = std::env::temp_dir().join(format!("worktable-art-string-{}.wt.idx", uuid::Uuid::new_v4()));
+        let mut space = SpaceArcticStringIndex::<String, 4096>::new(path.clone(), 3)
+            .await
+            .unwrap();
+        for (event_id, key) in ["", "nul\0inside", "é", "🦀"].into_iter().enumerate() {
+            space
+                .process_change_event(set_event(event_id as u64, key.to_owned(), link(event_id as u32 + 1)))
+                .await
+                .unwrap();
+        }
+        drop(space);
+
+        let index = SpaceArcticStringIndex::<String, 4096>::load_index::<4096>(&path, 3)
+            .await
+            .unwrap();
+        assert_eq!(index.get_value(&"nul\0inside".to_owned()).unwrap().0, link(2));
+        SpaceArcticStringIndex::<String, 4096>::write_checkpoint::<4096>(&path, 3, &index)
+            .await
+            .unwrap();
+        let reloaded = SpaceArcticStringIndex::<String, 4096>::load_index::<4096>(&path, 3)
+            .await
+            .unwrap();
+        assert_eq!(reloaded.len(), 4);
+        assert_eq!(reloaded.get_value(&"🦀".to_owned()).unwrap().0, link(4));
         tokio::fs::remove_file(path).await.unwrap();
     }
 

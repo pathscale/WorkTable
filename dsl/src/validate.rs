@@ -235,7 +235,7 @@ pub const AUTOINCREMENT_TYPES: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16
 pub fn supported_key_types(backend: IndexBackend) -> Option<&'static [&'static str]> {
     match backend {
         IndexBackend::Congee => Some(&["u8", "u16", "u32", "u64", "usize"]),
-        IndexBackend::Arctic => Some(&["u16", "u32", "u64", "u128", "i16", "i32", "i64", "i128"]),
+        IndexBackend::Arctic => Some(&["String", "u16", "u32", "u64", "u128", "i16", "i32", "i64", "i128"]),
         IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
     }
 }

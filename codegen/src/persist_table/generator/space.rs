@@ -36,7 +36,11 @@ impl Generator {
         let space_secondary_indexes = name_generator.get_space_secondary_index_ident();
         let space_secondary_indexes_events = name_generator.get_space_secondary_index_events_ident();
         let avt_index_ident = name_generator.get_available_indexes_ident();
-        let space_index_type = if self.attributes.pk_unsized && self.attributes.pk_wti_logical {
+        let space_index_type = if self.attributes.pk_arctic_string {
+            quote! {
+                SpaceArcticStringIndex<#primary_key_type, { #inner_const_name as u32 }>,
+            }
+        } else if self.attributes.pk_unsized && self.attributes.pk_wti_logical {
             quote! {
                 SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
             }

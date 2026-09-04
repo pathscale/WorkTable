@@ -9,7 +9,7 @@ use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
 use crate::{
     AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
-    TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, UniqueIndex, convert_change_events, in_memory,
+    TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, convert_change_events, in_memory,
 };
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
@@ -167,30 +167,12 @@ where
                     format!("row at {:?} does not match primary key {primary_key:?}", offset_link.0),
                 ));
             }
-
-            let reverse_key = self.primary_index.reverse_pk_map.get_value(&offset_link);
-            if reverse_key.as_ref() != Some(&primary_key) {
-                return Err(PersistenceLoadError::corrupt(
+            self.data.register_cell(offset_link.0).map_err(|error| {
+                PersistenceLoadError::corrupt(
                     path,
-                    format!("reverse primary index does not match link {:?}", offset_link.0),
-                ));
-            }
-        }
-
-        if self.primary_index.reverse_pk_map.len() != links.len() {
-            return Err(PersistenceLoadError::corrupt(
-                path,
-                "forward and reverse primary indexes contain different numbers of entries",
-            ));
-        }
-
-        for (offset_link, primary_key) in self.primary_index.reverse_pk_map.iter_values() {
-            if self.primary_index.pk_map.get_value(&primary_key) != Some(offset_link) {
-                return Err(PersistenceLoadError::corrupt(
-                    path,
-                    format!("forward primary index does not match link {:?}", offset_link.0),
-                ));
-            }
+                    format!("primary key {primary_key:?} has an invalid cell: {error}"),
+                )
+            })?;
         }
 
         Ok(())

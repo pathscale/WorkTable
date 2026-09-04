@@ -16,7 +16,7 @@ mod util;
 pub mod features;
 
 pub use index::*;
-pub use persistence::{LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError};
+pub use persistence::{LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError, UnloadReport};
 pub use row::*;
 pub use table::*;
 
@@ -32,7 +32,7 @@ pub use worktable_dsl;
 pub use worktable_codegen::s3_sync_persistence;
 
 pub mod prelude {
-    pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};
+    pub use crate::in_memory::{ArchivedRowWrapper, CellState, Data, DataPages, Query, RowWrapper, StorableRow};
     pub use crate::lock::FullRowLock;
     pub use crate::lock::{Lock, RowLock};
     pub use crate::lock::{LockAcquirer, LockGuard, LockMap, PendingLock};
@@ -43,10 +43,11 @@ pub mod prelude {
         IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
         PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceMonitor,
         PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex,
-        SpaceArcticMultiIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized,
-        SpaceLogicalIndex, SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, UpdateOperation,
-        load_persisted_state, map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
-        reconstruct_multi_index_nodes, validate_events,
+        SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex,
+        SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps,
+        TocEntryOversizedError, UnloadReport, UpdateOperation, load_persisted_state,
+        map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
+        validate_events,
     };
     pub use crate::primary_key::{
         PrimaryKeyGenerator, PrimaryKeyGeneratorRange, PrimaryKeyGeneratorState, TablePrimaryKey,
@@ -55,12 +56,13 @@ pub mod prelude {
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     pub use crate::{
-        ArcticIndex, ArcticKey, ArcticMultiIndex, AvailableIndex, BatchDeleteError, BatchInsertError, CongeeIndex,
-        CongeeKey, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex,
-        PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex,
-        TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps,
-        TableSecondaryIndexInfo, UniqueIndex, UnsizedNode, UpstreamIndexMap, UpstreamIndexPair, WorkTable,
-        WorkTableError, vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
+        ArcticIndex, ArcticKey, ArcticMultiIndex, ArcticStringKey, AvailableIndex, BatchDeleteError, BatchInsertError,
+        CongeeIndex, CongeeKey, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
+        PersistentArcticIndex, PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex,
+        PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
+        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
+        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
+        vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

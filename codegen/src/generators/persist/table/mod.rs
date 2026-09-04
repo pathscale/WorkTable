@@ -14,6 +14,7 @@ impl PersistGenerator {
         let page_size_consts = self.gen_page_size_consts();
         let version_const = self.gen_version_const();
         let type_ = self.gen_table_type()?;
+        let mem_stat_impl = self.gen_table_mem_stat_impl();
         let impl_ = self.gen_table_impl();
         let index_fns = self.gen_table_index_fns()?;
         let select_query_executor_impl = self.gen_table_select_query_executor_impl();
@@ -23,11 +24,27 @@ impl PersistGenerator {
             #page_size_consts
             #version_const
             #type_
+            #mem_stat_impl
             #impl_
             #index_fns
             #select_query_executor_impl
             #column_range_type
         })
+    }
+
+    fn gen_table_mem_stat_impl(&self) -> TokenStream {
+        let ident = WorktableNameGenerator::from_table_name(self.name.to_string()).get_work_table_ident();
+        quote! {
+            impl MemStat for #ident {
+                fn heap_size(&self) -> usize {
+                    self.0.heap_size()
+                }
+
+                fn used_size(&self) -> usize {
+                    self.0.used_size()
+                }
+            }
+        }
     }
 
     fn gen_page_size_consts(&self) -> TokenStream {
@@ -97,6 +114,10 @@ impl PersistGenerator {
                     #[table(pk_unsized, pk_wti_logical)]
                 }
             }
+            (true, crate::common::model::IndexBackend::Arctic) => quote! {
+                #[derive(Debug, PersistTable)]
+                #[table(pk_arctic_string)]
+            },
             (true, _) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized)]
