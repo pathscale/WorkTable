@@ -86,6 +86,9 @@ impl<T> PageDirectoryChunk<T> {
 #[derive(Debug)]
 struct PageDirectory<T> {
     roots: [AtomicPtr<PageDirectoryChunk<T>>; PAGE_DIRECTORY_ROOTS],
+    // Each chunk needs a stable address after the vector grows because
+    // `roots` publishes pointers to the chunk allocations.
+    #[allow(clippy::vec_box)]
     chunks: Mutex<Vec<Box<PageDirectoryChunk<T>>>>,
 }
 

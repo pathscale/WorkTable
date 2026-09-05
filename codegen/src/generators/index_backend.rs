@@ -108,13 +108,8 @@ pub(crate) fn primary_key_backend_impl(
         }
         IndexBackend::Arctic => {
             let field = single_supported_field(backend, fields, supported_types(backend))?;
-            let derive = if primitive_name(field).as_deref() == Some("String") {
-                quote! {}
-            } else {
-                quote! { Copy, }
-            };
             Ok((
-                derive,
+                quote! {},
                 quote! {
                     impl ArcticKey for #primary_key {
                         type Raw = <#field as ArcticKey>::Raw;

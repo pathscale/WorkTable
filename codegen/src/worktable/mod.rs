@@ -250,7 +250,7 @@ mod tests {
 
     #[cfg(feature = "logical-index-persistence")]
     #[test]
-    fn logical_persistence_wraps_only_default_wti_backends() {
+    fn logical_persistence_wraps_explicit_wti_backends() {
         let output = expand(quote! {
             name: LogicalDefaultBackend,
             persist: true,
@@ -261,7 +261,7 @@ mod tests {
                 arctic_value: u64,
             },
             indexes: {
-                wti_idx: wti_value unique,
+                wti_idx: wti_value unique using worktables_index,
                 congee_idx: congee_value unique using congee,
                 arctic_idx: arctic_value unique using arctic,
             },

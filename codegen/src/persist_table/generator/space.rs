@@ -36,35 +36,28 @@ impl Generator {
         let space_secondary_indexes = name_generator.get_space_secondary_index_ident();
         let space_secondary_indexes_events = name_generator.get_space_secondary_index_events_ident();
         let avt_index_ident = name_generator.get_available_indexes_ident();
-        let space_index_type = if self.attributes.pk_arctic_string {
-            quote! {
-                SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
-            }
-        } else if self.attributes.pk_unsized && self.attributes.pk_wti_logical {
-            quote! {
-                SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
-            }
-        } else if self.attributes.pk_unsized {
-            quote! {
-                SpaceIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
-            }
-        } else if self.attributes.pk_wti_logical {
-            quote! {
-                SpaceLogicalIndex<#primary_key_type, { #inner_const_name as u32 }>,
-            }
-        } else if self.attributes.pk_arctic {
-            quote! {
-                SpaceLogicalIndex<#primary_key_type, { #inner_const_name as u32 }>,
-            }
-        } else if self.attributes.pk_congee {
-            quote! {
-                SpaceCongeeIndex<#primary_key_type, { #inner_const_name as u32 }>,
-            }
-        } else {
-            quote! {
-                SpaceIndex<#primary_key_type, { #inner_const_name as u32 }>,
-            }
-        };
+        let space_index_type =
+            if self.attributes.pk_arctic_string || (self.attributes.pk_unsized && self.attributes.pk_wti_logical) {
+                quote! {
+                    SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
+                }
+            } else if self.attributes.pk_unsized {
+                quote! {
+                    SpaceIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
+                }
+            } else if self.attributes.pk_wti_logical || self.attributes.pk_arctic {
+                quote! {
+                    SpaceLogicalIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                }
+            } else if self.attributes.pk_congee {
+                quote! {
+                    SpaceCongeeIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                }
+            } else {
+                quote! {
+                    SpaceIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                }
+            };
 
         quote! {
             pub type #ident = DiskPersistenceEngine<
