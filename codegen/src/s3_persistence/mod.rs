@@ -26,6 +26,7 @@ pub fn expand(input: TokenStream) -> Result<TokenStream> {
 
     let output_ident = generator.get_s3_sync_persistence_engine_ident();
     let primary_key = generator.get_primary_key_type_ident();
+    let space_primary_index = generator.get_space_primary_index_ident();
     let space_secondary_index = generator.get_space_secondary_index_ident();
     let space_secondary_index_events = generator.get_space_secondary_index_events_ident();
     let available_indexes = generator.get_available_indexes_ident();
@@ -39,11 +40,26 @@ pub fn expand(input: TokenStream) -> Result<TokenStream> {
                 { #inner_size_const },
                 { #page_size_const as u32 },
             >,
-            SpaceIndex<#primary_key, { #inner_size_const as u32 }>,
+            #space_primary_index,
             #space_secondary_index,
             #primary_key,
             #space_secondary_index_events,
             #available_indexes,
         >;
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+
+    use super::expand;
+
+    #[test]
+    fn s3_engine_reuses_the_tables_generated_primary_persistence_adapter() {
+        let output = expand(quote!(AccountWorkTable)).unwrap().to_string();
+
+        assert!(output.contains("AccountSpacePrimaryIndex"));
+        assert!(!output.contains("SpaceIndex < AccountPrimaryKey"));
+    }
 }
