@@ -15,11 +15,7 @@ keywords = ["database", "embedded", "in-memory", "index", "storage"]
 categories = ["database-implementations", "data-structures", "caching"]
 
 [features]
-default = ["wti-predictable-search", "arctic-ps-reclaim"]
-# Compatibility name: WorkTable's Arctic adapter always uses ps-reclaim. Keep
-# this feature so existing manifests do not break, but do not allow a
-# `--no-default-features` build to silently select Arctic's no-op SMR.
-arctic-ps-reclaim = []
+default = ["wti-predictable-search"]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
 s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
@@ -37,6 +33,8 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# Read-mostly snapshots own page Arcs while the fixed directory supplies a
+# pointer-only fast path. Publication is append-only and asserted at each swap.
 arc-swap = "1"
 async-trait = "0.1"
 arctic = { package = "arctic-wt", version = "^0.1", default-features = false, features = ["smr-ps-reclaim"] }

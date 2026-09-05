@@ -30,7 +30,7 @@ cargo add worktable@1.0.0-beta.5
 | **Concurrency** | Lock-free concurrent indexes with change-data-capture, plus a row-level `LockMap` for ordered access. |
 | **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature syncs that to S3. Both opt-in, so a purely in-memory table pays for neither. |
 | **Schema migration** | `worktable_version!` and `migration_engine!` version a table's schema and generate migrations between versions. See [docs/migration.md](docs/migration.md). |
-| **Memory accounting** | `MemStat` reports actual memory held. |
+| **Memory accounting** | `MemStat` estimates live heap; resident benchmarks measure allocator and SMR overhead. |
 
 ## Persistence
 

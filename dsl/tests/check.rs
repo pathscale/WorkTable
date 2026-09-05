@@ -194,6 +194,31 @@ fn a_plain_page_size_is_still_accepted() {
     assert!(checked.is_acceptable(), "unexpected: {:?}", checked.diagnostics);
 }
 
+#[test]
+fn arctic_rejects_links_wider_than_its_inline_encoding() {
+    let checked = worktable_dsl::check(
+        "name: T, persist: false, columns: { id: u64 primary_key }, config: { page_size: 65536 },",
+    );
+    assert!(!checked.is_acceptable());
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("16 bits")),
+        "the diagnostic explains the link-width limit: {:?}",
+        checked.diagnostics
+    );
+
+    let wti = worktable_dsl::check(
+        "name: T, persist: false, columns: { id: u64 primary_key using worktables_index }, config: { page_size: 65536 },",
+    );
+    assert!(
+        wti.is_acceptable(),
+        "WTI does not use Arctic's packed link: {:?}",
+        wti.diagnostics
+    );
+}
+
 /// Several indexes breaking the same rule must all be reported.
 ///
 /// `index_backends_into` used to pick one offender: the primary if it
@@ -254,10 +279,15 @@ fn a_primary_key_backend_is_checked_against_its_key_type() {
         refused.diagnostics
     );
 
-    // arctic has the same shape with a different list.
+    // Arctic accepts its compact integer key widths, including u8.
     assert!(
-        !worktable_dsl::check("name: P, persist: false, columns: { id: u8 primary_key using arctic },").is_acceptable(),
-        "arctic does not hold u8"
+        worktable_dsl::check("name: P, persist: false, columns: { id: u8 primary_key using arctic },").is_acceptable(),
+        "arctic holds u8"
+    );
+    assert!(
+        !worktable_dsl::check("name: P, persist: false, columns: { id: bool primary_key using arctic },")
+            .is_acceptable(),
+        "arctic does not hold bool"
     );
 
     // And a key type the backend does hold is still accepted.

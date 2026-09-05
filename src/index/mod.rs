@@ -11,7 +11,7 @@ mod table_secondary_index;
 mod unique;
 mod unsized_node;
 
-pub use arctic::{ArcticIndex, ArcticKey, ArcticStringKey, ArcticValue};
+pub use arctic::{ArcticEntry, ArcticIndex, ArcticKey, ArcticStringKey, ArcticValue, validate_arctic_link};
 pub use arctic_multi::ArcticMultiIndex;
 pub use available_index::AvailableIndex;
 pub use congee::{CongeeIndex, CongeeKey};
@@ -23,7 +23,9 @@ pub use persistent_art::{
 };
 pub use persistent_wti::PersistentWtiIndex;
 pub use primary_index::PrimaryIndex;
-pub use table_index::{TableIndex, TableIndexCdc, convert_change_events, convert_upstream_change_events};
+pub use table_index::{
+    TableIndex, TableIndexCdc, convert_change_events, convert_multi_change_events, convert_upstream_change_events,
+};
 pub use table_secondary_index::{
     IndexError, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
 };

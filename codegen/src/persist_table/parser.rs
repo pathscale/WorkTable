@@ -60,6 +60,7 @@ impl Parser {
                     }
                     if meta.path.is_ident("pk_arctic_string") {
                         res.pk_arctic_string = true;
+                        res.pk_unsized = true;
                         return Ok(());
                     }
                     if meta.path.is_ident("pk_congee") {

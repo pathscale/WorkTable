@@ -2,7 +2,7 @@ use std::cell::UnsafeCell;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use data_bucket::page::INNER_PAGE_SIZE;
 use data_bucket::page::PageId;
@@ -12,7 +12,7 @@ use derive_more::{Display, Error};
 use performance_measurement_codegen::performance_measurement;
 use rkyv::{
     Archive, Deserialize, Portable, Serialize,
-    api::{high::HighDeserializer, root_position},
+    api::high::HighDeserializer,
     rancor::Strategy,
     seal::Seal,
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
@@ -23,34 +23,159 @@ use rkyv::{
 use crate::in_memory::ArchivedRowWrapper;
 use crate::prelude::Link;
 
-const CELL_WRITER: u8 = 1 << 7;
-const CELL_READERS: u8 = !CELL_WRITER;
+const CELL_LOCK_SLOTS: usize = 64;
+const CELL_KEY_MASK: u64 = u32::MAX as u64;
+const CELL_READER_ONE: u64 = 1 << 32;
+const CELL_READER_MASK: u64 = ((1_u64 << 31) - 1) << 32;
+const CELL_WRITER: u64 = 1 << 63;
+
+#[derive(Debug)]
+struct CellLocks {
+    slots: [AtomicU64; CELL_LOCK_SLOTS],
+}
+
+impl Default for CellLocks {
+    fn default() -> Self {
+        Self {
+            slots: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+}
+
+impl CellLocks {
+    #[inline]
+    fn key(link: Link) -> Result<u64, ExecutionError> {
+        u64::from(link.offset)
+            .checked_add(1)
+            .filter(|key| *key <= CELL_KEY_MASK)
+            .ok_or(ExecutionError::InvalidLink)
+    }
+
+    #[inline]
+    fn start(key: u64) -> usize {
+        (key.wrapping_mul(0x9e37_79b9) as usize) & (CELL_LOCK_SLOTS - 1)
+    }
+
+    #[inline]
+    fn wait(spins: &mut u32) {
+        if *spins < 64 {
+            std::hint::spin_loop();
+            *spins += 1;
+        } else {
+            std::thread::yield_now();
+        }
+    }
+
+    fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
+        let key = Self::key(link)?;
+        let start = Self::start(key);
+        let mut spins = 0;
+        'retry: loop {
+            for distance in 0..CELL_LOCK_SLOTS {
+                let state = &self.slots[(start + distance) & (CELL_LOCK_SLOTS - 1)];
+                let current = state.load(Ordering::Acquire);
+                let current_key = current & CELL_KEY_MASK;
+                if current_key == key {
+                    if current & CELL_WRITER != 0 || current & CELL_READER_MASK == CELL_READER_MASK {
+                        Self::wait(&mut spins);
+                        continue 'retry;
+                    }
+                    if state
+                        .compare_exchange_weak(current, current + CELL_READER_ONE, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        return Ok(CellReadGuard { state });
+                    }
+                    continue 'retry;
+                }
+                if current == 0 {
+                    if state
+                        .compare_exchange_weak(0, key | CELL_READER_ONE, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        return Ok(CellReadGuard { state });
+                    }
+                    continue 'retry;
+                }
+            }
+            Self::wait(&mut spins);
+        }
+    }
+
+    fn write(&self, link: Link) -> Result<CellWriteGuard<'_>, ExecutionError> {
+        let key = Self::key(link)?;
+        let start = Self::start(key);
+        let mut spins = 0;
+        'retry: loop {
+            for distance in 0..CELL_LOCK_SLOTS {
+                let state = &self.slots[(start + distance) & (CELL_LOCK_SLOTS - 1)];
+                let current = state.load(Ordering::Acquire);
+                let current_key = current & CELL_KEY_MASK;
+                if current_key == key {
+                    if current & CELL_WRITER != 0 {
+                        Self::wait(&mut spins);
+                        continue 'retry;
+                    }
+                    if state
+                        .compare_exchange_weak(current, current | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
+                        .is_err()
+                    {
+                        continue 'retry;
+                    }
+                    while state.load(Ordering::Acquire) & CELL_READER_MASK != 0 {
+                        Self::wait(&mut spins);
+                    }
+                    return Ok(CellWriteGuard { state });
+                }
+                if current == 0 {
+                    if state
+                        .compare_exchange_weak(0, key | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        return Ok(CellWriteGuard { state });
+                    }
+                    continue 'retry;
+                }
+            }
+            Self::wait(&mut spins);
+        }
+    }
+
+    fn reset(&self) {
+        for slot in &self.slots {
+            slot.store(0, Ordering::Release);
+        }
+    }
+}
 
 /// Shared access to one exact archived cell.
 pub(crate) struct CellReadGuard<'a> {
-    state: *mut AtomicU8,
-    marker: PhantomData<&'a AtomicU8>,
+    state: &'a AtomicU64,
 }
 
 impl Drop for CellReadGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: the guard cannot outlive the page from which `state` came.
-        unsafe { &*self.state }.fetch_sub(1, Ordering::Release);
+        let previous = self.state.fetch_sub(CELL_READER_ONE, Ordering::Release);
+        debug_assert_ne!(previous & CELL_READER_MASK, 0, "cell reader count underflow");
+        let remaining = previous - CELL_READER_ONE;
+        if remaining & (CELL_READER_MASK | CELL_WRITER) == 0 {
+            let _ = self
+                .state
+                .compare_exchange(remaining, 0, Ordering::Release, Ordering::Relaxed);
+        }
     }
 }
 
 /// Exclusive access to one exact archived cell.
 pub(crate) struct CellWriteGuard<'a> {
-    state: *mut AtomicU8,
-    marker: PhantomData<&'a AtomicU8>,
+    state: &'a AtomicU64,
 }
 
 impl Drop for CellWriteGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: the guard cannot outlive the page from which `state` came.
-        unsafe { &*self.state }.store(0, Ordering::Release);
+        self.state.store(0, Ordering::Release);
     }
 }
 
@@ -97,6 +222,12 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     #[rkyv(with = Skip)]
     pub(crate) access: parking_lot::RwLock<()>,
 
+    /// Runtime-only exact-cell reader/writer coordination. The fixed table is
+    /// outside the archived row image, so lock state can never reach disk and
+    /// the beta.17 wrapper layout remains unchanged.
+    #[rkyv(with = Skip)]
+    cell_locks: CellLocks,
+
     /// Number of live cells currently published on this page.
     ///
     /// Vacuum gets move candidates from a transient snapshot of the primary
@@ -119,28 +250,7 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 unsafe impl<Row, const DATA_LENGTH: usize> Sync for Data<Row, DATA_LENGTH> {}
 
 impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
-    fn archived_cell_state_offset(bytes: &mut [u8]) -> Result<usize, ExecutionError>
-    where
-        Row: Archive,
-        <Row as Archive>::Archived: ArchivedRowWrapper,
-    {
-        let root_offset = root_position::<<Row as Archive>::Archived>(bytes.len());
-        let base = bytes.as_mut_ptr();
-        let root = unsafe { base.add(root_offset).cast::<<Row as Archive>::Archived>() };
-        let state = unsafe { <Row as Archive>::Archived::cell_state_ptr(root) }.cast::<u8>();
-        let offset = unsafe { state.offset_from(base) };
-        let offset = usize::try_from(offset).map_err(|_| ExecutionError::InvalidLink)?;
-        if offset >= bytes.len() {
-            return Err(ExecutionError::InvalidLink);
-        }
-        Ok(offset)
-    }
-
-    fn cell_state_ptr(&self, link: Link) -> Result<*mut AtomicU8, ExecutionError>
-    where
-        Row: Archive,
-        <Row as Archive>::Archived: ArchivedRowWrapper,
-    {
+    fn validate_link(&self, link: Link) -> Result<(), ExecutionError> {
         let start = link.offset as usize;
         let end = start
             .checked_add(link.length as usize)
@@ -149,17 +259,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         if link.length == 0 || end > initialized || end > DATA_LENGTH {
             return Err(ExecutionError::InvalidLink);
         }
-
-        let inner_data = unsafe { &mut *self.inner_data.get() };
-        let root = unsafe {
-            inner_data
-                .as_mut_ptr()
-                .add(start + root_position::<<Row as Archive>::Archived>(link.length as usize))
-                .cast::<<Row as Archive>::Archived>()
-        };
-        // SAFETY: `root` points at this cell's archived wrapper. The wrapper
-        // contract places its atomic state at a stable archived offset.
-        Ok(unsafe { <Row as Archive>::Archived::cell_state_ptr(root) })
+        Ok(())
     }
 
     pub(crate) fn read_cell(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError>
@@ -167,24 +267,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Row: Archive,
         <Row as Archive>::Archived: ArchivedRowWrapper,
     {
-        let state = self.cell_state_ptr(link)?;
-        let state_ref = unsafe { &*state };
-        loop {
-            let current = state_ref.load(Ordering::Acquire);
-            if current & CELL_WRITER != 0 || current & CELL_READERS == CELL_READERS {
-                std::hint::spin_loop();
-                continue;
-            }
-            if state_ref
-                .compare_exchange_weak(current, current + 1, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                return Ok(CellReadGuard {
-                    state,
-                    marker: PhantomData,
-                });
-            }
-        }
+        self.validate_link(link)?;
+        self.cell_locks.read(link)
     }
 
     pub(crate) fn write_cell(&self, link: Link) -> Result<CellWriteGuard<'_>, ExecutionError>
@@ -192,27 +276,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Row: Archive,
         <Row as Archive>::Archived: ArchivedRowWrapper,
     {
-        let state = self.cell_state_ptr(link)?;
-        let state_ref = unsafe { &*state };
-        loop {
-            let current = state_ref.load(Ordering::Acquire);
-            if current & CELL_WRITER != 0 {
-                std::hint::spin_loop();
-                continue;
-            }
-            if state_ref
-                .compare_exchange_weak(current, current | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                while state_ref.load(Ordering::Acquire) != CELL_WRITER {
-                    std::hint::spin_loop();
-                }
-                return Ok(CellWriteGuard {
-                    state,
-                    marker: PhantomData,
-                });
-            }
-        }
+        self.validate_link(link)?;
+        self.cell_locks.write(link)
     }
 
     /// Creates new [`Data`] page.
@@ -221,6 +286,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             id,
             free_offset: AtomicU32::default(),
             access: parking_lot::RwLock::new(()),
+            cell_locks: CellLocks::default(),
             live_cells: AtomicU32::new(0),
             inner_data: UnsafeCell::new(AlignedBytes::<DATA_LENGTH>([0; DATA_LENGTH])),
             _phantom: PhantomData,
@@ -232,6 +298,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             id: page.header.page_id,
             free_offset: AtomicU32::from(page.header.data_length),
             access: parking_lot::RwLock::new(()),
+            cell_locks: CellLocks::default(),
             live_cells: AtomicU32::new(0),
             inner_data: UnsafeCell::new(AlignedBytes::<DATA_LENGTH>(page.inner.data)),
             _phantom: PhantomData,
@@ -278,12 +345,18 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             length,
         };
 
-        self.register_cell(link);
+        self.register_cell(link)?;
 
         Ok(link)
     }
 
-    #[allow(clippy::missing_safety_doc)]
+    /// Replaces the complete archived row at an existing link.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold this cell's write guard until the copy finishes.
+    /// The serialized replacement must have the same archived layout as the
+    /// existing row.
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "DataRow"))]
     pub unsafe fn save_row_by_link(&self, row: &Row, link: Link) -> Result<Link, ExecutionError>
     where
@@ -301,34 +374,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[link.offset as usize..][..link.length as usize].copy_from_slice(bytes.as_slice());
-
-        Ok(link)
-    }
-
-    /// Replaces an archived cell while preserving its active synchronization
-    /// byte. The caller must hold this cell's write guard for the entire call.
-    ///
-    /// The lock lives inside the archived wrapper, so copying the serialized
-    /// replacement wholesale would briefly publish a zero lock byte while the
-    /// surrounding row is only partially copied. A reader could then enter the
-    /// cell and observe a torn row. Copy the bytes on either side instead.
-    #[allow(clippy::missing_safety_doc)]
-    pub unsafe fn save_row_by_link_preserving_cell_state(&self, row: &Row, link: Link) -> Result<Link, ExecutionError>
-    where
-        Row: Archive + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
-        <Row as Archive>::Archived: ArchivedRowWrapper,
-    {
-        let mut bytes = rkyv::to_bytes(row).map_err(|_| ExecutionError::SerializeError)?;
-        let length = bytes.len() as u32;
-        if length != link.length {
-            return Err(ExecutionError::InvalidLink);
-        }
-
-        let state = Self::archived_cell_state_offset(bytes.as_mut_slice())?;
-        let inner_data = unsafe { &mut *self.inner_data.get() };
-        let destination = &mut inner_data[link.offset as usize..][..link.length as usize];
-        destination[..state].copy_from_slice(&bytes[..state]);
-        destination[state + 1..].copy_from_slice(&bytes[state + 1..]);
 
         Ok(link)
     }
@@ -359,7 +404,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[link.offset as usize..][..link.length as usize].copy_from_slice(bytes.as_slice());
 
-        self.register_cell(link);
+        self.register_cell(link)?;
 
         Ok((link, link_left))
     }
@@ -431,20 +476,6 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Ok(inner_data[link.offset as usize..(link.offset + link.length) as usize].to_vec())
     }
 
-    /// Copies a wrapped row while clearing its runtime-only synchronization
-    /// byte in the copy. CDC and vacuum must never persist or publish an active
-    /// reader count into another cell.
-    pub(crate) fn get_raw_row_without_cell_state(&self, link: Link) -> Result<Vec<u8>, ExecutionError>
-    where
-        Row: Archive,
-        <Row as Archive>::Archived: ArchivedRowWrapper,
-    {
-        let mut bytes = self.get_raw_row(link)?;
-        let state = Self::archived_cell_state_offset(bytes.as_mut_slice())?;
-        bytes[state] = 0;
-        Ok(bytes)
-    }
-
     /// Moves data within the page from one location to another.
     /// Used for defragmentation - shifts data left to fill gaps.
     ///
@@ -506,7 +537,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             offset,
             length,
         };
-        self.register_cell(link);
+        self.register_cell(link)?;
         Ok(link)
     }
 
@@ -516,37 +547,32 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 
     pub fn reset(&self) {
         self.free_offset.store(0, Ordering::Release);
+        self.cell_locks.reset();
         self.live_cells.store(0, Ordering::Release);
     }
 
-    pub(crate) fn reset_cell_state(&self, link: Link) -> Result<(), ExecutionError>
-    where
-        Row: Archive,
-        <Row as Archive>::Archived: ArchivedRowWrapper,
-    {
-        // Persisted pages can contain whatever synchronization byte happened
-        // to be present in the last in-memory image. A cold load has no live
-        // readers, so reset runtime state before publishing the table.
-        unsafe { &*self.cell_state_ptr(link)? }.store(0, Ordering::Release);
-        Ok(())
-    }
-
-    pub(crate) fn register_cell(&self, link: Link) {
+    pub(crate) fn register_cell(&self, link: Link) -> Result<(), ExecutionError> {
         debug_assert_eq!(link.page_id, self.id);
         self.live_cells
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1))
-            .expect("live cell count overflow");
+            .map(|_| ())
+            .map_err(|_| ExecutionError::LiveCellCountOverflow)
     }
 
-    pub(crate) fn remove_cell(&self, link: Link) {
+    pub(crate) fn remove_cell(&self, link: Link) -> Result<(), ExecutionError> {
         debug_assert_eq!(link.page_id, self.id);
         self.live_cells
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_sub(1))
-            .expect("removing a cell from an empty page");
+            .map(|_| ())
+            .map_err(|_| ExecutionError::LiveCellCountUnderflow)
     }
 
     pub(crate) fn has_live_cells(&self) -> bool {
         self.live_cells.load(Ordering::Acquire) != 0
+    }
+
+    pub(crate) fn live_cell_count(&self) -> u32 {
+        self.live_cells.load(Ordering::Acquire)
     }
 }
 
@@ -569,6 +595,12 @@ pub enum ExecutionError {
 
     /// Link provided for saving `Row` is invalid.
     InvalidLink,
+
+    /// A page's live-cell count cannot represent another row.
+    LiveCellCountOverflow,
+
+    /// A row was removed from a page whose live-cell count was already zero.
+    LiveCellCountUnderflow,
 }
 
 #[cfg(test)]

@@ -36,29 +36,38 @@ impl Generator {
                 self: std::sync::Arc<Self>,
                 timeout: std::time::Duration,
                 quiesce: F,
-            ) -> eyre::Result<UnloadReport>
+            ) -> Result<UnloadReport, UnloadFailure<Self>>
             where
                 F: FnOnce() -> Fut,
                 Fut: std::future::Future<Output = ()>,
             {
-                let released_bytes = self.heap_size();
-                tokio::time::timeout(timeout, quiesce())
-                    .await
-                    .map_err(|_| eyre::eyre!("timed out waiting for generation leases to quiesce"))?;
-
-                let outstanding = std::sync::Arc::strong_count(&self).saturating_sub(1);
-                if outstanding != 0 {
-                    return Err(eyre::eyre!(
-                        "cannot unload generation: {outstanding} Arc lease(s) remain after quiesce"
+                // Attribute the generation at the retirement request. The
+                // quiesce callback can give background maintenance time to
+                // shrink or rearrange live structures before the final drop;
+                // measuring afterwards would make the report depend on how
+                // long the reader barrier happened to take.
+                let estimated_released_bytes = self.heap_size();
+                if tokio::time::timeout(timeout, quiesce()).await.is_err() {
+                    return Err(UnloadFailure::retained(
+                        self,
+                        eyre::eyre!("timed out waiting for generation leases to quiesce"),
                     ));
                 }
 
-                let owned = std::sync::Arc::try_unwrap(self).map_err(|arc| {
-                    let outstanding = std::sync::Arc::strong_count(&arc).saturating_sub(1);
-                    eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain")
+                let owned = match std::sync::Arc::try_unwrap(self) {
+                    Ok(owned) => owned,
+                    Err(arc) => {
+                        let outstanding = std::sync::Arc::strong_count(&arc).saturating_sub(1);
+                        return Err(UnloadFailure::retained(
+                            arc,
+                            eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain"),
+                        ));
+                    }
+                };
+                owned.close().await.map_err(|error| {
+                    UnloadFailure::after_close(eyre::Report::new(error))
                 })?;
-                owned.close().await?;
-                Ok(UnloadReport { released_bytes })
+                Ok(UnloadReport { estimated_released_bytes })
             }
         }
     }
@@ -175,10 +184,40 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
-        if self.attributes.pk_arctic || self.attributes.pk_arctic_string || self.attributes.pk_congee {
-            // ART durability is maintained incrementally by its native
-            // checkpoint/WAL file rather than materialized as DataBucket pages.
+        if self.attributes.pk_congee {
+            // Congee durability is maintained by its native checkpoint/WAL.
             quote! {}
+        } else if self.attributes.pk_arctic_string {
+            quote! {
+                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
+                    let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name);
+                    for (key, value) in self.0.primary_index.pk_map.iter_values() {
+                        shadow.insert(key, value);
+                    }
+                    let mut pages = vec![];
+                    for node in shadow.iter_nodes() {
+                        pages.push(UnsizedIndexPage::from_node(node.lock_arc().as_ref()));
+                    }
+                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                    (toc.pages, pages)
+                }
+            }
+        } else if self.attributes.pk_arctic {
+            quote! {
+                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>>::with_maximum_node_size(size);
+                    for (key, value) in self.0.primary_index.pk_map.iter_values() {
+                        shadow.insert(key, value);
+                    }
+                    let mut pages = vec![];
+                    for node in shadow.iter_nodes() {
+                        pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                    }
+                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                    (toc.pages, pages)
+                }
+            }
         } else if self.attributes.pk_unsized {
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {

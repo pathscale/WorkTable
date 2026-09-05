@@ -20,6 +20,7 @@ use data_bucket::{
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
+use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::core::pair::Pair;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
@@ -330,6 +331,29 @@ where
             indexset.attach_node(node)
         }
 
+        Ok(indexset)
+    }
+
+    /// Reconstructs a non-unique WTI index without changing its persisted
+    /// topology. Keeping the original node boundaries is required because
+    /// subsequent CDC events address pages by their current node maxima.
+    pub async fn parse_index_multimap(&mut self, index_name: &str) -> eyre::Result<BTreeMultiMap<T, Link>> {
+        let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
+        let indexset = BTreeMultiMap::<T, Link>::with_maximum_node_size(size);
+        let mut pages = Vec::with_capacity(self.table_of_contents.iter().count());
+        for ((key, link), page_id) in self.table_of_contents.iter() {
+            let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, (*page_id).into()).await?;
+            pages.push((
+                Pair {
+                    key: key.clone(),
+                    value: *link,
+                },
+                page.inner.get_node(),
+            ));
+        }
+        for node in reconstruct_multi_index_nodes(index_name, pages) {
+            indexset.attach_multi_node(node);
+        }
         Ok(indexset)
     }
 }

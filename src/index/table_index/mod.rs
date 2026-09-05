@@ -18,7 +18,7 @@ mod cdc;
 pub mod util;
 
 pub use cdc::TableIndexCdc;
-pub use util::{convert_change_events, convert_upstream_change_events};
+pub use util::{convert_change_events, convert_multi_change_events, convert_upstream_change_events};
 
 pub trait TableIndex<T> {
     fn insert(&self, value: T, link: Link) -> Option<Link>;

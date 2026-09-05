@@ -111,9 +111,11 @@ impl<T> PageDirectory<T> {
             let mut chunks = self.chunks.lock();
             chunk = root.load(Ordering::Acquire);
             if chunk.is_null() {
-                let mut owned = Box::new(PageDirectoryChunk::new());
-                chunk = (&mut *owned) as *mut PageDirectoryChunk<T>;
-                chunks.push(owned);
+                chunks.push(Box::new(PageDirectoryChunk::new()));
+                chunk = std::ptr::from_ref::<PageDirectoryChunk<T>>(
+                    chunks.last().expect("the chunk was just appended").as_ref(),
+                )
+                .cast_mut();
                 root.store(chunk, Ordering::Release);
             }
         }
@@ -643,7 +645,9 @@ where
                     DataExecutionError::PageIsFull { .. }
                     | DataExecutionError::PageTooSmall { .. }
                     | DataExecutionError::SerializeError
-                    | DataExecutionError::DeserializeError => return Err(e.into()),
+                    | DataExecutionError::DeserializeError
+                    | DataExecutionError::LiveCellCountOverflow
+                    | DataExecutionError::LiveCellCountUnderflow => return Err(e.into()),
                 },
             }
         }
@@ -705,7 +709,9 @@ where
                     DataExecutionError::PageTooSmall { .. }
                     | DataExecutionError::SerializeError
                     | DataExecutionError::DeserializeError
-                    | DataExecutionError::InvalidLink => return Err(e.into()),
+                    | DataExecutionError::InvalidLink
+                    | DataExecutionError::LiveCellCountOverflow
+                    | DataExecutionError::LiveCellCountUnderflow => return Err(e.into()),
                 },
             };
         }
@@ -738,6 +744,13 @@ where
             let mut next = (*pages).clone();
             let page = Arc::new(Data::new(index.into()));
             next.push(page.clone());
+            debug_assert_eq!(next.len(), pages.len() + 1);
+            debug_assert!(
+                next[..pages.len()]
+                    .iter()
+                    .zip(pages.iter())
+                    .all(|(new, old)| Arc::ptr_eq(new, old))
+            );
             self.pages.store(Arc::new(next));
             self.publish_page(&page);
             self.current_page_id.store(index, Ordering::Release);
@@ -772,6 +785,13 @@ where
         let pages = self.pages.load_full();
         let mut next = (*pages).clone();
         next.push(page.clone());
+        debug_assert_eq!(next.len(), pages.len() + 1);
+        debug_assert!(
+            next[..pages.len()]
+                .iter()
+                .zip(pages.iter())
+                .all(|(new, old)| Arc::ptr_eq(new, old))
+        );
         self.pages.store(Arc::new(next));
         self.publish_page(&page);
 
@@ -911,7 +931,7 @@ where
         let _cell_guard = page.write_cell(link).map_err(ExecutionError::DataPageError)?;
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row.clone());
         let result = unsafe {
-            page.save_row_by_link_preserving_cell_state(&gen_row, link)
+            page.save_row_by_link(&gen_row, link)
                 .map_err(ExecutionError::DataPageError)
         }?;
         Ok(result)
@@ -958,7 +978,7 @@ where
         // `row` is consumed by the wrapper here (no clone): it is not used again.
         let gen_row = <Row as StorableRow>::WrappedRow::from_inner(row);
         unsafe {
-            page.save_row_by_link_preserving_cell_state(&gen_row, link)
+            page.save_row_by_link(&gen_row, link)
                 .map_err(ExecutionError::DataPageError)?;
         }
         // Clear the ghost bit on the stored row. A fresh `from_inner` wrapper
@@ -1025,8 +1045,11 @@ where
         for link in links {
             match unsafe { self.with_mut_ref(*link, |r| r.delete()) } {
                 Ok(()) => {
-                    self.remove_cell(*link)?;
                     ghosted += 1;
+                    if let Err(error) = self.remove_cell(*link) {
+                        failure = Some(error);
+                        break;
+                    }
                 }
                 Err(error) => {
                     failure = Some(error);
@@ -1050,8 +1073,7 @@ where
     pub fn select_raw(&self, link: Link) -> Result<Vec<u8>, ExecutionError> {
         let page = self.page_ref(link.page_id)?;
         let _cell_guard = page.read_cell(link).map_err(ExecutionError::DataPageError)?;
-        page.get_raw_row_without_cell_state(link)
-            .map_err(ExecutionError::DataPageError)
+        page.get_raw_row(link).map_err(ExecutionError::DataPageError)
     }
 
     pub fn mark_page_empty(&self, page_id: PageId) {
@@ -1103,16 +1125,13 @@ where
     /// for a persisted table.
     pub fn register_cell(&self, link: Link) -> Result<(), ExecutionError> {
         let page = self.page_ref(link.page_id)?;
-        let _page_guard = page.access.read();
-        page.reset_cell_state(link).map_err(ExecutionError::DataPageError)?;
-        page.register_cell(link);
+        page.register_cell(link).map_err(ExecutionError::DataPageError)?;
         Ok(())
     }
 
     fn remove_cell(&self, link: Link) -> Result<(), ExecutionError> {
         let page = self.page_ref(link.page_id)?;
-        let _page_guard = page.access.read();
-        page.remove_cell(link);
+        page.remove_cell(link).map_err(ExecutionError::DataPageError)?;
         Ok(())
     }
 
@@ -1121,6 +1140,19 @@ where
         Ok(page.has_live_cells())
     }
 
+    pub(crate) fn page_live_cell_count(&self, page_id: PageId) -> Result<u32, ExecutionError> {
+        let page = self.page_ref(page_id)?;
+        Ok(page.live_cell_count())
+    }
+
+    pub(crate) fn set_loaded_row_count(&self, count: usize) -> Result<(), ExecutionError> {
+        let count = u64::try_from(count).map_err(|_| ExecutionError::RowCountOverflow)?;
+        self.row_count.store(count, Ordering::Release);
+        Ok(())
+    }
+
+    /// Completes the vacuum's source-side accounting after every index has
+    /// been swung to the destination link.
     pub(crate) fn remove_moved_cell(&self, link: Link) -> Result<(), ExecutionError> {
         self.remove_cell(link)
     }
@@ -1173,14 +1205,15 @@ where
         let _cell_guard = from_page.write_cell(from_link).map_err(ExecutionError::DataPageError)?;
 
         let raw_data = from_page
-            .get_raw_row_without_cell_state(from_link)
+            .get_raw_row(from_link)
             .map_err(ExecutionError::DataPageError)?;
         // Copy to the destination BEFORE flagging the source. The vacuumed
         // flag used to be set first, so a failing destination save returned
         // with the flag durably set in the source page image: after a restart
         // the row would load as vacuumed with no copy anywhere (row loss).
-        // The whole method holds both pages' write barriers, so the order is
-        // invisible to concurrent readers.
+        // The source cell guard keeps its bytes private, and destination bytes
+        // are unreachable until the caller publishes `new_link`, so readers
+        // cannot observe this intermediate state.
         let new_link = to_page.save_raw_row(&raw_data).map_err(ExecutionError::DataPageError)?;
         let archived = unsafe {
             from_page
@@ -1279,6 +1312,9 @@ where
 pub enum ExecutionError {
     DataPageError(DataExecutionError),
 
+    #[display("row count exceeds u64")]
+    RowCountOverflow,
+
     PageNotFound(#[error(not(source))] PageId),
 
     Locked,
@@ -1309,7 +1345,6 @@ impl ExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use super::{DELETED, GHOSTED, VACUUMED};
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
@@ -1323,7 +1358,7 @@ mod tests {
 
     use crate::in_memory::data::Data;
     use crate::in_memory::pages::{DataPages, ExecutionError};
-    use crate::in_memory::{CellState, DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
+    use crate::in_memory::{DATA_INNER_LENGTH, PagesExecutionError, RowWrapper, StorableRow};
     use crate::prelude::ArchivedRowWrapper;
     use data_bucket::Link;
 
@@ -1336,14 +1371,15 @@ mod tests {
     /// General `Row` wrapper that is used to append general data for every `Inner`
     /// `Row`.
     #[derive(Archive, Deserialize, Debug, Serialize)]
-    #[rkyv(attr(repr(C)))]
     pub struct GeneralRow<Inner> {
         /// Inner generic `Row`.
         pub inner: Inner,
 
-        pub publication_flags: u8,
+        pub is_ghosted: bool,
 
-        pub cell_state: CellState,
+        pub is_deleted: bool,
+
+        pub is_in_vacuum_process: bool,
     }
 
     impl<Inner> RowWrapper<Inner> for GeneralRow<Inner> {
@@ -1352,23 +1388,24 @@ mod tests {
         }
 
         fn is_ghosted(&self) -> bool {
-            self.publication_flags & GHOSTED != 0
+            self.is_ghosted
         }
 
         fn is_vacuumed(&self) -> bool {
-            self.publication_flags & VACUUMED != 0
+            self.is_in_vacuum_process
         }
 
         fn is_deleted(&self) -> bool {
-            self.publication_flags & DELETED != 0
+            self.is_deleted
         }
 
         /// Creates new [`GeneralRow`] from `Inner`.
         fn from_inner(inner: Inner) -> Self {
             Self {
                 inner,
-                publication_flags: GHOSTED,
-                cell_state: CellState,
+                is_ghosted: true,
+                is_deleted: false,
+                is_in_vacuum_process: false,
             }
         }
     }
@@ -1381,20 +1418,17 @@ mod tests {
     where
         T: Archive,
     {
-        unsafe fn cell_state_ptr(this: *mut Self) -> *mut std::sync::atomic::AtomicU8 {
-            unsafe { std::ptr::addr_of_mut!((*this).cell_state).cast() }
-        }
         fn unghost(&mut self) {
-            self.publication_flags &= !GHOSTED
+            self.is_ghosted = false
         }
         fn set_in_vacuum_process(&mut self) {
-            self.publication_flags |= VACUUMED
+            self.is_in_vacuum_process = true
         }
         fn delete(&mut self) {
-            self.publication_flags |= DELETED
+            self.is_deleted = true
         }
         fn is_deleted(&self) -> bool {
-            self.publication_flags & DELETED != 0
+            self.is_deleted
         }
     }
 
@@ -1910,7 +1944,7 @@ mod tests {
         // The source row must NOT be left flagged as in-vacuum-process: that
         // flag is written into the persisted page image, and with no copy on
         // the destination it would mean durable row loss after a restart.
-        let vacuumed = pages.with_ref(link, |r| r.publication_flags & VACUUMED != 0).unwrap();
+        let vacuumed = pages.with_ref(link, |r| r.is_in_vacuum_process).unwrap();
         assert!(!vacuumed, "failed move must not leave the source marked vacuumed");
         assert_eq!(pages.select_non_vacuumed(link), Ok(row));
     }

@@ -71,6 +71,21 @@ pub trait WorkTableVacuum {
     /// the thing that got fragmented. Callers still want a fallback interval
     /// alongside this, for a table whose threshold is never reached.
     async fn wait_until_worth_running(&self);
+
+    /// Live cumulative counters, including work that has started but has not
+    /// completed a sweep yet.
+    fn diagnostics(&self) -> VacuumDiagnosticsSnapshot;
+}
+
+/// Cumulative vacuum activity. Unlike manager sweep counts, these counters
+/// expose partial work while a sweep is still waiting or running.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct VacuumDiagnosticsSnapshot {
+    pub requests: u64,
+    pub work_batches: u64,
+    pub pages_examined: u64,
+    pub pages_reclaimed: u64,
+    pub completions: u64,
 }
 
 /// Represents vacuum statistics after a vacuum operation

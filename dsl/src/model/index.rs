@@ -2,22 +2,22 @@ use proc_macro2::Ident;
 
 /// Physical implementation selected for a generated index.
 ///
-/// `WorktablesIndex` is deliberately the default so existing declarations keep
-/// their current implementation and persistence semantics when `using` is
-/// absent. Vanilla upstream IndexSet is an explicit, parallel backend.
+/// Arctic is the default runtime backend. Persisted tables retain the existing
+/// WorkTablesIndex page format, so declarations without `using` can open files
+/// created by earlier releases while getting Arctic for in-memory lookups.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum IndexBackend {
-    #[default]
     WorktablesIndex,
     Indexset,
     Congee,
+    #[default]
     Arctic,
 }
 
 impl IndexBackend {
     pub fn requires_explicit_persistence(self) -> bool {
-        matches!(self, Self::Congee | Self::Arctic)
+        matches!(self, Self::Congee)
     }
 
     pub fn name(self) -> &'static str {

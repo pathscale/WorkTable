@@ -16,15 +16,16 @@ Change Log
 
 ### Changed
 
-- WorkTable row/page reclamation uses the local `ps-reclaim` domain for every
-  index backend; the WorkTable Arctic adapter also selects Arctic's
-  `ps-reclaim` SMR exclusively.
+- WorkTable row/page reclamation uses the local `ps-reclaim` domain regardless
+  of the selected index backend. Arctic and Congee also select their local
+  `ps-reclaim` SMR implementations; WorkTablesIndex retains its structural
+  skip-list reclamation internally.
 - Readers now synchronize on the exact physical cell. Unrelated rows cannot
   block because of a hashed lock collision.
 - Vacuum discovers move candidates from a transient primary-index snapshot and
   keeps only one live-cell counter per page, removing the previous four-byte
   per-row directory.
-- Vacuum waits for two quiet observations after mutation activity and yields
+- Vacuum waits for three quiet observations after mutation activity and yields
   throughout a bulk mutation instead of competing with foreground work.
 - The archived wrapper retains the beta.17 inner-row position so legacy stores
   without bundled schema metadata remain readable.
@@ -33,8 +34,8 @@ Change Log
 
 - Torn reads and premature physical-link reuse during concurrent update,
   delete, and vacuum activity.
-- In-place replacement now preserves the embedded cell lock byte while copying
-  the rest of the archived row.
+- In-place replacement synchronizes through the runtime side-table cell lock;
+  the beta.17 archived row bytes remain unchanged.
 - Whole-map Arctic destruction uses an unordered physical drain instead of
   repeatedly searching for the next logical key.
 - Persisted primary/secondary index reconstruction and validation failures that

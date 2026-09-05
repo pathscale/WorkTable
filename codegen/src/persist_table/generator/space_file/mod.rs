@@ -28,17 +28,9 @@ impl Generator {
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
         let space_file_ident = name_generator.get_space_file_ident();
-        let primary_index = if self.attributes.pk_arctic_string {
-            quote! {
-                pub primary_index: PersistentArcticIndex<#pk_type, OffsetEqLink<#inner_const_name>>,
-            }
-        } else if self.attributes.pk_unsized {
+        let primary_index = if self.attributes.pk_unsized {
             quote! {
                 pub primary_index: (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>>>),
-            }
-        } else if self.attributes.pk_arctic {
-            quote! {
-                pub primary_index: PersistentArcticIndex<#pk_type, OffsetEqLink<#inner_const_name>>,
             }
         } else if self.attributes.pk_congee {
             quote! {
@@ -65,12 +57,11 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let literal_name = name_generator.get_work_table_literal_name();
         let version_const = name_generator.get_version_const_ident();
-        let primary_page_count =
-            if self.attributes.pk_arctic || self.attributes.pk_arctic_string || self.attributes.pk_congee {
-                quote! { 1 }
-            } else {
-                quote! { self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32 }
-            };
+        let primary_page_count = if self.attributes.pk_congee {
+            quote! { 1 }
+        } else {
+            quote! { self.primary_index.0.len() as u32 + self.primary_index.1.len() as u32 }
+        };
         let row_schema = self.attributes.row_schema.iter().map(|(name, type_name)| {
             quote! { (#name.to_string(), #type_name.to_string()) }
         });
@@ -146,9 +137,21 @@ impl Generator {
         let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
         let avt_index_ident = name_generator.get_available_indexes_ident();
 
-        let primary_index_init = if self.attributes.pk_arctic_string {
+        let primary_index_init = if self.attributes.pk_arctic || self.attributes.pk_arctic_string {
+            let map_type = if self.attributes.read_only {
+                quote! { ArcticIndex }
+            } else {
+                quote! { PersistentArcticIndex }
+            };
             quote! {
-                let pk_map = self.primary_index;
+                let pk_map = #map_type::<#pk_type, OffsetEqLink<#const_name>>::default();
+                for page in self.primary_index.1 {
+                    for pair in page.inner.get_node() {
+                        validate_arctic_link(pair.value)
+                            .map_err(|error| PersistenceLoadError::corrupt(path, error))?;
+                        pk_map.insert_value(pair.key, OffsetEqLink(pair.value));
+                    }
+                }
                 let primary_index = PrimaryIndex::from_map(pk_map);
             }
         } else if self.attributes.pk_unsized {
@@ -174,7 +177,7 @@ impl Generator {
                 }
                 let primary_index = PrimaryIndex::from_map(pk_map);
             }
-        } else if self.attributes.pk_arctic || self.attributes.pk_congee {
+        } else if self.attributes.pk_congee {
             quote! {
                 let pk_map = self.primary_index;
                 let primary_index = PrimaryIndex::from_map(pk_map);
@@ -338,7 +341,7 @@ impl Generator {
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
         let data_extension = Literal::string(WT_DATA_EXTENSION);
 
-        let parse_pk_page = if self.attributes.pk_unsized && !self.attributes.pk_arctic_string {
+        let parse_pk_page = if self.attributes.pk_unsized {
             quote! {
                 let index = parse_page::<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
             }
@@ -348,21 +351,7 @@ impl Generator {
             }
         };
 
-        let parse_primary = if self.attributes.pk_arctic_string {
-            quote! {
-                SpaceArcticStringIndex::<#pk_type, { #inner_const_name as u32 }>::load_index::<#inner_const_name>(
-                    format!("{}/primary{}", path, #index_extension),
-                    #version_const_name,
-                ).await?
-            }
-        } else if self.attributes.pk_arctic {
-            quote! {
-                SpaceArcticIndex::<#pk_type, { #inner_const_name as u32 }>::load_index::<#inner_const_name>(
-                    format!("{}/primary{}", path, #index_extension),
-                    #version_const_name,
-                ).await?
-            }
-        } else if self.attributes.pk_congee {
+        let parse_primary = if self.attributes.pk_congee {
             quote! {
                 SpaceCongeeIndex::<#pk_type, { #inner_const_name as u32 }>::load_index::<#inner_const_name>(
                     format!("{}/primary{}", path, #index_extension),

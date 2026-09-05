@@ -83,6 +83,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 
     worktable_dsl::validate::validate_index_backends(&columns, persistence)?;
     worktable_dsl::validate::validate_page_size(config.as_ref(), persistence)?;
+    worktable_dsl::validate::validate_arctic_page_size(&columns, config.as_ref())?;
     if let Some(q) = &queries {
         worktable_dsl::validate::validate_in_place_queries(&columns, q)?;
     }
@@ -179,8 +180,8 @@ mod tests {
                 name: CompositePrimaryKeyOrder,
                 persist: #persist,
                 columns: {
-                    tenant_id: u64 primary_key,
-                    record_id: u64 primary_key,
+                    tenant_id: u64 primary_key using worktables_index,
+                    record_id: u64 primary_key using worktables_index,
                     value: i64,
                 },
             })
@@ -191,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn absent_using_keeps_worktables_index_default() {
+    fn absent_using_selects_arctic_runtime_with_compatible_persistence() {
         let output = expand(quote! {
             name: DefaultBackend,
             persist: true,
@@ -206,12 +207,8 @@ mod tests {
         .unwrap()
         .to_string();
 
-        if cfg!(feature = "logical-index-persistence") {
-            assert!(output.contains("PersistentWtiIndex"));
-        } else {
-            assert!(output.contains("IndexMap"));
-            assert!(!output.contains("PersistentWtiIndex"));
-        }
+        assert!(output.contains("PersistentArcticIndex"));
+        assert!(output.contains("table (pk_arctic)"));
     }
 
     #[test]
@@ -312,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn art_backend_requires_explicit_persistence_choice() {
+    fn congee_backend_requires_explicit_persistence_choice() {
         let error = expand(quote! {
             name: MissingAcknowledgement,
             columns: {
@@ -415,7 +412,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("supported types: String, u16, u32, u64, u128, i16, i32, i64, i128")
+                .contains("supported types: String, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128")
         );
     }
 
@@ -465,11 +462,11 @@ mod tests {
     #[test]
     fn arctic_rejects_unsupported_secondary_keys() {
         let error = expand(quote! {
-            name: ByteArctic,
+            name: BoolArctic,
             persist: false,
             columns: {
                 id: u64 primary_key,
-                value: u8,
+                value: bool,
             },
             indexes: {
                 value_idx: value unique using arctic,
@@ -480,7 +477,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("supported types: String, u16, u32, u64, u128, i16, i32, i64, i128")
+                .contains("supported types: String, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128")
         );
     }
 

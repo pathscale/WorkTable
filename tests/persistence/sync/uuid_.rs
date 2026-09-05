@@ -14,8 +14,8 @@ worktable!(
         second: Uuid,
     },
     indexes: {
-        first_idx: first,
-        second_idx: second unique,
+        first_idx: first using worktables_index,
+        second_idx: second unique using worktables_index,
     },
 );
 

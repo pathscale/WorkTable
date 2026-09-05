@@ -446,7 +446,7 @@ mod tests {
         let mut columns = parser.parse_columns().unwrap();
         let mut parser = Parser::new(quote! {
             indexes: {
-                price_idx: price,
+                price_idx: price using worktables_index,
             }
         });
         columns.indexes = parser.parse_indexes().unwrap();

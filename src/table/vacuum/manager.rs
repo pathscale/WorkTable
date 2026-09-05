@@ -7,7 +7,7 @@ use tokio::task::AbortHandle;
 use parking_lot::RwLock;
 use smart_default::SmartDefault;
 
-use crate::vacuum::WorkTableVacuum;
+use crate::vacuum::{VacuumDiagnosticsSnapshot, WorkTableVacuum};
 
 /// How long a sweep waits before checking a table nothing has woken it about.
 ///
@@ -108,6 +108,21 @@ impl VacuumManager {
         id
     }
 
+    /// Aggregate live activity from every registered table vacuum.
+    pub fn diagnostic_snapshot(&self) -> VacuumDiagnosticsSnapshot {
+        self.vacuums.read().values().map(|vacuum| vacuum.diagnostics()).fold(
+            VacuumDiagnosticsSnapshot::default(),
+            |mut total, item| {
+                total.requests += item.requests;
+                total.work_batches += item.work_batches;
+                total.pages_examined += item.pages_examined;
+                total.pages_reclaimed += item.pages_reclaimed;
+                total.completions += item.completions;
+                total
+            },
+        )
+    }
+
     /// Starts a background task that periodically checks fragmentation and runs
     /// vacuum.
     ///
@@ -183,7 +198,7 @@ impl VacuumManager {
                                 final_consolidation_ran = true;
                             }
                             {
-                                log::debug!("Vacuuming {}", info.table_name);
+                                log::debug!("vacuum requested for {}; waiting for a quiet window", info.table_name);
                                 match vacuum.vacuum().await {
                                     Ok(stats) => {
                                         self.stats.sweeps.fetch_add(1, Ordering::Relaxed);

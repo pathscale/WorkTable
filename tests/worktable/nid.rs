@@ -9,7 +9,7 @@ type PackedNanoid21 = packed_nanoid_type!(21, Base64UrlAlphabet);
 worktable!(
     name: Test,
     columns: {
-        id: PackedNanoid21 primary_key,
+        id: PackedNanoid21 primary_key using worktables_index,
         another: i64,
     }
 );

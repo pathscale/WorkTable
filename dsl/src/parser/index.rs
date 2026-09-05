@@ -145,10 +145,10 @@ mod tests {
     use crate::model::IndexBackend;
 
     #[test]
-    fn absent_using_defaults_to_worktables_index() {
+    fn absent_using_defaults_to_arctic() {
         let mut parser = Parser::new(quote! { value_idx: value unique, });
         let (_, index) = parser.parse_index().unwrap();
-        assert_eq!(index.backend, IndexBackend::WorktablesIndex);
+        assert_eq!(index.backend, IndexBackend::Arctic);
     }
 
     #[test]

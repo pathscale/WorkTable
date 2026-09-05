@@ -5,7 +5,7 @@ use worktable::worktable;
 worktable! (
     name: Test,
     columns: {
-        id: Uuid primary_key,
+        id: Uuid primary_key using worktables_index,
         another: i64,
     }
 );

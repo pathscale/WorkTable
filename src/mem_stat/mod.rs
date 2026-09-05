@@ -145,25 +145,28 @@ where
 
 impl<K, V> MemStat for CongeeIndex<K, V>
 where
-    K: CongeeKey,
-    V: Clone + Debug + Send + Sync + 'static,
+    K: CongeeKey + MemStat,
+    V: Clone + Debug + Send + Sync + MemStat + 'static,
 {
     fn heap_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        let values = self.iter_values().map(|(_, value)| value.heap_size()).sum::<usize>();
+        self.allocated_node_bytes()
+            + self.len() * (std::mem::size_of::<V>() + 2 * std::mem::size_of::<usize>())
+            + values
     }
 
     fn used_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        self.heap_size()
     }
 }
 
 impl<K, V> MemStat for ArcticIndex<K, V>
 where
-    K: ArcticKey,
-    V: ArcticValue,
+    K: ArcticKey + MemStat,
+    V: ArcticValue + MemStat,
 {
     fn heap_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        self.allocated_node_bytes() + self.iter().map(|(_, value)| value.heap_size()).sum::<usize>()
     }
 
     fn used_size(&self) -> usize {
@@ -173,11 +176,11 @@ where
 
 impl<K, V> MemStat for ArcticMultiIndex<K, V>
 where
-    K: ArcticKey,
-    V: Clone + Debug + PartialEq + Send + Sync + 'static,
+    K: ArcticKey + MemStat,
+    V: Clone + Debug + PartialEq + Send + Sync + MemStat + 'static,
 {
     fn heap_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        self.allocated_index_bytes() + self.iter().map(|(_, value)| value.heap_size()).sum::<usize>()
     }
 
     fn used_size(&self) -> usize {

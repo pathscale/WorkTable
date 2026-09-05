@@ -20,8 +20,8 @@ worktable!(
 worktable!(
     name: BorrowedTupleKey,
     columns: {
-        tenant: String primary_key,
-        record: String primary_key,
+        tenant: String primary_key using worktables_index,
+        record: String primary_key using worktables_index,
         value: u64,
     },
 );

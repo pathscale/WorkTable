@@ -50,6 +50,32 @@ pub fn validate_page_size(config: Option<&crate::model::Config>, persistence: Pe
     Ok(())
 }
 
+/// Arctic stores a row link in one inline `u64`: 32 bits for the page id and
+/// 16 bits each for the offset and length. A larger page can produce a link
+/// that cannot be represented, even for an in-memory table.
+pub fn validate_arctic_page_size(columns: &Columns, config: Option<&crate::model::Config>) -> syn::Result<()> {
+    let Some(config) = config else { return Ok(()) };
+    let Some(page_size) = config.page_size else {
+        return Ok(());
+    };
+    let uses_arctic = columns.primary_index_backend == IndexBackend::Arctic
+        || columns
+            .indexes
+            .values()
+            .any(|index| index.backend == IndexBackend::Arctic);
+    if uses_arctic && page_size > u32::from(u16::MAX) {
+        let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`page_size: {page_size}` is too large for an Arctic-backed table: Arctic packs each row link into 64 bits and its offset and length fields are 16 bits. Use a page size no larger than {} or select `using worktables_index` for every index",
+                u16::MAX,
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// `in_place` queries hand the caller a mutable reference to the archived
 /// column bytes and bypass all index maintenance, so a column that any index
 /// is built over cannot be mutated in place: the index would keep resolving
@@ -235,7 +261,9 @@ pub const AUTOINCREMENT_TYPES: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16
 pub fn supported_key_types(backend: IndexBackend) -> Option<&'static [&'static str]> {
     match backend {
         IndexBackend::Congee => Some(&["u8", "u16", "u32", "u64", "usize"]),
-        IndexBackend::Arctic => Some(&["String", "u16", "u32", "u64", "u128", "i16", "i32", "i64", "i128"]),
+        IndexBackend::Arctic => Some(&[
+            "String", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
+        ]),
         IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
     }
 }
@@ -263,6 +291,9 @@ pub fn all(
     let mut errors = Vec::new();
     index_backends_into(columns, persistence, &mut errors);
     if let Err(error) = validate_page_size(config, persistence) {
+        errors.push(error);
+    }
+    if let Err(error) = validate_arctic_page_size(columns, config) {
         errors.push(error);
     }
     if let Some(queries) = queries

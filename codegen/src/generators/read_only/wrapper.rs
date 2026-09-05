@@ -25,12 +25,12 @@ impl ReadOnlyGenerator {
 
         quote! {
             #[derive(rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize)]
-            #[rkyv(attr(repr(C)))]
             #[repr(C)]
             pub struct #wrapper_ident {
                 inner: #row_ident,
-                publication_flags: u8,
-                cell_state: CellState,
+                is_ghosted: bool,
+                is_deleted: bool,
+                is_in_vacuum_process: bool,
             }
         }
     }
@@ -48,22 +48,23 @@ impl ReadOnlyGenerator {
                 }
 
                 fn is_ghosted(&self) -> bool {
-                    self.publication_flags & 1 != 0
+                    self.is_ghosted
                 }
 
                 fn is_vacuumed(&self) -> bool {
-                    self.publication_flags & 4 != 0
+                    self.is_in_vacuum_process
                 }
 
                 fn is_deleted(&self) -> bool {
-                    self.publication_flags & 2 != 0
+                    self.is_deleted
                 }
 
                 fn from_inner(inner: #row_ident) -> Self {
                     Self {
                         inner,
-                        publication_flags: 1,
-                        cell_state: CellState,
+                        is_ghosted: true,
+                        is_deleted: false,
+                        is_in_vacuum_process: false,
                     }
                 }
             }
@@ -88,20 +89,17 @@ impl ReadOnlyGenerator {
 
         quote! {
             impl ArchivedRowWrapper for #row_ident {
-                unsafe fn cell_state_ptr(this: *mut Self) -> *mut std::sync::atomic::AtomicU8 {
-                    unsafe { std::ptr::addr_of_mut!((*this).cell_state).cast() }
-                }
                 fn unghost(&mut self) {
-                    self.publication_flags &= !1;
+                    self.is_ghosted = false;
                 }
                 fn set_in_vacuum_process(&mut self) {
-                    self.publication_flags |= 4;
+                    self.is_in_vacuum_process = true;
                 }
                 fn delete(&mut self) {
-                    self.publication_flags |= 2;
+                    self.is_deleted = true;
                 }
                 fn is_deleted(&self) -> bool {
-                    self.publication_flags & 2 != 0
+                    self.is_deleted
                 }
             }
         }

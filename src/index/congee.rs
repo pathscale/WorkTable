@@ -89,6 +89,10 @@ where
     K: CongeeKey,
     V: Clone + Debug + Send + Sync + 'static,
 {
+    pub(crate) fn allocated_node_bytes(&self) -> usize {
+        self.inner.stats().total_memory_bytes()
+    }
+
     /// Every entry, ascending.
     ///
     /// An inherent alias for [`UniqueIndex::iter_values`], so this reads the

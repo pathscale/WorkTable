@@ -18,17 +18,76 @@ pub use readonly_engine::ReadOnlyPersistenceEngine;
 pub use space::{
     ArtPersistenceKey, IndexTableOfContents, SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex,
     SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex,
-    SpaceLogicalIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, map_index_pages_to_toc_and_general,
-    map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
+    SpaceLogicalIndexUnsized, SpaceLogicalMultiIndex, SpaceLogicalMultiIndexUnsized, SpaceSecondaryIndexOps,
+    TocEntryOversizedError, map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
+    reconstruct_multi_index_nodes,
 };
 pub use task::{PersistenceMonitor, PersistenceTask};
 
 /// Result of retiring one Arc-owned persisted table generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UnloadReport {
-    /// Memory attributed to the generation immediately before it was dropped.
-    pub released_bytes: usize,
+    /// Estimated live heap attributed to the generation when retirement was
+    /// requested. Successful unload proves the generation was destroyed; this
+    /// estimate is not an allocator RSS measurement.
+    pub estimated_released_bytes: usize,
 }
+
+/// A generation could not be unloaded cleanly.
+///
+/// Failures before shutdown return ownership of the generation so the caller
+/// can keep serving it or retry. A failure returned by `close` has no retained
+/// generation because shutdown was already attempted and consumed it.
+pub struct UnloadFailure<T> {
+    generation: Option<std::sync::Arc<T>>,
+    error: eyre::Report,
+}
+
+impl<T> UnloadFailure<T> {
+    #[doc(hidden)]
+    pub fn retained(generation: std::sync::Arc<T>, error: eyre::Report) -> Self {
+        Self {
+            generation: Some(generation),
+            error,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn after_close(error: eyre::Report) -> Self {
+        Self {
+            generation: None,
+            error,
+        }
+    }
+
+    /// Returns the still-live generation when shutdown never began.
+    pub fn into_generation(self) -> Option<std::sync::Arc<T>> {
+        self.generation
+    }
+
+    /// The underlying unload error.
+    pub fn error(&self) -> &eyre::Report {
+        &self.error
+    }
+}
+
+impl<T> std::fmt::Debug for UnloadFailure<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("UnloadFailure")
+            .field("generation_retained", &self.generation.is_some())
+            .field("error", &self.error)
+            .finish()
+    }
+}
+
+impl<T> std::fmt::Display for UnloadFailure<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+impl<T: 'static> std::error::Error for UnloadFailure<T> {}
 
 mod engine;
 mod error;

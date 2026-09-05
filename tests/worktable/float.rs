@@ -14,9 +14,9 @@ worktable! (
         exchange: String
     },
     indexes: {
-        test_idx: test unique,
-        exchnage_idx: exchange,
-        another_idx: another
+        test_idx: test unique using worktables_index,
+        exchnage_idx: exchange using worktables_index,
+        another_idx: another using worktables_index
     }
 );
 
@@ -28,7 +28,7 @@ worktable! (
         value: f64,
     },
     indexes: {
-        value_idx: value unique,
+        value_idx: value unique using worktables_index,
     }
 );
 

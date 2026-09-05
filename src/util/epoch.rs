@@ -29,13 +29,10 @@
 //! WorkTable's Arctic adapter now also selects `ps-reclaim`; Arctic supports
 //! other SMRs for its general users, but WorkTable keeps one progress model.
 //!
-//! # crossbeam is still in the tree
+//! # Crossbeam benchmark comparison
 //!
-//! This removes it from WorkTable's own reclamation, not from the build. It
-//! still arrives three ways: `congee-wt` depends on `crossbeam-epoch` directly
-//! and re-exports its `Guard`, which `src/index/congee.rs` names; and
-//! `crossbeam-skiplist` comes in under both `WorkTablesIndex` and `indexset`.
-//! Say "no crossbeam in the reclamation path", not "no crossbeam", until
-//! `congee-wt` is ported. See `docs/TODO.md`.
+//! WorkTablesIndex 0.0.11 removes Crossbeam from its runtime topology. Its
+//! development benchmark keeps `crossbeam-skiplist` only as a comparison; it
+//! is not in WorkTable's runtime dependency graph.
 
 pub(crate) use ps_reclaim::{Domain as EpochDomain, Guard};

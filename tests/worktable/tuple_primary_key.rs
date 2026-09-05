@@ -4,8 +4,8 @@ use worktable::worktable;
 worktable! (
     name: Test,
     columns: {
-        id: u64 primary_key,
-        test: u64 primary_key,
+        id: u64 primary_key using worktables_index,
+        test: u64 primary_key using worktables_index,
         another: i64,
     }
 );
