@@ -3,7 +3,7 @@ members = ["codegen", "dsl", "examples", "performance_measurement", "performance
 
 [package]
 name = "worktable"
-version = "1.0.0-beta.18"
+version = "1.0.0-beta.19"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -37,16 +37,16 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 # pointer-only fast path. Publication is append-only and asserted at each swap.
 arc-swap = "1"
 async-trait = "0.1"
-arctic = { package = "arctic-wt", version = "^0.1", default-features = false, features = ["smr-ps-reclaim"] }
-congee = { package = "congee-wt", version = "^0.4" }
+arctic = { package = "arctic-wt", version = "^0.1, >=0.1.9", default-features = false, features = ["smr-ps-reclaim"] }
+congee = { package = "congee-wt", version = "^0.4, >=0.4.4" }
 convert_case = "0.6"
 crc32fast = "1"
-data_bucket = { version = "^0.5" }
+data_bucket = { version = "^0.5, >=0.5.7" }
 derive_more = { version = "2", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6"
 fastrand = "2"
 futures = "0.3"
-indexset = { package = "WorkTablesIndex", version = "^0.0", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.12", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 vanilla_indexset = { package = "indexset", version = "0.15", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "^0.12", features = ["concurrent", "cdc", "multimap"] }
@@ -59,7 +59,7 @@ prettytable-rs = "0.10"
 psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
 rkyv = { version = "0.8", features = ["uuid-1"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
-ps-reclaim = { version = "^0.1" }
+ps-reclaim = { version = "^0.1, >=0.1.3" }
 rustc-hash = "2"
 rusty-s3 = { version = "0.10", optional = true }
 smart-default = "0.7"
@@ -71,7 +71,7 @@ walkdir = { version = "2", optional = true }
 # These pre-release workspace crates move as one train. The explicit caret
 # keeps the dependency policy consistent while the local path selects this
 # checkout during validation.
-worktable_codegen = { path = "codegen", version = "^1.0.0-beta.18" }
+worktable_codegen = { path = "codegen", version = "^1.0.0-beta.19" }
 # Re-exported below. Each generated table carries its declaration as a const
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
