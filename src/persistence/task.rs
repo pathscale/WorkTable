@@ -30,9 +30,9 @@ worktable! (
         pos: usize,
     },
     indexes: {
-        operation_id_idx: operation_id,
-        page_id_idx: page_id,
-        link_idx: link,
+        operation_id_idx: operation_id using worktables_index,
+        page_id_idx: page_id using worktables_index,
+        link_idx: link using worktables_index,
     },
 );
 

@@ -7,8 +7,8 @@ worktable! (
     name: PersistedTuplePrimaryKey,
     persist: true,
     columns: {
-        tenant_id: u64 primary_key,
-        record_id: u64 primary_key,
+        tenant_id: u64 primary_key using worktables_index,
+        record_id: u64 primary_key using worktables_index,
         value: i64,
     },
 );

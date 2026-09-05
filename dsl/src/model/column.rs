@@ -69,16 +69,17 @@ impl Columns {
                 } else {
                     gen_type = Some(row.gen_type)
                 }
-                let backend = row.index_backend.unwrap_or_default();
-                if let Some(existing) = primary_index_backend {
-                    if existing != backend {
-                        return Err(syn::Error::new(
-                            row.name.span(),
-                            "all columns in a composite primary key must use the same index backend",
-                        ));
+                if let Some(backend) = row.index_backend {
+                    if let Some(existing) = primary_index_backend {
+                        if existing != backend {
+                            return Err(syn::Error::new(
+                                row.name.span(),
+                                "all columns in a composite primary key must use the same index backend",
+                            ));
+                        }
+                    } else {
+                        primary_index_backend = Some(backend);
                     }
-                } else {
-                    primary_index_backend = Some(backend);
                 }
                 pk.push(row.name);
             } else if row.index_backend.is_some() {
@@ -93,12 +94,24 @@ impl Columns {
             return Err(syn::Error::new(input.span(), "Primary key must be set"));
         }
 
+        // Arctic is the default for the common single-column key. Its native
+        // key contract cannot represent tuples, so a composite declaration
+        // with no explicit `using` retains WTI rather than becoming invalid
+        // merely because the global default changed.
+        let primary_index_backend = primary_index_backend.unwrap_or_else(|| {
+            if pk.len() > 1 {
+                IndexBackend::WorktablesIndex
+            } else {
+                IndexBackend::default()
+            }
+        });
+
         Ok(Self {
             is_sized: sized,
             columns_map,
             indexes: Default::default(),
             primary_keys: pk,
-            primary_index_backend: primary_index_backend.unwrap_or_default(),
+            primary_index_backend,
             generator_type: gen_type.expect("set"),
             field_positions,
         })

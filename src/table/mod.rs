@@ -146,6 +146,7 @@ where
     {
         let path = path.as_ref();
         let mut links = HashSet::with_capacity(self.primary_index.pk_map.len());
+        let mut cells_by_page = std::collections::HashMap::<data_bucket::page::PageId, u32>::new();
 
         for (primary_key, offset_link) in self.primary_index.pk_map.iter_values() {
             if !links.insert(offset_link) {
@@ -173,7 +174,26 @@ where
                     format!("primary key {primary_key:?} has an invalid cell: {error}"),
                 )
             })?;
+            let page_count = cells_by_page.entry(offset_link.0.page_id).or_default();
+            *page_count = page_count
+                .checked_add(1)
+                .ok_or_else(|| PersistenceLoadError::corrupt(path, "live-cell count exceeds u32"))?;
         }
+
+        for (page_id, expected) in cells_by_page {
+            let actual = self.data.page_live_cell_count(page_id).map_err(|error| {
+                PersistenceLoadError::corrupt(path, format!("cannot audit page {page_id:?}: {error}"))
+            })?;
+            if actual != expected {
+                return Err(PersistenceLoadError::corrupt(
+                    path,
+                    format!("page {page_id:?} has {actual} live cells; primary index references {expected}"),
+                ));
+            }
+        }
+        self.data
+            .set_loaded_row_count(links.len())
+            .map_err(|error| PersistenceLoadError::corrupt(path, format!("cannot restore row count: {error}")))?;
 
         Ok(())
     }

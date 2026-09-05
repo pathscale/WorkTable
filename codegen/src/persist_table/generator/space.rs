@@ -38,7 +38,7 @@ impl Generator {
         let avt_index_ident = name_generator.get_available_indexes_ident();
         let space_index_type = if self.attributes.pk_arctic_string {
             quote! {
-                SpaceArcticStringIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
             }
         } else if self.attributes.pk_unsized && self.attributes.pk_wti_logical {
             quote! {
@@ -54,7 +54,7 @@ impl Generator {
             }
         } else if self.attributes.pk_arctic {
             quote! {
-                SpaceArcticIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                SpaceLogicalIndex<#primary_key_type, { #inner_const_name as u32 }>,
             }
         } else if self.attributes.pk_congee {
             quote! {

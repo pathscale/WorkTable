@@ -213,6 +213,20 @@ where
         self.len() == 0
     }
 
+    /// Reachable Arctic nodes plus each boxed per-key slot and its link
+    /// vector allocation. Values' own nested allocations are counted by
+    /// WorkTable's `MemStat` implementation.
+    pub fn allocated_index_bytes(&self) -> usize {
+        let shard = self.inner.all();
+        let mut entries = shard.entries(Order::Ascend);
+        let mut slots = 0;
+        while let Some((_, slot)) = entries.lend() {
+            let links = slot.read();
+            slots += std::mem::size_of::<RwLock<LinkSlot<V>>>() + links.links.capacity() * std::mem::size_of::<V>();
+        }
+        self.inner.allocated_node_bytes() + slots
+    }
+
     /// Returns the pairs whose keys fall in `range`, ascending by key and in
     /// insertion order within a key, as a stable snapshot.
     pub fn range<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a

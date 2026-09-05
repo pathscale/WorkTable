@@ -1,8 +1,8 @@
 # Per-index backends with `using`
 
-**Status:** PR #187 is merged; native ART persistence is implemented on `feat/art-native-persistence` and remains experimental pending validation.
+**Status:** Arctic is the default runtime backend for beta.18. Persisted Arctic-backed declarations retain the beta.17 WorkTablesIndex page format.
 
-**Default:** `worktables_index`
+**Default:** `arctic`
 
 **Backends in this change:** `worktables_index`, `indexset`, `congee`, `arctic`
 
@@ -14,7 +14,7 @@ The generated table contains concrete map types. Selection is resolved by the ma
 
 This has two distinct uses:
 
-- **Production migration:** persisted tables can select a backend per index. WorkTablesIndex and vanilla IndexSet share the existing DataBucket page representation; Congee and Arctic use backend-native topology checkpoints plus logical WAL records.
+- **Production migration:** persisted tables can select a backend per index. WorkTablesIndex, vanilla IndexSet, and Arctic share the existing DataBucket page representation; Congee remains backend-native.
 - **Research and measurement:** the same schema can compare memory-only and persisted Congee/Arctic access paths without runtime backend dispatch.
 
 The useful paper claim is not that WorkTable bundles several maps. It is that a generated table can statically select a physical implementation per access path, keep a stable typed API, and reject incompatible persistence or key semantics at compile time.
@@ -45,14 +45,14 @@ There is no separate `config` syntax for this feature. The physical choice stays
 
 ### The absent-`using` default
 
-Omitting `using` always means `worktables_index`:
+Omitting `using` means an Arctic runtime index:
 
 ```rust
 columns: {
-    id: u64 primary_key autoincrement, // WorkTablesIndex
+    id: u64 primary_key autoincrement, // Arctic runtime, WTI disk pages when persisted
 },
 indexes: {
-    account_idx: account_id unique,    // WorkTablesIndex
+    account_idx: account_id unique,    // Arctic runtime, WTI disk pages when persisted
 }
 ```
 
@@ -60,14 +60,15 @@ The explicit equivalent is:
 
 ```rust
 columns: {
-    id: u64 primary_key autoincrement using worktables_index,
+    id: u64 primary_key autoincrement using arctic,
 },
 indexes: {
-    account_idx: account_id unique using worktables_index,
+    account_idx: account_id unique using arctic,
 }
 ```
 
-This default is intentional. Vanilla `indexset` is an explicit fourth backend; it is not the default and does not silently replace WorkTablesIndex.
+Use `using worktables_index` explicitly for composite, UUID, PackedNanoid,
+floating-point, and other key shapes Arctic does not support.
 
 ## Persistence is controlled by the existing `persist` declaration
 
@@ -75,12 +76,13 @@ No new persistence keyword is introduced.
 
 | Declaration | Meaning | Allowed backends |
 |---|---|---|
-| `persist` omitted | Existing non-persisted table behavior | WorkTablesIndex or vanilla IndexSet; ART use requires an explicit persistence choice |
+| `persist` omitted | Existing non-persisted table behavior | Arctic by default; all memory backends are selectable |
 | `persist: false` | Explicitly memory-only | All four backends, subject to key and uniqueness constraints |
 | `persist: true` | Local durable persistence plus in-memory indexes | All four; ART persistence is experimental |
 | S3 support | Existing S3 sync layered over local persistence | File paths are compatible; ART end-to-end S3 validation remains required |
 
-Congee and Arctic require an explicit `persist: true` or `persist: false`; omitting `persist` is not sufficient acknowledgement. This makes the durability choice visible during review:
+Congee requires an explicit `persist: true` or `persist: false`. Arctic does not,
+because it is the ordinary default:
 
 ```rust
 worktable!(
@@ -96,7 +98,8 @@ worktable!(
 );
 ```
 
-The macro accepts the same schema with `persist: true` and selects native ART persistence. It rejects the schema when `persist` is omitted.
+The macro accepts the same schema with `persist: true`. Arctic is also valid when
+`persist` is omitted because it is the default runtime backend.
 
 ## Current capability matrix
 
@@ -105,18 +108,18 @@ The macro accepts the same schema with `persist: true` and selects native ART pe
 | Primary index | Yes | Yes | Yes | Yes |
 | Unique secondary index | Yes | Yes | Yes | Yes |
 | Non-unique secondary index | Yes | No | No | Yes |
-| Persisted local disk | Yes | Yes | Experimental | Experimental |
-| Existing S3 persistence path | Yes | Yes | Files compatible; validation pending | Files compatible; validation pending |
-| Variable-sized keys | Yes | Not in this change | No | No |
+| Persisted local disk | Yes | Yes | Experimental native format | Yes, WTI-compatible format |
+| Existing S3 persistence path | Yes | Yes | Files compatible; validation pending | WTI-compatible files; validation pending |
+| Variable-sized keys | Yes | Not in this change | No | Yes (`String`) |
 | Ordered point/range API | Yes | Yes | Adapter snapshot for scans | Adapter snapshot for scans |
-| Default when `using` is absent | Yes | No | No | No |
+| Default when `using` is absent | No | No | No | Yes |
 
-Arctic additionally supports non-unique secondary indexes: `value_idx: value using arctic` maps each key to a boxed link collection with multiset semantics, for memory-only and persisted tables alike (persisted through a pair-list checkpoint plus logical `(key, link)` WAL). Non-unique declarations on Congee or vanilla IndexSet still fail at macro expansion and tell the author to use `worktables_index` or `arctic`.
+Arctic additionally supports non-unique secondary indexes: `value_idx: value using arctic` maps each key to a link collection with multiset semantics. Persisted Arctic tables keep the WTI page format and translate logical `(key, link)` mutations in the persistence worker, so beta.17 files remain directly readable. Non-unique declarations on Congee or vanilla IndexSet still fail at macro expansion and tell the author to use `worktables_index` or `arctic`.
 
 ### Key constraints
 
 - **Congee:** `u8`, `u16`, `u32`, `usize`, and `u64` on 64-bit targets. Its native key and payload are one machine word. Composite, NanoID, string, signed, and floating-point keys are rejected.
-- **Arctic:** `u16`, `u32`, `u64`, and `u128` in this initial adapter. Its crate supports more representations, but WorkTable exposes only the shapes covered by the current contract tests.
+- **Arctic:** `String`, `u8`, `u16`, `u32`, `u64`, `u128`, `usize`, `i8`, `i16`, `i32`, `i64`, and `i128`.
 - **Vanilla IndexSet:** sized ordered keys in this change. Variable-sized keys remain on WorkTablesIndex.
 - **WorkTablesIndex:** retains the existing generic and variable-sized key support.
 
@@ -140,9 +143,12 @@ The selected provider is therefore an in-memory implementation detail, not a new
 
 It also separately covers vanilla IndexSet persist → reload → mutate → reload. This is the technical basis for deploying the two providers in parallel without a full data rebuild.
 
-Congee and Arctic deliberately do **not** normalize into WorkTablesIndex pages. Their `*.wt.idx` files contain a checksummed pointer-free checkpoint of the selected ART's physical topology followed by logical Set/Remove WAL frames. Compaction reconstructs a temporary native ART, applies the WAL, and atomically replaces the checkpoint; it does not retain a duplicate authoritative tree during normal operation. See [Native ART index persistence](art-index-persistence-plan.md).
-
-Because those physical formats differ, switching an existing index between an ART and a B-tree requires an explicit rebuild or migration. WorkTablesIndex ↔ vanilla IndexSet remains the format-compatible provider switch.
+Arctic deliberately normalizes into WorkTablesIndex pages. Its foreground map
+emits logical Set/Remove events; the persistence worker applies them to a WTI
+shadow reconstructed with the exact existing node boundaries, then persists the
+resulting structural CDC. This lets a beta.18 Arctic runtime open and continue
+mutating beta.17 files without a conversion pass. Congee's explicitly selected
+backend still uses its native checkpoint/WAL format.
 
 This is still a sensitive storage path. Production rollout should retain backups, verify the exact downstream schema/version, and run crash/torn-write and sustained post-reload mutation tests before changing a live table.
 
@@ -182,7 +188,8 @@ page bytes, ghost publication, and reclamation rather than index routing.
 ### Arctic
 
 - Point lookup and mutation call Arctic directly.
-- WorkTable links are stored in `Box` values because Arctic's inline value is limited to 64 bits. Inserts allocate; reads copy the link from the box.
+- WorkTable links are packed into Arctic's inline 64-bit value. The DSL rejects
+  page sizes above 65,535 bytes because offset and length each occupy 16 bits.
 - Ordered reads use Arctic's native bounded traversal and materialize the requested interval into a `Vec`.
 - Concurrent scan behavior inherits Arctic's non-linearizable traversal contract.
 - With `persist: true`, mutations use the same persistence-only sequencing wrapper as Congee. Point reads remain direct and lock-free.
@@ -197,9 +204,10 @@ reporting one blended throughput number.
 
 ### Memory diagnostics
 
-WorkTablesIndex and vanilla IndexSet expose node capacity and topology used by existing `system_info` reporting. Congee and Arctic do not expose equivalent stable allocator statistics. For those adapters:
+WorkTablesIndex and vanilla IndexSet expose node capacity and topology used by existing `system_info` reporting. Arctic does not expose equivalent stable allocator statistics. For ART adapters:
 
-- reported used/heap bytes are only a payload-size lower bound;
+- `MemStat` includes logical payload and heap-backed key/value bytes and Congee
+  node allocations, but Arctic node overhead and retired SMR allocations remain estimates;
 - reported capacity equals logical length;
 - reported node count is zero/unknown.
 
@@ -209,7 +217,7 @@ Use allocator/RSS measurements for comparative memory results; do not treat the 
 
 This implementation pins two narrow forks for typed topology import/export:
 
-- `WorkTablesIndex 0.0.5` as the default `indexset` dependency alias already used by WorkTable;
+- the current WorkTablesIndex release as the compatible disk-format implementation;
 - vanilla `indexset 0.15.0` under the `vanilla_indexset` Cargo name;
 - `congee-wt` at commit `005bfb1968e781800176f2d7e465e6a1af630e1a`;
 - `arctic-wt` at commit `e13fc7df3c040f14ae66c1cb56b1bd0a3f6da3fc`.
@@ -255,8 +263,9 @@ For the paper, the strongest controlled experiment keeps the WorkTable schema, g
 
 ## Production versus research classification
 
-- **WorkTablesIndex:** production default.
+- **Arctic:** production runtime default with WTI-compatible persistence.
+- **WorkTablesIndex:** explicit fallback for unsupported key shapes and direct structural CDC.
 - **Vanilla IndexSet:** experimental provider. It preserves local/S3 persistence through the existing format boundary, but is excluded from concurrent correctness and published performance claims until upstream offers a stable structural-read primitive or the adapter gains a low-cost algorithm.
-- **Congee and Arctic:** research/experimental backends with native local persistence. Promotion requires crash/S3 validation, relevant downstream evidence, allocation/reclamation review, and a workload that does not depend on the current allocating scan path.
+- **Congee:** explicit experimental backend with native local persistence.
 
 That boundary is deliberate: `using` exposes optional physical specialization without quietly weakening WorkTable's in-memory/on-disk coordination contract.

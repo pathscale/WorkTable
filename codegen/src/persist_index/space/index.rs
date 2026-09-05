@@ -19,11 +19,17 @@ impl Generator {
                 let i = field.ident.as_ref().expect("index fields should be named");
                 let t = self.field_types.get(i).expect("field type was collected");
                 Ok(match layout.art_backend {
+                    Some(ArtBackend::Arctic) if is_unsized(&t.to_string()) => quote! {
+                        #i: SpaceLogicalIndexUnsized<#t, { #inner_const_name as u32}>,
+                    },
                     Some(ArtBackend::Arctic) => quote! {
-                        #i: SpaceArcticIndex<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalIndex<#t, { #inner_const_name as u32}>,
+                    },
+                    Some(ArtBackend::ArcticMulti) if is_unsized(&t.to_string()) => quote! {
+                        #i: SpaceLogicalMultiIndexUnsized<#t, { #inner_const_name as u32}>,
                     },
                     Some(ArtBackend::ArcticMulti) => quote! {
-                        #i: SpaceArcticMultiIndex<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalMultiIndex<#t, { #inner_const_name as u32}>,
                     },
                     Some(ArtBackend::Congee) => quote! {
                         #i: SpaceCongeeIndex<#t, { #inner_const_name as u32}>,
@@ -82,11 +88,17 @@ impl Generator {
                 let t = self.field_types.get(i).expect("field type was collected");
                 let literal_name = Literal::string(i.to_string().as_str());
                 Ok(match layout.art_backend {
+                    Some(ArtBackend::Arctic) if is_unsized(&t.to_string()) => quote! {
+                        #i: SpaceLogicalIndexUnsized::secondary_from_table_files_path(path, #literal_name, version).await?,
+                    },
                     Some(ArtBackend::Arctic) => quote! {
-                        #i: SpaceArcticIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
+                        #i: SpaceLogicalIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
+                    },
+                    Some(ArtBackend::ArcticMulti) if is_unsized(&t.to_string()) => quote! {
+                        #i: SpaceLogicalMultiIndexUnsized::secondary_from_table_files_path(path, #literal_name, version).await?,
                     },
                     Some(ArtBackend::ArcticMulti) => quote! {
-                        #i: SpaceArcticMultiIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
+                        #i: SpaceLogicalMultiIndex::secondary_from_table_files_path(path, #literal_name, version).await?,
                     },
                     Some(ArtBackend::Congee) => quote! {
                         #i: SpaceCongeeIndex::secondary_from_table_files_path(path, #literal_name, version).await?,

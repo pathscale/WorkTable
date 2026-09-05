@@ -12,6 +12,7 @@ use data_bucket::{
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
+use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::core::pair::Pair;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
@@ -26,7 +27,7 @@ use tokio::io::AsyncWriteExt;
 use super::page_aliases::PageAliases;
 use crate::UnsizedNode;
 use crate::persistence::space::BatchChangeEvent;
-use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps};
+use crate::persistence::{IndexTableOfContents, SpaceIndex, SpaceIndexOps, reconstruct_multi_index_nodes};
 use crate::prelude::WT_INDEX_EXTENSION;
 
 #[derive(Debug)]
@@ -339,6 +340,31 @@ where
             indexset.attach_node(UnsizedNode::from_inner(node, DATA_LENGTH as usize))
         }
 
+        Ok(indexset)
+    }
+
+    /// Variable-key counterpart to `SpaceIndex::parse_index_multimap`.
+    pub async fn parse_index_multimap(
+        &mut self,
+        index_name: &str,
+    ) -> eyre::Result<BTreeMultiMap<T, Link, UnsizedNode<indexset::core::multipair::MultiPair<T, Link>>>> {
+        let indexset = BTreeMultiMap::<T, Link, UnsizedNode<_>>::with_maximum_node_size(DATA_LENGTH as usize);
+        let mut pages = Vec::with_capacity(self.table_of_contents.iter().count());
+        for ((key, link), page_id) in self.table_of_contents.iter() {
+            let page =
+                parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(&mut self.index_file, (*page_id).into())
+                    .await?;
+            pages.push((
+                Pair {
+                    key: key.clone(),
+                    value: *link,
+                },
+                page.inner.get_node(),
+            ));
+        }
+        for node in reconstruct_multi_index_nodes(index_name, pages) {
+            indexset.attach_multi_node(UnsizedNode::from_inner(node, DATA_LENGTH as usize));
+        }
         Ok(indexset)
     }
 }

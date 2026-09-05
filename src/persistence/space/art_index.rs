@@ -296,6 +296,12 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
             if crc32fast::hash(payload) != payload_crc {
                 bail!("ART WAL frame at byte {position} checksum mismatch");
             }
+            if K::WIDTH == 0 {
+                let key_len = u32::from_le_bytes(payload[9..13].try_into().unwrap()) as usize;
+                if 13usize.checked_add(key_len).and_then(|end| end.checked_add(12)) != Some(payload_len) {
+                    bail!("ART WAL frame at byte {position} has inconsistent embedded key length {key_len}");
+                }
+            }
             wal.push(decode_wal_record::<K>(payload)?);
             position = payload_end;
             durable_end = payload_end;
@@ -432,6 +438,9 @@ fn decode_wal_record<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<WalReco
         offset,
         length,
     };
+    if matches!(operation, 1 | 3) {
+        validate_arctic_link(link)?;
+    }
     let op = match operation {
         1 => WalOp::Set(link),
         2 => WalOp::Remove,
@@ -439,6 +448,10 @@ fn decode_wal_record<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<WalReco
         _ => bail!("invalid ART WAL operation {operation}"),
     };
     Ok(WalRecord { event_id, key, op })
+}
+
+fn validate_arctic_link(link: Link) -> eyre::Result<()> {
+    crate::validate_arctic_link(link)
 }
 
 fn logical_record<K: ArtPersistenceKey>(event: ChangeEvent<Pair<K, Link>>) -> eyre::Result<WalRecord<K>> {
@@ -1052,11 +1065,13 @@ impl<'a> Decoder<'a> {
         let page_id = u32::from_le_bytes(self.take(4)?.try_into().unwrap());
         let offset = u32::from_le_bytes(self.take(4)?.try_into().unwrap());
         let length = u32::from_le_bytes(self.take(4)?.try_into().unwrap());
-        Ok(Link {
+        let link = Link {
             page_id: PageId::from(page_id),
             offset,
             length,
-        })
+        };
+        validate_arctic_link(link)?;
+        Ok(link)
     }
 
     fn finish(self) -> eyre::Result<()> {

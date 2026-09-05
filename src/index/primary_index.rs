@@ -13,9 +13,9 @@ use crate::{IndexMap, TableIndex, TableIndexCdc, UniqueIndex};
 
 /// Primary-key to physical-row mapping.
 ///
-/// Vacuum enumerates a compact per-page cell directory and reads the primary
-/// key already stored in each row. Keeping a second link-to-key index here
-/// would duplicate every key solely for maintenance.
+/// Vacuum groups a transient snapshot of this map by page. Keeping a second
+/// link-to-key index here would duplicate every key for the table's lifetime
+/// solely to accelerate an occasional maintenance pass.
 #[derive(Debug)]
 pub struct PrimaryIndex<PrimaryKey, const DATA_LENGTH: usize, PkMap = IndexMap<PrimaryKey, OffsetEqLink<DATA_LENGTH>>>
 where

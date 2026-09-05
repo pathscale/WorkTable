@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// How long retirements have to stop arriving for a delete burst to count as
@@ -26,9 +27,9 @@ use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::lock::{Lock, LockGuard, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};
 use crate::vacuum::VacuumPersistence;
-use crate::vacuum::VacuumStats;
 use crate::vacuum::WorkTableVacuum;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
+use crate::vacuum::{VacuumDiagnosticsSnapshot, VacuumStats};
 use crate::vacuum::{VacuumGate, VacuumPacing};
 use crate::{
     AvailableIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex, TableSecondaryIndexCdc,
@@ -49,6 +50,27 @@ enum CandidateMove {
     /// The physical move failed; the live row remains on the source page, so
     /// the page must not be reclaimed.
     Failed,
+}
+
+#[derive(Debug, Default)]
+struct VacuumDiagnostics {
+    requests: AtomicU64,
+    work_batches: AtomicU64,
+    pages_examined: AtomicU64,
+    pages_reclaimed: AtomicU64,
+    completions: AtomicU64,
+}
+
+impl VacuumDiagnostics {
+    fn snapshot(&self) -> VacuumDiagnosticsSnapshot {
+        VacuumDiagnosticsSnapshot {
+            requests: self.requests.load(Ordering::Relaxed),
+            work_batches: self.work_batches.load(Ordering::Relaxed),
+            pages_examined: self.pages_examined.load(Ordering::Relaxed),
+            pages_reclaimed: self.pages_reclaimed.load(Ordering::Relaxed),
+            completions: self.completions.load(Ordering::Relaxed),
+        }
+    }
 }
 
 #[derive(derive_more::Debug)]
@@ -87,6 +109,8 @@ pub struct EmptyDataVacuum<
 
     /// The bit a caller flips to hold the sweep off.
     gate: Arc<VacuumGate>,
+
+    diagnostics: VacuumDiagnostics,
 
     phantom_data: PhantomData<(SecondaryEvents, AvailableTypes, AvailableIndexes)>,
 }
@@ -149,6 +173,7 @@ where
             persistence: None,
             pacing: VacuumPacing::default(),
             gate: Arc::new(VacuumGate::default()),
+            diagnostics: VacuumDiagnostics::default(),
             phantom_data: PhantomData,
         }
     }
@@ -208,6 +233,7 @@ where
     }
 
     async fn defragment(&self) -> eyre::Result<VacuumStats> {
+        self.diagnostics.requests.fetch_add(1, Ordering::Relaxed);
         // The first batch needs the same permission as every later batch. If
         // this check lives only at the batch boundary, a sweep woken during a
         // sustained mutation stream still moves `batch_pages` sources before
@@ -220,6 +246,8 @@ where
         if self.pacing.batch_pages > 0 {
             self.pacing.wait_until_quiet(&*self.lock_manager, &self.gate).await;
         }
+        self.diagnostics.work_batches.fetch_add(1, Ordering::Relaxed);
+        log::debug!("vacuum work starting for {}", self.table_name);
 
         let now = Instant::now();
 
@@ -291,6 +319,7 @@ where
         let mut pages_since_yield = 0usize;
 
         for info in info_iter {
+            self.diagnostics.pages_examined.fetch_add(1, Ordering::Relaxed);
             pages_since_yield += 1;
             if self.pacing.batch_pages > 0 && pages_since_yield > self.pacing.batch_pages {
                 pages_since_yield = 1;
@@ -302,6 +331,8 @@ where
                 // idle and the sweep went in on top of the workload.
                 drop(registry_lock.take());
                 self.pacing.wait_until_quiet(&*self.lock_manager, &self.gate).await;
+                self.diagnostics.work_batches.fetch_add(1, Ordering::Relaxed);
+                log::debug!("vacuum work resuming for {} after a quiet recheck", self.table_name);
                 registry_lock = Some(registry.lock_vacuum().await);
             }
 
@@ -403,6 +434,7 @@ where
                 }
             }
             self.data_pages.mark_page_empty(page_from);
+            self.diagnostics.pages_reclaimed.fetch_add(1, Ordering::Relaxed);
             pages_freed += 1;
         }
 
@@ -412,6 +444,7 @@ where
         self.finalize_staged_pages(free_pages, defragmented_pages)?;
         drop(registry_lock);
 
+        self.diagnostics.completions.fetch_add(1, Ordering::Relaxed);
         Ok(VacuumStats {
             pages_processed,
             pages_freed,
@@ -695,6 +728,10 @@ where
     async fn wait_until_worth_running(&self) {
         self.data_pages.empty_links_registry().wait_for_fragmentation().await;
         self.settle_after_wake().await;
+    }
+
+    fn diagnostics(&self) -> VacuumDiagnosticsSnapshot {
+        self.diagnostics.snapshot()
     }
 }
 
@@ -1094,7 +1131,7 @@ mod tests {
     ) -> EmptyDataVacuum<
         TestRow,
         TestPrimaryKey,
-        IndexMap<TestPrimaryKey, OffsetEqLink<TEST_INNER_SIZE>>,
+        ArcticIndex<TestPrimaryKey, OffsetEqLink<TEST_INNER_SIZE>>,
         TestIndex,
         TestAvaiableTypes,
         TestAvailableIndexes,

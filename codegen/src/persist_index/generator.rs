@@ -146,7 +146,7 @@ impl Generator {
                 let layout = index_layout(field)?;
                 let i = field.ident.as_ref().expect("index fields should be named");
                 let t = self.field_types.get(i).expect("field type was collected");
-                if layout.art_backend.is_some() {
+                if layout.art_backend == Some(ArtBackend::Congee) {
                     let field_type = &field.ty;
                     Ok(quote! { #i: #field_type, })
                 } else if is_unsized(&t.to_string()) {
@@ -207,20 +207,6 @@ impl Generator {
                 let ty = self.field_types.get(i).expect("field type was collected");
                 let index_name_literal = Literal::string(i.to_string().as_str());
                 Ok(match layout.art_backend {
-                    Some(ArtBackend::Arctic) => quote! {
-                        SpaceArcticIndex::<#ty, { #inner_const_name as u32 }>::write_checkpoint(
-                            format!("{}/{}{}", path, #index_name_literal, #index_extension),
-                            #version_const_name,
-                            &mut self.#i,
-                        ).await?;
-                    },
-                    Some(ArtBackend::ArcticMulti) => quote! {
-                        SpaceArcticMultiIndex::<#ty, { #inner_const_name as u32 }>::write_checkpoint(
-                            format!("{}/{}{}", path, #index_name_literal, #index_extension),
-                            #version_const_name,
-                            &mut self.#i,
-                        ).await?;
-                    },
                     Some(ArtBackend::Congee) => quote! {
                         SpaceCongeeIndex::<#ty, { #inner_const_name as u32 }>::write_checkpoint(
                             format!("{}/{}{}", path, #index_name_literal, #index_extension),
@@ -228,7 +214,7 @@ impl Generator {
                             &mut self.#i,
                         ).await?;
                     },
-                    None => quote! {
+                    _ => quote! {
                         {
                             let mut file = tokio::fs::File::create(format!("{}/{}{}", path, #index_name_literal, #index_extension)).await?;
                             let mut info = #ident::space_info_default();
@@ -274,27 +260,40 @@ impl Generator {
                 let i = field.ident.as_ref().expect("index fields should be named");
                 let ty = self.field_types.get(i).expect("field type was collected");
                 let literal = Literal::string(i.to_string().as_str());
+                let parsed_type = if is_unsized(&ty.to_string()) {
+                    quote! {
+                        (Vec<GeneralPage<TableOfContentsPage<(#ty, Link)>>>,
+                         Vec<GeneralPage<UnsizedIndexPage<#ty, { #inner_const_name as u32 }>>>)
+                    }
+                } else {
+                    quote! {
+                        (Vec<GeneralPage<TableOfContentsPage<(#ty, Link)>>>,
+                         Vec<GeneralPage<IndexPage<#ty>>>)
+                    }
+                };
+                let validate_arctic_links = if matches!(
+                    layout.art_backend,
+                    Some(ArtBackend::Arctic | ArtBackend::ArcticMulti)
+                ) {
+                    quote! {
+                        for page in &#i.1 {
+                            for pair in page.inner.get_node() {
+                                validate_arctic_link(pair.value)?;
+                            }
+                        }
+                    }
+                } else {
+                    quote! {}
+                };
                 Ok(match layout.art_backend {
-                    Some(ArtBackend::Arctic) => quote! {
-                        let #i = SpaceArcticIndex::<#ty, { #inner_const_name as u32 }>::load_index(
-                            format!("{}/{}{}", path, #literal, #index_extension),
-                            #version_const_name,
-                        ).await?;
-                    },
-                    Some(ArtBackend::ArcticMulti) => quote! {
-                        let #i = SpaceArcticMultiIndex::<#ty, { #inner_const_name as u32 }>::load_index(
-                            format!("{}/{}{}", path, #literal, #index_extension),
-                            #version_const_name,
-                        ).await?;
-                    },
                     Some(ArtBackend::Congee) => quote! {
                         let #i = SpaceCongeeIndex::<#ty, { #inner_const_name as u32 }>::load_index(
                             format!("{}/{}{}", path, #literal, #index_extension),
                             #version_const_name,
                         ).await?;
                     },
-                    None => quote! {
-                        let #i = {
+                    _ => quote! {
+                        let #i: #parsed_type = {
                             let mut #i = vec![];
                             let mut file = tokio::fs::File::open(format!("{}/{}{}", path, #literal, #index_extension)).await?;
                             let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut file, 0).await?;
@@ -312,6 +311,7 @@ impl Generator {
                             }
                             (toc.pages, #i)
                         };
+                        #validate_arctic_links
                     }
                 })
             })
@@ -391,13 +391,59 @@ impl Generator {
                     .field_types
                     .get(i)
                     .expect("should be available as constructed from same values");
-                if layout.art_backend == Some(ArtBackend::ArcticMulti) {
-                    let field_type = &field.ty;
+                if layout.art_backend == Some(ArtBackend::ArcticMulti) && is_unsized(&ty.to_string()) {
                     Ok(quote! {
-                        let #i: #field_type = Default::default();
+                        let shadow = IndexMultiMap::<#ty, OffsetEqLink, UnsizedNode<_>>::with_maximum_node_size(#const_name);
                         for (key, value) in self.#i.iter() {
-                            #i.insert_pair(key, value);
+                            shadow.insert(key, value);
                         }
+                        let mut pages = vec![];
+                        for node in shadow.iter_nodes() {
+                            pages.push(UnsizedIndexPage::from_node(node.lock_arc().as_ref()));
+                        }
+                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let #i = (toc.pages, pages);
+                    })
+                } else if layout.art_backend == Some(ArtBackend::ArcticMulti) {
+                    Ok(quote! {
+                        let size = get_index_page_size_from_data_length::<#ty>(#const_name);
+                        let shadow = IndexMultiMap::<#ty, OffsetEqLink>::with_maximum_node_size(size);
+                        for (key, value) in self.#i.iter() {
+                            shadow.insert(key, value);
+                        }
+                        let mut pages = vec![];
+                        for node in shadow.iter_nodes() {
+                            pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                        }
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let #i = (toc.pages, pages);
+                    })
+                } else if layout.art_backend == Some(ArtBackend::Arctic) && is_unsized(&ty.to_string()) {
+                    Ok(quote! {
+                        let shadow = IndexMap::<#ty, OffsetEqLink, UnsizedNode<_>>::with_maximum_node_size(#const_name);
+                        for (key, value) in self.#i.iter_values() {
+                            shadow.insert(key, value);
+                        }
+                        let mut pages = vec![];
+                        for node in shadow.iter_nodes() {
+                            pages.push(UnsizedIndexPage::from_node(node.lock_arc().as_ref()));
+                        }
+                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let #i = (toc.pages, pages);
+                    })
+                } else if layout.art_backend == Some(ArtBackend::Arctic) {
+                    Ok(quote! {
+                        let size = get_index_page_size_from_data_length::<#ty>(#const_name);
+                        let shadow = IndexMap::<#ty, OffsetEqLink>::with_maximum_node_size(size);
+                        for (key, value) in self.#i.iter_values() {
+                            shadow.insert(key, value);
+                        }
+                        let mut pages = vec![];
+                        for node in shadow.iter_nodes() {
+                            pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                        }
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend.is_some() {
                     let field_type = &field.ty;
@@ -560,7 +606,27 @@ impl Generator {
                     }
                 };
 
-                if layout.art_backend.is_some() {
+                if layout.art_backend == Some(ArtBackend::ArcticMulti) {
+                    let field_type = &f.ty;
+                    Ok(quote! {
+                        let #i: #field_type = Default::default();
+                        for page in persisted.#i.1 {
+                            for pair in page.inner.get_node() {
+                                #i.insert_pair(pair.key, OffsetEqLink(pair.value));
+                            }
+                        }
+                    })
+                } else if layout.art_backend == Some(ArtBackend::Arctic) {
+                    let field_type = &f.ty;
+                    Ok(quote! {
+                        let #i: #field_type = Default::default();
+                        for page in persisted.#i.1 {
+                            for pair in page.inner.get_node() {
+                                #i.insert_value(pair.key, OffsetEqLink(pair.value));
+                            }
+                        }
+                    })
+                } else if layout.art_backend.is_some() {
                     Ok(quote! {
                         let #i = persisted.#i;
                     })

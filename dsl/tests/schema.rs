@@ -77,7 +77,7 @@ fn an_omitted_persist_is_not_written_back() {
 #[test]
 fn only_a_deliberate_backend_choice_is_written_back() {
     // A primary key always carries a backend once parsed, because the model
-    // fills the default in. Emitting `using worktables_index` everywhere would
+    // fills the default in. Emitting `using arctic` everywhere would
     // round-trip correctly and read like noise.
     let default = parse("name: Default, columns: { id: u64 primary_key }");
     assert!(!default.to_dsl().contains("using"));

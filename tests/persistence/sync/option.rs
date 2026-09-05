@@ -464,7 +464,7 @@ worktable! (
     },
     indexes: {
         another_idx: another unique,
-        test_idx: test,
+        test_idx: test using worktables_index,
         exchnage_idx: exchange,
     },
     queries: {

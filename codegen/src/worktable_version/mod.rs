@@ -64,7 +64,7 @@ mod tests {
             "should generate read_only index attribute"
         );
         assert!(
-            output.contains("table (read_only)"),
+            output.contains("table (read_only , pk_arctic)"),
             "should generate read_only table attribute"
         );
     }
@@ -153,7 +153,7 @@ mod tests {
         let output = res.to_string();
 
         assert!(
-            output.contains("table (read_only , pk_unsized)"),
+            output.contains("table (read_only , pk_arctic_string)"),
             "an unsized primary key must keep read_only, not replace it with pk_unsized"
         );
     }

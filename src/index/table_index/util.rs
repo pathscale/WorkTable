@@ -1,4 +1,5 @@
 use indexset::cdc::change::ChangeEvent;
+use indexset::core::multipair::MultiPair;
 use indexset::core::pair::Pair;
 use vanilla_indexset::cdc::change::ChangeEvent as VanillaChangeEvent;
 use vanilla_indexset::core::pair::Pair as VanillaPair;
@@ -76,6 +77,67 @@ where
     L1: Into<L2>,
 {
     evs.into_iter().map(convert_change_event).collect()
+}
+
+/// Converts the ordered pair representation used by WTI multimaps into the
+/// key-only `Pair` representation retained by WorkTable's persistence format.
+pub fn convert_multi_change_events<T, L1, L2>(evs: Vec<ChangeEvent<MultiPair<T, L1>>>) -> Vec<ChangeEvent<Pair<T, L2>>>
+where
+    L1: Into<L2>,
+{
+    fn pair<T, L1, L2>(value: MultiPair<T, L1>) -> Pair<T, L2>
+    where
+        L1: Into<L2>,
+    {
+        Pair {
+            key: value.key,
+            value: value.value.into(),
+        }
+    }
+
+    evs.into_iter()
+        .map(|event| match event {
+            ChangeEvent::InsertAt {
+                event_id,
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::InsertAt {
+                event_id,
+                max_value: pair(max_value),
+                value: pair(value),
+                index,
+            },
+            ChangeEvent::RemoveAt {
+                event_id,
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::RemoveAt {
+                event_id,
+                max_value: pair(max_value),
+                value: pair(value),
+                index,
+            },
+            ChangeEvent::CreateNode { event_id, max_value } => ChangeEvent::CreateNode {
+                event_id,
+                max_value: pair(max_value),
+            },
+            ChangeEvent::RemoveNode { event_id, max_value } => ChangeEvent::RemoveNode {
+                event_id,
+                max_value: pair(max_value),
+            },
+            ChangeEvent::SplitNode {
+                event_id,
+                max_value,
+                split_index,
+            } => ChangeEvent::SplitNode {
+                event_id,
+                max_value: pair(max_value),
+                split_index,
+            },
+        })
+        .collect()
 }
 
 /// Normalizes upstream IndexSet CDC events into WorkTablesIndex's event type,

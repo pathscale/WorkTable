@@ -3,7 +3,8 @@
 //! `validate_index_backends` rejects a declaration whose key type the backend
 //! cannot serve, and the accepted sets are narrow and specific: congee takes
 //! `u8`, `u16`, `u32`, `u64`, `usize`; arctic takes `u16`, `u32`, `u64`,
-//! `u128`. That list is a promise the macro makes to a consumer.
+//! `u128`, including the narrow values widened losslessly by its adapter. That
+//! list is a promise the macro makes to a consumer.
 //!
 //! Nothing tested it. Before this file the suite instantiated `u64` with both
 //! backends and `u128` once, so most of the advertised matrix had never been
@@ -85,11 +86,15 @@ width_case!(congee_u32, congee, u32, "congee");
 width_case!(congee_u64, congee, u64, "congee");
 width_case!(congee_usize, congee, usize, "congee");
 
-// Arctic: u16, u32, u64, u128.
+// Arctic: narrow, native-width, and signed adapters.
+width_case!(arctic_u8, arctic, u8, "arctic");
 width_case!(arctic_u16, arctic, u16, "arctic");
 width_case!(arctic_u32, arctic, u32, "arctic");
 width_case!(arctic_u64, arctic, u64, "arctic");
 width_case!(arctic_u128, arctic, u128, "arctic");
+width_case!(arctic_i8, arctic, i8, "arctic");
+width_case!(arctic_i64, arctic, i64, "arctic");
+width_case!(arctic_usize, arctic, usize, "arctic");
 
 // The default backend takes any ordered key, so it is the control: if a width
 // fails here too, the problem is not the backend.

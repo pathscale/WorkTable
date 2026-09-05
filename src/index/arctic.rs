@@ -28,7 +28,7 @@ pub trait ArcticKey: Clone + Debug + Ord + Send + Sync + 'static {
 /// Arctic's variable-sized keys require a byte sequence with no zero byte so
 /// the tree can append its own logical terminator. Valid UTF-8 never contains
 /// `0xff`, therefore adding one to every encoded byte is a lossless,
-/// order-preserving mapping into `1..=0xf5`. This includes Rust strings that
+/// order-preserving mapping into `1..=0xf8`. This includes Rust strings that
 /// contain `\0`, without reserving a value or changing their ordering.
 pub type ArcticStringKey = arctic::key::BoxedSlice<arctic::key::NonNull>;
 
@@ -85,6 +85,48 @@ macro_rules! impl_arctic_key {
     };
 }
 
+impl ArcticKey for u8 {
+    type Raw = u16;
+
+    #[inline]
+    fn to_arctic(&self) -> Self::Raw {
+        u16::from(*self)
+    }
+
+    #[inline]
+    fn from_arctic(value: Self::Raw) -> Self {
+        value as Self
+    }
+}
+
+impl ArcticKey for usize {
+    type Raw = u64;
+
+    #[inline]
+    fn to_arctic(&self) -> Self::Raw {
+        *self as u64
+    }
+
+    #[inline]
+    fn from_arctic(value: Self::Raw) -> Self {
+        value as Self
+    }
+}
+
+impl ArcticKey for i8 {
+    type Raw = u16;
+
+    #[inline]
+    fn to_arctic(&self) -> Self::Raw {
+        u16::from((*self as u8) ^ (1 << 7))
+    }
+
+    #[inline]
+    fn from_arctic(value: Self::Raw) -> Self {
+        ((value as u8) ^ (1 << 7)) as Self
+    }
+}
+
 impl_arctic_key!(u16, u32, u64, u128);
 
 /// Signed keys, mapped onto the unsigned key space by flipping the sign bit.
@@ -99,7 +141,7 @@ impl_arctic_key!(u16, u32, u64, u128);
 /// Being a bijection over the *whole* width also preserves adjacency, which
 /// keeps excluded range bounds exact in the raw key space.
 ///
-/// There is no `i8`, because Arctic's narrowest raw key is `u16`.
+/// `i8` is widened losslessly into Arctic's narrowest raw key, `u16`.
 macro_rules! impl_arctic_signed_key {
     ($($ty:ty => $raw:ty),* $(,)?) => {
         $(
@@ -141,9 +183,21 @@ impl ArcticValue for u64 {
     }
 }
 
+#[doc(hidden)]
+pub fn validate_arctic_link(link: data_bucket::Link) -> eyre::Result<()> {
+    if link.offset > u32::from(u16::MAX) || link.length > u32::from(u16::MAX) {
+        eyre::bail!(
+            "link cannot be represented by Arctic: page {:?}, offset {}, length {}",
+            link.page_id,
+            link.offset,
+            link.length,
+        );
+    }
+    Ok(())
+}
+
 fn pack_link(link: data_bucket::Link) -> u64 {
-    assert!(link.offset <= u16::MAX.into(), "link offset exceeds Arctic encoding");
-    assert!(link.length <= u16::MAX.into(), "link length exceeds Arctic encoding");
+    validate_arctic_link(link).expect("WorkTable validated the link before publishing it to Arctic");
     (u64::from(u32::from(link.page_id)) << 32) | (u64::from(link.offset) << 16) | u64::from(link.length)
 }
 
@@ -191,6 +245,21 @@ pub struct ArcticIndex<K: ArcticKey, V: ArcticValue> {
     marker: PhantomData<fn() -> V>,
 }
 
+/// Owned compatibility view returned by [`ArcticIndex::get`].
+///
+/// WTI exposes a guarded entry with a `get()` accessor. Arctic values are
+/// decoded inline, so this view owns the decoded pair while preserving that
+/// small inspection API for backend-agnostic diagnostics and tests.
+pub struct ArcticEntry<K, V> {
+    pair: indexset::core::pair::Pair<K, V>,
+}
+
+impl<K, V> ArcticEntry<K, V> {
+    pub fn get(&self) -> &indexset::core::pair::Pair<K, V> {
+        &self.pair
+    }
+}
+
 impl<K: ArcticKey, V: ArcticValue> Debug for ArcticIndex<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ArcticIndex")
@@ -216,7 +285,6 @@ where
 impl<K, V> ArcticIndex<K, V>
 where
     K: ArcticKey,
-    K::Raw: arctic::topology::Key,
     V: ArcticValue,
 {
     /// Every entry, ascending.
@@ -235,17 +303,47 @@ where
         <Self as UniqueIndex<K, V>>::iter_values(self)
     }
 
+    /// WTI-compatible point inspection for code that examines generated
+    /// index internals. Normal table reads use [`UniqueIndex::get_value`].
+    pub fn get(&self, key: &K) -> Option<ArcticEntry<K, V>> {
+        self.get_value(key).map(|value| ArcticEntry {
+            pair: indexset::core::pair::Pair {
+                key: key.clone(),
+                value,
+            },
+        })
+    }
+
+    /// WTI-compatible ordered pair range.
+    pub fn range<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = (K, V)> + 'a
+    where
+        R: RangeBounds<K> + 'a,
+    {
+        self.range_values(range)
+    }
+
+    /// Heap bytes occupied by Arctic's reachable adaptive nodes.
+    pub fn allocated_node_bytes(&self) -> usize {
+        self.inner.allocated_node_bytes()
+    }
+
     pub(crate) fn export_topology<T>(
         &mut self,
         mut encode: impl FnMut(&V) -> T,
-    ) -> Result<arctic::topology::Topology<T>, arctic::topology::Error> {
+    ) -> Result<arctic::topology::Topology<T>, arctic::topology::Error>
+    where
+        K::Raw: arctic::topology::Key,
+    {
         self.inner.export_topology(|value| encode(&V::from_arctic(*value)))
     }
 
     pub(crate) fn from_topology<T>(
         topology: arctic::topology::Topology<T>,
         mut decode: impl FnMut(T) -> V,
-    ) -> Result<Self, arctic::topology::Error> {
+    ) -> Result<Self, arctic::topology::Error>
+    where
+        K::Raw: arctic::topology::Key,
+    {
         let inner = ConcurrentMap::from_topology(topology, |value| decode(value).into_arctic())?;
         let len = inner.all().entries(Order::Ascend).count();
         Ok(Self {
@@ -369,11 +467,8 @@ where
                 .entries(Order::Ascend)
                 .map(|(key, value)| (K::from_arctic(key), V::from_arctic(value)))
                 .collect(),
-        }
-        .into_iter()
-        .filter(move |(key, _)| range.contains(key))
-        .collect::<Vec<_>>();
-        values.into_iter()
+        };
+        values.into_iter().filter(move |(key, _)| range.contains(key))
     }
 
     fn range_links<'a, R>(&'a self, range: R) -> impl DoubleEndedIterator<Item = V> + 'a

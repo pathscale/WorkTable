@@ -45,7 +45,7 @@ impl TablePrimaryKey for TestPrimaryKey {
 worktable! (
     name: Test,
     columns: {
-        id: CustomId primary_key custom,
+        id: CustomId primary_key custom using worktables_index,
         test: u64
     }
 );

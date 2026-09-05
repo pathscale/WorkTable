@@ -118,8 +118,11 @@ async fn a_retired_generation_releases_its_memory() {
         })
         .await
         .expect("the generation retires");
-    assert_eq!(report.released_bytes, held);
-    assert!(report.released_bytes > 0, "the memory came back");
+    assert_eq!(report.estimated_released_bytes, held);
+    assert!(
+        report.estimated_released_bytes > 0,
+        "the generation had memory to release"
+    );
 
     let _ = std::fs::remove_dir_all(DIR);
 }
@@ -136,6 +139,38 @@ async fn a_generation_can_report_what_it_holds() {
     assert!(held > 0, "a filled generation holds memory: {held}");
     generation.close().await.expect("generation closes");
     let _ = std::fs::remove_dir_all(DIR);
+}
+
+#[tokio::test]
+async fn a_failed_unload_returns_the_live_generation() {
+    let dir = "tests/data/generation_swap/retained_failure";
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).expect("a directory");
+
+    let generation = Arc::new(attach(dir).await);
+    generation
+        .insert(GenerationSwapRow {
+            id: generation.get_next_pk().into(),
+            blob: "still serving".to_owned(),
+        })
+        .await
+        .expect("a row");
+    generation.wait_for_ops().await.expect("the queue drains");
+
+    let outstanding_reader = Arc::clone(&generation);
+    let failure = generation
+        .unload_gracefully(DRAIN_TIMEOUT, || async {})
+        .await
+        .expect_err("an outstanding Arc lease prevents unload");
+    let generation = failure
+        .into_generation()
+        .expect("failure before close retains the generation");
+    assert_eq!(generation.select_all().execute().expect("a read").len(), 1);
+
+    drop(outstanding_reader);
+    let generation = Arc::try_unwrap(generation).expect("the caller recovered sole ownership");
+    generation.close().await.expect("the recovered generation closes");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// **Already works.** Kept so nobody spends a day building it: two handles on
