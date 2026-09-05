@@ -163,7 +163,7 @@ impl Generator {
             };
             quote! {
                 let pk_map = #map_type::<#pk_ident, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name);
-                for page in self.primary_index.1 {
+                let nodes = self.primary_index.1.into_iter().map(|page| {
                     let node = page
                         .inner
                         .get_node()
@@ -173,8 +173,9 @@ impl Generator {
                             value: p.value.into(),
                         })
                         .collect();
-                    pk_map.attach_node(UnsizedNode::from_inner(node, #const_name));
-                }
+                    UnsizedNode::from_inner(node, #const_name)
+                });
+                pk_map.attach_nodes(nodes);
                 let primary_index = PrimaryIndex::from_map(pk_map);
             }
         } else if self.attributes.pk_congee {
@@ -195,11 +196,20 @@ impl Generator {
             } else {
                 quote! { IndexPair }
             };
+            let attach_nodes = if self.pk_upstream {
+                quote! {
+                    for node in nodes {
+                        pk_map.attach_node(node);
+                    }
+                }
+            } else {
+                quote! { pk_map.attach_nodes(nodes); }
+            };
             quote! {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                 let pk_map = #map_type::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size);
-                for page in self.primary_index.1 {
-                    let node = page
+                let nodes = self.primary_index.1.into_iter().map(|page| {
+                    page
                         .inner
                         .get_node()
                         .into_iter()
@@ -207,9 +217,9 @@ impl Generator {
                             key: p.key,
                             value: p.value.into(),
                         })
-                        .collect();
-                    pk_map.attach_node(node);
-                }
+                        .collect()
+                });
+                #attach_nodes
                 let primary_index = PrimaryIndex::from_map(pk_map);
             }
         };

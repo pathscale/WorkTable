@@ -398,8 +398,8 @@ impl Generator {
                             shadow.insert(key, value);
                         }
                         let mut pages = vec![];
-                        for node in shadow.iter_nodes() {
-                            pages.push(UnsizedIndexPage::from_node(node.lock_arc().as_ref()));
+                        for node in shadow.snapshot_nodes() {
+                            pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                         }
                         let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
@@ -412,8 +412,8 @@ impl Generator {
                             shadow.insert(key, value);
                         }
                         let mut pages = vec![];
-                        for node in shadow.iter_nodes() {
-                            pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                        for node in shadow.snapshot_nodes() {
+                            pages.push(IndexPage::from_node(&node, size));
                         }
                         let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
@@ -425,8 +425,8 @@ impl Generator {
                             shadow.insert(key, value);
                         }
                         let mut pages = vec![];
-                        for node in shadow.iter_nodes() {
-                            pages.push(UnsizedIndexPage::from_node(node.lock_arc().as_ref()));
+                        for node in shadow.snapshot_nodes() {
+                            pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                         }
                         let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
@@ -439,8 +439,8 @@ impl Generator {
                             shadow.insert(key, value);
                         }
                         let mut pages = vec![];
-                        for node in shadow.iter_nodes() {
-                            pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                        for node in shadow.snapshot_nodes() {
+                            pages.push(IndexPage::from_node(&node, size));
                         }
                         let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
@@ -454,15 +454,28 @@ impl Generator {
                         }
                     })
                 } else if is_unsized(&ty.to_string()) {
-                    Ok(quote! {
-                        let mut pages = vec![];
-                        for node in self.#i.iter_nodes() {
-                            let page = UnsizedIndexPage::from_node(node.lock_arc().as_ref());
-                            pages.push(page);
-                        }
-                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
-                        let #i = (toc.pages, pages);
-                    })
+                    if layout.uses_upstream {
+                        Ok(quote! {
+                            let mut pages = vec![];
+                            for node in self.#i.iter_nodes() {
+                                let node = node.lock_arc();
+                                let page = UnsizedIndexPage::from_node(node.as_ref());
+                                pages.push(page);
+                            }
+                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                            let #i = (toc.pages, pages);
+                        })
+                    } else {
+                        Ok(quote! {
+                            let mut pages = vec![];
+                            for node in self.#i.snapshot_nodes() {
+                                let page = UnsizedIndexPage::from_node(node.as_ref());
+                                pages.push(page);
+                            }
+                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                            let #i = (toc.pages, pages);
+                        })
+                    }
                 } else if layout.uses_upstream {
                     Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
@@ -485,8 +498,8 @@ impl Generator {
                     Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let mut pages = vec![];
-                        for node in self.#i.iter_nodes() {
-                            let page = IndexPage::from_node(node.lock_arc().as_ref(), size);
+                        for node in self.#i.snapshot_nodes() {
+                            let page = IndexPage::from_node(&node, size);
                             pages.push(page);
                         }
                         let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
@@ -555,6 +568,7 @@ impl Generator {
                         quote! { IndexPair }
                     };
                     quote! {
+                        let mut nodes = Vec::with_capacity(persisted.#i.1.len());
                         for page in persisted.#i.1 {
                             let inner: Vec<#pair_type<#ty, OffsetEqLink>> = page
                                 .inner
@@ -565,8 +579,9 @@ impl Generator {
                                     value: p.value.into(),
                                 })
                                 .collect();
-                            #attach
+                            nodes.push(inner);
                         }
+                        #attach
                     }
                 };
                 // Non-unique indexes additionally need their duplicate
@@ -600,9 +615,8 @@ impl Generator {
                                 .collect();
                             raw_nodes.push((node_id, entries));
                         }
-                        for sorted in reconstruct_multi_index_nodes(#index_name_literal, raw_nodes) {
-                            #attach
-                        }
+                        let nodes = reconstruct_multi_index_nodes(#index_name_literal, raw_nodes);
+                        #attach
                     }
                 };
 
@@ -632,18 +646,25 @@ impl Generator {
                     })
                 } else if is_unsized(&ty.to_string()) {
                     if is_unique {
-                        let body = unique_reconstruct(quote! {
-                            let node = UnsizedNode::from_inner(inner, #const_name);
-                            #i.attach_node(node);
-                        });
+                        let attach = if uses_upstream {
+                            quote! {
+                                for inner in nodes {
+                                    #i.attach_node(UnsizedNode::from_inner(inner, #const_name));
+                                }
+                            }
+                        } else {
+                            quote! {
+                                #i.attach_nodes(nodes.into_iter().map(|inner| UnsizedNode::from_inner(inner, #const_name)));
+                            }
+                        };
+                        let body = unique_reconstruct(attach);
                         Ok(quote! {
                             let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
                             #body
                         })
                     } else {
                         let body = multi_reconstruct(quote! {
-                            let node = UnsizedNode::from_inner(sorted, #const_name);
-                            #i.attach_multi_node(node);
+                            #i.attach_multi_nodes(nodes.into_iter().map(|sorted| UnsizedNode::from_inner(sorted, #const_name)));
                         });
                         Ok(quote! {
                             let #i: #t<_, OffsetEqLink, UnsizedNode<_>> = #t::with_maximum_node_size(#const_name);
@@ -651,9 +672,18 @@ impl Generator {
                         })
                     }
                 } else if is_unique {
-                    let body = unique_reconstruct(quote! {
-                        #i.attach_node(inner);
-                    });
+                    let attach = if uses_upstream {
+                        quote! {
+                            for node in nodes {
+                                #i.attach_node(node);
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #i.attach_nodes(nodes);
+                        }
+                    };
+                    let body = unique_reconstruct(attach);
                     Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);
                         let #i: #t<_, OffsetEqLink> = #t::with_maximum_node_size(size);
@@ -661,7 +691,7 @@ impl Generator {
                     })
                 } else {
                     let body = multi_reconstruct(quote! {
-                        #i.attach_multi_node(sorted);
+                        #i.attach_multi_nodes(nodes);
                     });
                     Ok(quote! {
                         let size = get_index_page_size_from_data_length::<#ty>(#const_name);

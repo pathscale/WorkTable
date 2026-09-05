@@ -332,13 +332,15 @@ where
 
     pub async fn parse_indexset(&mut self) -> eyre::Result<BTreeMap<T, Link, UnsizedNode<Pair<T, Link>>>> {
         let indexset = BTreeMap::<T, Link, UnsizedNode<Pair<T, Link>>>::with_maximum_node_size(DATA_LENGTH as usize);
+        let mut nodes = Vec::with_capacity(self.table_of_contents.iter().count());
         for (_, page_id) in self.table_of_contents.iter() {
             let page =
                 parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH>(&mut self.index_file, (*page_id).into())
                     .await?;
             let node = page.inner.get_node();
-            indexset.attach_node(UnsizedNode::from_inner(node, DATA_LENGTH as usize))
+            nodes.push(UnsizedNode::from_inner(node, DATA_LENGTH as usize));
         }
+        indexset.attach_nodes(nodes);
 
         Ok(indexset)
     }
@@ -362,9 +364,11 @@ where
                 page.inner.get_node(),
             ));
         }
-        for node in reconstruct_multi_index_nodes(index_name, pages) {
-            indexset.attach_multi_node(UnsizedNode::from_inner(node, DATA_LENGTH as usize));
-        }
+        indexset.attach_multi_nodes(
+            reconstruct_multi_index_nodes(index_name, pages)
+                .into_iter()
+                .map(|node| UnsizedNode::from_inner(node, DATA_LENGTH as usize)),
+        );
         Ok(indexset)
     }
 }
