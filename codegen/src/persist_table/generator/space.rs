@@ -33,40 +33,43 @@ impl Generator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let const_name = name_generator.get_page_size_const_ident();
+        let space_primary_index = name_generator.get_space_primary_index_ident();
         let space_secondary_indexes = name_generator.get_space_secondary_index_ident();
         let space_secondary_indexes_events = name_generator.get_space_secondary_index_events_ident();
         let avt_index_ident = name_generator.get_available_indexes_ident();
         let space_index_type =
             if self.attributes.pk_arctic_string || (self.attributes.pk_unsized && self.attributes.pk_wti_logical) {
                 quote! {
-                    SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
+                    SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>
                 }
             } else if self.attributes.pk_unsized {
                 quote! {
-                    SpaceIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>,
+                    SpaceIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>
                 }
             } else if self.attributes.pk_wti_logical || self.attributes.pk_arctic {
                 quote! {
-                    SpaceLogicalIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                    SpaceLogicalIndex<#primary_key_type, { #inner_const_name as u32 }>
                 }
             } else if self.attributes.pk_congee {
                 quote! {
-                    SpaceCongeeIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                    SpaceCongeeIndex<#primary_key_type, { #inner_const_name as u32 }>
                 }
             } else {
                 quote! {
-                    SpaceIndex<#primary_key_type, { #inner_const_name as u32 }>,
+                    SpaceIndex<#primary_key_type, { #inner_const_name as u32 }>
                 }
             };
 
         quote! {
+            pub type #space_primary_index = #space_index_type;
+
             pub type #ident = DiskPersistenceEngine<
                 SpaceData<
                     <<#primary_key_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                     { #inner_const_name},
                     { #const_name as u32 }
                 >,
-                #space_index_type
+                #space_primary_index,
                 #space_secondary_indexes,
                 #primary_key_type,
                 #space_secondary_indexes_events,
