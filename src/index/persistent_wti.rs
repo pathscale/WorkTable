@@ -13,7 +13,6 @@ use std::array;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::ops::RangeBounds;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use data_bucket::Link;
@@ -133,11 +132,15 @@ where
         self.inner.attach_node(node);
     }
 
-    pub fn iter_nodes(&self) -> impl Iterator<Item = Arc<Mutex<Node>>> + '_
+    pub fn attach_nodes(&self, nodes: impl IntoIterator<Item = Node>) {
+        self.inner.attach_nodes(nodes);
+    }
+
+    pub fn snapshot_nodes(&self) -> Vec<Node>
     where
         Node: Clone,
     {
-        self.inner.iter_nodes()
+        self.inner.snapshot_nodes()
     }
 
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (K, V)> + '_ {

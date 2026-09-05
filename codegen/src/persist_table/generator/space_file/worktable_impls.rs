@@ -195,8 +195,8 @@ impl Generator {
                         shadow.insert(key, value);
                     }
                     let mut pages = vec![];
-                    for node in shadow.iter_nodes() {
-                        pages.push(UnsizedIndexPage::from_node(node.lock_arc().as_ref()));
+                    for node in shadow.snapshot_nodes() {
+                        pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                     }
                     let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                     (toc.pages, pages)
@@ -211,8 +211,8 @@ impl Generator {
                         shadow.insert(key, value);
                     }
                     let mut pages = vec![];
-                    for node in shadow.iter_nodes() {
-                        pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                    for node in shadow.snapshot_nodes() {
+                        pages.push(IndexPage::from_node(&node, size));
                     }
                     let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
                     (toc.pages, pages)
@@ -222,8 +222,8 @@ impl Generator {
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
                     let mut pages = vec![];
-                    for node in self.0.primary_index.pk_map.iter_nodes() {
-                        let page = UnsizedIndexPage::from_node(node.lock_arc().as_ref());
+                    for node in self.0.primary_index.pk_map.snapshot_nodes() {
+                        let page = UnsizedIndexPage::from_node(node.as_ref());
                         pages.push(page);
                     }
                     let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
@@ -247,8 +247,8 @@ impl Generator {
                 }
             } else {
                 quote! {
-                    for node in self.0.primary_index.pk_map.iter_nodes() {
-                        pages.push(IndexPage::from_node(node.lock_arc().as_ref(), size));
+                    for node in self.0.primary_index.pk_map.snapshot_nodes() {
+                        pages.push(IndexPage::from_node(&node, size));
                     }
                 }
             };
