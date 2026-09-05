@@ -1,6 +1,6 @@
 [package]
 name = "worktable_codegen"
-version = "1.0.0-beta.18"
+version = "1.0.0-beta.19"
 edition = "2024"
 license = "MIT"
 description = "Proc-macro companion crate for worktable: the worktable! macro and its derives."

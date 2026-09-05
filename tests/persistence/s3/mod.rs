@@ -59,7 +59,7 @@ async fn fake_s3() -> (String, JoinHandle<()>) {
 
                 let is_list = request.starts_with(b"GET ");
                 let body = if is_list {
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult><Name>test</Name><Prefix></Prefix><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>"
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>test</Name><Prefix></Prefix><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>"
                 } else {
                     ""
                 };

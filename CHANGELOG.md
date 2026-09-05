@@ -1,6 +1,22 @@
 Change Log
 ==========
 
+## [1.0.0-beta.19]
+
+### Changed
+
+- Require WTI 0.0.12 and the backend/reclamation releases validated with
+  beta.19 so an existing lockfile cannot retain an incompatible pre-fix
+  version.
+- Require Arctic 0.1.9, including normalized validated-key prefix scans.
+
+### Fixed
+
+- Generated S3 engines now use the table's selected primary-index persistence
+  adapter. Loaded default-Arctic tables can update, insert, delete, flush, and
+  reopen without feeding logical Arctic events into the structural WTI disk
+  format.
+
 ## [1.0.0-beta.18]
 
 ### Added

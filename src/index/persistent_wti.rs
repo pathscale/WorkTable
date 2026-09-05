@@ -133,7 +133,10 @@ where
         self.inner.attach_node(node);
     }
 
-    pub fn iter_nodes(&self) -> impl Iterator<Item = Arc<Mutex<Node>>> + '_ {
+    pub fn iter_nodes(&self) -> impl Iterator<Item = Arc<Mutex<Node>>> + '_
+    where
+        Node: Clone,
+    {
         self.inner.iter_nodes()
     }
 
