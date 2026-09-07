@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use data_bucket::page::PageId;
 use data_bucket::{Link, SizeMeasurable};
@@ -10,6 +11,7 @@ use indexset::core::pair::Pair;
 use worktable_codegen::{MemStat, worktable};
 
 use crate::persistence::OperationType;
+use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
 use crate::persistence::space::{BatchChangeEvent, BatchData};
 use crate::persistence::task::{LastEventIds, QueueInnerRow};
 use crate::prelude::*;
@@ -149,6 +151,10 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
 pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes> {
     ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>,
     info_wt: BatchInnerWorkTable,
+    /// Event bookkeeping shared with the queue that produced `ops`, read by
+    /// the event-gap guard in `validate` so a stall names its own cause.
+    /// Diagnostics only, and `None` for batches built outside the analyzer.
+    event_ledger: Option<Arc<EventLedger>>,
     prepared_index_evs: Option<PreparedIndexEvents<PrimaryKey, SecondaryEvents>>,
     phantom_data: PhantomData<AvailableIndexes>,
 }
@@ -173,9 +179,21 @@ where
         Self {
             ops,
             info_wt,
+            event_ledger: None,
             prepared_index_evs: None,
             phantom_data: PhantomData,
         }
+    }
+
+    /// Attaches the analyzer's event bookkeeping, so the gap guard below can
+    /// say which ids in a gap ever reached the persistence queue.
+    ///
+    /// A builder method rather than a `new` parameter, so every existing
+    /// caller of `new` keeps working unchanged and the batch stays usable
+    /// without any bookkeeping at all.
+    pub fn with_event_ledger(mut self, ledger: Arc<EventLedger>) -> Self {
+        self.event_ledger = Some(ledger);
+        self
     }
 
     /// Remove metadata immediately after `self.ops.remove(removed_pos)`.
@@ -272,7 +290,52 @@ where
             prepared_evs.secondary_evs.remove(op_secondary);
         }
 
+        self.record_stage(&removed_ops, Stages::TRIMMED);
+
         Ok(removed_ops)
+    }
+
+    /// Records `stage` against every event id carried by `ops`.
+    ///
+    /// Diagnostics only. Skipped entirely when bookkeeping is off, which keeps
+    /// the `Debug` formatting of secondary index labels out of release builds.
+    fn record_stage(&self, ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>], stage: Stages) {
+        let Some(ledger) = &self.event_ledger else {
+            return;
+        };
+        if !event_ledger::enabled() {
+            return;
+        }
+        for op in ops {
+            if let Some(evs) = op.primary_key_events() {
+                ledger.record_stage_for_events(EventStream::Primary, evs, stage);
+            }
+            // See the matching note in `QueueAnalyzer::record_ops_stage`: the
+            // producer side records primary ids only, so an id observed on a
+            // secondary stream here is known to have been queued.
+            for (index, id) in op.secondary_key_events().iter_event_ids() {
+                ledger.record_stage(
+                    EventStream::Secondary(format!("{index:?}")),
+                    id.inner(),
+                    stage.union(Stages::QUEUED),
+                );
+            }
+        }
+    }
+
+    /// The bookkeeping's account of a gap, or a note saying there is none.
+    fn gap_report(
+        &self,
+        stream: &EventStream,
+        last_applied: IndexChangeEventId,
+        next_available: IndexChangeEventId,
+    ) -> String {
+        match &self.event_ledger {
+            Some(ledger) => ledger.gap_report(stream, last_applied.inner(), next_available.inner()),
+            None => {
+                " This batch was built without event bookkeeping attached, so the gap cannot be attributed.".to_owned()
+            }
+        }
     }
 
     pub fn get_last_event_ids(&self) -> LastEventIds<AvailableIndexes> {
@@ -358,8 +421,9 @@ where
                 // that persists is a bug upstream of the analyzer; report it
                 // loudly instead of force-applying and corrupting the file.
                 if attempts > GIVE_UP_AFTER_ATTEMPTS {
+                    let report = self.gap_report(&EventStream::Primary, last_ids.primary_id, id);
                     return Err(eyre::eyre!(
-                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?} after {attempts} attempts, with {} operations queued. Every one of them was collected and the stream is still gapped, so the operation carrying the missing id never reached the queue: an event id was consumed without its event being pushed. The producer is upstream of the analyzer, not here.",
+                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?} after {attempts} attempts, with {} operations queued.{report}",
                         last_ids.primary_id,
                         id,
                         self.ops.len()
@@ -381,8 +445,9 @@ where
                     // stream, defer until the missing event arrives, and report
                     // a persistent gap as the bug it is.
                     if attempts > GIVE_UP_AFTER_ATTEMPTS {
+                        let report = self.gap_report(&EventStream::Secondary(format!("{index:?}")), *last, id);
                         return Err(eyre::eyre!(
-                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} after {attempts} attempts, with {} operations queued. All of them were collected and the stream is still gapped, so the operation carrying the missing id never reached the queue.",
+                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} after {attempts} attempts, with {} operations queued.{report}",
                             self.ops.len()
                         ));
                     }

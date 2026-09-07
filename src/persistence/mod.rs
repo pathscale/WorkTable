@@ -10,6 +10,7 @@ pub use error::{
     PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceResult, PersistenceState,
     load_persisted_state,
 };
+pub use event_ledger::{EventLedger, EventStream, Stages};
 pub use operation::{
     AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,
@@ -91,6 +92,7 @@ impl<T: 'static> std::error::Error for UnloadFailure<T> {}
 
 mod engine;
 mod error;
+pub mod event_ledger;
 pub mod operation;
 mod readonly_engine;
 mod space;

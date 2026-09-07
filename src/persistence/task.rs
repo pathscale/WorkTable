@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -12,7 +13,8 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use worktable_codegen::worktable;
 
-use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId};
+use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
+use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, OperationType};
 use crate::persistence::{
     PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceResult, PersistenceState,
 };
@@ -207,6 +209,12 @@ pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availabl
     /// collection off `attempts` therefore never happened in exactly the case
     /// that needed it. Progress is what should widen the search.
     no_progress: usize,
+    /// Shared with the queue that feeds this analyzer and with every
+    /// `BatchOperation` it builds, so the event-gap guard can say which ids in
+    /// a gap ever reached the queue. Diagnostics only: see
+    /// [`crate::persistence::event_ledger`]. Detached until
+    /// `attach_event_ledger` is called, which unit-test analyzers never do.
+    event_ledger: Arc<EventLedger>,
 }
 
 #[derive(Debug)]
@@ -260,7 +268,17 @@ where
             page_limit: MAX_PAGE_AMOUNT,
             attempts: 0,
             no_progress: 0,
+            event_ledger: Arc::new(EventLedger::detached()),
         }
+    }
+
+    /// Shares the feeding queue's event bookkeeping with this analyzer.
+    ///
+    /// Only the producer side records who pushed an event, so the analyzer has
+    /// to read the *same* ledger the queue writes for its gap reports to mean
+    /// anything.
+    pub fn attach_event_ledger(&mut self, ledger: Arc<EventLedger>) {
+        self.event_ledger = ledger;
     }
 
     pub fn push(&mut self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> eyre::Result<()> {
@@ -299,6 +317,39 @@ where
             .iter()
             .next()
             .map(|(id, _)| id)
+    }
+
+    /// Records `stage` against every event id carried by `ops`.
+    ///
+    /// Diagnostics only. The whole body is skipped when bookkeeping is off,
+    /// which keeps the `Debug` formatting of secondary index labels off the
+    /// path of a release build entirely.
+    fn record_ops_stage(&self, ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>], stage: Stages)
+    where
+        SecondaryKeys: TableSecondaryIndexEventsOps<AvailableIndexes>,
+    {
+        if !event_ledger::enabled() {
+            return;
+        }
+        for op in ops {
+            if let Some(evs) = op.primary_key_events() {
+                self.event_ledger
+                    .record_stage_for_events(EventStream::Primary, evs, stage);
+            }
+            // `Stages::QUEUED` is unioned in for secondary streams because the
+            // producer side records primary ids only: an operation reaching
+            // the analyzer at all proves it was queued, and without this the
+            // secondary gap report would call every id it knows about leaked.
+            // The cost is that a secondary record carries no producer call
+            // site, which the report prints as `<unrecorded>`.
+            for (index, id) in op.secondary_key_events().iter_event_ids() {
+                self.event_ledger.record_stage(
+                    EventStream::Secondary(format!("{index:?}")),
+                    id.inner(),
+                    stage.union(Stages::QUEUED),
+                );
+            }
+        }
     }
 
     pub async fn collect_batch_from_op_id(
@@ -440,13 +491,23 @@ where
             ops.push(op);
         }
 
-        let mut op = BatchOperation::new(ops, info_wt);
+        self.record_ops_stage(&ops, Stages::COLLECTED);
+        let mut op = BatchOperation::new(ops, info_wt).with_event_ledger(self.event_ledger.clone());
         let invalid_for_this_batch_ops = op.validate(&self.last_events_ids, self.attempts).await?;
         if let Some(invalid_for_this_batch_ops) = invalid_for_this_batch_ops {
+            self.record_ops_stage(&invalid_for_this_batch_ops, Stages::REQUEUED);
             self.extend_from_iter(invalid_for_this_batch_ops.into_iter())?;
             let previous_primary = self.last_events_ids.primary_id;
             let last_ids = op.get_last_event_ids();
             let advanced = last_ids.primary_id > previous_primary;
+            self.event_ledger
+                .record_applied_upto(EventStream::Primary, last_ids.primary_id.inner());
+            if event_ledger::enabled() {
+                for (index, id) in &last_ids.secondary_ids {
+                    self.event_ledger
+                        .record_applied_upto(EventStream::Secondary(format!("{index:?}")), id.inner());
+                }
+            }
             self.last_events_ids.merge(last_ids);
             self.last_invalid_batch_size = 0;
             self.page_limit = MAX_PAGE_AMOUNT;
@@ -461,6 +522,7 @@ where
         } else {
             // can't collect batch for now
             let ops = op.ops();
+            self.record_ops_stage(&ops, Stages::REQUEUED);
             self.attempts += 1;
             self.no_progress += 1;
             if self.last_invalid_batch_size == ops.len() {
@@ -918,7 +980,7 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn wake_landing_inside_the_pop_race_window_is_not_lost() {
         let lifecycle = Arc::new(PersistenceLifecycle::new());
-        let mut queue = Queue::<(), u64, TestEvents>::new(lifecycle.clone());
+        let mut queue = Queue::<(), u64, TestEvents>::new(lifecycle.clone(), "tests/queue");
         let gate = Arc::new(PopRaceWindowGate::new());
         queue.pop_race_window_gate = Some(gate.clone());
         let queue = Arc::new(queue);
@@ -1148,6 +1210,41 @@ impl PopRaceWindowGate {
     }
 }
 
+/// Primary index event ids lifted off an operation before it is moved into the
+/// queue, so they can be recorded once the push is known to have been accepted.
+///
+/// Primary only: `Queue` is generic over the secondary event type with no bound
+/// that could iterate it, and the primary stream is the one whose gap guard
+/// stalls the engine. The analyzer records secondary ids at collection time,
+/// where that bound does exist.
+///
+/// Cheap when bookkeeping is off: `EventLedger::event_ids` returns an empty
+/// `Vec`, which allocates nothing, and the rest is two `Copy` field reads.
+struct QueuedEventIds {
+    ids: Vec<u64>,
+    op_id: OperationId,
+    op_type: OperationType,
+}
+
+impl QueuedEventIds {
+    fn of<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>(
+        value: &Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
+    ) -> Self {
+        Self {
+            ids: value
+                .primary_key_events()
+                .map(|evs| EventLedger::event_ids(evs.as_slice()))
+                .unwrap_or_default(),
+            op_id: value.operation_id(),
+            op_type: value.operation_type(),
+        }
+    }
+
+    fn record(&self, ledger: &EventLedger, site: &'static Location<'static>) {
+        ledger.record_queued(EventStream::Primary, &self.ids, self.op_id, self.op_type, site);
+    }
+}
+
 #[derive(Debug)]
 pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // Not `lockfree::queue::Queue`: its `Removable::empty` materializes the
@@ -1161,38 +1258,71 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // queue that still holds work.
     len: Arc<AtomicUsize>,
     lifecycle: Arc<PersistenceLifecycle>,
+    /// Producer-side half of the event-gap bookkeeping: every operation that
+    /// reaches persistence passes through this queue, so an event id the
+    /// engine is waiting for that never appears here was assigned by the index
+    /// and dropped before it was queued. Shared with the analyzer, which reads
+    /// it when the gap guard fires. Diagnostics only, and inert unless
+    /// [`event_ledger::enabled`].
+    event_ledger: Arc<EventLedger>,
     #[cfg(test)]
     pop_race_window_gate: Option<std::sync::Arc<PopRaceWindowGate>>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
-    fn new(lifecycle: Arc<PersistenceLifecycle>) -> Self {
+    fn new(lifecycle: Arc<PersistenceLifecycle>, table_path: &str) -> Self {
         Self {
             queue: ParkingMutex::new(VecDeque::new()),
             notify: Notify::new(),
             len: Arc::new(AtomicUsize::new(0)),
             lifecycle,
+            event_ledger: Arc::new(EventLedger::new(table_path)),
             #[cfg(test)]
             pop_race_window_gate: None,
         }
     }
 
-    pub fn push(&self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
-        self.push_message(PersistenceMessage::Operation(value))
+    /// The event bookkeeping this queue writes, for sharing with the analyzer.
+    pub fn event_ledger(&self) -> Arc<EventLedger> {
+        self.event_ledger.clone()
     }
 
-    /// Enqueues a whole batch of operations under one lifecycle check, one
-    /// queue lock acquisition and one worker wake-up, so callers producing
-    /// many operations at once (`insert_many`) pay the intake overhead once
-    /// instead of per row. All-or-nothing: either every operation is accepted
-    /// or none is.
-    pub fn push_many(
+    /// Enqueues one operation, naming the producer's call site.
+    ///
+    /// The site is passed explicitly rather than taken with `#[track_caller]`,
+    /// because that only reaches one frame up: a wrapper that wants its own
+    /// caller named in a gap report has to forward a location through here.
+    /// through here rather than call `push` and lose it.
+    pub fn push_at(
+        &self,
+        value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
+        site: &'static Location<'static>,
+    ) -> PersistenceResult {
+        // The ids have to be lifted out before the operation is moved into the
+        // queue, but they are only recorded once the push is accepted: a
+        // refused push (the engine is closing or already failed) genuinely
+        // does not queue its events, and recording it as queued would hide
+        // exactly that leak mode.
+        let queued = QueuedEventIds::of(&value);
+        self.push_message(PersistenceMessage::Operation(value))?;
+        queued.record(&self.event_ledger, site);
+        Ok(())
+    }
+
+    /// Enqueues a whole batch under one lifecycle check, one queue lock and one
+    /// worker wake-up, so a caller producing many operations at once
+    /// (`insert_many`) pays the intake overhead once instead of per row.
+    /// All-or-nothing: either every operation is accepted or none is. Takes the
+    /// producer's call site for the same reason as [`Queue::push_at`].
+    pub fn push_many_at(
         &self,
         values: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+        site: &'static Location<'static>,
     ) -> PersistenceResult {
         if values.is_empty() {
             return Ok(());
         }
+        let queued = values.iter().map(QueuedEventIds::of).collect::<Vec<_>>();
         let state = self.lifecycle.state.lock();
         match &*state {
             PersistenceState::Running => {}
@@ -1205,6 +1335,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
             .lock()
             .extend(values.into_iter().map(PersistenceMessage::Operation));
         self.notify.notify_one();
+        drop(state);
+        // Recorded after acceptance, for the reason given in `push_at`.
+        for queued in &queued {
+            queued.record(&self.event_ledger, site);
+        }
         Ok(())
     }
 
@@ -1309,13 +1444,21 @@ where
         primary_key_events: Vec<IndexChangeEvent<IndexPair<PrimaryKey, Link>>>,
         secondary_keys_events: SecondaryKeys,
     ) -> PersistenceResult {
-        self.push(Operation::Update(UpdateOperation {
-            id: OperationId::Single(uuid::Uuid::now_v7()),
-            primary_key_events,
-            secondary_keys_events,
-            bytes,
-            link: new_link,
-        }))
+        // `Location::caller()` without `#[track_caller]` resolves to this line
+        // rather than to vacuum's call site. That is deliberate: the trait
+        // declaration lives outside this module and cannot be annotated, and
+        // this line is already a unique producer label, because `apply_move`
+        // is only ever reached from a vacuum row move.
+        self.push_at(
+            Operation::Update(UpdateOperation {
+                id: OperationId::Single(uuid::Uuid::now_v7()),
+                primary_key_events,
+                secondary_keys_events,
+                bytes,
+                link: new_link,
+            }),
+            Location::caller(),
+        )
     }
 
     fn reclaim_pages(&self, page_ids: Vec<PageId>) -> PersistenceResult {
@@ -1391,17 +1534,21 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
+    /// `#[track_caller]` so an event-gap report names the producer that
+    /// pushed the operation rather than this forwarding line.
+    #[track_caller]
     pub fn apply_operation(&self, op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
-        self.queue.push(op)
+        self.queue.push_at(op, Location::caller())
     }
 
     /// Enqueues a batch of operations atomically with a single worker
     /// wake-up. See [`Queue::push_many`].
+    #[track_caller]
     pub fn apply_operations(
         &self,
         ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     ) -> PersistenceResult {
-        self.queue.push_many(ops)
+        self.queue.push_many_at(ops, Location::caller())
     }
 
     pub fn ensure_running(&self) -> PersistenceResult {
@@ -1448,12 +1595,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     {
         let table_path = engine.config().table_path().to_owned();
         let lifecycle = Arc::new(PersistenceLifecycle::new());
-        let queue = Arc::new(Queue::new(lifecycle.clone()));
+        let queue = Arc::new(Queue::new(lifecycle.clone(), &table_path));
 
         let engine_queue = queue.clone();
         let engine_lifecycle = lifecycle.clone();
         let analyzer_inner_wt: Arc<QueueInnerWorkTable> = Default::default();
         let mut analyzer = QueueAnalyzer::new(analyzer_inner_wt.clone());
+        // Producer and consumer must share one ledger: the queue records who
+        // pushed an event, the analyzer's gap guard reads it back.
+        analyzer.attach_event_ledger(queue.event_ledger());
         let analyzer_in_progress = Arc::new(AtomicBool::new(true));
         let task_analyzer_in_progress = analyzer_in_progress.clone();
 

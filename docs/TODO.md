@@ -3,7 +3,9 @@
 What is known to be unfinished, and enough context to act on it without the
 conversation it came from. Ordered by whether it blocks a release.
 
-Last reviewed 2026-09-04, against `master` after beta.17 publication.
+Last reviewed 2026-09-07. Sections below still describe the repository as of
+beta.17; `master` is now at 1.0.0-beta.19 and this file has not been swept for
+what those two releases closed.
 
 ## Closed, and how
 
@@ -111,43 +113,88 @@ yank beta.16 once beta.17 supersedes it.
 
 ## Not blocking, but wrong today
 
-### `congee-wt` still pulls `crossbeam-epoch`
+### `congee-wt` no longer pulls `crossbeam-epoch`
 
-beta.16 removes crossbeam from WorkTable's own reclamation, not from the build.
-`congee-wt` depends on it directly and re-exports its `Guard`, which
-`src/index/congee.rs:101` names in a signature; `crossbeam-skiplist` also
-arrives under `WorkTablesIndex` and `indexset`.
+Corrected 2026-09-07. This section said the port was outstanding and mechanical.
+Both halves were wrong.
 
-congee's use is shallow: 34 references, none of them `Atomic<>`, `Owned::` or
-`Shared<>`, and most in tests. It only ever calls `pin()` and passes `Guard`
-around as an opaque token, so porting it to `ps-reclaim` is mechanical. The
-catch is that `Guard` is in congee-wt's public API, so it is a breaking change
-there plus the call sites here.
+`congee-wt` dropped `crossbeam-epoch` in 0.4.4. `Cargo.toml:22` now reads
+`ps-reclaim = { version = "0.1.4", default-features = false, features =
+["libc", "spin"] }`, no `crossbeam_epoch` reference survives in its sources or
+tests, and this repository's `Cargo.lock` already resolves `congee-wt 0.4.4`.
+The two remaining `crossbeam` strings in that crate are attribution comments on
+a seqlock and a backoff loop.
 
-`arctic-wt` should **not** be ported. It reclaims through `seize`, and is right
-to: a trie with short reads reaches quiescence constantly, which is the exact
-property that makes `seize` wrong for this crate, where `select` holds a read
-guard.
+The call site this section worried about needed no change. It has moved to
+`src/index/congee.rs:120` and still reads
+`fn retire_old(pointer: usize, guard: &congee::epoch::Guard) -> Arc<V>`. The
+`congee::epoch::Guard` path was deliberately preserved across the port, and the
+lifetime the new guard carries elides in reference position.
 
-### Persistence stalls on a primary index event gap, rarely
+The port was not the mechanical rename described here. A literal swap would have
+kept one global epoch; what shipped gives each tree its own `Domain`, adds a
+bounded pending-retire batch, checks guard provenance so a guard from another
+tree panics rather than corrupting, and drains the tree's own domain on `Drop`.
+Worth knowing because the new `Guard` is `!Send` and tree-scoped, so a guard may
+not be created outside the thread and tree that uses it. Nothing in either
+repository does; every threaded test builds its guard inside the spawned
+closure.
 
-One run of `cargo test --workspace --all-targets --all-features` failed with
+### Persistence event gap: three leak sites found, instrumented not yet fixed
 
-    persistence stalled on primary index event gap: last applied Id(1439),
-    next available Id(1455) (attempt 9)
+Updated 2026-09-07. This section previously said the cause was unknown and that
+the next step was instrumentation rather than a repro hunt. The instrumentation
+was built, and reading for it found the leaks.
 
-in `tests/persistence/loaded_index_growth.rs`. Not a flaky timeout: the guard
-at `src/persistence/operation/batch.rs:346` is deliberate, added in `c0c06ba`,
-and its comment says a gap that persists past eight deferrals means an event id
-was consumed without its event being queued, which only non-CDC index mutations
-do. The gap is 16 ids wide.
+`IndexChangeEventId` is `indexset::cdc::change::Id`, allocated by
+`event_id.fetch_add` in the same statement that stamps the event, so indexset
+never consumes an id without emitting its event. Every leak is on our side: an
+event handed back and then dropped. Three sites, all in generated persisted
+query code, all on secondary streams, all confirmed by reading:
 
-1 failure in 6 full runs on this branch, 0 in 3 on master, 0 in 15
-persistence-only runs, so it needs whole-suite load and is not a beta.16
-regression. Do not start with a repro hunt: instrument `IndexChangeEventId`
-assignment against event queueing so the next occurrence names its own cause.
-Evidence at `~/code/wt-event-gap-2026-09-01.txt`.
+- `codegen/src/generators/persist/queries/update.rs:569`. The
+  `IndexError::NotFound => Err(WorkTableError::NotFound)` arm returns with no
+  acknowledge, while its sibling `AlreadyExists` arm immediately above builds an
+  `Acknowledge` carrying `merged_events` and applies it. The events from
+  `process_difference_insert_cdc` are dropped on the `NotFound` path. This
+  asymmetry between two adjacent arms is the clearest of the three.
+- `codegen/src/generators/persist/queries/update.rs:593`,
+  `gen_process_diffs_remove_on_index`: `let (secondary_keys_events_remove, res)
+  = ...; res?;`. On `Err` the `?` returns before
+  `op.extend_secondary_key_events`, dropping the events bound on the line above.
+- `codegen/src/generators/persist/queries/delete.rs:101`: the same `res?;` shape
+  after `delete_row_cdc`.
 
+Checked and NOT leaks: the rollback arms of `insert_cdc`, `insert_many_cdc` and
+`reinsert_cdc` in `src/table/mod.rs` all merge forward and rollback events into
+an `Acknowledge`, as does the data-delete-failure restore path. Vacuum's
+`update_index_after_move` takes the non-CDC branch only when `persistence` is
+`None`, so the one case commit `c0c06ba` named is closed for persisted tables.
+
+The only structurally possible primary-stream leak is a refused
+`apply_operation` after the index mutation already consumed ids, and more
+generally any `?` between a CDC index mutation and its `apply_operation`.
+
+**The failure text quoted in earlier versions of this section is stale.** It
+said "attempt 9"; `GIVE_UP_AFTER_ATTEMPTS` is now 120, and
+`COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS` plus its regression test
+`collection_recovers_when_event_order_and_operation_order_disagree` were added
+since, for a symptom that reads identically but is a collection failure rather
+than a leak. Telling those two apart is exactly what the new ledger does.
+
+`src/persistence/event_ledger.rs` records queued, collected, requeued, trimmed
+and applied per stream in a bounded 8192-id window, and the guard's message now
+ends in a verdict: either ASSIGNED BUT NEVER QUEUED with the id range and the
+producer sites either side of the gap, or QUEUED BUT NOT APPLIED with the per-id
+stage history. It says so plainly when part of the gap fell outside the retained
+window, so it never claims "never queued" about an id it cannot answer for.
+Always compiled, gated at run time on `debug_assertions` or `WT_EVENT_LEDGER`,
+which puts it on exactly where the bug appears, since the stall needs a full
+debug `--all-features` run.
+
+Not fixed, and not compiled. The three sites need the same treatment the
+rollback arms already use: build an `Acknowledge` carrying the orphaned events
+before propagating the error.
 ## Housekeeping
 
 - `CHANGELOG.md` stops at 0.4.1, long before the 1.0.0-beta line.
