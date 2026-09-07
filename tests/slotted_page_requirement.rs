@@ -153,7 +153,8 @@ async fn a_data_page_says_where_its_rows_are() {
     // layout would do; what matters is that something in the page delimits the
     // rows. Today the tail is write padding, so this reads zero.
     let mut described = 0usize;
-    for page in bytes.chunks_exact(PAGE_SIZE).skip(1) {
+    let (pages, _) = bytes.as_chunks::<PAGE_SIZE>();
+    for page in pages.iter().skip(1) {
         let mut tail = [0u8; 4];
         tail.copy_from_slice(&page[PAGE_SIZE - 4..]);
         described += u32::from_le_bytes(tail) as usize;
