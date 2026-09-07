@@ -13,6 +13,18 @@ permissions:
   contents: read
 
 jobs:
+  # `scripts/ci-local.sh` runs `cargo fmt --all --check` as its first step. CI
+  # did not, which made the script stricter than CI instead of equal to it, and
+  # formatting drift reached master unnoticed. Same command, same arguments.
+  fmt:
+    name: Formatting
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Formatting (cargo fmt --all --check)
+        run: cargo fmt --all --check
+
   build:
     name: Build and test (${{ matrix.name }})
     runs-on: ubicloud-standard-2
