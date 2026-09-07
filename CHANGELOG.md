@@ -57,6 +57,697 @@ Change Log
 - Persisted primary/secondary index reconstruction and validation failures that
   could otherwise expose missing, duplicate, or mismatched rows.
 
+## [1.0.0-beta.17]
+
+### Added
+
+- `worktable_dsl`, a standalone crate holding the schema language. A schema can
+  now be read as data and written back, two schemas can be compared and the
+  cost of the difference reported, and declarations can be found across a
+  source tree.
+- Every generated table embeds its own declaration, so the schema is
+  recoverable from the code the macro produced.
+
+### Changed
+
+- Dependency requirements on the index and reclamation crates are carets rather
+  than exact pins, and `ps-reclaim` moved to 0.1.1 taken from the registry.
+- Retirement runs through the reclamation domain rather than through the guard.
+
+## [1.0.0-beta.16]
+
+### Changed
+
+- A batch pins its reclamation domain once instead of once per row, and
+  reclamation goes through `ps-reclaim`.
+- Requires data_bucket 0.5.5.
+
+## [1.0.0-beta.15]
+
+### BC Breaks
+
+- Non-unique index entries are identified and ordered by their `(key, value)`
+  pair, and the discriminator is gone. This is a persisted format change. An
+  index file written by beta.14 or earlier orders entries within a key by
+  discriminator, so it must be reindexed rather than loaded.
+
+### Fixed
+
+- Inserting into a non-unique index no longer scans every entry sharing the
+  key. On a table that puts a whole generation under one key, a one-file update
+  measured 698 ms on beta.13 and 15.1 s on beta.14; the per-row cost is back
+  from 330 us to roughly 9 us.
+- Index pages reconstruct in order of their minimum rather than their node id,
+  so a page that merely ends late no longer sorts ahead of one that starts
+  earlier.
+
+## [1.0.0-beta.14]
+
+### Added
+
+- `insert_many` with all-or-nothing semantics and CDC batch operations, and
+  `reserve_pks` for atomic primary key range reservation, both generated on
+  in-memory and persisted tables.
+- Per-table epoch pin domains. The global reader counter is replaced by
+  epoch-based retirement reclamation, and removed partitions are reclaimed
+  through the shared router under the same grace period.
+- Non-unique Arctic indexes for fixed-width integer keys, generated for
+  in-memory and persisted tables, with a pair-list checkpoint and WAL.
+
+### Changed
+
+- The persistence queue takes batches on a single wakeup, deduplicates page
+  queries when collecting a multi-row batch, and caps rows per group id so the
+  analyzer drain stays linear.
+- The table-global page barrier is narrowed to one barrier per page.
+- Requires WorkTablesIndex 0.0.8 and data_bucket 0.5.4.
+
+### Fixed
+
+- Mutation stripes are acquired as a batch without deadlocking.
+- A unique-collision unwind on a persisted table survives reload.
+
+## [1.0.0-beta.13]
+
+The audit-fix release. Most of it is durability and concurrency correctness
+rather than new surface.
+
+### BC Breaks
+
+- Persisted tables reject any `page_size` other than 16384 instead of writing a
+  file that cannot be read back.
+- A torn table-of-contents page 1 fails loudly instead of silently starting
+  from an empty table.
+- In-place update is rejected on indexed columns rather than leaving the index
+  stale.
+- An exhausted autoincrement generator panics instead of wrapping around and
+  handing out keys that are already in use.
+
+### Fixed
+
+- A failed data write no longer leaves published index keys behind. Insert,
+  update and delete each roll their index changes back.
+- Index pages are written before the table of contents that references them,
+  and table-of-contents key updates are guarded against segment overflow.
+- Data-file accounting: the u32 page-offset wrap when writing the last page's
+  data length, files whose length is an exact page multiple failing to reopen,
+  and non-extending writes being counted into the last page's length.
+- Vacuum no longer panics on a failed row move, no longer counts its scratch
+  pages in `pages_freed`, and never reports a source page fully moved when a
+  row was skipped.
+- A cancelled lock wait releases its registered op-lock, and a row that
+  vanishes mid-update returns `NotFound` instead of panicking.
+- The persistence worker refuses new operations once `Drop` has aborted it,
+  propagates `insert_cdc` serialization failure instead of panicking, and keeps
+  surviving data-only writes when event removal empties a batch.
+- ART checkpoints are atomic and clean up stale temporaries.
+- Arctic returns an empty range for `Excluded` bounds with no neighbour.
+- Row counts include inserts and deletes that reused a slot, and the
+  `PageIsFull` page switch is serialized against racing inserters.
+- A misplaced `persist` or `partition_by` in a declaration now names the
+  position it belongs in.
+
+## [1.0.0-beta.12]
+
+### Added
+
+- `partition_by`: one declared table type, many routed instances, with
+  `partition_ref` for borrowing a partition rather than cloning it.
+
+### Changed
+
+- `system_info` no longer copies every data page, and partition metrics scan
+  and allocate once instead of three times.
+
+### Fixed
+
+- A use-after-free in partition removal.
+- `close` reported success having persisted nothing.
+- One panic inside the router no longer disables the router.
+
+## [1.0.0-beta.11]
+
+### Changed
+
+- Requires the reviewed ART backend releases.
+
+## [1.0.0-beta.10]
+
+### Fixed
+
+- Table-of-contents inserts carry across persisted segments, reload insertion
+  stays on the fast path, and the insert API keeps its previous shape.
+
+## [1.0.0-beta.9]
+
+### Fixed
+
+- Persistence health is preserved across page splits.
+
+## [1.0.0-beta.8]
+
+### Fixed
+
+- Multi-row persistence order is preserved, and overlapping durable row writes
+  are ordered against each other.
+
+## [1.0.0-beta.7]
+
+### Fixed
+
+- The sized indexed update path is preserved.
+
+## [1.0.0-beta.6]
+
+### Changed
+
+- Fixed-width updates stay in place.
+
+### Fixed
+
+- Vacuum revalidates links after row locking.
+
+## [1.0.0-beta.5]
+
+### Added
+
+- Checked offline recovery load.
+
+### Changed
+
+- WorkTablesIndex structural persistence moved off the mutation path.
+- Logical WTI mutation stripes hash with FxHash, reusable data ranges are
+  subtracted in one pass, and full-row updates generate distinct paths.
+
+### Fixed
+
+- Same-size unsized updates apply in place instead of going through reinsert.
+- Full-table scans re-resolve stale links.
+- Vacuumed pages are reusable after reload.
+- Cancelled lock acquirers are cleaned up.
+- A panic while loading a persisted table is contained instead of unwinding
+  into the caller.
+
+## [1.0.0-beta.4]
+
+### Fixed
+
+- Release hardening and torn-store refusal are consolidated, so a torn store
+  refuses cleanly.
+
+## [1.0.0-beta.3]
+
+### Changed
+
+- Depends on the published index dependency chain rather than git revisions.
+- Row publication is concurrency-safe by default.
+- Persistence failures are terminal instead of leaving the table in a state
+  that looks usable.
+
+### Fixed
+
+- Synchronous insert is serialized against row mutations.
+- Page and link reclamation no longer overlap, and vacuum page reuse is
+  deferred through the read grace period.
+- Upsert retry backoff is bounded and its shift is capped, so same-key churn
+  cannot livelock.
+- Fragmented unsized index pages are compacted.
+- A stale multimap removal lookup is avoided.
+
+## [1.0.0-beta.2]
+
+### Added
+
+- Native ART index backends persist.
+
+### Changed
+
+- The temporary rusty-s3 fork is retired in favour of the published crate.
+- Stable index reads use the specialized path by default.
+
+### Fixed
+
+- Same-key upserts linearize.
+- Bounded retry for transient index misses is gated rather than always on.
+- Reused persistence slots coalesce.
+
+## [1.0.0-beta.1]
+
+### Added
+
+- Per-index backend selection in the `worktable!` declaration, with unique-index
+  adapters for Arctic, Congee and a parallel upstream indexset. Persistence is
+  preserved across indexset providers.
+
+## [0.9.4]
+
+### Changed
+
+- Requires data_bucket 0.4.1, and the temporary git patch is retired.
+
+### Fixed
+
+- A torn store refuses cleanly instead of terminating the process by signal.
+
+## [0.9.3]
+
+### Fixed
+
+- `worktable_version!` stays read-only when the primary key is unsized.
+
+## [0.9.2]
+
+### Fixed
+
+- Duplicate-key secondary indexes reconstruct correctly on reload.
+- Nodes sharing a maximum key order correctly, and pages are no longer re-sorted
+  on reload.
+- Space files flush before an operation reports done.
+
+## [0.9.1]
+
+### Changed
+
+- The proc-macro crate is published as `worktable_codegen` again, after a brief
+  release under the name `worktable_macros`.
+
+## [0.9.0]
+
+### Changed
+
+- Moves to WorkTablesIndex 0.0.1 and data_bucket 0.4.0.
+- The unsound lock-free persistence queue is replaced with a mutexed
+  `VecDeque`.
+
+### Fixed
+
+- Row lock acquisition and vacuum no longer race between check and act.
+- `wait_for_ops` no longer returns while a popped operation is still in flight.
+- Upsert retries an existence flip instead of surfacing it to the caller.
+- A multi-row update locks one validated snapshot, predicate included, and
+  delete by non-unique index snapshots validated primary keys.
+- Gapped event streams are never force-applied to the on-disk index, and the
+  whole batch is scanned for event-id gaps rather than the last thirty events.
+- A failed batch sub-operation is reported without cancelling the rest of the
+  work.
+- `save_batch_data` tracks the real maximum created page id.
+- Vacuum persists row moves through CDC, so persisted tables survive
+  defragmentation.
+
+## [0.9.0-beta0.2.3]
+
+### Fixed
+
+- Primary key generator state is preserved across migration reinserts.
+
+## [0.9.0-beta0.2.2]
+
+### Changed
+
+- Range ordering query logic reworked.
+
+## [0.9.0-beta0.2.1]
+
+### Changed
+
+- Update locks spin before returning a `Pending` state.
+
+## [0.9.0-beta0.2.0]
+
+### Added
+
+- Migrations.
+
+## [0.9.0-beta0.1.4]
+
+### Fixed
+
+- Page-not-found bug in the table of contents.
+
+## [0.9.0-beta0.1.1]
+
+### Fixed
+
+- Persistence bug affecting operations that fail.
+
+## [0.9.0-alpha8]
+
+### Changed
+
+- S3 integration moves to a different client crate.
+
+## [0.9.0-alpha7]
+
+### Fixed
+
+- S3 integration bug.
+
+## [0.9.0-alpha6]
+
+### Changed
+
+- Moves to rustls.
+
+## [0.9.0-alpha5]
+
+### Added
+
+- nanoid support for primary keys.
+
+## [0.9.0-alpha4]
+
+### Fixed
+
+- Vacuum logic.
+
+## [0.9.0-alpha3]
+
+### Fixed
+
+- The S3 macro.
+
+## [0.9.0-alpha2]
+
+### Added
+
+- S3 sync feature.
+
+## [0.9.0-alpha1]
+
+### Changed
+
+- Persistence is moved behind separate traits.
+
+## [0.8.23]
+
+### Changed
+
+- `Lock`s are reworked around RAII guards.
+
+## [0.8.22]
+
+### Added
+
+- `MemStat` derive on the generated primary key type.
+
+### Changed
+
+- `DataPages` select is generic over the input link type.
+
+## [0.8.21]
+
+### Changed
+
+- `delete` is generic, matching `insert` and `update`.
+
+## [0.8.20]
+
+### Added
+
+- Vacuum.
+
+## [0.8.19]
+
+### Fixed
+
+- Optional fields in persisted tables.
+
+## [0.8.18]
+
+### Fixed
+
+- Persisted table code failed to compile when the declaration used `optional`
+  fields.
+
+## [0.8.17]
+
+### Changed
+
+- Updated `indexset`.
+
+## [0.8.16]
+
+### Changed
+
+- Dependencies are pinned to exact versions.
+
+## [0.8.15]
+
+### Fixed
+
+- Empty link registry.
+
+## [0.8.13]
+
+### Changed
+
+- Bumped `indexset`.
+
+## [0.8.12]
+
+### Changed
+
+- Bumped `data_bucket` to 0.3.5 and `wt-indexset` to 0.12.11, and the crate now
+  declares its repository.
+
+## [0.8.11]
+
+### Changed
+
+- Bumped `indexset`.
+
+## [0.8.10]
+
+### Changed
+
+- Bumped `data_bucket` to 0.3.3 and `wt-indexset` to 0.12.9.
+
+## [0.8.9]
+
+### Fixed
+
+- Empty node bug.
+
+## [0.8.8]
+
+### Added
+
+- Every `AtomicU*` and `AtomicI*` type is usable as a primary key.
+
+## [0.8.7]
+
+### Changed
+
+- Dependency bumps.
+
+## [0.8.6]
+
+### Fixed
+
+- An `update`-related bug.
+
+## [0.8.5]
+
+### Fixed
+
+- Another `update`-related bug.
+
+## [0.8.4]
+
+### Changed
+
+- Codegen version bump.
+
+## [0.8.3]
+
+### Fixed
+
+- `delete` queries on a table whose primary key is not named `id`.
+- An update bug, by way of an `indexset` update.
+
+## [0.8.1]
+
+### Added
+
+- The macro reports an error when an index names a column that does not exist,
+  and declaration errors are raised as `syn::Error`s with usable messages.
+
+### Fixed
+
+- `UnsizedNode` split.
+
+## [0.8.0]
+
+### Fixed
+
+- Unsized node bug.
+
+## [0.7.2]
+
+### Fixed
+
+- A further `update` bug.
+
+## [0.7.1]
+
+### Fixed
+
+- An update violation.
+
+## [0.7.0]
+
+### Fixed
+
+- Reinsert bug.
+
+## [0.6.14]
+
+### Added
+
+- Ghost inserts. A row is staged invisible and becomes visible only once its
+  index entries are in place, so a concurrent reader never observes a
+  half-inserted row.
+
+## [0.6.13]
+
+### Fixed
+
+- Concurrency bugs in `select`.
+
+## [0.6.12]
+
+### Fixed
+
+- A further locking bug.
+
+## [0.6.11]
+
+### Fixed
+
+- Locking bugs for unsized types, and an `UnsizedNode` bug on `update`.
+
+### Changed
+
+- Dependency bumps.
+
+## [0.6.10]
+
+### Changed
+
+- Republished against `worktable_codegen` 0.6.9. No library change.
+
+## [0.6.9]
+
+### Fixed
+
+- Concurrent persistence issues.
+
+## [0.6.8]
+
+### Fixed
+
+- `wait_for_ops` logic.
+
+## [0.6.7]
+
+### Fixed
+
+- `delete` on persisted tables.
+
+## [0.6.5]
+
+### Added
+
+- Custom derives can be attached to the generated row type.
+
+## [0.6.4]
+
+### Fixed
+
+- `uuid` usage.
+
+## [0.6.3]
+
+### Fixed
+
+- A debug `println!` on the persistence batch path no longer writes to stdout.
+
+## [0.6.2]
+
+### Fixed
+
+- Table-of-contents corrections.
+
+## [0.6.1]
+
+### Added
+
+- `update_in_place`.
+
+### Changed
+
+- The persistence queue is optimized.
+
+### Fixed
+
+- `insert` with an already-existing key.
+- A `use rkyv::Archive` import was required for some declarations.
+- `wait_for_ops`.
+
+## [0.5.6]
+
+### Changed
+
+- Updated `indexset`.
+
+## [0.5.5]
+
+### Fixed
+
+- Array-typed fields.
+
+### Changed
+
+- Moves to the newer Rust edition.
+
+## [0.5.4]
+
+### Added
+
+- Unsized index space, so index keys are no longer limited to fixed-width
+  types.
+- `SystemInfo` for the table and its indexes.
+- `where_by` on `SelectBuilder` for any column, indexed or not.
+- Float columns are usable in indexes, including ranges.
+
+### Fixed
+
+- Re-reading a table from file.
+- Index difference logic for `update` queries.
+
+## [0.5.1]
+
+### Changed
+
+- Persistence I/O is asynchronous.
+
+## [0.5.0]
+
+### Added
+
+- `select_where_{field}` queries for selecting data ranges.
+- `count` on the table.
+- Persist sync logic.
+
+### Changed
+
+- Non-unique indexes are backed by `IndexMultiMap`.
+
+### Fixed
+
+- Secondary index left inconsistent after an update.
+- Diff logic for a full-row update.
+
 ## [0.4.1]
 
 ### Added
