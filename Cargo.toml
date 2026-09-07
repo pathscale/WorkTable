@@ -37,7 +37,7 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 # pointer-only fast path. Publication is append-only and asserted at each swap.
 arc-swap = "1"
 async-trait = "0.1"
-arctic = { package = "arctic-wt", version = "^0.1, >=0.1.9", default-features = false, features = ["smr-ps-reclaim"] }
+arctic = { package = "arctic-wt", version = "^0.1, >=0.1.11", default-features = false, features = ["smr-ps-reclaim"] }
 congee = { package = "congee-wt", version = "^0.4, >=0.4.4" }
 convert_case = "0.6"
 crc32fast = "1"
@@ -59,7 +59,7 @@ prettytable-rs = "0.10"
 psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
 rkyv = { version = "0.8", features = ["uuid-1"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
-ps-reclaim = { version = "^0.1, >=0.1.3" }
+ps-reclaim = { version = "^0.1, >=0.1.4" }
 rustc-hash = "2"
 rusty-s3 = { version = "0.10", optional = true }
 smart-default = "0.7"
