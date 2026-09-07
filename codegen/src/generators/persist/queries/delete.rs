@@ -98,7 +98,23 @@ impl PersistGenerator {
                     row,
                     link,
                 );
-            res?;
+            // `delete_row_cdc` produces events whether or not it succeeds, and
+            // the index has already assigned their ids. Propagating the error
+            // without queueing them leaves a hole the persistence stream can
+            // never fill, exactly as the restore path below is careful not to.
+            if let core::result::Result::Err(e) = res {
+                let ack_op: Operation<
+                    <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                    #pk_ident,
+                    #secondary_events_ident
+                > = Operation::Acknowledge(AcknowledgeOperation {
+                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                    primary_key_events: vec![],
+                    secondary_keys_events,
+                });
+                self.1.apply_operation(ack_op)?;
+                return core::result::Result::Err(e.into());
+            }
             let (_, primary_key_events) = self.0.primary_index.remove_cdc(pk.clone(), link);
             if let core::result::Result::Err(e) = self.0.data.delete(link) {
                 let mut secondary_keys_events = secondary_keys_events;
@@ -386,6 +402,22 @@ mod tests {
         assert!(
             emitted.contains("Operation :: Acknowledge"),
             "acknowledge op missing:\n{emitted}"
+        );
+
+        // A failed secondary removal used to propagate through a bare `res?`,
+        // dropping the events `delete_row_cdc` had already produced. Their ids
+        // are assigned when the index produces them, so the persistence stream
+        // gapped permanently and the stall named a range rather than a cause.
+        let secondary = emitted.find("delete_row_cdc").expect("secondary removal emitted");
+        let tail = &emitted[secondary..];
+        let ack = tail
+            .find("Operation :: Acknowledge")
+            .expect("a failed secondary removal must acknowledge its events");
+        assert!(
+            ack < tail
+                .find("remove_cdc (pk . clone () , link)")
+                .expect("primary removal emitted"),
+            "the secondary removal propagates before acknowledging, which gaps the stream:\n{emitted}"
         );
     }
 }

@@ -140,7 +140,7 @@ not be created outside the thread and tree that uses it. Nothing in either
 repository does; every threaded test builds its guard inside the spawned
 closure.
 
-### Persistence event gap: three leak sites found, instrumented not yet fixed
+### Persistence event gap: three leak sites found, instrumented, and fixed
 
 Updated 2026-09-07. This section previously said the cause was unknown and that
 the next step was instrumentation rather than a repro hunt. The instrumentation
@@ -192,12 +192,36 @@ Always compiled, gated at run time on `debug_assertions` or `WT_EVENT_LEDGER`,
 which puts it on exactly where the bug appears, since the stall needs a full
 debug `--all-features` run.
 
-Not fixed, and not compiled. The three sites need the same treatment the
-rollback arms already use: build an `Acknowledge` carrying the orphaned events
-before propagating the error.
+**Fixed 2026-09-08.** All three sites now do what the rollback arms already did:
+build an `Acknowledge` carrying the orphaned events and apply it before
+propagating the error. The two `res?` sites became `if let Err(e) = res` so the
+events are moved into the acknowledge and the error is returned explicitly, and
+the `NotFound` arm acknowledges the events its sibling arm was already
+acknowledging.
+
+The events are **moved** into the acknowledge rather than cloned, and that is
+load-bearing rather than tidy. Cloning them fails to compile: the events type is
+still an inference variable at that point in the generated code, pinned only by
+the `op.extend_secondary_key_events` call further down, and method resolution for
+`.clone()` needs the type resolved where the call is written. The result is an
+`E0282` reported against the `worktable!` invocation with no inner span, which is
+an expensive thing to diagnose twice.
+
+Covered by emitted-token assertions in both generators
+(`indexed_update_write_failure_unwinds_and_acknowledges` and
+`delete_data_failure_restores_indexes_and_acknowledges`), which assert the
+acknowledge is emitted **before** the return or the extend rather than merely
+present somewhere in the output. The write failure itself is not forcible through
+the public API, so the wiring is pinned on the tokens, which is the same approach
+those tests already took.
+
+The in-memory generator has the same two `NotFound` arms
+(`codegen/src/generators/in_memory/queries/update.rs:528` and `552`) and they are
+correctly untouched: there is no persistence stream behind them to gap.
 ## Housekeeping
 
-- `CHANGELOG.md` stops at 0.4.1, long before the 1.0.0-beta line.
+- `CHANGELOG.md` was backfilled to 0.3.10 on 2026-09-08. It previously stopped at
+  beta.18.
 - `.github/workflows/rust.yml` has no `cargo fmt --check` job, so formatting
   drift accumulates unnoticed; `scripts/ci-local.sh` does check it, which makes
   the script stricter than CI rather than equal to it.

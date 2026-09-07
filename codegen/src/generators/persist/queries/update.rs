@@ -501,6 +501,7 @@ impl PersistGenerator {
     fn gen_process_diffs_insert_on_index(&self, idents: &[Ident], idx_idents: Option<&Vec<Ident>>) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();
+        let pk_ident = name_generator.get_primary_key_type_ident();
         // `updated_bytes` is bound by gen_data_write_and_fetch, which captures
         // the real row bytes right after the data write.
         let diff_container = if idx_idents.is_some() {
@@ -567,7 +568,27 @@ impl PersistGenerator {
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
                             }
-                            IndexError::NotFound => Err(WorkTableError::NotFound),
+                            IndexError::NotFound => {
+                                // The insert side produced events before it
+                                // failed, and the index has already assigned
+                                // their ids. Returning without queueing them
+                                // leaves a hole the persistence stream can
+                                // never fill, which is what the sibling arm
+                                // above avoids and what this arm used to
+                                // cause.
+                                let ack_op: Operation<
+                                    <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                                    #pk_ident,
+                                    #secondary_events_ident
+                                > = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: secondary_events.clone(),
+                                });
+                                self.1.apply_operation(ack_op)?;
+
+                                Err(WorkTableError::NotFound)
+                            }
                         };
                     }
                     let mut secondary_keys_events = secondary_events;
@@ -587,10 +608,29 @@ impl PersistGenerator {
     }
 
     fn gen_process_diffs_remove_on_index(&self, idx_idents: Option<&Vec<Ident>>) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let pk_ident = name_generator.get_primary_key_type_ident();
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
         if idx_idents.is_some() {
             quote! {
                 let (secondary_keys_events_remove, res) = self.0.indexes.process_difference_remove_cdc(link, diffs);
-                res?;
+                // The removal produced events whether or not it succeeded, and
+                // their ids are already assigned. Propagating the error without
+                // queueing them gaps the stream permanently, so acknowledge
+                // them first and then propagate unchanged.
+                if let core::result::Result::Err(e) = res {
+                    let ack_op: Operation<
+                        <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                        #pk_ident,
+                        #secondary_events_ident
+                    > = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(uuid::Uuid::now_v7()),
+                        primary_key_events: vec![],
+                        secondary_keys_events: secondary_keys_events_remove,
+                    });
+                    self.1.apply_operation(ack_op)?;
+                    return core::result::Result::Err(e.into());
+                }
                 op.extend_secondary_key_events(secondary_keys_events_remove);
             }
         } else {
@@ -1143,5 +1183,45 @@ mod tests {
             .find("Operation :: Update (UpdateOperation")
             .expect("update op emitted");
         assert!(insert < write && write < op_build, "emission order broken:\n{emitted}");
+
+        // Every event the index produced must reach the persistence stream,
+        // including on the paths that fail. The index assigns an event id at
+        // the moment it produces the event, so a path that returns without
+        // queueing one leaves a hole `BatchOperation::validate` will refuse
+        // forever, and the stall it causes names a range rather than a cause.
+        //
+        // The `NotFound` arm used to be exactly that: its sibling
+        // `AlreadyExists` arm built an Acknowledge and it did not.
+        let not_found = emitted
+            .find("IndexError :: NotFound =>")
+            .expect("not-found arm emitted");
+        let tail = &emitted[not_found..];
+        let ack = tail
+            .find("Operation :: Acknowledge")
+            .expect("not-found arm must acknowledge its events");
+        let returns = tail
+            .find("Err (WorkTableError :: NotFound)")
+            .expect("not-found arm returns");
+        assert!(
+            ack < returns,
+            "the not-found arm returns before acknowledging, which gaps the stream:\n{emitted}"
+        );
+
+        // Same for the removal side, where the events were dropped by a bare
+        // `res?` before the extend that would have carried them.
+        let removal = emitted
+            .find("process_difference_remove_cdc (link , diffs)")
+            .expect("old-key removal emitted");
+        let tail = &emitted[removal..];
+        let ack = tail
+            .find("Operation :: Acknowledge")
+            .expect("a failed removal must acknowledge its events");
+        let extend = tail
+            .find("op . extend_secondary_key_events")
+            .expect("successful removal extends the operation");
+        assert!(
+            ack < extend,
+            "a failed removal propagates before acknowledging, which gaps the stream:\n{emitted}"
+        );
     }
 }
