@@ -1,9 +1,11 @@
 pub(crate) mod epoch;
 mod offset_eq_link;
+#[cfg(feature = "std")]
 mod optimized_vec;
 mod ordered_float;
 
 pub use offset_eq_link::OffsetEqLink;
+#[cfg(feature = "std")]
 pub use optimized_vec::OptimizedVec;
 pub use ordered_float::{OrderedF32Def, OrderedF64Def};
 

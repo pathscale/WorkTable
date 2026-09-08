@@ -12,6 +12,7 @@ pub mod in_memory;
 mod index;
 pub mod lock;
 mod mem_stat;
+#[cfg(feature = "std")]
 pub mod migration;
 pub mod partition;
 pub mod persistence;
@@ -24,6 +25,7 @@ mod util;
 pub mod features;
 
 pub use index::*;
+#[cfg(feature = "std")]
 pub use persistence::{
     LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError, UnloadFailure, UnloadReport,
 };
@@ -53,16 +55,18 @@ pub mod prelude {
     pub use crate::lock::{LockAcquirer, LockGuard, LockMap, PendingLock};
     pub use crate::mem_stat::MemStat;
     pub use crate::partition::{MAX_PARTITIONS, PartRef, PartitionError, PartitionSet};
+    pub use crate::persistence::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId};
+    pub use crate::persistence::{OperationType, UpdateOperation, validate_events};
+    #[cfg(feature = "std")]
     pub use crate::persistence::{
-        AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
-        IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
-        PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceMonitor,
-        PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex,
-        SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex,
-        SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized, SpaceLogicalMultiIndex,
-        SpaceLogicalMultiIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, UnloadFailure, UnloadReport,
-        UpdateOperation, load_persisted_state, map_index_pages_to_toc_and_general,
-        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
+        ArtPersistenceKey, DiskConfig, DiskPersistenceEngine, IndexTableOfContents, LoadMode, PersistedWorkTable,
+        PersistenceConfig, PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError,
+        PersistenceMonitor, PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine,
+        SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
+        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized,
+        SpaceLogicalMultiIndex, SpaceLogicalMultiIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError,
+        UnloadFailure, UnloadReport, load_persisted_state, map_index_pages_to_toc_and_general,
+        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
     };
     pub use crate::primary_key::{
         PrimaryKeyGenerator, PrimaryKeyGeneratorRange, PrimaryKeyGeneratorState, TablePrimaryKey,
@@ -76,9 +80,10 @@ pub mod prelude {
         PersistentArcticIndex, PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex,
         PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
         TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
-        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
-        vacuum::VacuumPersistence, vacuum::WorkTableVacuum, validate_arctic_link,
+        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, validate_arctic_link,
     };
+    #[cfg(feature = "std")]
+    pub use crate::{vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum};
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,
         Link, PAGE_SIZE, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoPage,

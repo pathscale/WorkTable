@@ -41,10 +41,11 @@ impl_memstat_zero!(
     core::num::NonZeroI64,
     core::num::NonZeroI128,
     core::num::NonZeroIsize,
-    core::time::Duration,
-    std::time::SystemTime,
-    std::time::Instant
+    core::time::Duration
 );
+
+#[cfg(feature = "std")]
+impl_memstat_zero!(std::time::SystemTime, std::time::Instant);
 
 impl_memstat_zero!(
     [u8],

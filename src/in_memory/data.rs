@@ -568,10 +568,12 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             .map_err(|_| ExecutionError::LiveCellCountUnderflow)
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn has_live_cells(&self) -> bool {
         self.live_cells.load(Ordering::Acquire) != 0
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn live_cell_count(&self) -> u32 {
         self.live_cells.load(Ordering::Acquire)
     }

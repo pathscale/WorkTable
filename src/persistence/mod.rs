@@ -1,12 +1,14 @@
-use alloc::{string::String, vec::Vec};
 use core::future::Future;
 
-use data_bucket::page::PageId;
 
+#[cfg(feature = "std")]
 use crate::persistence::operation::BatchOperation;
 
+#[cfg(feature = "std")]
 pub use engine::DiskConfig;
+#[cfg(feature = "std")]
 pub use engine::DiskPersistenceEngine;
+#[cfg(feature = "std")]
 pub use error::{
     PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceResult, PersistenceState,
     load_persisted_state,
@@ -15,7 +17,9 @@ pub use operation::{
     AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId, OperationType, UpdateOperation,
     validate_events,
 };
+#[cfg(feature = "std")]
 pub use readonly_engine::ReadOnlyPersistenceEngine;
+#[cfg(feature = "std")]
 pub use space::{
     ArtPersistenceKey, IndexTableOfContents, SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex,
     SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex,
@@ -23,6 +27,7 @@ pub use space::{
     TocEntryOversizedError, map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general,
     reconstruct_multi_index_nodes,
 };
+#[cfg(feature = "std")]
 pub use task::{PersistenceMonitor, PersistenceTask};
 
 /// Result of retiring one Arc-owned persisted table generation.
@@ -90,11 +95,19 @@ impl<T> core::fmt::Display for UnloadFailure<T> {
 
 impl<T: 'static> core::error::Error for UnloadFailure<T> {}
 
+#[cfg(feature = "std")]
+use data_bucket::page::PageId;
+
+#[cfg(feature = "std")]
 mod engine;
+#[cfg(feature = "std")]
 mod error;
 pub mod operation;
+#[cfg(feature = "std")]
 mod readonly_engine;
+#[cfg(feature = "std")]
 mod space;
+#[cfg(feature = "std")]
 mod task;
 
 // TODO: remove this
@@ -143,6 +156,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes> {
     type Config: PersistenceConfig;
 
