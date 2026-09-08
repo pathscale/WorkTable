@@ -37,7 +37,18 @@ fn page_id_mapper(page_id: usize) -> usize {
 }
 
 const PAGE_DIRECTORY_CHUNK_SIZE: usize = 64;
-const PAGE_DIRECTORY_ROOTS: usize = 64;
+/// Roots in the page directory, so its reach is `ROOTS * CHUNK_SIZE` pages.
+///
+/// **This was 64, which reached 4,096 pages: 64 MiB at the default page size.**
+/// Past that, `publish` returns early and every page access falls back to an
+/// `ArcSwap` snapshot of the owning list. A table of 4 KiB rows, which fit
+/// three to a page, crosses it after twelve thousand rows.
+///
+/// Raising it did not measurably change insert cost on that fixture - the
+/// copy-on-write page list dominated, and still does at these sizes - so this
+/// is a ceiling being moved rather than a cost being removed. 1,024 roots
+/// reach 65,536 pages, or 1 GiB, for an 8 KiB array of pointers.
+const PAGE_DIRECTORY_ROOTS: usize = 1024;
 const GHOSTED: u8 = 1 << 0;
 const DELETED: u8 = 1 << 1;
 const VACUUMED: u8 = 1 << 2;
