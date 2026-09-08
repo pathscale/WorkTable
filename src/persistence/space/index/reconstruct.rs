@@ -4,7 +4,7 @@
 //! generic function that can be unit-tested with synthetic pages; the proc
 //! macro only generates type plumbing and node attachment.
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use indexset::core::multipair::MultiPair;
 use indexset::core::pair::Pair;
@@ -173,7 +173,7 @@ mod tests {
             for b in nodes.iter().skip(i + 1) {
                 assert_ne!(
                     a.last().unwrap().cmp(b.last().unwrap()),
-                    std::cmp::Ordering::Equal,
+                    core::cmp::Ordering::Equal,
                     "two node maxima compare Equal: {:?} vs {:?}",
                     a.last().unwrap(),
                     b.last().unwrap()
@@ -247,7 +247,7 @@ mod tests {
         assert_eq!(flatten(&nodes[..1]), vec![(1, 1), (1, 2), (2, 30)]);
         // Every stored entry is distinct. That is what the discriminator counter was
         // for; identity is now the `(key, value)` pair itself.
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = alloc::collections::BTreeSet::new();
         for p in nodes.iter().flatten() {
             assert!(seen.insert((p.key, p.value)), "duplicate entry {:?}", (p.key, p.value));
         }

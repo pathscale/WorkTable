@@ -9,11 +9,11 @@
 //! not claims about the live WTI node position or maximum; the shadow validates
 //! that marker and derives the real structural metadata itself.
 
-use std::array;
-use std::fmt::{self, Debug};
-use std::hash::{Hash, Hasher};
-use std::ops::RangeBounds;
-use std::sync::atomic::{AtomicU64, Ordering};
+use core::array;
+use core::fmt::{self, Debug};
+use core::hash::{Hash, Hasher};
+use core::ops::RangeBounds;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use data_bucket::Link;
 use indexset::cdc::change::{ChangeEvent, Id};
@@ -285,7 +285,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use hashbrown::HashSet;
 
     use data_bucket::page::PageId;
 

@@ -4,12 +4,12 @@ mod table_of_contents;
 mod unsized_;
 mod util;
 
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
+use hashbrown::HashMap;
+use core::fmt::Debug;
+use core::hash::Hash;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};

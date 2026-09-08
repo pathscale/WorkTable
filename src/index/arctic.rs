@@ -1,10 +1,10 @@
 //! Arctic adapter for memory-only unique WorkTable indexes.
 
-use std::borrow::Borrow;
-use std::fmt::{self, Debug};
-use std::marker::PhantomData;
-use std::ops::{Bound, RangeBounds};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use core::borrow::Borrow;
+use core::fmt::{self, Debug};
+use core::marker::PhantomData;
+use core::ops::{Bound, RangeBounds};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use arctic::{ConcurrentMap, Key, Order};
 
@@ -481,8 +481,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Bound;
-    use std::sync::{Arc, Barrier};
+    use core::ops::Bound;
+    use alloc::sync::Arc;
+use std::sync::Barrier;
 
     use super::{ArcticIndex, UniqueIndex};
 

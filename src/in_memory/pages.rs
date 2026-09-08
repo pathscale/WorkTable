@@ -12,9 +12,10 @@ use rkyv::{
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
 };
-use std::collections::{HashSet, VecDeque};
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
+use alloc::collections::VecDeque;
+use hashbrown::HashSet;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
 use std::{
     fmt::Debug,
     sync::Arc,
@@ -75,7 +76,7 @@ struct PageDirectoryChunk<T> {
 impl<T> PageDirectoryChunk<T> {
     fn new() -> Self {
         Self {
-            pages: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            pages: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
         }
     }
 }
@@ -95,7 +96,7 @@ struct PageDirectory<T> {
 impl<T> PageDirectory<T> {
     fn new(pages: &[Arc<T>]) -> Self {
         let directory = Self {
-            roots: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            roots: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
             chunks: Mutex::new(Vec::new()),
         };
         for (index, page) in pages.iter().enumerate() {
@@ -115,7 +116,7 @@ impl<T> PageDirectory<T> {
             chunk = root.load(Ordering::Acquire);
             if chunk.is_null() {
                 chunks.push(Box::new(PageDirectoryChunk::new()));
-                chunk = std::ptr::from_ref::<PageDirectoryChunk<T>>(
+                chunk = core::ptr::from_ref::<PageDirectoryChunk<T>>(
                     chunks.last().expect("the chunk was just appended").as_ref(),
                 )
                 .cast_mut();
@@ -358,7 +359,7 @@ where
     /// thread can later collect it; it executes only after every reader
     /// pinned right now has unpinned.
     fn retire(&self, item: Retired) {
-        self.retire_many(std::iter::once(item));
+        self.retire_many(core::iter::once(item));
     }
 
     /// Queue several retired items behind one grace marker.
@@ -1258,7 +1259,7 @@ where
 
     /// Heap bytes reserved by the fixed-size data-page allocations.
     pub fn allocated_bytes(&self) -> usize {
-        self.pages.load().len() * std::mem::size_of::<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>()
+        self.pages.load().len() * core::mem::size_of::<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>()
     }
 
     /// Pages allocated but currently on the empty list, so reusable without
@@ -1348,12 +1349,12 @@ impl ExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use hashbrown::HashSet;
+    use alloc::sync::Arc;
+    use core::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
+    use core::time::Duration;
     use std::time::Instant;
 
     use parking_lot::RwLock;
@@ -1627,7 +1628,7 @@ mod tests {
     impl Drop for RemoteReader {
         fn drop(&mut self) {
             let (disconnected, _rx) = mpsc::channel();
-            let _ = std::mem::replace(&mut self.commands, disconnected);
+            let _ = core::mem::replace(&mut self.commands, disconnected);
             if let Some(thread) = self.thread.take() {
                 thread.join().unwrap();
             }

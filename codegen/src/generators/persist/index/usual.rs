@@ -236,7 +236,7 @@ impl PersistGenerator {
             fn process_difference_remove(
                 &self,
                 link: Link,
-                difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
+                difference: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>>
             ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
                 #(#process_difference_remove_rows)*
                 core::result::Result::Ok(())
@@ -293,7 +293,7 @@ impl PersistGenerator {
             fn process_difference_insert(
                 &self,
                 link: Link,
-                difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
+                difference: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>>
             ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
                 let mut inserted_indexes: Vec<#avt_index_ident> = vec![];
                 #(#process_difference_insert_rows)*

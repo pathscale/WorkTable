@@ -3,8 +3,8 @@ mod data;
 mod index;
 mod logical_index;
 
-use std::collections::HashMap;
-use std::future::Future;
+use hashbrown::HashMap;
+use core::future::Future;
 use std::path::Path;
 
 use data_bucket::page::PageId;

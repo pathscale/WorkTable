@@ -1,5 +1,5 @@
-use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use core::fmt::Debug;
+use core::hash::{Hash, Hasher};
 
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;

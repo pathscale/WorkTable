@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use worktable::prelude::HashMap;
 
 use data_bucket::{INNER_PAGE_SIZE, Link, PAGE_SIZE, parse_general_header_by_index};
 use worktable::prelude::{SpaceData, SpaceDataOps};

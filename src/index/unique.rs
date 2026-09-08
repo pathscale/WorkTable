@@ -4,9 +4,9 @@
 //! backend's guard type. That keeps generated code independent from the
 //! concurrency and reclamation strategy used by each index implementation.
 
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops::RangeBounds;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::ops::RangeBounds;
 
 use crate::IndexMap;
 use indexset::core::node::NodeLike;
@@ -206,7 +206,7 @@ pub type UpstreamIndexPair<K, V> = VanillaPair<K, V>;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     use super::{UniqueIndex, UpstreamIndexMap};
     use crate::{ArcticIndex, CongeeIndex, IndexMap};
@@ -260,7 +260,7 @@ mod tests {
                 let iterated = index.iter_values().find(|(candidate, _)| *candidate == key);
                 panic!(
                     "backend={}, key={key}, point={value:?}, iterated={iterated:?}",
-                    std::any::type_name::<I>(),
+                    core::any::type_name::<I>(),
                 );
             }
         }
@@ -292,7 +292,7 @@ mod tests {
             threads.push(std::thread::spawn(move || {
                 for sequence in 0..1_000_u64 {
                     let key = worker * 1_000 + sequence;
-                    let backend = std::any::type_name::<I>();
+                    let backend = core::any::type_name::<I>();
                     assert_eq!(
                         index.insert_value_checked(key, key + 1),
                         Some(()),

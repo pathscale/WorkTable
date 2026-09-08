@@ -12,7 +12,7 @@
 //!
 //! [`WorkTable`]: crate::table::WorkTable
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use data_bucket::page::PageId;
 use data_bucket::{INNER_PAGE_SIZE, Link};

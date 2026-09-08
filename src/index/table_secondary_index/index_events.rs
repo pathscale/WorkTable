@@ -1,6 +1,6 @@
 use crate::prelude::IndexChangeEventId;
 use indexset::cdc::change;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 pub trait TableSecondaryIndexEventsOps<AvailableIndexes> {
     fn extend(&mut self, another: Self)

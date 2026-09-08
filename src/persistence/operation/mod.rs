@@ -3,9 +3,9 @@ mod batch;
 mod operation;
 mod util;
 
-use std::cmp::Ordering;
-use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use core::cmp::Ordering;
+use core::fmt::Debug;
+use core::hash::{Hash, Hasher};
 
 use data_bucket::SizeMeasurable;
 use derive_more::Display;

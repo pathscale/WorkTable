@@ -1,5 +1,11 @@
 #![doc = include_str!("../docs/crate.md")]
 
+extern crate alloc;
+
+/// Generated code names `worktable::` paths, which must also resolve inside
+/// this crate, where `worktable!` is invoked for the persistence queue.
+extern crate self as worktable;
+
 pub mod in_memory;
 mod index;
 pub mod lock;
@@ -34,6 +40,11 @@ pub use worktable_dsl;
 pub use worktable_codegen::s3_sync_persistence;
 
 pub mod prelude {
+    pub use alloc::collections::BTreeMap;
+    pub use alloc::sync::Arc;
+    pub use alloc::vec::IntoIter;
+    pub use hashbrown::{HashMap, HashSet};
+
     pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};
     pub use crate::lock::FullRowLock;
     pub use crate::lock::{Lock, RowLock};

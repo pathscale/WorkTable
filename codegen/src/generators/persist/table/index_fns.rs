@@ -99,7 +99,7 @@ impl PersistGenerator {
                 if current_link == Some(link) {
                     return None;
                 }
-                std::hint::spin_loop();
+                core::hint::spin_loop();
             }
             None
         };
@@ -140,7 +140,7 @@ impl PersistGenerator {
                                                                      #column_range_type,
                                                                      #row_fields_ident>
             {
-                let rows = std::iter::once_with(move || {
+                let rows = core::iter::once_with(move || {
                     let read_guard = self.0.data.read_guard();
                     self.0.indexes.#field_ident
                         .get(#by)
@@ -173,7 +173,7 @@ impl PersistGenerator {
 
         let (range_bounds, range_arg) = if is_float(type_.to_string().as_str()) {
             (
-                quote! { std::ops::RangeBounds<#type_> },
+                quote! { core::ops::RangeBounds<#type_> },
                 quote! {
                     (
                         predicate_range.0.as_ref().map(|v| OrderedFloat(*v)),
@@ -183,7 +183,7 @@ impl PersistGenerator {
             )
         } else {
             (
-                quote! { std::ops::RangeBounds<#type_> },
+                quote! { core::ops::RangeBounds<#type_> },
                 quote! { predicate_range.clone() },
             )
         };
@@ -216,7 +216,7 @@ impl PersistGenerator {
         };
         let predicate_filter = quote! {
             .filter(move |row| {
-                std::ops::RangeBounds::contains(&predicate_range, &row.#row_field_ident)
+                core::ops::RangeBounds::contains(&predicate_range, &row.#row_field_ident)
             })
         };
 
@@ -231,7 +231,7 @@ impl PersistGenerator {
                 #predicate_setup
                 // Query construction is not an active read. Pin the grace
                 // period on the first row lookup instead.
-                let rows = std::iter::once_with(move || {
+                let rows = core::iter::once_with(move || {
                     let read_guard = self.0.data.read_guard();
                     #index_range
                         .filter_map(#select_row)

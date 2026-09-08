@@ -100,8 +100,8 @@ impl Generator {
             .collect();
 
         quote! {
-            fn first_evs(&self) -> std::collections::HashMap<#avt_index_ident, Option<IndexChangeEventId>> {
-                    let mut map = std::collections::HashMap::new();
+            fn first_evs(&self) -> worktable::prelude::HashMap<#avt_index_ident, Option<IndexChangeEventId>> {
+                    let mut map = worktable::prelude::HashMap::new();
                     #(#fields_first)*
                     map
                 }
@@ -126,8 +126,8 @@ impl Generator {
             .collect();
 
         quote! {
-            fn last_evs(&self) -> std::collections::HashMap<#avt_index_ident, Option<IndexChangeEventId>> {
-                    let mut map = std::collections::HashMap::new();
+            fn last_evs(&self) -> worktable::prelude::HashMap<#avt_index_ident, Option<IndexChangeEventId>> {
+                    let mut map = worktable::prelude::HashMap::new();
                     #(#fields_last)*
                     map
                 }
@@ -200,7 +200,7 @@ impl Generator {
 
         quote! {
             fn iter_event_ids(&self) -> impl Iterator<Item = (#avt_index_ident, IndexChangeEventId)> {
-                <std::vec::IntoIter<Vec<(#avt_index_ident, IndexChangeEventId)>> as Iterator>::flatten(
+                <worktable::prelude::IntoIter<Vec<(#avt_index_ident, IndexChangeEventId)>> as Iterator>::flatten(
                     vec![
                     #(#fields_iter),*
                 ]

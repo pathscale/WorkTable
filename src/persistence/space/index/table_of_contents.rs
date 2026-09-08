@@ -1,6 +1,6 @@
-use std::fmt::Debug;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use core::fmt::Debug;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use data_bucket::page::PageId;
 use data_bucket::{
@@ -26,8 +26,8 @@ pub struct TocEntryOversizedError {
     pub segment_capacity: usize,
 }
 
-impl std::fmt::Display for TocEntryOversizedError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TocEntryOversizedError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             formatter,
             "table-of-contents entry needs {} bytes but a whole empty segment holds only {}",
@@ -36,7 +36,7 @@ impl std::fmt::Display for TocEntryOversizedError {
     }
 }
 
-impl std::error::Error for TocEntryOversizedError {}
+impl core::error::Error for TocEntryOversizedError {}
 
 #[derive(Debug)]
 pub struct IndexTableOfContents<T: Ord + Eq, const DATA_LENGTH: u32> {
@@ -317,8 +317,8 @@ where
 mod tests {
     use crate::persistence::space::index::table_of_contents::IndexTableOfContents;
     use data_bucket::page::PageId;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicU32;
+    use alloc::sync::Arc;
+    use core::sync::atomic::AtomicU32;
 
     #[test]
     fn empty() {

@@ -6,12 +6,12 @@
 //! different stripes remain concurrent because their Set/Remove records
 //! commute during recovery.
 
-use std::array;
-use std::collections::hash_map::DefaultHasher;
-use std::fmt::{self, Debug};
-use std::hash::{Hash, Hasher};
-use std::ops::RangeBounds;
-use std::sync::atomic::{AtomicU64, Ordering};
+use core::array;
+use rustc_hash::FxHasher as DefaultHasher;
+use core::fmt::{self, Debug};
+use core::hash::{Hash, Hasher};
+use core::ops::RangeBounds;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use data_bucket::Link;
 use indexset::cdc::change::{ChangeEvent, Id};
@@ -49,7 +49,7 @@ where
     K: ArcticKey,
     V: Clone + Debug + PartialEq + Send + Sync + 'static,
 {
-    pub fn get(&self, key: &K) -> std::vec::IntoIter<(K, V)> {
+    pub fn get(&self, key: &K) -> alloc::vec::IntoIter<(K, V)> {
         self.inner.get(key)
     }
 
@@ -128,7 +128,7 @@ impl<I> PersistentArtIndex<I> {
     }
 
     fn mutation_stripe<K: Hash>(&self, key: &K) -> &Mutex<()> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = DefaultHasher::default();
         key.hash(&mut hasher);
         &self.mutation_stripes[hasher.finish() as usize % MUTATION_STRIPES]
     }
@@ -318,7 +318,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Barrier};
+    use alloc::sync::Arc;
+use std::sync::Barrier;
 
     use super::*;
 

@@ -42,7 +42,7 @@ impl PersistGenerator {
             .keys()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -311,8 +311,8 @@ impl PersistGenerator {
                     // compensation above).
                     let mut merged_events = secondary_keys_events;
                     if row_holds_old_values {
-                        let mut reversed_diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> =
-                            std::collections::HashMap::new();
+                        let mut reversed_diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> =
+                            worktable::prelude::HashMap::new();
                         for (key, diff) in diffs {
                             reversed_diffs.insert(key, Difference { old: diff.new, new: diff.old });
                         }
@@ -507,7 +507,7 @@ impl PersistGenerator {
             quote! {
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 let row_new = row.clone();
-                let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
+                let mut diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> = worktable::prelude::HashMap::new();
             }
         } else {
             quote! {}
@@ -615,7 +615,7 @@ impl PersistGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -693,7 +693,7 @@ impl PersistGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -860,7 +860,7 @@ impl PersistGenerator {
                 pks.sort_unstable();
                 pks.dedup();
 
-                let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+                let mut guards: worktable::prelude::HashMap<_, _> = worktable::prelude::HashMap::new();
                 // Full-row locks, not per-column custom locks: each row's
                 // unsized reinsert path mutates the whole row under these
                 // guards, and one uniform lock kind keeps every concurrent
@@ -933,7 +933,7 @@ impl PersistGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();

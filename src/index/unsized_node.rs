@@ -1,11 +1,11 @@
 use data_bucket::{SizeMeasurable, UnsizedIndexPageUtility, VariableSizeMeasurable};
 use indexset::core::node::NodeLike;
 
-use std::borrow::Borrow;
-use std::collections::Bound;
-use std::fmt::Debug;
-use std::ops::Deref;
-use std::slice::Iter;
+use core::borrow::Borrow;
+use core::ops::Bound;
+use core::fmt::Debug;
+use core::ops::Deref;
+use core::slice::Iter;
 
 pub const UNSIZED_HEADER_LENGTH: u32 = 64;
 
@@ -238,7 +238,7 @@ where
     fn replace(&mut self, idx: usize, value: T) -> Option<T> {
         let value_size = value.aligned_size();
         if let Some(old) = self.inner.get_mut(idx) {
-            let old = std::mem::replace(old, value);
+            let old = core::mem::replace(old, value);
             self.length += value_size;
             self.removed_length += old.aligned_size();
             if idx + 1 == self.inner.len() {

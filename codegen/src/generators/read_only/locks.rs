@@ -24,7 +24,7 @@ impl ReadOnlyGenerator {
             .keys()
             .map(|i| {
                 let name = Ident::new(format!("{i}_lock").as_str(), Span::mixed_site());
-                quote! { #name: Option<std::sync::Arc<Lock>>, }
+                quote! { #name: Option<worktable::prelude::Arc<Lock>>, }
             })
             .collect();
 
@@ -124,8 +124,8 @@ impl ReadOnlyGenerator {
             .collect();
 
         quote! {
-             fn with_lock(id: u16) -> (Self, std::sync::Arc<Lock>) {
-                let lock = std::sync::Arc::new(Lock::new(id));
+             fn with_lock(id: u16) -> (Self, worktable::prelude::Arc<Lock>) {
+                let lock = worktable::prelude::Arc::new(Lock::new(id));
                 (
                     Self {
                         #(#rows),*
@@ -154,9 +154,9 @@ impl ReadOnlyGenerator {
 
         quote! {
             #[allow(clippy::mutable_key_type)]
-             fn lock(&mut self, id: u16) -> (std::collections::HashSet<std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
-                let mut set = std::collections::HashSet::new();
-                let lock = std::sync::Arc::new(Lock::new(id));
+             fn lock(&mut self, id: u16) -> (worktable::prelude::HashSet<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
+                let mut set = worktable::prelude::HashSet::new();
+                let lock = worktable::prelude::Arc::new(Lock::new(id));
                 #(#rows)*
 
                 (set, lock)
@@ -186,8 +186,8 @@ impl ReadOnlyGenerator {
 
         quote! {
             #[allow(clippy::mutable_key_type)]
-            fn merge(&mut self, other: &mut Self) -> std::collections::HashSet<std::sync::Arc<Lock>> {
-                let mut set = std::collections::HashSet::new();
+            fn merge(&mut self, other: &mut Self) -> worktable::prelude::HashSet<worktable::prelude::Arc<Lock>> {
+                let mut set = worktable::prelude::HashSet::new();
                 #(#rows)*
                 set
             }

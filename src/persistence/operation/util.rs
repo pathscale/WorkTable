@@ -1,7 +1,7 @@
 use data_bucket::Link;
 use indexset::cdc::change::{self, ChangeEvent};
 use indexset::core::pair::Pair;
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 pub fn validate_events<T>(evs: &mut Vec<ChangeEvent<Pair<T, Link>>>) -> Vec<ChangeEvent<Pair<T, Link>>>
 where
@@ -20,7 +20,7 @@ where
         }
     }
 
-    removed_events.sort_by_key(|ev2| std::cmp::Reverse(ev2.id()));
+    removed_events.sort_by_key(|ev2| core::cmp::Reverse(ev2.id()));
 
     removed_events
 }

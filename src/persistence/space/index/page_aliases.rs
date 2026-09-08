@@ -35,7 +35,7 @@ pub(super) struct PageAliasEntry<T> {
 impl<T> Default for PageAliases<T> {
     fn default() -> Self {
         Self {
-            inline: std::array::from_fn(|_| None),
+            inline: core::array::from_fn(|_| None),
             overflow: Vec::new(),
         }
     }

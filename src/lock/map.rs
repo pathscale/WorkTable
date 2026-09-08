@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
+use hashbrown::HashMap;
+use rustc_hash::FxHasher as DefaultHasher;
+use core::fmt::Debug;
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
 
@@ -138,7 +138,7 @@ impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey> {
         Self {
             map: RwLock::new(HashMap::new()),
             next_id: AtomicU16::default(),
-            mutation_stripes: Arc::new(std::array::from_fn(|_| MutationStripe::default())),
+            mutation_stripes: Arc::new(core::array::from_fn(|_| MutationStripe::default())),
             bulk_mutations: Arc::default(),
         }
     }
@@ -283,7 +283,7 @@ where
     }
 
     fn stripe_of(key: &PrimaryKey) -> usize {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = DefaultHasher::default();
         key.hash(&mut hasher);
         (hasher.finish() as usize) % MUTATION_STRIPE_COUNT
     }
@@ -343,7 +343,7 @@ where
         while gate.serving.load(Ordering::Acquire) != ticket {
             if spins < 16 {
                 spins += 1;
-                std::hint::spin_loop();
+                core::hint::spin_loop();
             } else {
                 std::thread::yield_now();
             }

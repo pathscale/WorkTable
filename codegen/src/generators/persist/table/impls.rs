@@ -254,13 +254,13 @@ impl PersistGenerator {
         };
         let index_setup = if self.columns.primary_index_backend == crate::common::model::IndexBackend::Arctic {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                     PersistentArcticIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
                 ));
             }
         } else if pk_types_unsized {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                     #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name)
                 ));
             }
@@ -268,19 +268,19 @@ impl PersistGenerator {
             match self.columns.primary_index_backend {
                 crate::common::model::IndexBackend::WorktablesIndex => quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         #wti_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                     ));
                 },
                 crate::common::model::IndexBackend::Indexset => quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         UpstreamIndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                     ));
                 },
                 crate::common::model::IndexBackend::Arctic => unreachable!("handled before variable-size dispatch"),
                 crate::common::model::IndexBackend::Congee => quote! {
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         PersistentCongeeIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
                     ));
                 },
@@ -409,7 +409,7 @@ impl PersistGenerator {
                                                                      #row_fields_ident>
             where
                 #primary_key_type: From<Pk>,
-                R: std::ops::RangeBounds<Pk> + 'a,
+                R: core::ops::RangeBounds<Pk> + 'a,
                 Pk: Clone + 'a,
             {
                 let converted_range = (
@@ -418,7 +418,7 @@ impl PersistGenerator {
                 );
                 // Delay the grace-period guard until the returned iterator is
                 // consumed so an idle query builder cannot pin reclamation.
-                let rows = std::iter::once_with(move || {
+                let rows = core::iter::once_with(move || {
                     let read_guard = self.0.data.read_guard();
                     self.0.primary_index.pk_map
                         .range_links(converted_range)
@@ -648,7 +648,7 @@ impl PersistGenerator {
                         let exponent = core::cmp::min(backoff_spins - 8, 8);
                         let micros = core::cmp::min(1u64 << exponent, 256);
                         backoff_spins = backoff_spins.saturating_add(1);
-                        tokio::time::sleep(std::time::Duration::from_micros(micros)).await;
+                        tokio::time::sleep(core::time::Duration::from_micros(micros)).await;
                     }
                 }
             }
@@ -689,7 +689,7 @@ impl PersistGenerator {
             /// assigned contiguous keys before `insert_many`. Interleaved
             /// `get_next_pk` calls keep working and never overlap a
             /// reservation.
-            pub fn reserve_pks(&self, count: usize) -> std::ops::Range<#pk_inner_type> {
+            pub fn reserve_pks(&self, count: usize) -> core::ops::Range<#pk_inner_type> {
                 self.0.reserve_pks(count)
             }
         }
@@ -732,7 +732,7 @@ impl PersistGenerator {
         quote! {
             pub async fn iter_with_async<
                 F: Fn(#row_type) -> Fut,
-                Fut: std::future::Future<Output = core::result::Result<(), WorkTableError>>
+                Fut: core::future::Future<Output = core::result::Result<(), WorkTableError>>
             >(&self, f: F) -> core::result::Result<(), WorkTableError> {
                 #inner
             }
@@ -794,8 +794,8 @@ impl PersistGenerator {
         let lock_type = name_generator.get_lock_type_ident();
 
         quote! {
-            pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
-                std::sync::Arc::new(EmptyDataVacuum::<
+            pub fn vacuum(&self) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
+                worktable::prelude::Arc::new(EmptyDataVacuum::<
                     _,
                     _,
                     _,
@@ -807,10 +807,10 @@ impl PersistGenerator {
                     #secondary_index_events
                 >::new(
                     #table_name,
-                    std::sync::Arc::clone(&self.0.data),
-                    std::sync::Arc::clone(&self.0.lock_manager),
-                    std::sync::Arc::clone(&self.0.primary_index),
-                    std::sync::Arc::clone(&self.0.indexes),
+                    worktable::prelude::Arc::clone(&self.0.data),
+                    worktable::prelude::Arc::clone(&self.0.lock_manager),
+                    worktable::prelude::Arc::clone(&self.0.primary_index),
+                    worktable::prelude::Arc::clone(&self.0.indexes),
                 ).with_persistence(self.1.vacuum_sink()))
             }
         }

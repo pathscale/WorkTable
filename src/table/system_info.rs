@@ -1,5 +1,5 @@
 use prettytable::{Table, format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR, row};
-use std::fmt::{self, Debug, Display, Formatter};
+use core::fmt::{self, Debug, Display, Formatter};
 
 use crate::in_memory::{RowWrapper, StorableRow};
 use crate::mem_stat::MemStat;
@@ -55,7 +55,7 @@ impl<
     PkMap,
 > WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, PkMap>
 where
-    PrimaryKey: Debug + Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,

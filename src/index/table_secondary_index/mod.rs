@@ -3,7 +3,7 @@ mod index_events;
 mod info;
 
 use data_bucket::Link;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use crate::WorkTableError;
 use crate::{AvailableIndex, Difference};

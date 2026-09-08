@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use hashbrown::HashSet;
 use std::io::SeekFrom;
 use std::path::Path;
 
@@ -206,7 +206,7 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
     /// those writes can leak reusable space, but can never leave a live row
     /// described as free and eligible to be overwritten after reload.
     fn consume_reusable_ranges(&mut self, used_links: impl IntoIterator<Item = Link>) -> bool {
-        let free_ranges = std::mem::take(&mut self.info.inner.empty_links_list);
+        let free_ranges = core::mem::take(&mut self.info.inner.empty_links_list);
         let (remaining, changed) = subtract_used_ranges(free_ranges, used_links);
         self.info.inner.empty_links_list = remaining;
         changed

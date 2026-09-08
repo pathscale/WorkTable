@@ -5,8 +5,8 @@
 //! this persistence-worker-owned index derives the structural events required
 //! by the unchanged WTI disk format.
 
-use std::fmt::Debug;
-use std::hash::Hash;
+use core::fmt::Debug;
+use core::hash::Hash;
 use std::path::{Path, PathBuf};
 
 use data_bucket::{Link, SizeMeasurable, SpaceId, VariableSizeMeasurable};
@@ -171,7 +171,7 @@ impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalIndex<T, INNER_PAGE_SI
 where
     T: Send + Ord + Eq + Clone + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("SpaceLogicalIndex").finish_non_exhaustive()
     }
 }
@@ -273,7 +273,7 @@ impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalIndexUnsized<T, INNER_
 where
     T: Send + Ord + Eq + Clone + Default + Debug + SizeMeasurable + VariableSizeMeasurable + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("SpaceLogicalIndexUnsized")
             .finish_non_exhaustive()
@@ -381,7 +381,7 @@ impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalMultiIndex<T, INNER_PA
 where
     T: Debug + Send + Ord + Eq + Clone + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("SpaceLogicalMultiIndex").finish_non_exhaustive()
     }
 }
@@ -483,7 +483,7 @@ impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalMultiIndexUnsized<T, I
 where
     T: Send + Ord + Eq + Clone + Default + Debug + SizeMeasurable + VariableSizeMeasurable + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("SpaceLogicalMultiIndexUnsized")
             .finish_non_exhaustive()
@@ -577,7 +577,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap as StdBTreeMap;
+    use alloc::collections::BTreeMap as StdBTreeMap;
 
     use data_bucket::page::PageId;
 

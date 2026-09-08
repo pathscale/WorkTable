@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use hashbrown::HashMap;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
 use tokio::task::AbortHandle;
 
 use parking_lot::RwLock;

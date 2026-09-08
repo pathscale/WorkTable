@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use alloc::collections::VecDeque;
+use hashbrown::{HashMap, HashSet};
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::time::Duration;
 
 use data_bucket::page::PageId;
 use parking_lot::Mutex as ParkingMutex;
@@ -480,8 +481,8 @@ where
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use hashbrown::HashMap;
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
@@ -508,7 +509,7 @@ mod lifecycle_tests {
         }
 
         fn iter_event_ids(&self) -> impl Iterator<Item = (TestIndex, IndexChangeEventId)> {
-            std::iter::empty()
+            core::iter::empty()
         }
 
         fn sort(&mut self) {}
@@ -727,7 +728,7 @@ mod lifecycle_tests {
             .unwrap();
 
         assert_eq!(
-            batch.get(&1.into()).unwrap(),
+            batch.get(&PageId::from(1u32)).unwrap(),
             &vec![
                 (
                     Link {
@@ -791,7 +792,7 @@ mod lifecycle_tests {
             .get_batch_data_op()
             .unwrap();
 
-        let page_one_writes = batch.get(&1.into()).unwrap();
+        let page_one_writes = batch.get(&PageId::from(1u32)).unwrap();
         assert_eq!(
             page_one_writes,
             &vec![
@@ -815,7 +816,7 @@ mod lifecycle_tests {
             "the complete earlier group must be applied"
         );
         assert!(
-            !batch.contains_key(&2.into()),
+            !batch.contains_key(&PageId::from(2u32)),
             "the blocking group must stay queued, not be applied without its earlier events"
         );
         assert_eq!(analyzer.len(), 2, "both rows of the blocked group remain queued");
@@ -1162,7 +1163,7 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     len: Arc<AtomicUsize>,
     lifecycle: Arc<PersistenceLifecycle>,
     #[cfg(test)]
-    pop_race_window_gate: Option<std::sync::Arc<PopRaceWindowGate>>,
+    pop_race_window_gate: Option<alloc::sync::Arc<PopRaceWindowGate>>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {

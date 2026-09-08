@@ -95,9 +95,9 @@ impl InMemoryGenerator {
 
         quote! {
             #[allow(clippy::mutable_key_type)]
-            pub fn #ident(&mut self, id: u16) -> (std::collections::HashSet<std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
-                let mut set = std::collections::HashSet::new();
-                let new_lock = std::sync::Arc::new(Lock::new(id));
+            pub fn #ident(&mut self, id: u16) -> (worktable::prelude::HashSet<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
+                let mut set = worktable::prelude::HashSet::new();
+                let new_lock = worktable::prelude::Arc::new(Lock::new(id));
                 #(#inner)*
                 (set, new_lock)
             }

@@ -1,5 +1,5 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -65,13 +65,13 @@ impl<const DATA_LENGTH: usize> IndexOrdLink<DATA_LENGTH> {
 }
 
 impl<const DATA_LENGTH: usize> PartialOrd for IndexOrdLink<DATA_LENGTH> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl<const DATA_LENGTH: usize> Ord for IndexOrdLink<DATA_LENGTH> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.absolute_index().cmp(&other.absolute_index())
     }
 }
@@ -138,7 +138,7 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     /// reclamation, and the most valuable. A scattered single-row delete says
     /// nothing about where to look, so [`Self::push`] does not record
     /// anything and only [`Self::push_many`] does.
-    targeted_pages: FairMutex<std::collections::BTreeSet<PageId>>,
+    targeted_pages: FairMutex<alloc::collections::BTreeSet<PageId>>,
 }
 
 /// A [`Link`] popped from the registry, together with the read guard that
@@ -418,11 +418,11 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     /// ranged delete emptied part of, and it is where a sweep should look
     /// first.
     fn note_coalesced_pages(&self, links: &[Link], runs: &[IndexOrdLink<DATA_LENGTH>]) {
-        let mut links_per_page: std::collections::BTreeMap<PageId, usize> = Default::default();
+        let mut links_per_page: alloc::collections::BTreeMap<PageId, usize> = Default::default();
         for link in links {
             *links_per_page.entry(link.page_id).or_default() += 1;
         }
-        let mut runs_per_page: std::collections::BTreeMap<PageId, usize> = Default::default();
+        let mut runs_per_page: alloc::collections::BTreeMap<PageId, usize> = Default::default();
         for run in runs {
             *runs_per_page.entry(run.0.page_id).or_default() += 1;
         }
@@ -443,8 +443,8 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
     /// Draining rather than reading: a sweep that has taken them is
     /// responsible for them, and leaving them would make every later sweep
     /// re-prioritise pages that are already compact.
-    pub fn take_targeted_pages(&self) -> std::collections::BTreeSet<PageId> {
-        std::mem::take(&mut *self.targeted_pages.lock())
+    pub fn take_targeted_pages(&self) -> alloc::collections::BTreeSet<PageId> {
+        core::mem::take(&mut *self.targeted_pages.lock())
     }
 
     /// Wakes a parked vacuum when freeing crossed the configured threshold.

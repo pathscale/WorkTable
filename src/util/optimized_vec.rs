@@ -201,7 +201,7 @@ mod tests {
     /// count proves the removed value is the only remaining owner.
     #[test]
     fn test_optimized_vec_remove_moves_without_clone() {
-        use std::rc::Rc;
+        use alloc::rc::Rc;
 
         struct NotClone(#[allow(dead_code)] Rc<()>);
 

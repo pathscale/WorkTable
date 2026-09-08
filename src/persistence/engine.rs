@@ -1,8 +1,8 @@
-use std::fmt::Debug;
+use core::fmt::Debug;
 use std::fs;
-use std::future::Future;
-use std::hash::Hash;
-use std::marker::PhantomData;
+use core::future::Future;
+use core::hash::Hash;
+use core::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::path::Path;
 

@@ -46,7 +46,7 @@ mod tests {
             #[derive(Debug, Default, Clone)]
             pub struct TestIndex {
                 test_idx: TreeIndex<i64, Link>,
-                exchnage_idx: TreeIndex<String, std::sync::Arc<LockFreeSet<Link>>>
+                exchnage_idx: TreeIndex<String, worktable::prelude::Arc<LockFreeSet<Link>>>
             }
         };
         assert!(Parser::parse_struct(input).is_ok())

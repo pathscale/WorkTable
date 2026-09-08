@@ -1,8 +1,8 @@
 //! Primary-key to row-location index.
 
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
 
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;

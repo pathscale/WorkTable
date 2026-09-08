@@ -6,9 +6,9 @@
 //! applies the WAL, writes a new native checkpoint atomically, and drops the
 //! temporary tree; no duplicate ART is retained during normal operation.
 
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use data_bucket::{Link, page::PageId};
@@ -76,14 +76,14 @@ macro_rules! impl_art_persistence_key {
     ($($type:ty),+ $(,)?) => {
         $(
             impl ArtPersistenceKey for $type {
-                const WIDTH: u8 = std::mem::size_of::<Self>() as u8;
+                const WIDTH: u8 = core::mem::size_of::<Self>() as u8;
 
                 fn encode_art_key(&self, output: &mut Vec<u8>) {
                     output.extend_from_slice(&self.to_be_bytes());
                 }
 
                 fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
-                    let bytes: [u8; std::mem::size_of::<Self>()] = bytes
+                    let bytes: [u8; core::mem::size_of::<Self>()] = bytes
                         .try_into()
                         .map_err(|_| eyre!("invalid {}-byte ART key", Self::WIDTH))?;
                     Ok(Self::from_be_bytes(bytes))
@@ -112,7 +112,7 @@ macro_rules! impl_art_persistence_key_signed {
     ($($type:ty => $raw:ty),+ $(,)?) => {
         $(
             impl ArtPersistenceKey for $type {
-                const WIDTH: u8 = std::mem::size_of::<Self>() as u8;
+                const WIDTH: u8 = core::mem::size_of::<Self>() as u8;
 
                 fn encode_art_key(&self, output: &mut Vec<u8>) {
                     let raw = (*self as $raw) ^ ((1 as $raw) << (<$raw>::BITS - 1));
@@ -120,7 +120,7 @@ macro_rules! impl_art_persistence_key_signed {
                 }
 
                 fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
-                    let bytes: [u8; std::mem::size_of::<Self>()] = bytes
+                    let bytes: [u8; core::mem::size_of::<Self>()] = bytes
                         .try_into()
                         .map_err(|_| eyre!("invalid {}-byte ART key", Self::WIDTH))?;
                     let raw = <$raw>::from_be_bytes(bytes) ^ ((1 as $raw) << (<$raw>::BITS - 1));
@@ -384,7 +384,7 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
 fn encode_wal_record<K: ArtPersistenceKey>(record: &WalRecord<K>) -> Vec<u8> {
     let mut key = Vec::new();
     record.key.encode_art_key(&mut key);
-    let variable_prefix = usize::from(K::WIDTH == 0) * std::mem::size_of::<u32>();
+    let variable_prefix = usize::from(K::WIDTH == 0) * core::mem::size_of::<u32>();
     let mut bytes = Vec::with_capacity(9 + variable_prefix + key.len() + 12);
     bytes.extend_from_slice(&record.event_id.to_le_bytes());
     match record.op {
@@ -717,7 +717,7 @@ where
                 path,
                 Backend::ArcticVariable,
                 table_version,
-                encode_multi_pairs(std::iter::empty::<(K, Link)>()),
+                encode_multi_pairs(core::iter::empty::<(K, Link)>()),
             )
             .await?,
         })
@@ -922,7 +922,7 @@ where
     K: ArtPersistenceKey + ArcticKey,
 {
     async fn new(path: PathBuf, table_version: u32) -> eyre::Result<Self> {
-        let snapshot = encode_multi_pairs(std::iter::empty::<(K, Link)>());
+        let snapshot = encode_multi_pairs(core::iter::empty::<(K, Link)>());
         Ok(Self {
             file: ArtFile::open(path, Backend::ArcticMulti, table_version, snapshot).await?,
         })
@@ -1439,7 +1439,7 @@ mod tests {
         assert_eq!(decode_multi_pairs::<u64>(&bytes).unwrap(), pairs);
         assert!(decode_multi_pairs::<u64>(&bytes[..bytes.len() - 1]).is_err());
         assert_eq!(
-            decode_multi_pairs::<u64>(&encode_multi_pairs(std::iter::empty::<(u64, Link)>())).unwrap(),
+            decode_multi_pairs::<u64>(&encode_multi_pairs(core::iter::empty::<(u64, Link)>())).unwrap(),
             vec![]
         );
     }

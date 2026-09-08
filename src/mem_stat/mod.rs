@@ -1,9 +1,9 @@
 mod primitives;
 
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::rc::Rc;
-use std::sync::Arc;
+use hashbrown::HashMap;
+use core::fmt::Debug;
+use alloc::rc::Rc;
+use alloc::sync::Arc;
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -55,7 +55,7 @@ impl<
         PkMap,
     >
 where
-    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>> + MemStat,
@@ -81,10 +81,10 @@ impl<T: MemStat> MemStat for Option<T> {
 
 impl<T: MemStat> MemStat for Vec<T> {
     fn heap_size(&self) -> usize {
-        self.capacity() * std::mem::size_of::<T>() + self.iter().map(|v| v.heap_size()).sum::<usize>()
+        self.capacity() * core::mem::size_of::<T>() + self.iter().map(|v| v.heap_size()).sum::<usize>()
     }
     fn used_size(&self) -> usize {
-        self.len() * std::mem::size_of::<T>() + self.iter().map(|v| v.used_size()).sum::<usize>()
+        self.len() * core::mem::size_of::<T>() + self.iter().map(|v| v.used_size()).sum::<usize>()
     }
 }
 
@@ -104,7 +104,7 @@ where
     Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     fn heap_size(&self) -> usize {
-        let slot_size = std::mem::size_of::<Pair<K, V>>();
+        let slot_size = core::mem::size_of::<Pair<K, V>>();
         let base_heap = self.capacity() * slot_size;
 
         let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
@@ -113,7 +113,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        let pair_size = std::mem::size_of::<Pair<K, V>>();
+        let pair_size = core::mem::size_of::<Pair<K, V>>();
         let base = self.len() * pair_size;
 
         let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
@@ -129,14 +129,14 @@ where
     Node: VanillaNodeLike<VanillaPair<K, V>> + Send + 'static,
 {
     fn heap_size(&self) -> usize {
-        let slot_size = std::mem::size_of::<VanillaPair<K, V>>();
+        let slot_size = core::mem::size_of::<VanillaPair<K, V>>();
         let base_heap = self.capacity() * slot_size;
         let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
         base_heap + kv_heap
     }
 
     fn used_size(&self) -> usize {
-        let pair_size = std::mem::size_of::<VanillaPair<K, V>>();
+        let pair_size = core::mem::size_of::<VanillaPair<K, V>>();
         let base = self.len() * pair_size;
         let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
         base + used
@@ -151,7 +151,7 @@ where
     fn heap_size(&self) -> usize {
         let values = self.iter_values().map(|(_, value)| value.heap_size()).sum::<usize>();
         self.allocated_node_bytes()
-            + self.len() * (std::mem::size_of::<V>() + 2 * std::mem::size_of::<usize>())
+            + self.len() * (core::mem::size_of::<V>() + 2 * core::mem::size_of::<usize>())
             + values
     }
 
@@ -170,7 +170,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        self.len() * core::mem::size_of::<(K, V)>()
     }
 }
 
@@ -184,7 +184,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        self.len() * core::mem::size_of::<(K, V)>()
     }
 }
 
@@ -220,7 +220,7 @@ where
     Node: NodeLike<MultiPair<K, V>> + Send + 'static,
 {
     fn heap_size(&self) -> usize {
-        let slot_size = std::mem::size_of::<MultiPair<K, V>>();
+        let slot_size = core::mem::size_of::<MultiPair<K, V>>();
         let base_heap = self.capacity() * slot_size;
 
         let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
@@ -229,7 +229,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        let pair_size = std::mem::size_of::<MultiPair<K, V>>();
+        let pair_size = core::mem::size_of::<MultiPair<K, V>>();
         let base = self.len() * pair_size;
 
         let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
@@ -240,32 +240,32 @@ where
 
 impl<T: MemStat> MemStat for Box<T> {
     fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
+        core::mem::size_of::<T>() + (**self).heap_size()
     }
     fn used_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).used_size()
+        core::mem::size_of::<T>() + (**self).used_size()
     }
 }
 
 impl<T: MemStat> MemStat for Arc<T> {
     fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
+        core::mem::size_of::<T>() + (**self).heap_size()
     }
     fn used_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).used_size()
+        core::mem::size_of::<T>() + (**self).used_size()
     }
 }
 
 impl<T: MemStat> MemStat for Rc<T> {
     fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
+        core::mem::size_of::<T>() + (**self).heap_size()
     }
     fn used_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).used_size()
+        core::mem::size_of::<T>() + (**self).used_size()
     }
 }
 
-impl<K: MemStat + Eq + std::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
+impl<K: MemStat + Eq + core::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
     fn heap_size(&self) -> usize {
         let bucket_size = size_of::<(K, V)>();
         let base_heap = self.capacity() * bucket_size;

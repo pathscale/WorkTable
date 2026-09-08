@@ -33,13 +33,13 @@ impl Generator {
             /// Retires an Arc-owned table generation after the caller's
             /// quiesce barrier has stopped new leases and drained old ones.
             pub async fn unload_gracefully<F, Fut>(
-                self: std::sync::Arc<Self>,
-                timeout: std::time::Duration,
+                self: worktable::prelude::Arc<Self>,
+                timeout: core::time::Duration,
                 quiesce: F,
             ) -> Result<UnloadReport, UnloadFailure<Self>>
             where
                 F: FnOnce() -> Fut,
-                Fut: std::future::Future<Output = ()>,
+                Fut: core::future::Future<Output = ()>,
             {
                 // Attribute the generation at the retirement request. The
                 // quiesce callback can give background maintenance time to
@@ -54,10 +54,10 @@ impl Generator {
                     ));
                 }
 
-                let owned = match std::sync::Arc::try_unwrap(self) {
+                let owned = match worktable::prelude::Arc::try_unwrap(self) {
                     Ok(owned) => owned,
                     Err(arc) => {
-                        let outstanding = std::sync::Arc::strong_count(&arc).saturating_sub(1);
+                        let outstanding = worktable::prelude::Arc::strong_count(&arc).saturating_sub(1);
                         return Err(UnloadFailure::retained(
                             arc,
                             eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain"),

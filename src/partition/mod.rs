@@ -67,10 +67,10 @@ use loom::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use loom::sync::{Mutex, MutexGuard};
 #[cfg(not(wt_loom))]
 use parking_lot::{Mutex, MutexGuard};
-use std::collections::VecDeque;
-use std::sync::Arc;
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
 #[cfg(not(wt_loom))]
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::mem_stat::MemStat;
 #[cfg(not(wt_loom))]
@@ -109,7 +109,7 @@ struct Chunk<T> {
 impl<T> Chunk<T> {
     fn empty() -> Box<Self> {
         Box::new(Chunk {
-            slots: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            slots: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
         })
     }
 }
@@ -144,7 +144,7 @@ pub struct PartRef<'a, T> {
     value: &'a T,
 }
 
-impl<T> std::ops::Deref for PartRef<'_, T> {
+impl<T> core::ops::Deref for PartRef<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -180,7 +180,7 @@ impl<T> Default for PartitionSet<T> {
 impl<T> PartitionSet<T> {
     pub fn new() -> Self {
         Self {
-            spine: (0..MAX_CHUNKS).map(|_| AtomicPtr::new(std::ptr::null_mut())).collect(),
+            spine: (0..MAX_CHUNKS).map(|_| AtomicPtr::new(core::ptr::null_mut())).collect(),
             live: AtomicUsize::new(0),
             grow: Mutex::new(VecDeque::new()),
             #[cfg(not(wt_loom))]
@@ -488,7 +488,7 @@ impl<T> PartitionSet<T> {
         let table = {
             let mut retired = self.lock();
             let chunk = self.chunk(idx)?;
-            let p = chunk.slots[idx % CHUNK].swap(std::ptr::null_mut(), Ordering::AcqRel);
+            let p = chunk.slots[idx % CHUNK].swap(core::ptr::null_mut(), Ordering::AcqRel);
             if p.is_null() {
                 return None;
             }
@@ -594,13 +594,13 @@ impl<T> PartitionSet<T> {
     }
 }
 
-impl<T> std::fmt::Debug for PartitionSet<T> {
+impl<T> core::fmt::Debug for PartitionSet<T> {
     /// Deliberately shallow: a partition set can hold thousands of tables and
     /// printing them would be useless as well as slow.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PartitionSet")
             .field("live", &self.len())
-            .field("table", &std::any::type_name::<T>())
+            .field("table", &core::any::type_name::<T>())
             .finish()
     }
 }
@@ -608,7 +608,7 @@ impl<T> std::fmt::Debug for PartitionSet<T> {
 impl<T> Drop for PartitionSet<T> {
     fn drop(&mut self) {
         for cell in &self.spine {
-            let p = cell.swap(std::ptr::null_mut(), Ordering::AcqRel);
+            let p = cell.swap(core::ptr::null_mut(), Ordering::AcqRel);
             if p.is_null() {
                 continue;
             }
@@ -616,7 +616,7 @@ impl<T> Drop for PartitionSet<T> {
             // published exactly once, and nothing else frees it.
             let chunk = unsafe { Box::from_raw(p) };
             for slot in chunk.slots.iter() {
-                let sp = slot.swap(std::ptr::null_mut(), Ordering::AcqRel);
+                let sp = slot.swap(core::ptr::null_mut(), Ordering::AcqRel);
                 if !sp.is_null() {
                     // Safety: a live slot owns one strong reference.
                     drop(unsafe { Arc::from_raw(sp as *const T) });
@@ -652,8 +652,8 @@ pub enum PartitionError {
     OutOfRange { key: u64 },
 }
 
-impl std::fmt::Display for PartitionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for PartitionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             PartitionError::OutOfRange { key } => {
                 write!(f, "partition key {key} exceeds the maximum of {MAX_PARTITIONS}")
@@ -662,7 +662,7 @@ impl std::fmt::Display for PartitionError {
     }
 }
 
-impl std::error::Error for PartitionError {}
+impl core::error::Error for PartitionError {}
 
 #[cfg(all(test, not(wt_loom)))]
 mod tests;

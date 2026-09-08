@@ -1,8 +1,8 @@
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
 use std::path::Path;
-use std::time::Duration;
+use core::time::Duration;
 
 use reqwest::Client;
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};

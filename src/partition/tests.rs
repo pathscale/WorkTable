@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::atomic::AtomicU32;
+use core::sync::atomic::AtomicU32;
 
 #[derive(Debug, PartialEq)]
 struct Counted(u64);
@@ -119,7 +119,7 @@ fn concurrent_creation_of_one_key_makes_one_table() {
 #[test]
 fn concurrent_readers_see_a_partition_created_under_them() {
     let set: Arc<PartitionSet<Counted>> = Arc::new(PartitionSet::new());
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = Arc::new(core::sync::atomic::AtomicBool::new(false));
     let reader = {
         let set = set.clone();
         let stop = stop.clone();
@@ -389,7 +389,7 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
 
     let drops = Arc::new(AtomicU32::new(0));
     let set: Arc<PartitionSet<Tracked>> = Arc::new(PartitionSet::new());
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = Arc::new(core::sync::atomic::AtomicBool::new(false));
     let seen = Arc::new(AtomicU32::new(0));
 
     let readers: Vec<_> = (0..if cfg!(miri) { 2 } else { 3 })
@@ -434,7 +434,7 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
     for k in 0..KEYS {
         set.get_or_create(k, || make(k, &drops)).unwrap();
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + core::time::Duration::from_secs(30);
     while seen.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
         std::thread::yield_now();
     }
@@ -447,7 +447,7 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
     // read to finish, never a zero-reader instant. The pre-epoch retire list
     // could only assert the opposite here (everything retired, nothing
     // freed, unbounded growth through the shared router).
-    let reclaim_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let reclaim_deadline = std::time::Instant::now() + core::time::Duration::from_secs(30);
     while drops.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < reclaim_deadline {
         set.collect();
         std::thread::yield_now();
@@ -473,7 +473,7 @@ fn a_reader_racing_a_remove_never_touches_freed_memory() {
 
     // Drain the remainder through the shared handle: no `&mut`, no
     // `Arc::try_unwrap` gymnastics needed for reclamation any more.
-    let drain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let drain_deadline = std::time::Instant::now() + core::time::Duration::from_secs(30);
     while set.retired_len() > 0 && std::time::Instant::now() < drain_deadline {
         set.collect();
     }
@@ -669,7 +669,7 @@ fn mem_stat_reports_each_partition_and_their_sum() {
     // `size_of::<T>()` on top of the payload, because that is what the
     // allocation actually holds. Derived rather than hard coded so the
     // expectation is the rule, not one machine's numbers.
-    let overhead = std::mem::size_of::<Sized_>();
+    let overhead = core::mem::size_of::<Sized_>();
     for (k, size) in [(3u64, 17usize), (1, 5), (2048, 300)] {
         set.get_or_create(k, || Sized_(size)).unwrap();
     }
@@ -698,6 +698,6 @@ fn partition_error_says_which_key_and_which_bound() {
     );
 
     // The `Error` impl is what a caller using `?` and `eyre` will format.
-    let as_error: &dyn std::error::Error = &out_of_range;
+    let as_error: &dyn core::error::Error = &out_of_range;
     assert_eq!(as_error.to_string(), text);
 }

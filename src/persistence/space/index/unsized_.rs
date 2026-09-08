@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use hashbrown::HashMap;
+use core::fmt::Debug;
+use core::hash::Hash;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use data_bucket::page::PageId;
 use data_bucket::{

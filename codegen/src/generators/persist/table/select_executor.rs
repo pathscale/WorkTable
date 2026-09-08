@@ -44,7 +44,7 @@ impl PersistGenerator {
                     );
                     let range_ident = Ident::new(&format!("Range{variant}"), Span::call_site());
                     quote! {
-                        #variant_ident(std::ops::#range_ident<#ty_ident>),
+                        #variant_ident(core::ops::#range_ident<#ty_ident>),
                     }
                 })
                 .collect();
@@ -65,8 +65,8 @@ impl PersistGenerator {
                     );
                     let range_ident = Ident::new(&format!("Range{variant}"), Span::call_site());
                     quote! {
-                        impl From<std::ops::#range_ident<#ty_ident>> for #column_range_type {
-                            fn from(range: std::ops::#range_ident<#ty_ident>) -> Self {
+                        impl From<core::ops::#range_ident<#ty_ident>> for #column_range_type {
+                            fn from(range: core::ops::#range_ident<#ty_ident>) -> Self {
                                 Self::#variant_ident(range)
                             }
                         }
@@ -100,8 +100,8 @@ impl PersistGenerator {
             let col_ident = Ident::new(&column.to_string(), Span::call_site());
             quote! {
                 #row_fields_ident::#column_variant => {
-                    let cmp = a.#col_ident.partial_cmp(&b.#col_ident).unwrap_or(std::cmp::Ordering::Equal);
-                    if cmp != std::cmp::Ordering::Equal {
+                    let cmp = a.#col_ident.partial_cmp(&b.#col_ident).unwrap_or(core::cmp::Ordering::Equal);
+                    if cmp != core::cmp::Ordering::Equal {
                         return match order {
                             Order::Asc => cmp,
                             Order::Desc => cmp.reverse(),
@@ -165,7 +165,7 @@ impl PersistGenerator {
                         _ => continue,
                     }
                 }
-                std::cmp::Ordering::Equal
+                core::cmp::Ordering::Equal
             });
             iter = Box::new(items.into_iter());
         };

@@ -1,4 +1,4 @@
-use std::future::Future;
+use core::future::Future;
 
 use data_bucket::page::PageId;
 
@@ -39,13 +39,13 @@ pub struct UnloadReport {
 /// can keep serving it or retry. A failure returned by `close` has no retained
 /// generation because shutdown was already attempted and consumed it.
 pub struct UnloadFailure<T> {
-    generation: Option<std::sync::Arc<T>>,
+    generation: Option<alloc::sync::Arc<T>>,
     error: eyre::Report,
 }
 
 impl<T> UnloadFailure<T> {
     #[doc(hidden)]
-    pub fn retained(generation: std::sync::Arc<T>, error: eyre::Report) -> Self {
+    pub fn retained(generation: alloc::sync::Arc<T>, error: eyre::Report) -> Self {
         Self {
             generation: Some(generation),
             error,
@@ -61,7 +61,7 @@ impl<T> UnloadFailure<T> {
     }
 
     /// Returns the still-live generation when shutdown never began.
-    pub fn into_generation(self) -> Option<std::sync::Arc<T>> {
+    pub fn into_generation(self) -> Option<alloc::sync::Arc<T>> {
         self.generation
     }
 
@@ -71,8 +71,8 @@ impl<T> UnloadFailure<T> {
     }
 }
 
-impl<T> std::fmt::Debug for UnloadFailure<T> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> core::fmt::Debug for UnloadFailure<T> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("UnloadFailure")
             .field("generation_retained", &self.generation.is_some())
@@ -81,13 +81,13 @@ impl<T> std::fmt::Debug for UnloadFailure<T> {
     }
 }
 
-impl<T> std::fmt::Display for UnloadFailure<T> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> core::fmt::Display for UnloadFailure<T> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.error.fmt(formatter)
     }
 }
 
-impl<T: 'static> std::error::Error for UnloadFailure<T> {}
+impl<T: 'static> core::error::Error for UnloadFailure<T> {}
 
 mod engine;
 mod error;

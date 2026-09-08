@@ -45,6 +45,7 @@ data_bucket = { version = "^0.5, >=0.5.7" }
 derive_more = { version = "2", features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6"
 fastrand = "2"
+hashbrown = "0.15"
 futures = "0.3"
 indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.12", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 vanilla_indexset = { package = "indexset", version = "0.15", features = ["concurrent", "cdc", "multimap"] }

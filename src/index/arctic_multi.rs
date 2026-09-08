@@ -45,10 +45,10 @@
 //! the dead entry and retries with a fresh slot, and the SMR guard it holds
 //! keeps the memory valid throughout.
 
-use std::borrow::Borrow;
-use std::fmt::{self, Debug};
-use std::ops::{Bound, ControlFlow, RangeBounds};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use core::borrow::Borrow;
+use core::fmt::{self, Debug};
+use core::ops::{Bound, ControlFlow, RangeBounds};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use arctic::{ConcurrentMap, Key as ArcticNativeKey, Order};
 use parking_lot::RwLock;
@@ -190,7 +190,7 @@ where
 
     /// Returns every `(key, value)` pair stored under `key`, in insertion
     /// order, as a stable snapshot. An unknown key yields an empty iterator.
-    pub fn get(&self, key: &K) -> std::vec::IntoIter<(K, V)> {
+    pub fn get(&self, key: &K) -> alloc::vec::IntoIter<(K, V)> {
         let raw = key.to_arctic();
         let Some(slot) = self.inner.get(raw.borrow()) else {
             return Vec::new().into_iter();
@@ -222,7 +222,7 @@ where
         let mut slots = 0;
         while let Some((_, slot)) = entries.lend() {
             let links = slot.read();
-            slots += std::mem::size_of::<RwLock<LinkSlot<V>>>() + links.links.capacity() * std::mem::size_of::<V>();
+            slots += core::mem::size_of::<RwLock<LinkSlot<V>>>() + links.links.capacity() * core::mem::size_of::<V>();
         }
         self.inner.allocated_node_bytes() + slots
     }
@@ -287,8 +287,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Bound;
-    use std::sync::{Arc, Barrier};
+    use core::ops::Bound;
+    use alloc::sync::Arc;
+use std::sync::Barrier;
 
     use super::ArcticMultiIndex;
 
