@@ -11,6 +11,7 @@ mod failure;
 mod in_place_durability;
 mod index_page;
 mod insert_cost_shape;
+mod insert_latency;
 mod insert_many;
 mod insert_many_bench;
 mod loaded_index_growth;
