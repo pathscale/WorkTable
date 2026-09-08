@@ -45,6 +45,7 @@
 //! the dead entry and retries with a fresh slot, and the SMR guard it holds
 //! keeps the memory valid throughout.
 
+use alloc::{boxed::Box, vec::Vec};
 use core::borrow::Borrow;
 use core::fmt::{self, Debug};
 use core::ops::{Bound, ControlFlow, RangeBounds};

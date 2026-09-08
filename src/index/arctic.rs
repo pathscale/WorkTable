@@ -1,5 +1,6 @@
 //! Arctic adapter for memory-only unique WorkTable indexes.
 
+use alloc::{string::String, vec::Vec};
 use core::borrow::Borrow;
 use core::fmt::{self, Debug};
 use core::marker::PhantomData;

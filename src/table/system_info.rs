@@ -1,3 +1,4 @@
+use alloc::{string::String, string::ToString, vec::Vec};
 use prettytable::{Table, format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR, row};
 use core::fmt::{self, Debug, Display, Formatter};
 

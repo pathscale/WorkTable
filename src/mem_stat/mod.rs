@@ -1,3 +1,4 @@
+use alloc::{boxed::Box, string::String, vec::Vec};
 mod primitives;
 
 use hashbrown::HashMap;

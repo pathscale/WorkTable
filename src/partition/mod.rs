@@ -55,6 +55,7 @@
 //! instance measures 110 KB and 6.1 ms to construct, of which 95 percent is
 //! inside `PersistenceEngine::new`.
 
+use alloc::{boxed::Box, vec::Vec};
 // Under `--cfg wt_loom` the atomics and the mutex come from loom, which explores
 // every interleaving of them rather than whichever one this machine happened
 // to produce. `Arc` stays `std`: loom's has no `into_raw` or

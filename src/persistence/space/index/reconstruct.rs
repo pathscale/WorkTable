@@ -4,6 +4,7 @@
 //! generic function that can be unit-tested with synthetic pages; the proc
 //! macro only generates type plumbing and node attachment.
 
+use alloc::{vec::Vec};
 use core::fmt::Debug;
 
 use indexset::core::multipair::MultiPair;

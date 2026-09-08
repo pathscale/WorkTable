@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 /// Struct for storing data in a vector with stable indexes and slot reuse.
 /// Slots are `Option<T>`: `remove` is `Option::take`, so the value moves out
 /// without a `Clone` bound and the slot is freed immediately. The previous

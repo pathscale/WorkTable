@@ -1,5 +1,6 @@
 //! Congee adapter for memory-only unique WorkTable indexes.
 
+use alloc::{vec::Vec};
 use core::fmt::{self, Debug};
 use core::ops::{Bound, RangeBounds};
 use alloc::sync::Arc;

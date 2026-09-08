@@ -1,3 +1,4 @@
+use alloc::{boxed::Box, vec::Vec};
 use arc_swap::ArcSwap;
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
@@ -16,11 +17,9 @@ use alloc::collections::VecDeque;
 use hashbrown::HashSet;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
-use std::{
-    fmt::Debug,
-    sync::Arc,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use alloc::sync::Arc;
+use core::fmt::Debug;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::prelude::ArchivedRowWrapper;

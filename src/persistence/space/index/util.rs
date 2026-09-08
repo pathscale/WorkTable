@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 use crate::prelude::IndexTableOfContents;
 use data_bucket::{
     GeneralHeader, GeneralPage, IndexPage, Link, PageType, SizeMeasurable, UnsizedIndexPage, VariableSizeMeasurable,

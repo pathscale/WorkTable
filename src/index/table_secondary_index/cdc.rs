@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 use hashbrown::HashMap;
 
 use data_bucket::Link;

@@ -6,6 +6,7 @@
 //! different stripes remain concurrent because their Set/Remove records
 //! commute during recovery.
 
+use alloc::{vec::Vec};
 use core::array;
 use rustc_hash::FxHasher as DefaultHasher;
 use core::fmt::{self, Debug};

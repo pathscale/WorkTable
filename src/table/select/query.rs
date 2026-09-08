@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 use crate::WorkTableError;
 use crate::select::{Order, QueryParams};
 

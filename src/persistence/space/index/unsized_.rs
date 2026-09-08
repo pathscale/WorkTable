@@ -1,3 +1,4 @@
+use alloc::{string::String, vec::Vec};
 use hashbrown::HashMap;
 use core::fmt::Debug;
 use core::hash::Hash;

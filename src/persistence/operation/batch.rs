@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+use alloc::{string::ToString, vec::Vec};
 use hashbrown::HashMap;
 use core::fmt::Debug;
 use core::hash::Hash;

@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 use data_bucket::Link;
 use indexset::cdc::change::{self, ChangeEvent};
 use indexset::core::pair::Pair;

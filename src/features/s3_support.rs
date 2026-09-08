@@ -1,3 +1,4 @@
+use alloc::{string::String, string::ToString};
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::marker::PhantomData;

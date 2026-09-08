@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 use core::cell::UnsafeCell;
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -62,7 +63,7 @@ impl CellLocks {
             core::hint::spin_loop();
             *spins += 1;
         } else {
-            std::thread::yield_now();
+            crate::util::yield_now();
         }
     }
 

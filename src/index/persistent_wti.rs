@@ -9,6 +9,7 @@
 //! not claims about the live WTI node position or maximum; the shadow validates
 //! that marker and derives the real structural metadata itself.
 
+use alloc::{vec::Vec};
 use core::array;
 use core::fmt::{self, Debug};
 use core::hash::{Hash, Hasher};

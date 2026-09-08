@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 use hashbrown::HashMap;
 use rustc_hash::FxHasher as DefaultHasher;
 use core::fmt::Debug;
@@ -345,7 +346,7 @@ where
                 spins += 1;
                 core::hint::spin_loop();
             } else {
-                std::thread::yield_now();
+                crate::util::yield_now();
             }
         }
 

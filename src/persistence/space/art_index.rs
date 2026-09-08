@@ -6,6 +6,7 @@
 //! applies the WAL, writes a new native checkpoint atomically, and drops the
 //! temporary tree; no duplicate ART is retained during normal operation.
 
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::marker::PhantomData;

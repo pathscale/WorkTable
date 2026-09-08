@@ -4,6 +4,7 @@
 //! backend's guard type. That keeps generated code independent from the
 //! concurrency and reclamation strategy used by each index implementation.
 
+use alloc::{vec::Vec};
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::ops::RangeBounds;

@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 mod cdc;
 mod index_events;
 mod info;

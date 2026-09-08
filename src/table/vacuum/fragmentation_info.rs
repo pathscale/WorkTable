@@ -12,6 +12,7 @@
 //!
 //! [`WorkTable`]: crate::table::WorkTable
 
+use alloc::{vec::Vec};
 use hashbrown::HashMap;
 
 use data_bucket::page::PageId;

@@ -1,3 +1,4 @@
+use alloc::{string::String, string::ToString, vec::Vec};
 mod page_aliases;
 mod reconstruct;
 mod table_of_contents;

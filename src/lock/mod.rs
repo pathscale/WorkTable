@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 mod map;
 mod row_lock;
 

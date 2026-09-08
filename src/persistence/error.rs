@@ -1,3 +1,4 @@
+use alloc::{string::String, string::ToString};
 use core::error::Error;
 use core::fmt::{Display, Formatter};
 use core::future::Future;

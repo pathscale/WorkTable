@@ -5,6 +5,7 @@
 //! this persistence-worker-owned index derives the structural events required
 //! by the unchanged WTI disk format.
 
+use alloc::{string::String, vec::Vec};
 use core::fmt::Debug;
 use core::hash::Hash;
 use std::path::{Path, PathBuf};

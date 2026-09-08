@@ -1,3 +1,4 @@
+use alloc::{vec::Vec};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::multipair::MultiPair;
 use indexset::core::pair::Pair;

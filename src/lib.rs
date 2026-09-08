@@ -1,5 +1,7 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 #![doc = include_str!("../docs/crate.md")]
 
+#[macro_use]
 extern crate alloc;
 
 /// Generated code names `worktable::` paths, which must also resolve inside

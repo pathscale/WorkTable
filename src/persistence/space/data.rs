@@ -1,3 +1,4 @@
+use alloc::{string::String, string::ToString, vec::Vec};
 use hashbrown::HashSet;
 use std::io::SeekFrom;
 use std::path::Path;

@@ -1,5 +1,6 @@
 //! Primary-key to row-location index.
 
+use alloc::{vec::Vec};
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::marker::PhantomData;
