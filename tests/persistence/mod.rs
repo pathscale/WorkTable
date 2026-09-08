@@ -17,6 +17,7 @@ mod insert_many_bench;
 mod loaded_index_growth;
 mod local_write_bandwidth;
 mod multi_row_backend_order;
+mod persistence_is_what;
 mod read;
 mod recovery_load;
 mod same_size_in_place;
