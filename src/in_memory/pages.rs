@@ -150,6 +150,21 @@ impl<T> PageList<T> {
             .cloned()
     }
 
+    /// Run `visit` against the page at `index`, borrowing it rather than
+    /// handing back an owned `Arc`.
+    ///
+    /// **`get` costs an atomic increment and the matching decrement on drop.**
+    /// A read that only needs the page for the length of one call pays both for
+    /// nothing, and it is measurable: routing the link-based read through `get`
+    /// moved a delete from 665 to 751 ns, while a select by primary key - which
+    /// goes through the page directory and never touches this - did not move at
+    /// all.
+    fn with_page<R>(&self, index: usize, visit: impl FnOnce(&T) -> R) -> Option<R> {
+        let chunks = self.chunks.load();
+        let page = chunks.get(index / PAGE_LIST_CHUNK)?.get(index % PAGE_LIST_CHUNK)?;
+        Some(visit(page))
+    }
+
     fn for_each(&self, mut visit: impl FnMut(&Arc<T>)) {
         let chunks = self.chunks.load();
         for chunk in chunks.iter() {
@@ -921,18 +936,20 @@ where
         let page_index = page_id
             .checked_sub(1)
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let page = self
-            .pages
-            .get(page_index)
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let wrapped = page.get_row_checked(link).map_err(ExecutionError::DataPageError)?;
-        if wrapped.is_ghosted() {
-            return Err(ExecutionError::Ghosted);
-        }
-        if wrapped.is_deleted() {
-            return Err(ExecutionError::Deleted);
-        }
-        Ok(wrapped.get_inner())
+        // Borrowed rather than cloned: this is a read path and an `Arc` bump
+        // here showed up as a 13% slower delete.
+        self.pages
+            .with_page(page_index, |page| {
+                let wrapped = page.get_row_checked(link).map_err(ExecutionError::DataPageError)?;
+                if wrapped.is_ghosted() {
+                    return Err(ExecutionError::Ghosted);
+                }
+                if wrapped.is_deleted() {
+                    return Err(ExecutionError::Deleted);
+                }
+                Ok(wrapped.get_inner())
+            })
+            .ok_or(ExecutionError::PageNotFound(link.page_id))?
     }
 
     pub fn select_non_vacuumed(&self, link: Link) -> Result<Row, ExecutionError>
