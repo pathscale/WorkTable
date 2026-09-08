@@ -158,7 +158,7 @@ fn local_write_bandwidth() {
 
         println!("table {:.1} MB on disk", bytes as f64 / 1e6);
         println!(
-            "  bulk load, {ROWS} rows        : {:>8.1} ms   {:>7.0} MB/s   {:>8.0} rows/s",
+            "  bulk insert, {ROWS} rows       : {:>8.1} ms   {:>7.0} MB/s   {:>8.0} rows/s",
             bulk * 1e3,
             bytes as f64 / 1e6 / bulk,
             ROWS as f64 / bulk,
