@@ -19,6 +19,7 @@ mod key_widths;
 mod leak_probe;
 mod lock_order;
 mod multi_row_deadlock;
+mod multi_thread_discipline;
 mod mutation_gate_deadlock;
 mod nid;
 mod nonunique_arctic;
