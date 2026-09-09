@@ -153,6 +153,11 @@ rand = "0.9"
 # contract. Those go through `worktable::prelude` now.
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
+# Drives `tests/ui.rs`. Half of what `worktable!` promises is a refusal, and a
+# refusal is only testable by compiling something that must not compile. The
+# expected diagnostic is a committed `.stderr` beside each case, so the test
+# asserts on the message and not merely on failure.
+trybuild = "1"
 
 # Only under `--cfg loom`, so a normal build and a normal `cargo test` never
 # resolve it. See src/partition/loom_tests.rs for how to run the models.

@@ -1,0 +1,5 @@
+error: Unexpected column name
+  --> tests/ui/query_over_unknown_column.rs:15:25
+   |
+15 |             MissingById(missing) by id,
+   |                         ^^^^^^^

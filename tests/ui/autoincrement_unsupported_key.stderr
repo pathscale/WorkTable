@@ -1,0 +1,5 @@
+error: primary key `id` is `autoincrement` over key type `usize`, which cannot be generated; supported types: u8, u16, u32, u64, i8, i16, i32, i64
+  --> tests/ui/autoincrement_unsupported_key.rs:10:9
+   |
+10 |         id: usize primary_key autoincrement,
+   |         ^^

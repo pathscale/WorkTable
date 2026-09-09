@@ -1,0 +1,5 @@
+error: primary index `id` uses `congee`, which requires an explicit `persist: true` or `persist: false`
+ --> tests/ui/congee_without_persist.rs:9:9
+  |
+9 |         id: u64 primary_key autoincrement using congee,
+  |         ^^

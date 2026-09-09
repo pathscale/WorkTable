@@ -1,0 +1,5 @@
+error: `using congee` requires a directly named primitive primary-key type; found `String`; supported types: u8, u16, u32, u64, usize (type aliases cannot be resolved by the macro)
+  --> tests/ui/congee_unsupported_key_type.rs:10:9
+   |
+10 |         id: String primary_key using congee,
+   |         ^^
