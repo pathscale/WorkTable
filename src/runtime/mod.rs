@@ -65,10 +65,14 @@ pub use nagoya::Elapsed;
 pub use st3::fanout::Tuning;
 
 mod nagoya_rt;
+
+mod profile;
 #[cfg(feature = "tokio-runtime")]
 mod tokio_rt;
 
 pub use nagoya_rt::{Locality, NagoyaRt, Spread, Throughput};
+
+pub use profile::{Profile, RuntimeUnpinned, TableRuntime};
 #[cfg(feature = "tokio-runtime")]
 pub use tokio_rt::{TokioJoinHandle, TokioRt};
 

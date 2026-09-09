@@ -12,6 +12,7 @@ mod mem_stat;
 mod migration_engine;
 mod persist_index;
 mod persist_table;
+mod runtimes;
 #[cfg(feature = "s3-support")]
 mod s3_persistence;
 mod worktable;
@@ -31,6 +32,27 @@ pub fn worktable(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn s3_sync_persistence(input: TokenStream) -> TokenStream {
     s3_persistence::expand(input.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Declares the process's named runtime profiles.
+///
+/// ```ignore
+/// runtimes! {
+///     tokio_max:  tokio,
+///     fast_local: nagoya(locality),
+///     wide:       nagoya(spread),
+/// }
+/// ```
+///
+/// One unit struct per entry, implementing `worktable::prelude::Profile`. Every
+/// pool the process will ever create can be enumerated by reading one of these
+/// blocks, which is the reason profiles are named rather than spelled out at
+/// call sites.
+#[proc_macro]
+pub fn runtimes(input: TokenStream) -> TokenStream {
+    runtimes::expand(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
