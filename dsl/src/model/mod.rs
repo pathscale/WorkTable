@@ -7,6 +7,7 @@ mod partition;
 mod persistence;
 mod primary_key;
 mod queries;
+mod runtime;
 
 pub use column::{Columns, Row};
 pub use columnar::{
@@ -20,3 +21,4 @@ pub use partition::{PARTITION_KEY_TYPES, PartitionKey};
 pub use persistence::Persistence;
 pub use primary_key::{GeneratorType, PrimaryKey};
 pub use queries::Queries;
+pub use runtime::{Flavor, RuntimeBackend};
