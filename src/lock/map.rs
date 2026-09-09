@@ -43,7 +43,7 @@ pub struct BulkMutationGuard {
 
 #[derive(Debug)]
 struct LockEntry<LockType> {
-    lock: Arc<tokio::sync::RwLock<LockType>>,
+    lock: Arc<nagoya::sync::RwLock<LockType>>,
     acquirers: Arc<AtomicUsize>,
 }
 
@@ -58,7 +58,7 @@ where
     LockType: RowLock,
     PrimaryKey: Hash + Eq + Debug + Clone,
 {
-    lock: Option<Arc<tokio::sync::RwLock<LockType>>>,
+    lock: Option<Arc<nagoya::sync::RwLock<LockType>>>,
     acquirers: Arc<AtomicUsize>,
     lock_map: Arc<LockMap<LockType, PrimaryKey>>,
     primary_key: PrimaryKey,
@@ -85,7 +85,7 @@ where
     LockType: RowLock,
     PrimaryKey: Hash + Eq + Debug + Clone,
 {
-    type Target = tokio::sync::RwLock<LockType>;
+    type Target = nagoya::sync::RwLock<LockType>;
 
     fn deref(&self) -> &Self::Target {
         self.lock.as_deref().expect("the acquisition lock exists until drop")
@@ -121,7 +121,7 @@ impl Drop for BulkMutationGuard {
 /// # Sync/async lock boundary
 ///
 /// The `parking_lot` map guard is never returned and never crosses an
-/// `.await`. Acquisition clones a tracked `Arc<tokio::sync::RwLock<_>>` before
+/// `.await`. Acquisition clones a tracked `Arc<nagoya::sync::RwLock<_>>` before
 /// releasing the map guard. Cleanup may synchronously take the short-lived map
 /// write guard, but only probes the per-row lock with `try_read`; it never waits
 /// on a Tokio lock while holding the map. This one-way boundary prevents a
@@ -158,8 +158,8 @@ where
     pub fn insert(
         &self,
         key: PrimaryKey,
-        lock: Arc<tokio::sync::RwLock<LockType>>,
-    ) -> Option<Arc<tokio::sync::RwLock<LockType>>> {
+        lock: Arc<nagoya::sync::RwLock<LockType>>,
+    ) -> Option<Arc<nagoya::sync::RwLock<LockType>>> {
         self.map
             .write()
             .insert(
@@ -174,7 +174,7 @@ where
 
     /// Returns an untracked raw lock clone, which keeps the map entry alive
     /// until that clone is dropped.
-    pub fn get(&self, key: &PrimaryKey) -> Option<Arc<tokio::sync::RwLock<LockType>>> {
+    pub fn get(&self, key: &PrimaryKey) -> Option<Arc<nagoya::sync::RwLock<LockType>>> {
         self.map.read().get(key).map(|entry| entry.lock.clone())
     }
 
@@ -209,7 +209,7 @@ where
         let mut map = self.map.write();
         // Re-check: another task can insert between the read and write guards.
         let entry = map.entry(key.clone()).or_insert_with(|| LockEntry {
-            lock: Arc::new(tokio::sync::RwLock::new(f())),
+            lock: Arc::new(nagoya::sync::RwLock::new(f())),
             acquirers: Arc::new(AtomicUsize::new(0)),
         });
         entry.acquirers.fetch_add(1, Ordering::AcqRel);
@@ -231,7 +231,7 @@ where
     {
         let mut set = self.map.write();
         let should_remove = set.get(key).is_some_and(|entry| {
-            let Ok(guard) = entry.lock.try_read() else {
+            let Some(guard) = entry.lock.try_read() else {
                 return false;
             };
             !guard.is_locked()

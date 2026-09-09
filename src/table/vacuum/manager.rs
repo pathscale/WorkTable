@@ -3,7 +3,9 @@ use alloc::{string::ToString, vec::Vec};
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 use hashbrown::HashMap;
-use tokio::task::AbortHandle;
+// The task handle is nagoya's now: dropping it detaches, `cancel` stops it,
+// which is the same contract `AbortHandle` had here.
+use nagoya::JoinHandle;
 
 use parking_lot::RwLock;
 use smart_default::SmartDefault;
@@ -127,9 +129,10 @@ impl VacuumManager {
     /// Starts a background task that periodically checks fragmentation and runs
     /// vacuum.
     ///
-    /// Returns an `AbortHandle` that can be used to cancel the task.
-    pub fn run_vacuum_task(self: Arc<Self>) -> AbortHandle {
-        let handle = tokio::spawn(async move {
+    /// Returns a handle whose `cancel` stops the task.
+    #[cfg(feature = "std")]
+    pub fn run_vacuum_task(self: Arc<Self>) -> JoinHandle<()> {
+        crate::runtime::background().spawn(async move {
             loop {
                 self.wait_for_work().await;
 
@@ -231,7 +234,7 @@ impl VacuumManager {
                                         }
                                         // The persistence worker's turn. See the
                                         // note above the loop.
-                                        tokio::time::sleep(BETWEEN_PASSES).await;
+                                        nagoya::sleep(BETWEEN_PASSES).await;
                                     }
                                     Err(e) => {
                                         // println!("Vacuum failed for table '{}': {}", table_name, e);
@@ -244,9 +247,7 @@ impl VacuumManager {
                     }
                 }
             }
-        });
-
-        handle.abort_handle()
+        })
     }
 
     /// Blocks until some registered table has freed enough space to be worth
@@ -257,14 +258,15 @@ impl VacuumManager {
             vacuums.values().cloned().collect()
         };
         if registered.is_empty() {
-            tokio::time::sleep(FALLBACK_INTERVAL).await;
+            nagoya::sleep(FALLBACK_INTERVAL).await;
             return;
         }
 
         let waits: Vec<_> = registered.iter().map(|v| v.wait_until_worth_running()).collect();
-        tokio::select! {
-            _ = futures::future::select_all(waits) => {}
-            _ = tokio::time::sleep(FALLBACK_INTERVAL) => {}
-        }
+        // This was a two-armed `tokio::select!` racing the waits against a
+        // sleep, which is what a timeout is. Saying `timeout` says the intent
+        // and costs no combinator: the fallback exists so a table that never
+        // becomes worth vacuuming is still looked at eventually.
+        let _ = nagoya::timeout(FALLBACK_INTERVAL, futures::future::select_all(waits)).await;
     }
 }

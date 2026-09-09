@@ -18,6 +18,11 @@ mod mem_stat;
 pub mod migration;
 pub mod partition;
 pub mod persistence;
+// The table's own background threads. Gated because it starts them: see the
+// module comment for why the table owns this and the caller does not.
+#[cfg(feature = "std")]
+pub(crate) mod runtime;
+
 mod primary_key;
 mod row;
 mod table;

@@ -220,7 +220,7 @@ where
         let deadline = Instant::now() + MAX_SETTLE;
         loop {
             let before = self.data_pages.pending_retirements();
-            tokio::time::sleep(SETTLE_INTERVAL).await;
+            nagoya::sleep(SETTLE_INTERVAL).await;
             if self.data_pages.pending_retirements() == before || Instant::now() >= deadline {
                 return;
             }

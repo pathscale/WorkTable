@@ -11,8 +11,9 @@ use core::time::Duration;
 use hashbrown::{HashMap, HashSet};
 
 use data_bucket::page::PageId;
+use nagoya::sync::Notify;
 use parking_lot::Mutex as ParkingMutex;
-use tokio::sync::Notify;
+
 use tokio::task::JoinHandle;
 use worktable_codegen::worktable;
 
@@ -179,7 +180,7 @@ impl PersistenceMonitor {
     pub async fn wait_for_failure(self) -> PersistenceResult {
         loop {
             let notified = self.lifecycle.terminal_notify.notified();
-            tokio::pin!(notified);
+            let mut notified = core::pin::pin!(notified);
             // `notify_waiters` does not retain a permit. Register this waiter
             // before reading the lifecycle state so a terminal transition
             // cannot land between the state read and the first poll of
@@ -953,7 +954,7 @@ mod lifecycle_tests {
         });
 
         // Drive the worker to its idle poll, where it parks inside the window.
-        tokio::task::yield_now().await;
+        nagoya::yield_now().await;
 
         task.apply_operation(insert_operation(1)).unwrap();
         task.close().await.unwrap();
@@ -1060,7 +1061,7 @@ mod lifecycle_tests {
                 config: TestConfig,
                 failure: TestFailure::None,
             });
-            tokio::task::yield_now().await;
+            nagoya::yield_now().await;
             task
         });
 
@@ -1101,7 +1102,7 @@ mod lifecycle_tests {
             failure: TestFailure::None,
         });
         // Let the worker reach its idle poll so `Drop` takes the abort path.
-        tokio::task::yield_now().await;
+        nagoya::yield_now().await;
 
         let sink = task.vacuum_sink();
         drop(task);
@@ -1182,16 +1183,16 @@ enum PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 #[cfg(test)]
 #[derive(Debug)]
 struct PopRaceWindowGate {
-    entered: tokio::sync::Semaphore,
-    proceed: tokio::sync::Semaphore,
+    entered: nagoya::sync::Semaphore,
+    proceed: nagoya::sync::Semaphore,
 }
 
 #[cfg(test)]
 impl PopRaceWindowGate {
     fn new() -> Self {
         Self {
-            entered: tokio::sync::Semaphore::new(0),
-            proceed: tokio::sync::Semaphore::new(0),
+            entered: nagoya::sync::Semaphore::new(0),
+            proceed: nagoya::sync::Semaphore::new(0),
         }
     }
 
@@ -1374,7 +1375,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     ) -> Option<PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         loop {
             let notified = self.notify.notified();
-            tokio::pin!(notified);
+            let mut notified = core::pin::pin!(notified);
             // `wake()` uses `notify_waiters`, which stores no permit: only a
             // waiter that already exists observes it. Register this waiter
             // before draining the queue and reading the lifecycle state, so a
@@ -1630,7 +1631,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     // luck; this yield holds it open. Unit tests only, and it
                     // changes scheduling rather than behaviour.
                     #[cfg(test)]
-                    tokio::task::yield_now().await;
+                    nagoya::yield_now().await;
                     if matches!(engine_lifecycle.state(), PersistenceState::Closing) {
                         // Re-check the queue before giving up on it. An
                         // operation can be enqueued between the poll above and
@@ -1700,7 +1701,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                             return;
                         }
                     } else {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        nagoya::sleep(Duration::from_millis(500)).await;
                     }
                 } else if let Some(page_ids) = pending_reclaim.take() {
                     // `get_first_op_id_available() == None` is only sufficient
@@ -1791,7 +1792,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 
             tokio::select! {
                 _ = self.lifecycle.progress_notify.notified() => {},
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                _ = nagoya::sleep(Duration::from_secs(1)) => {}
             }
         }
     }

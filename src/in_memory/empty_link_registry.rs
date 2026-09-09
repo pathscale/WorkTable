@@ -7,8 +7,8 @@ use data_bucket::page::PageId;
 use derive_more::Into;
 use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::concurrent::set::BTreeSet;
+use nagoya::sync::{Notify, OwnedRwLockReadGuard};
 use parking_lot::FairMutex;
-use tokio::sync::{Notify, OwnedRwLockReadGuard};
 
 use crate::in_memory::DATA_INNER_LENGTH;
 
@@ -110,7 +110,7 @@ pub struct EmptyLinkRegistry<const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     /// completes; vacuum takes the write side, so it cannot start reclaiming
     /// while any popped link is still being written through, and no new link
     /// can be popped while vacuum runs.
-    vacuum_lock: Arc<tokio::sync::RwLock<()>>,
+    vacuum_lock: Arc<nagoya::sync::RwLock<()>>,
 
     /// How many times a caller has asked this registry for reclaimable space.
     ///
@@ -344,7 +344,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             return None;
         }
 
-        let guard = self.vacuum_lock.clone().try_read_owned().ok()?;
+        let guard = self.vacuum_lock.clone().try_read_owned()?;
 
         let _g = self.op_lock.lock();
 
@@ -376,7 +376,7 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
 
     /// Takes the vacuum (write) side of the exclusion: waits until every
     /// popped link's read guard is dropped, and blocks new pops while held.
-    pub async fn lock_vacuum(&self) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+    pub async fn lock_vacuum(&self) -> nagoya::sync::RwLockWriteGuard<'_, ()> {
         self.vacuum_lock.write().await
     }
 

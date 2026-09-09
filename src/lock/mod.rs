@@ -373,7 +373,7 @@ mod tests {
 
         // Create and insert a lock
         let (lock_type, lock) = FullRowLock::with_lock(lock_map.next_id());
-        let rw_lock = Arc::new(tokio::sync::RwLock::new(lock_type));
+        let rw_lock = Arc::new(nagoya::sync::RwLock::new(lock_type));
         lock_map.insert(pk, rw_lock);
 
         // Verify the lock is in the map
