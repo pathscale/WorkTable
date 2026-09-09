@@ -174,6 +174,20 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 /// user building with `-D warnings` would otherwise fail over a name they never
 /// wrote.
 fn gen_runtime_type(name: &proc_macro2::Ident, runtime: Option<RuntimeBackend>) -> TokenStream {
+    // Emit nothing into a `no_std` build. Every backend needs threads, so the
+    // prelude exports no runtime type there and naming one would not resolve.
+    // A table that never spawns is still a table, which is why this is silent
+    // rather than an error.
+    //
+    // This intentionally evaluates the proc-macro crate's own feature, the same
+    // way `index_backend` does: `worktable`'s `std` forwards to
+    // `worktable_codegen/std` in Cargo.toml, so the runtime types and the
+    // emitted types are selected together. Emitting a `cfg` into the expansion
+    // would instead test the consuming package's unrelated feature namespace.
+    if !cfg!(feature = "std") {
+        return TokenStream::new();
+    }
+
     let ident = WorktableNameGenerator::from_table_name(name.to_string()).get_runtime_type_ident();
     // An omitted `runtime:` resolves through the same chain as an unannotated
     // section, so a declaration written before this key existed emits exactly

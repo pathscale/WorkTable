@@ -20,7 +20,7 @@ default = ["std", "wti-predictable-search", "vanilla-index"]
 # line: written as `features = ["std"]` beside the version, a
 # `--no-default-features` build of this crate would still turn them on. The
 # s3 tests reach `futures::io`, whose traits live behind that feature.
-std = ["nagoya/std", "ps-reclaim/std", "congee/std", "indexset/std", "futures/std", "ps-st3/host"]
+std = ["nagoya/std", "ps-reclaim/std", "congee/std", "indexset/std", "futures/std", "ps-st3/host", "worktable_codegen/std"]
 # The tokio backend for `Runtime`, selectable with `runtime: tokio` in a
 # schema. **Off, and it stays off.** Getting tokio out of the normal dependency
 # graph is the work this builds on: it used to arrive through the `tokio::`

@@ -9,6 +9,10 @@ repository = "https://github.com/pathscale/WorkTable"
 [features]
 s3-support = []
 logical-index-persistence = []
+# Mirrors the consuming crate's `std`. The macro emits a runtime type name
+# that only exists in a std build, so the emitter has to know which build it is
+# expanding into. Forwarded from `worktable` so the two cannot disagree.
+std = []
 # Compatibility no-op retained for downstream manifests.
 versioned-row-publication = []
 
