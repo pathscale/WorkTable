@@ -6,9 +6,12 @@ mod index;
 mod name;
 mod punct;
 pub mod queries;
+mod runtime;
 
 use proc_macro2::{TokenStream, TokenTree};
 use std::iter::Peekable;
+
+pub use runtime::DUPLICATE_RUNTIME;
 
 pub struct Parser {
     pub input: TokenStream,
