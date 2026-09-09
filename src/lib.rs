@@ -64,7 +64,7 @@ pub mod prelude {
     /// carried it whether or not they ran one.
     pub use nagoya::{sleep, timeout, yield_now};
 
-    pub use alloc::collections::BTreeMap;
+    pub use alloc::collections::{BTreeMap, BTreeSet};
     pub use alloc::sync::Arc;
     pub use alloc::vec::IntoIter;
     pub use hashbrown::{HashMap, HashSet};

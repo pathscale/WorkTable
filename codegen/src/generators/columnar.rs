@@ -225,12 +225,12 @@ pub(crate) fn definitions(table: &Ident, columns: &Columns) -> TokenStream {
         #[derive(Debug, MemStat)]
         struct #data {
             next_slot_position: Option<u64>,
-            free_slot_ids: std::collections::BTreeSet<#slot_id>,
+            free_slot_ids: worktable::prelude::BTreeSet<#slot_id>,
             slot_generations: Vec<u64>,
             incarnation: u64,
             slots_high_water: usize,
             dirty: bool,
-            slots: std::collections::BTreeMap<#pk, (#slot_id, u64)>,
+            slots: worktable::prelude::BTreeMap<#pk, (#slot_id, u64)>,
             primary_keys: ColumnarColumn<#pk>,
             #(#column_fields)*
             #(#index_fields)*
@@ -455,12 +455,12 @@ pub(crate) fn table_methods(table: &Ident, columns: &Columns) -> TokenStream {
             // this lock; absence from this scan is not proof of deletion.
             let mut rebuilt: #data = Default::default();
             rebuilt.next_slot_position = columnar.next_slot_position;
-            rebuilt.free_slot_ids = std::mem::take(&mut columnar.free_slot_ids);
-            rebuilt.slot_generations = std::mem::take(&mut columnar.slot_generations);
+            rebuilt.free_slot_ids = core::mem::take(&mut columnar.free_slot_ids);
+            rebuilt.slot_generations = core::mem::take(&mut columnar.slot_generations);
             rebuilt.incarnation = columnar.incarnation;
             rebuilt.slots_high_water = columnar.slots_high_water;
-            rebuilt.slots = std::mem::take(&mut columnar.slots);
-            rebuilt.primary_keys = std::mem::replace(
+            rebuilt.slots = core::mem::take(&mut columnar.slots);
+            rebuilt.primary_keys = core::mem::replace(
                 &mut columnar.primary_keys,
                 ColumnarColumn::new(65_536, ColumnCompression::None),
             );

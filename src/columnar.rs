@@ -1,7 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::atomic::{AtomicU64, Ordering};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mem_stat::MemStat;
 
