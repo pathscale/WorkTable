@@ -214,6 +214,7 @@ impl Schema {
         let mut indexes = None;
         let mut queries: Option<Queries> = None;
         let mut config = None;
+        let mut columnar_indexes = None;
 
         while let Some(ident) = parser.peek_next() {
             match ident.to_string().as_str() {
@@ -221,6 +222,7 @@ impl Schema {
                 "indexes" => indexes = Some(parser.parse_indexes()?),
                 "queries" => queries = Some(parser.parse_queries()?),
                 "config" => config = Some(parser.parse_configs()?),
+                "columnar_indexes" => columnar_indexes = Some(parser.parse_columnar_indexes()?),
                 "version" => {
                     return Err(syn::Error::new(
                         ident.span(),
@@ -238,7 +240,7 @@ impl Schema {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "Unexpected token `{other}`; expected one of `columns`, `indexes`, `queries`, `config`"
+                            "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, `queries`, `config`"
                         ),
                     ));
                 }
@@ -247,6 +249,9 @@ impl Schema {
 
         let mut model =
             columns.ok_or_else(|| syn::Error::new(parser.input.span(), "Expected a `columns` block in declaration"))?;
+        if let Some(columnar_indexes) = columnar_indexes {
+            model.columnar_indexes = columnar_indexes.indexes;
+        }
         if let Some(indexes) = indexes {
             model.indexes = indexes;
         }

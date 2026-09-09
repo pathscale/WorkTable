@@ -75,7 +75,9 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             other => {
                 return Err(syn::Error::new(
                     ident.span(),
-                    format!("Unexpected token `{other}`; expected one of `columns`, `indexes`, `queries`, `config`"),
+                    format!(
+                        "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, `queries`, `config`"
+                    ),
                 ));
             }
         }

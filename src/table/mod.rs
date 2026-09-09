@@ -690,6 +690,12 @@ where
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    self.primary_index.remove(pk, link);
+                    self.indexes.delete_from_indexes(row.clone(), link, inserted_already)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                }
                 IndexError::NotFound => {
                     self.primary_index.remove(pk, link);
                     self.indexes.delete_row(row.clone(), link)?;
@@ -1051,6 +1057,18 @@ where
                             Err(e) => WorkTableError::PagesError(e),
                         }
                     }
+                    IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                        let (_, rollback_primary) = self.primary_index.remove_cdc(pks[row_index].clone(), link);
+                        primary_key_events.extend(convert_change_events(rollback_primary));
+                        let (rollback_secondary, _) =
+                            self.indexes
+                                .delete_from_indexes_cdc(row.clone(), link, inserted_already);
+                        secondary_events.extend(rollback_secondary);
+                        match self.data.delete(link) {
+                            Ok(()) => WorkTableError::ColumnSlotIdExhausted(bits),
+                            Err(e) => WorkTableError::PagesError(e),
+                        }
+                    }
                     IndexError::NotFound => {
                         let (_, rollback_primary) = self.primary_index.remove_cdc(pks[row_index].clone(), link);
                         primary_key_events.extend(convert_change_events(rollback_primary));
@@ -1312,22 +1330,19 @@ where
                     }
                 }
                 IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
-                    let (_, rollback_pk_events) = self.primary_index.insert_cdc(pk.clone(), old_link);
-                    let rollback_pk_events = convert_change_events(rollback_pk_events);
-
+                    // Same shape as the AlreadyExists arm: the primary index
+                    // was never swung, so only the secondary entries this
+                    // reinsert published have to be taken back out.
                     let (rollback_secondary_events, _) =
                         self.indexes
                             .delete_from_indexes_cdc(row_new, new_link, inserted_already);
-
-                    let mut merged_primary_events = primary_key_events.clone();
-                    merged_primary_events.extend(rollback_pk_events);
 
                     let mut merged_secondary_events = secondary_events.clone();
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
                         id: OperationId::Single(Uuid::now_v7()),
-                        primary_key_events: merged_primary_events,
+                        primary_key_events: vec![],
                         secondary_keys_events: merged_secondary_events,
                     });
 

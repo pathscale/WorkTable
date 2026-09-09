@@ -12,7 +12,7 @@ pub enum ColumnSlotIdType {
 }
 
 impl ColumnSlotIdType {
-    pub(crate) fn type_name(self) -> &'static str {
+    pub fn type_name(self) -> &'static str {
         match self {
             Self::U8 => "ColumnSlotId8",
             Self::U16 => "ColumnSlotId16",
@@ -29,7 +29,7 @@ pub enum ColumnCompression {
 }
 
 impl ColumnCompression {
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::None => "none",
         }

@@ -101,6 +101,7 @@ async fn columnar_fields_and_clustered_index_follow_mutations() {
             temperature: 72,
             label: "second".to_string(),
         })
+        .await
         .unwrap();
     table
         .insert(ColumnarMetricsRow {
@@ -110,6 +111,7 @@ async fn columnar_fields_and_clustered_index_follow_mutations() {
             temperature: 68,
             label: "first".to_string(),
         })
+        .await
         .unwrap();
 
     let host_two = table.columnar_select_host_time(2, 20).unwrap();
@@ -169,6 +171,7 @@ async fn concurrent_reinsert_and_columnar_refresh_preserve_row_identity() {
             temperature: 1,
             label: "short".to_string(),
         })
+        .await
         .unwrap();
     let stable_id = table.columnar_select_host_time(1, 0).unwrap()[0].clone();
 
@@ -208,7 +211,7 @@ async fn concurrent_reinsert_and_columnar_refresh_preserve_row_identity() {
 async fn configured_slot_id_capacity_is_checked_and_deleted_slots_are_safe_to_reuse() {
     let table = TinyColumnarIdsWorkTable::default();
     for id in 0..=u8::MAX as u16 {
-        table.insert(TinyColumnarIdsRow { id, value: id }).unwrap();
+        table.insert(TinyColumnarIdsRow { id, value: id }).await.unwrap();
     }
 
     let stale = table
@@ -218,7 +221,10 @@ async fn configured_slot_id_capacity_is_checked_and_deleted_slots_are_safe_to_re
         .find(|(row_ref, _)| row_ref.primary_key().0 == 7)
         .unwrap()
         .0;
-    let error = table.insert(TinyColumnarIdsRow { id: 256, value: 256 }).unwrap_err();
+    let error = table
+        .insert(TinyColumnarIdsRow { id: 256, value: 256 })
+        .await
+        .unwrap_err();
     assert!(matches!(error, WorkTableError::ColumnSlotIdExhausted(8)));
     assert!(
         table.select(256).is_none(),
@@ -226,7 +232,7 @@ async fn configured_slot_id_capacity_is_checked_and_deleted_slots_are_safe_to_re
     );
 
     table.delete(7).await.unwrap();
-    table.insert(TinyColumnarIdsRow { id: 256, value: 256 }).unwrap();
+    table.insert(TinyColumnarIdsRow { id: 256, value: 256 }).await.unwrap();
 
     let replacement = table
         .columnar_scan_value()
@@ -241,7 +247,7 @@ async fn configured_slot_id_capacity_is_checked_and_deleted_slots_are_safe_to_re
     );
 
     table.delete(256).await.unwrap();
-    table.insert(TinyColumnarIdsRow { id: 256, value: 999 }).unwrap();
+    table.insert(TinyColumnarIdsRow { id: 256, value: 999 }).await.unwrap();
     assert!(
         table.columnar_project_value(&[replacement]).unwrap().is_empty(),
         "delete and reinsert of the same primary key cannot revive a stale row reference"
@@ -250,14 +256,14 @@ async fn configured_slot_id_capacity_is_checked_and_deleted_slots_are_safe_to_re
     assert_eq!(table.columnar_slots_high_water(), 256);
 }
 
-#[test]
-fn row_refs_are_scoped_to_one_table_incarnation() {
+#[tokio::test]
+async fn row_refs_are_scoped_to_one_table_incarnation() {
     let first = TinyColumnarIdsWorkTable::default();
-    first.insert(TinyColumnarIdsRow { id: 1, value: 11 }).unwrap();
+    first.insert(TinyColumnarIdsRow { id: 1, value: 11 }).await.unwrap();
     let retained = first.columnar_scan_value().unwrap()[0].0.clone();
 
     let second = TinyColumnarIdsWorkTable::default();
-    second.insert(TinyColumnarIdsRow { id: 1, value: 22 }).unwrap();
+    second.insert(TinyColumnarIdsRow { id: 1, value: 22 }).await.unwrap();
 
     assert!(
         second.columnar_project_value(&[retained]).unwrap().is_empty(),
@@ -270,8 +276,8 @@ async fn columnar_side_indexes_compose_with_congee_and_arctic_using_backends() {
     macro_rules! exercise {
         ($table:ident, $row:ident) => {{
             let table = $table::default();
-            table.insert($row { id: 1, value: 20 }).unwrap();
-            table.insert($row { id: 2, value: 10 }).unwrap();
+            table.insert($row { id: 1, value: 20 }).await.unwrap();
+            table.insert($row { id: 2, value: 10 }).await.unwrap();
 
             let ordered = table.columnar_scan_value_order().unwrap();
             assert_eq!(

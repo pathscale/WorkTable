@@ -344,7 +344,7 @@ mod tests {
             let row = parser.parse_row().unwrap();
             let config = row.columnar.unwrap();
             assert_eq!(config.chunk_rows, Some(65_536));
-            assert_eq!(config.compression, crate::common::model::ColumnCompression::None);
+            assert_eq!(config.compression, crate::model::ColumnCompression::None);
         }
 
         #[test]

@@ -4,8 +4,8 @@ use indexmap::IndexMap;
 use proc_macro2::{Delimiter, Ident, TokenTree};
 use syn::spanned::Spanned as _;
 
-use crate::common::Parser;
-use crate::common::model::{ColumnCompression, ColumnarFieldConfig, ColumnarIndex, ColumnarIndexes};
+use crate::Parser;
+use crate::model::{ColumnCompression, ColumnarFieldConfig, ColumnarIndex, ColumnarIndexes};
 
 impl Parser {
     pub(super) fn try_parse_columnar_field(&mut self) -> syn::Result<Option<ColumnarFieldConfig>> {
@@ -266,8 +266,8 @@ fn ensure_unique(values: &[Ident], message: &str) -> syn::Result<()> {
 mod tests {
     use quote::quote;
 
-    use crate::common::Parser;
-    use crate::common::model::{ColumnCompression, ColumnarFieldConfig};
+    use crate::Parser;
+    use crate::model::{ColumnCompression, ColumnarFieldConfig};
 
     #[test]
     fn parses_columnar_field_options() {
