@@ -77,7 +77,10 @@ vanilla_indexset = { package = "indexset", version = "0.15", features = ["concur
 # indexset = { package = "wt-indexset", version = "^0.12", features = ["concurrent", "cdc", "multimap"] }
 log = { version = "0.4", default-features = false }
 ordered-float = { version = "5", default-features = false }
-parking_lot = "0.12"
+# The house fork, not vanilla: `parking_lot_lite_hack` is what every other
+# consumer here takes, and vanilla arrives anyway through tokio until that
+# leaves. Same crate name via `package`, so no call site changes.
+parking_lot = { package = "parking_lot_lite_hack", git = "https://github.com/pathscale/parking_lot_lite_hack", branch = "feat/fair-mutex", default-features = false }
 performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
 psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
