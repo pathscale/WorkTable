@@ -20,11 +20,20 @@ use std::path::{Path, PathBuf};
 
 use worktable_dsl::{Schema, declarations_in_source};
 
+/// `tests/ui` is a corpus of declarations the macro must **refuse**, so the
+/// scanner has to skip it. Reading it would assert the opposite of what those
+/// files are for, and the failure would read as a parser bug rather than as the
+/// harness finding exactly what it was built to find.
+const NOT_A_CORPUS: &str = "ui";
+
 fn rust_files(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == NOT_A_CORPUS) {
+                continue;
+            }
             rust_files(&path, out);
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             out.push(path);
