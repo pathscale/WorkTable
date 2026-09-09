@@ -8,11 +8,18 @@ use worktable::prelude::*;
 use worktable::runtimes;
 
 runtimes! {
-    tokio_max:  tokio,
     fast_local: nagoya(locality),
     wide:       nagoya(spread),
     batch:      nagoya(throughput),
     bare:       nagoya,
+}
+
+// A tokio profile only resolves when the backend is in the graph. `TokioRt`
+// lives behind `tokio-runtime`, which is off by default so that taking
+// WorkTable off tokio stays true for anyone who does not ask for it back.
+#[cfg(feature = "tokio-runtime")]
+runtimes! {
+    tokio_max: tokio,
 }
 
 /// Holds only when `P`'s backend is exactly `B`, which is the same equality
@@ -26,6 +33,7 @@ where
 
 #[test]
 fn each_profile_resolves_to_its_backend() {
+    #[cfg(feature = "tokio-runtime")]
     assert_backend::<tokio_max, TokioRt>();
     assert_backend::<fast_local, NagoyaRt<Locality>>();
     assert_backend::<wide, NagoyaRt<Spread>>();
@@ -43,6 +51,7 @@ fn each_profile_resolves_to_its_tuning() {
     assert_eq!(<fast_local as Profile>::tuning(), Tuning::locality());
     assert_eq!(<wide as Profile>::tuning(), Tuning::spread());
     assert_eq!(<batch as Profile>::tuning(), Tuning::throughput());
+    #[cfg(feature = "tokio-runtime")]
     assert_eq!(<tokio_max as Profile>::tuning(), Tuning::default());
 }
 

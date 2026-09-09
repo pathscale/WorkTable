@@ -49,6 +49,8 @@ pub use table::*;
 
 pub use data_bucket;
 pub use worktable_codegen::migration_engine;
+/// Declares the process's runtime profiles. See `runtime::Profile`.
+pub use worktable_codegen::runtimes;
 pub use worktable_codegen::worktable;
 pub use worktable_codegen::worktable_version;
 /// The schema language, so the declaration each table embeds can be read
@@ -69,8 +71,9 @@ pub mod prelude {
     /// resolve in the consumer's crate for the same reason `fsx` does.
     #[cfg(feature = "std")]
     pub use crate::runtime::{
-        Elapsed, FlavorMarker, Locality, NagoyaRt, Runtime, RuntimeJoinHandle, RuntimeNotified, RuntimeNotify,
-        RuntimeRwLock, RuntimeSemaphore, RuntimeSemaphorePermit, Spread, Throughput, Tuning,
+        Elapsed, FlavorMarker, Locality, NagoyaRt, Profile, Runtime, RuntimeJoinHandle, RuntimeNotified, RuntimeNotify,
+        RuntimeRwLock, RuntimeSemaphore, RuntimeSemaphorePermit, RuntimeUnpinned, Spread, TableRuntime, Throughput,
+        Tuning,
     };
     #[cfg(all(feature = "std", feature = "tokio-runtime"))]
     pub use crate::runtime::{TokioJoinHandle, TokioRt};
