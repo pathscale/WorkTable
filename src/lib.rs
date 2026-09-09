@@ -18,10 +18,6 @@ mod mem_stat;
 pub mod migration;
 pub mod partition;
 pub mod persistence;
-// The table's own background threads. Gated because it starts them: see the
-// module comment for why the table owns this and the caller does not.
-#[cfg(feature = "std")]
-pub(crate) mod runtime;
 
 mod primary_key;
 mod row;
@@ -56,6 +52,13 @@ pub mod prelude {
     /// crate itself uses without naming it.
     #[cfg(feature = "std")]
     pub use crate::fsx;
+    /// The three async primitives generated code awaits on. Re-exported for
+    /// the same reason `fsx` is: `worktable!` expands inside the consumer's
+    /// crate, so every path it emits has to resolve there. Emitting `tokio::`
+    /// made a whole runtime part of the macro's contract, and every consumer
+    /// carried it whether or not they ran one.
+    pub use nagoya::{sleep, timeout, yield_now};
+
     pub use alloc::collections::BTreeMap;
     pub use alloc::sync::Arc;
     pub use alloc::vec::IntoIter;

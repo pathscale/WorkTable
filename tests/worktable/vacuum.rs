@@ -323,7 +323,7 @@ async fn vacuum_loop_test() {
     }
 
     task.await.unwrap();
-    vacuum_task.abort();
+    vacuum_task.cancel();
 }
 
         }

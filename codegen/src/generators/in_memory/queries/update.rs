@@ -1005,7 +1005,7 @@ impl InMemoryGenerator {
                                     return Err(WorkTableError::NotFound);
                                 }
                                 vacuum_retries += 1;
-                                tokio::task::yield_now().await;
+                                worktable::prelude::yield_now().await;
                             }
                             core::result::Result::Err(e) => return Err(e.into()),
                         }

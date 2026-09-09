@@ -14,7 +14,7 @@ use data_bucket::page::PageId;
 use nagoya::sync::Notify;
 use parking_lot::Mutex as ParkingMutex;
 
-use tokio::task::JoinHandle;
+use nagoya::JoinHandle;
 use worktable_codegen::worktable;
 
 use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
@@ -1047,41 +1047,62 @@ mod lifecycle_tests {
         assert!(Arc::ptr_eq(&wait_error, &intake_error));
     }
 
-    #[test]
-    fn runtime_shutdown_is_terminal_and_rejects_later_operations() {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .unwrap();
-        let task = runtime.block_on(async {
-            let task = PersistenceTask::run_engine(TestEngine {
-                batches: Arc::new(AtomicUsize::new(0)),
-                events: Arc::new(ParkingMutex::new(Vec::new())),
-                config: TestConfig,
-                failure: TestFailure::None,
-            });
-            nagoya::yield_now().await;
-            task
+    /// A worker that stops publishes a terminal state instead of leaving its
+    /// waiters parked, and refuses operations afterwards.
+    ///
+    /// This used to build a tokio runtime, spawn the engine onto it and drop
+    /// the runtime out from under the worker. That worked because
+    /// `tokio::spawn` picked up whatever runtime the caller happened to be on,
+    /// and it is no longer how the worker is scheduled: it runs on the
+    /// engine's own pool, so tearing down a caller's runtime leaves it
+    /// running. Deliberately. A flush loop that dies because its caller
+    /// dropped an unrelated runtime loses writes it had already accepted.
+    ///
+    /// So the shutdown under test is the one that still exists: `Drop` on an
+    /// idle task, with `monitor()` for the waiter that has to outlive it.
+    ///
+    /// Both terminal outcomes are accepted, because which one happens is a
+    /// genuine race rather than a fact about the engine. `Drop` wakes the
+    /// queue and then cancels; if a pool thread polls the worker inside that
+    /// window it sees `Closing` and closes cleanly, otherwise the cancellation
+    /// lands first and the completion guard reports it. Asserting one of them
+    /// would be asserting who won.
+    #[tokio::test]
+    async fn a_stopped_worker_is_terminal_and_rejects_later_operations() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::None,
         });
+        nagoya::yield_now().await;
 
-        drop(runtime);
+        let monitor = task.monitor();
+        let sink = task.vacuum_sink();
+        drop(task);
 
-        let verifier = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let wait_error = verifier
-            .block_on(async { tokio::time::timeout(Duration::from_secs(1), task.wait_for_failure()).await })
-            .expect("cancelled worker must notify terminal waiters")
-            .unwrap_err();
-        assert_eq!(
-            wait_error.to_string(),
-            "persistence engine failed: persistence worker was cancelled"
-        );
+        let outcome = tokio::time::timeout(Duration::from_secs(1), monitor.wait_for_failure())
+            .await
+            .expect("a stopped worker must notify terminal waiters");
 
-        let intake_error = task.apply_operation(insert_operation(1)).unwrap_err();
-        assert!(Arc::ptr_eq(&wait_error, &intake_error));
+        match &outcome {
+            Ok(()) => {}
+            Err(error) => assert_eq!(
+                error.to_string(),
+                "persistence engine failed: persistence worker was cancelled"
+            ),
+        }
+
+        // Terminal either way means no further operation is accepted. The
+        // queue outlives the task through `vacuum_sink`, which is exactly the
+        // path that made this worth asserting: a push accepted here would be
+        // acknowledged to a caller and then never written.
+        let intake_error = sink
+            .reclaim_pages(vec![1.into()])
+            .expect_err("a terminal engine must refuse operations");
+        if let Err(wait_error) = &outcome {
+            assert!(Arc::ptr_eq(wait_error, &intake_error));
+        }
     }
 
     /// Regression: an operation pushed while `Drop` ran was accepted, then
@@ -1200,12 +1221,15 @@ impl PopRaceWindowGate {
     /// blocks until [`Self::release`].
     async fn pause(&self) {
         self.entered.add_permits(1);
-        self.proceed.acquire().await.expect("gate semaphore closed").forget();
+        // No `expect` here any more: nagoya's semaphore has no closed state,
+        // so `acquire` yields the permit rather than a `Result`. The panic
+        // this used to carry was for a case that cannot arise.
+        self.proceed.acquire().await.forget();
     }
 
     /// Waits until the popping task is parked inside the window.
     async fn wait_entered(&self) {
-        self.entered.acquire().await.expect("gate semaphore closed").forget();
+        self.entered.acquire().await.forget();
     }
 
     /// Lets the popping task run on from the window.
@@ -1500,11 +1524,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     /// `close()` lifecycle (drain, join, surface terminal errors) is the
     /// long-term replacement for this heuristic.
     fn drop(&mut self) {
-        let Some(handle) = self.engine_task_handle.as_ref() else {
-            return;
-        };
-        if handle.is_finished() {
-            return;
+        match self.engine_task_handle.as_ref() {
+            None => return,
+            Some(handle) if handle.is_finished() => return,
+            Some(_) => {}
         }
         if matches!(
             self.lifecycle.state(),
@@ -1526,7 +1549,12 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
         }
         self.queue.wake();
         if self.check_wait_triggers() {
-            handle.abort();
+            // `cancel` consumes the handle, where `abort` took `&self`. Taking
+            // the field is the whole difference, and it is safe here because
+            // this task is being dropped and nothing reads the handle again.
+            if let Some(handle) = self.engine_task_handle.take() {
+                handle.cancel();
+            }
         } else {
             tracing::error!(
                 "PersistenceTask dropped with work in flight; the engine task keeps draining detached and                  then stops, but its errors can no longer be observed. Call close() (or wait_for_ops()                  before dropping) to guarantee a clean shutdown."
@@ -1730,7 +1758,13 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
             worker.await;
             completion_guard.disarm();
         };
-        let engine_task_handle = tokio::spawn(task);
+        // This worker is the engine's business, not the caller's: a flush loop
+        // drains a queue, so unlike the vacuum sweep there is no foreground
+        // task it could be folded into. It needs a thread whether or not
+        // anything else does, which is why an ambient runtime was reached for
+        // in the first place, and `nagoya::runtime::background` is that same
+        // convenience with the gate tokio's global never had.
+        let engine_task_handle = nagoya::runtime::background().spawn(task);
         Self {
             queue,
             engine_task_handle: Some(engine_task_handle),
@@ -1790,10 +1824,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 tracing::info!("Waiting for {} operations", count);
             }
 
-            tokio::select! {
-                _ = self.lifecycle.progress_notify.notified() => {},
-                _ = nagoya::sleep(Duration::from_secs(1)) => {}
-            }
+            // A `tokio::select!` racing the notify against a sleep, which is
+            // what a timeout is. The second arm exists so a wake lost to a
+            // race still gets re-checked, not to measure anything.
+            let _ = nagoya::timeout(Duration::from_secs(1), self.lifecycle.progress_notify.notified()).await;
         }
     }
 
@@ -1816,12 +1850,17 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         let begin_result = self.lifecycle.begin_close();
         self.queue.wake();
 
+        // `None` is cancellation. Note what this no longer catches: tokio's
+        // `JoinError` also reported a *panic* in the worker, and nagoya's
+        // handle does not, because the panic propagates out of the await
+        // instead. A panicking worker therefore unwinds through this call
+        // rather than arriving as a terminal error.
         if let Some(handle) = self.engine_task_handle.take()
-            && let Err(error) = handle.await
+            && handle.await.is_none()
         {
             return Err(self
                 .lifecycle
-                .fail(eyre::eyre!("persistence engine task failed to join: {error}")));
+                .fail(eyre::eyre!("persistence engine task was cancelled before it closed")));
         }
 
         match self.lifecycle.state() {

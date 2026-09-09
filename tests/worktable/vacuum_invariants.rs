@@ -203,7 +203,7 @@ macro_rules! vacuum_invariant_suite {
                 // Let vacuum run once more against the wreckage, then stop it
                 // so the check reads a still table.
                 tokio::time::sleep(Duration::from_millis(60)).await;
-                vacuum_task.abort();
+                vacuum_task.cancel();
                 tokio::time::sleep(Duration::from_millis(20)).await;
 
                 assert_indexes_resolve_to_their_own_rows(&table, "after churn");

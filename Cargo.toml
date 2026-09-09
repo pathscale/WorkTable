@@ -92,7 +92,6 @@ ps-reclaim = { version = "^0.1, >=0.1.4", default-features = false, features = [
 rustc-hash = { version = "2", default-features = false }
 rusty-s3 = { version = "0.10", optional = true }
 smart-default = "0.7"
-tokio = { version = "1", features = ["full"] }
 tracing = { version = "0.1", default-features = false }
 url = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
@@ -111,6 +110,15 @@ worktable_dsl = { path = "dsl", version = "^1.0.0-beta.18.1" }
 chrono = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
 rand = "0.9"
+# A dev-dependency, and that is the whole of the no_std claim. It was a normal
+# dependency with every feature on, so `cargo tree --no-default-features -e
+# normal -i tokio` found it linked into a build that had asked for no std at
+# all. `cargo check --no-default-features` passed the entire time, because it
+# only ever proved this crate's own source was std-free and never its closure.
+# What kept it there was not the engine: it was six `tokio::` paths emitted by
+# `worktable!` into consumer crates, which made the runtime part of the macro's
+# contract. Those go through `worktable::prelude` now.
+tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
 
 # Only under `--cfg loom`, so a normal build and a normal `cargo test` never

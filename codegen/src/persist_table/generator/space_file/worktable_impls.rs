@@ -47,7 +47,7 @@ impl Generator {
                 // measuring afterwards would make the report depend on how
                 // long the reader barrier happened to take.
                 let estimated_released_bytes = self.heap_size();
-                if tokio::time::timeout(timeout, quiesce()).await.is_err() {
+                if worktable::prelude::timeout(timeout, quiesce()).await.is_err() {
                     return Err(UnloadFailure::retained(
                         self,
                         eyre::eyre!("timed out waiting for generation leases to quiesce"),

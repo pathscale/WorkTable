@@ -126,13 +126,23 @@ impl VacuumManager {
         )
     }
 
-    /// Starts a background task that periodically checks fragmentation and runs
-    /// vacuum.
+    /// Starts the sweep task. Returns a handle whose `cancel` stops it.
     ///
-    /// Returns a handle whose `cancel` stops the task.
+    /// It does not poll: it parks on the registered tables until one of them
+    /// frees enough space to be worth a sweep, with [`FALLBACK_INTERVAL`] only
+    /// bounding how long a table that never reaches its threshold goes
+    /// unlooked-at.
+    ///
+    /// A background task even so, and not folded into whichever mutation freed
+    /// the space, because a sweep waits for the table to go *quiet* before it
+    /// takes the registry exclusion (see [`VacuumPacing::wait_until_quiet`]).
+    /// A foreground mutation running its own sweep would be waiting on its own
+    /// quiescence.
+    ///
+    /// [`VacuumPacing::wait_until_quiet`]: crate::vacuum::VacuumPacing
     #[cfg(feature = "std")]
     pub fn run_vacuum_task(self: Arc<Self>) -> JoinHandle<()> {
-        crate::runtime::background().spawn(async move {
+        nagoya::runtime::background().spawn(async move {
             loop {
                 self.wait_for_work().await;
 

@@ -293,7 +293,7 @@ impl InMemoryGenerator {
                     }
                     if backoff_spins < 8 {
                         backoff_spins = backoff_spins.saturating_add(1);
-                        tokio::task::yield_now().await;
+                        worktable::prelude::yield_now().await;
                     } else {
                         // Cap the exponent BEFORE shifting: `1u64 << 64` panics
                         // (overflow) in debug/test builds. Clamp the shift to a
@@ -302,7 +302,7 @@ impl InMemoryGenerator {
                         let exponent = core::cmp::min(backoff_spins - 8, 8);
                         let micros = core::cmp::min(1u64 << exponent, 256);
                         backoff_spins = backoff_spins.saturating_add(1);
-                        tokio::time::sleep(core::time::Duration::from_micros(micros)).await;
+                        worktable::prelude::sleep(core::time::Duration::from_micros(micros)).await;
                     }
                 }
             }

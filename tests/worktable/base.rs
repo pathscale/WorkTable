@@ -266,7 +266,7 @@ async fn update_parallel() {
     }
     h.await.unwrap();
 
-    for (test, val) in i_state.lock_arc().iter() {
+    for (test, val) in i_state.lock().iter() {
         let row = table.select_by_test(*test).unwrap();
         assert_eq!(row.another, *val)
     }
