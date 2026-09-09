@@ -78,13 +78,13 @@ hashbrown = "0.15"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # The file traits and the host implementation. `std` here; the crate takes it
 # without default features wherever the filesystem is not involved.
-nagoya = { version = "0.1", default-features = false }
+nagoya = { version = "^0.1", default-features = false }
 # The pool underneath nagoya, named here for one type: `Tuning`, which is what
 # a `runtime: nagoya(spread)` selects. nagoya does not re-export it and its
 # `Runtime` has no `with_tuning`, so a flavored pool is built here out of
 # `Pool::with_tuning` and `nagoya::Executor`. Already in the graph as nagoya's
 # own dependency, so this line adds a name rather than a crate.
-ps-st3 = { version = "0.5.0", default-features = false, features = ["fanout"] }
+ps-st3 = { version = "^0.6", default-features = false, features = ["fanout"] }
 indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.12", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 # Pulls `serde` and `serde_core` into every build, and nothing here uses them.
 # They are not reachable from this line: `indexset` 0.15 declares `ftree` with
@@ -178,14 +178,3 @@ name = "worktable_benchmarks"
 harness = false
 
 
-# None of these three are published yet, and `[patch]` only takes effect from
-# the workspace root, so the whole chain has to be named here: a dependency's
-# own patches do not reach its consumer. Without this the branch resolves
-# nowhere, for a reviewer and for CI alike.
-#
-# Delete as each publishes: ps-st3 0.5.1, then nagoya 0.1.0, then data_bucket
-# 0.6.0.
-[patch.crates-io]
-data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "feat/tunable-page-stride" }
-nagoya = { git = "https://github.com/pathscale/nagoya", branch = "feat/timers" }
-ps-st3 = { git = "https://github.com/pathscale/ps-st3", branch = "perf/skip-the-wake-when-nobody-sleeps" }
