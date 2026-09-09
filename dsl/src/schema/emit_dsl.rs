@@ -18,7 +18,7 @@
 use std::fmt::Write as _;
 
 use super::{ColumnSpec, IndexSpec, OperationSpec, Schema};
-use crate::model::{GeneratorType, IndexBackend, Persistence};
+use crate::model::{GeneratorType, IndexBackend, Persistence, RuntimeBackend};
 
 const INDENT: &str = "    ";
 
@@ -48,6 +48,13 @@ impl Schema {
             let _ = writeln!(out, "partition_by: {}: {},", key.name, key.ty);
         }
 
+        // Same rule as `using` on a column: writing the default back out would
+        // be correct but noisy, and an omitted `runtime` and an explicit
+        // `runtime: nagoya` are the same table.
+        if self.runtime != RuntimeBackend::default() {
+            let _ = writeln!(out, "runtime: {},", runtime_to_dsl(self.runtime));
+        }
+
         let _ = writeln!(out, "columns: {{");
         for column in &self.columns {
             let _ = writeln!(out, "{INDENT}{},", column_to_dsl(column));
@@ -64,9 +71,24 @@ impl Schema {
 
         if !self.queries.is_empty() {
             let _ = writeln!(out, "queries: {{");
-            write_query_block(&mut out, "update", &self.queries.updates);
-            write_query_block(&mut out, "delete", &self.queries.deletes);
-            write_query_block(&mut out, "in_place", &self.queries.in_place);
+            write_query_block(
+                &mut out,
+                "update",
+                self.queries.update_runtime.as_deref(),
+                &self.queries.updates,
+            );
+            write_query_block(
+                &mut out,
+                "delete",
+                self.queries.delete_runtime.as_deref(),
+                &self.queries.deletes,
+            );
+            write_query_block(
+                &mut out,
+                "in_place",
+                self.queries.in_place_runtime.as_deref(),
+                &self.queries.in_place,
+            );
             let _ = writeln!(out, "}},");
         }
 
@@ -145,11 +167,29 @@ fn index_to_dsl(index: &IndexSpec) -> String {
     out
 }
 
-fn write_query_block(out: &mut String, kind: &str, operations: &[OperationSpec]) {
+fn runtime_to_dsl(backend: RuntimeBackend) -> String {
+    match backend {
+        // The flavor is written even when it is the default one, because this
+        // arm is only reached for a backend that is not the default, and a
+        // reader comparing two declarations should not have to know which
+        // flavor `nagoya` alone means.
+        RuntimeBackend::Nagoya(flavor) => format!("{}({})", backend.name(), flavor.name()),
+        RuntimeBackend::Tokio => backend.name().to_string(),
+    }
+}
+
+fn write_query_block(out: &mut String, kind: &str, runtime: Option<&str>, operations: &[OperationSpec]) {
     if operations.is_empty() {
         return;
     }
-    let _ = writeln!(out, "{INDENT}{kind}: {{");
+    match runtime {
+        Some(profile) => {
+            let _ = writeln!(out, "{INDENT}{kind} runtime {profile}: {{");
+        }
+        None => {
+            let _ = writeln!(out, "{INDENT}{kind}: {{");
+        }
+    }
     for operation in operations {
         let _ = writeln!(
             out,

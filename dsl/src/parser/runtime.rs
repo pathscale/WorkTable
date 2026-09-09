@@ -345,6 +345,118 @@ mod tests {
         assert!(error.contains("expected a profile name after `runtime`"), "{error}");
     }
 
+    /// The free-order dispatch, exercised through the whole declaration
+    /// rather than through `parse_runtime` alone. Position is a property of
+    /// the loop, so a test that calls the section parser directly cannot see
+    /// it.
+    fn schema(source: &str) -> crate::Schema {
+        crate::Schema::parse(source).unwrap_or_else(|error| panic!("{error}\n{source}"))
+    }
+
+    #[test]
+    fn an_omitted_runtime_is_the_default() {
+        let schema = schema("name: Bare, columns: { id: u64 primary_key }");
+        assert_eq!(schema.runtime, RuntimeBackend::default());
+    }
+
+    #[test]
+    fn runtime_may_precede_columns() {
+        let schema = schema(
+            "
+            name: First,
+            runtime: nagoya(spread),
+            columns: { id: u64 primary_key },
+            ",
+        );
+        assert_eq!(schema.runtime, RuntimeBackend::Nagoya(Flavor::Spread));
+    }
+
+    #[test]
+    fn runtime_may_follow_queries() {
+        let schema = schema(
+            "
+            name: Last,
+            columns: { id: u64 primary_key, qty: u64 },
+            queries: { update: { Fill(qty) by id } },
+            runtime: tokio,
+            ",
+        );
+        assert_eq!(schema.runtime, RuntimeBackend::Tokio);
+    }
+
+    #[test]
+    fn runtime_may_sit_between_indexes_and_config() {
+        let schema = schema(
+            "
+            name: Middle,
+            columns: { id: u64 primary_key, qty: u64 },
+            indexes: { qty_idx: qty },
+            runtime: nagoya(throughput),
+            config: { page_size: 4096 },
+            ",
+        );
+        assert_eq!(schema.runtime, RuntimeBackend::Nagoya(Flavor::Throughput));
+    }
+
+    #[test]
+    fn rejects_a_second_runtime() {
+        let error = crate::Schema::parse(
+            "
+            name: Twice,
+            runtime: tokio,
+            columns: { id: u64 primary_key },
+            runtime: nagoya,
+            ",
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            error,
+            "duplicate `runtime` section; a declaration selects a runtime at most once"
+        );
+    }
+
+    #[test]
+    fn a_section_annotation_survives_the_whole_declaration() {
+        let schema = schema(
+            "
+            name: Annotated,
+            columns: { id: u64 primary_key, qty: u64, symbol: u64 },
+            queries: {
+                update runtime fast_local: { Fill(qty) by id },
+                delete runtime wide: { BySymbol() by symbol },
+                in_place: { Bump(qty) by id },
+            },
+            ",
+        );
+        assert_eq!(schema.queries.update_runtime.as_deref(), Some("fast_local"));
+        assert_eq!(schema.queries.delete_runtime.as_deref(), Some("wide"));
+        assert_eq!(schema.queries.in_place_runtime, None);
+    }
+
+    #[test]
+    fn a_declared_runtime_survives_the_round_trip() {
+        let source = "
+            name: RoundTrip,
+            columns: { id: u64 primary_key, qty: u64 },
+            runtime: nagoya(spread),
+            queries: { update runtime wide: { Fill(qty) by id } },
+            ";
+        let once = schema(source);
+        let twice = schema(&once.to_dsl());
+        assert_eq!(once, twice);
+        assert_eq!(twice.runtime, RuntimeBackend::Nagoya(Flavor::Spread));
+        assert_eq!(twice.queries.update_runtime.as_deref(), Some("wide"));
+    }
+
+    #[test]
+    fn the_default_runtime_is_not_written_back_out() {
+        // An omitted `runtime` and an explicit `runtime: nagoya` are the same
+        // table, so the emitter writes neither.
+        let dsl = schema("name: Quiet, runtime: nagoya, columns: { id: u64 primary_key }").to_dsl();
+        assert!(!dsl.contains("runtime"), "{dsl}");
+    }
+
     #[test]
     fn backend_names_round_trip() {
         assert_eq!(RuntimeBackend::Nagoya(Flavor::Spread).name(), "nagoya");

@@ -229,17 +229,31 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     let mut indexes = None;
     let mut queries = None;
     let mut config = None;
+    let mut runtime = None;
     while let Some(ident) = parser.peek_next() {
         match ident.to_string().as_str() {
             "columns" => columns = Some(parser.parse_columns()?),
             "indexes" => indexes = Some(parser.parse_indexes()?),
             "queries" => queries = Some(parser.parse_queries()?),
             "config" => config = Some(parser.parse_configs()?),
+            "runtime" => {
+                let span = ident.span();
+                if runtime.is_some() {
+                    return Err(syn::Error::new(span, crate::parser::DUPLICATE_RUNTIME));
+                }
+                runtime = Some(parser.parse_runtime()?);
+            }
             other => {
                 return Err(syn::Error::new(ident.span(), format!("Unexpected token `{other}`")));
             }
         }
     }
+
+    // Parsed for its diagnostics and then dropped. No rule in `validate` reads
+    // the runtime yet, but the grammar has to accept it here or `check` would
+    // reject a declaration the macro compiles, which is the one thing this
+    // function exists not to do.
+    let _ = runtime;
 
     let mut columns = columns.ok_or_else(|| {
         syn::Error::new(

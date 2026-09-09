@@ -46,7 +46,7 @@
 use proc_macro2::TokenStream;
 use syn::spanned::Spanned as _;
 
-use crate::model::{Columns, GeneratorType, IndexBackend, Persistence, Queries};
+use crate::model::{Columns, GeneratorType, IndexBackend, Persistence, Queries, RuntimeBackend};
 use crate::parser::Parser;
 
 mod diff;
@@ -80,6 +80,12 @@ pub struct Schema {
     pub columns: Vec<ColumnSpec>,
     /// Secondary indexes in declaration order.
     pub indexes: Vec<IndexSpec>,
+    /// The runtime the table is built against. Absent in the declaration means
+    /// [`RuntimeBackend::default`], and this stores the resolved value for the
+    /// same reason `version` does: a consumer asking which runtime a table
+    /// uses wants an answer either way.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub runtime: RuntimeBackend,
     /// Generated queries, sorted by name within each kind.
     pub queries: QueriesSpec,
     /// The `config` block.
@@ -143,6 +149,13 @@ pub struct QueriesSpec {
     pub deletes: Vec<OperationSpec>,
     /// `in_place:` operations.
     pub in_place: Vec<OperationSpec>,
+    /// The profile named by `update runtime <profile>:`, if written. Unresolved:
+    /// see [`crate::model::Queries::update_runtime`].
+    pub update_runtime: Option<String>,
+    /// The profile named by `delete runtime <profile>:`, if written.
+    pub delete_runtime: Option<String>,
+    /// The profile named by `in_place runtime <profile>:`, if written.
+    pub in_place_runtime: Option<String>,
 }
 
 impl QueriesSpec {
@@ -215,6 +228,7 @@ impl Schema {
         let mut queries: Option<Queries> = None;
         let mut config = None;
         let mut columnar_indexes = None;
+        let mut runtime = None;
 
         while let Some(ident) = parser.peek_next() {
             match ident.to_string().as_str() {
@@ -223,6 +237,16 @@ impl Schema {
                 "queries" => queries = Some(parser.parse_queries()?),
                 "config" => config = Some(parser.parse_configs()?),
                 "columnar_indexes" => columnar_indexes = Some(parser.parse_columnar_indexes()?),
+                // Free-order like the blocks around it, and unlike `persist`
+                // and `partition_by`, because nothing downstream of it depends
+                // on having been read first.
+                "runtime" => {
+                    let span = ident.span();
+                    if runtime.is_some() {
+                        return Err(syn::Error::new(span, crate::parser::DUPLICATE_RUNTIME));
+                    }
+                    runtime = Some(parser.parse_runtime()?);
+                }
                 "version" => {
                     return Err(syn::Error::new(
                         ident.span(),
@@ -240,7 +264,8 @@ impl Schema {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, `queries`, `config`"
+                            "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, \
+                             `queries`, `config`, `runtime`"
                         ),
                     ));
                 }
@@ -261,6 +286,7 @@ impl Schema {
             version,
             persist,
             partition_by,
+            runtime: runtime.unwrap_or_default(),
             columns: columns_from_model(&model)?,
             indexes: indexes_from_model(&model),
             queries: queries.map(queries_from_model).unwrap_or_default(),
@@ -376,6 +402,9 @@ fn queries_from_model(queries: Queries) -> QueriesSpec {
     }
 
     QueriesSpec {
+        update_runtime: queries.update_runtime.map(|profile| profile.to_string()),
+        delete_runtime: queries.delete_runtime.map(|profile| profile.to_string()),
+        in_place_runtime: queries.in_place_runtime.map(|profile| profile.to_string()),
         updates: convert(queries.updates),
         deletes: convert(queries.deletes),
         in_place: convert(queries.in_place),
