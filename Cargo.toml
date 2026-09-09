@@ -78,8 +78,19 @@ vanilla_indexset = { package = "indexset", version = "0.15", features = ["concur
 log = { version = "0.4", default-features = false }
 ordered-float = { version = "5", default-features = false }
 # The house fork, not vanilla: `parking_lot_lite_hack` is what every other
-# consumer here takes, and vanilla arrives anyway through tokio until that
-# leaves. Same crate name via `package`, so no call site changes.
+# consumer here takes. Same crate name via `package`, so no call site changes.
+#
+# Vanilla is still in the default-feature graph, and no longer for the reason
+# it was: it used to arrive through tokio, and now arrives through `indexset
+# 0.15` behind the `vanilla-index` default feature. So it is gone from a
+# `--no-default-features` build and present in a normal one, until that backend
+# is deselected.
+#
+# Two copies of the fork are also in the lock, because `WorkTablesIndex` takes
+# the published 0.12.7 while this takes the branch. That is not a version skew
+# to wait out: 0.12.7's own module comment says `FairMutex` is among what it
+# removed, so the branch is the only copy that has what is used here. It
+# collapses when the branch publishes as 0.12.8.
 parking_lot = { package = "parking_lot_lite_hack", git = "https://github.com/pathscale/parking_lot_lite_hack", branch = "feat/fair-mutex", default-features = false }
 performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
