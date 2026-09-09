@@ -3,7 +3,7 @@ members = ["codegen", "dsl", "examples", "performance_measurement", "performance
 
 [package]
 name = "worktable"
-version = "1.0.0-beta.19"
+version = "1.9.0-alpha1"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -138,7 +138,7 @@ walkdir = { version = "2", optional = true }
 # These pre-release workspace crates move as one train. The explicit caret
 # keeps the dependency policy consistent while the local path selects this
 # checkout during validation.
-worktable_codegen = { path = "codegen", version = "^1.0.0-beta.19" }
+worktable_codegen = { path = "codegen", version = "^1.9.0-alpha1" }
 # Re-exported below. Each generated table carries its declaration as a const
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
