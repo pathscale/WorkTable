@@ -336,11 +336,7 @@ where
             // Nothing applied yet reports as `0`, which is what the ledger
             // means by "everything from the start is missing": the first id is
             // 0, so there is no id below it to name.
-            Some(ledger) => ledger.gap_report(
-                stream,
-                last_applied.map_or(0, |id| id.inner()),
-                next_available.inner(),
-            ),
+            Some(ledger) => ledger.gap_report(stream, last_applied.map_or(0, |id| id.inner()), next_available.inner()),
             None => {
                 " This batch was built without event bookkeeping attached, so the gap cannot be attributed.".to_owned()
             }
