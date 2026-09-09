@@ -1186,7 +1186,29 @@ mod runtime_tests {
             .expect("expands")
             .to_string();
 
-        assert_eq!(omitted, declared);
+        assert_same_tokens(&omitted, &declared);
+    }
+
+    /// Borrowed from `generator_determinism`: two expansions that differ by one
+    /// token differ by one byte in a string thousands of bytes long, and
+    /// `assert_eq!` prints both in full rather than saying where.
+    fn assert_same_tokens(first: &str, second: &str) {
+        if first == second {
+            return;
+        }
+        let at = first
+            .bytes()
+            .zip(second.bytes())
+            .position(|(left, right)| left != right)
+            .unwrap_or_else(|| first.len().min(second.len()));
+        let start = at.saturating_sub(120);
+        let first_end = (at + 240).min(first.len());
+        let second_end = (at + 240).min(second.len());
+        panic!(
+            "expansions first differ at byte {at}\nfirst:  {}\nsecond: {}",
+            &first[start..first_end],
+            &second[start..second_end],
+        );
     }
 
     /// The free-order position: `runtime` is an arm beside the blocks, so it
@@ -1205,7 +1227,7 @@ mod runtime_tests {
             .expect("expands")
             .to_string();
 
-        assert_eq!(before, after);
+        assert_same_tokens(&before, &after);
     }
 
     #[test]
