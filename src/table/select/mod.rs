@@ -1,5 +1,7 @@
 use alloc::collections::VecDeque;
 
+use crate::runtime::Tuning;
+
 mod query;
 
 pub use query::{SelectQueryBuilder, SelectQueryExecutor};
@@ -17,4 +19,8 @@ pub struct QueryParams<ColumnRange, RowFields> {
     pub order: VecDeque<(Order, RowFields)>,
     pub range: VecDeque<(ColumnRange, RowFields)>,
     pub sorted_by: Option<RowFields>,
+    /// The pool settings the profile named at the call site asks for, `None`
+    /// when no `.runtime()` was written. Carried here rather than acted on,
+    /// because `execute` is generated and this is what it reads.
+    pub tuning: Option<Tuning>,
 }
