@@ -1251,8 +1251,8 @@ mod runtime_tests {
             let name: proc_macro2::TokenStream = name.parse().unwrap();
             let error = expand(declaration(quote! { runtime: #name, })).unwrap_err().to_string();
 
-            assert!(error.contains("is not implemented"), "{error}");
-            assert!(error.contains("available backends: nagoya, tokio"), "{error}");
+            assert!(error.contains("recognised but not implemented"), "{error}");
+            assert!(error.contains("`nagoya` and `tokio`"), "{error}");
         }
     }
 
@@ -1262,8 +1262,8 @@ mod runtime_tests {
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("unknown flavor `banana`"), "{error}");
-        assert!(error.contains("`locality`, `spread`, or `throughput`"), "{error}");
+        assert!(error.contains("unknown nagoya flavor `banana`"), "{error}");
+        assert!(error.contains("`locality`, `spread` or `throughput`"), "{error}");
     }
 
     #[test]

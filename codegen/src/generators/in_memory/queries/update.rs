@@ -1116,6 +1116,7 @@ mod tests {
             updates,
             deletes: IndexMap::new(),
             in_place: IndexMap::new(),
+            ..Default::default()
         });
         generator.gen_primary_key_def().unwrap();
 
