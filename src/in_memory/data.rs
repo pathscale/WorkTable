@@ -1,8 +1,9 @@
-use std::cell::UnsafeCell;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use alloc::vec::Vec;
+use core::cell::UnsafeCell;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use data_bucket::page::INNER_PAGE_SIZE;
 use data_bucket::page::PageId;
@@ -37,7 +38,7 @@ struct CellLocks {
 impl Default for CellLocks {
     fn default() -> Self {
         Self {
-            slots: std::array::from_fn(|_| AtomicU64::new(0)),
+            slots: core::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 }
@@ -59,10 +60,10 @@ impl CellLocks {
     #[inline]
     fn wait(spins: &mut u32) {
         if *spins < 64 {
-            std::hint::spin_loop();
+            core::hint::spin_loop();
             *spins += 1;
         } else {
-            std::thread::yield_now();
+            crate::util::yield_now();
         }
     }
 
@@ -497,7 +498,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         // Use ptr::copy for overlapping memory regions (safe for shifting left)
         // When moving left (dst_offset < src_offset), this works correctly
         unsafe {
-            std::ptr::copy(
+            core::ptr::copy(
                 inner_data.as_ptr().add(src_offset),
                 inner_data.as_mut_ptr().add(dst_offset),
                 length,
@@ -567,10 +568,12 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             .map_err(|_| ExecutionError::LiveCellCountUnderflow)
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn has_live_cells(&self) -> bool {
         self.live_cells.load(Ordering::Acquire) != 0
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn live_cell_count(&self) -> u32 {
         self.live_cells.load(Ordering::Acquire)
     }
@@ -605,8 +608,9 @@ pub enum ExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
-    use std::sync::{Arc, mpsc};
+    use alloc::sync::Arc;
+    use core::sync::atomic::Ordering;
+    use std::sync::mpsc;
     use std::thread;
 
     use rkyv::{Archive, Deserialize, Serialize};

@@ -1,8 +1,9 @@
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
+use alloc::{string::String, string::ToString};
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
+use core::time::Duration;
 use std::path::Path;
-use std::time::Duration;
 
 use reqwest::Client;
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
@@ -135,7 +136,7 @@ where
 
             tracing::debug!(local_path = %local_path.display(), s3_key = %s3_key, "Uploading file to S3");
 
-            let content = tokio::fs::read(local_path).await?;
+            let content = crate::fsx::read(local_path).await?;
 
             let action = self.bucket.put_object(Some(&self.credentials), &s3_key);
             let url = action.sign(Duration::from_secs(3600));
@@ -191,7 +192,7 @@ where
             return Ok(());
         }
 
-        tokio::fs::create_dir_all(table_path).await?;
+        crate::fsx::create_dir_all(table_path).await?;
 
         for obj in parsed.contents {
             let s3_key = &obj.key;
@@ -213,7 +214,7 @@ where
             let response = client.get(url).send().await?.error_for_status()?;
 
             let content = response.bytes().await?;
-            tokio::fs::write(&local_path, content).await?;
+            crate::fsx::write(&local_path, content).await?;
         }
 
         tracing::info!(table_name = %table_name, "S3 download sync complete");

@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use data_bucket::DEFAULT_PAGE_STRIDE;
+use worktable::prelude::HashMap;
 
 use data_bucket::{INNER_PAGE_SIZE, Link, PAGE_SIZE, parse_general_header_by_index};
 use worktable::prelude::{SpaceData, SpaceDataOps};
@@ -46,7 +47,9 @@ async fn rewriting_one_link_does_not_inflate_the_persisted_data_length() {
     space.save_batch_data(batch).await.unwrap();
     assert_eq!(space.current_data_length, 48);
 
-    let header = parse_general_header_by_index(&mut space.data_file, 1).await.unwrap();
+    let header = parse_general_header_by_index::<DEFAULT_PAGE_STRIDE>(&mut space.data_file, 1)
+        .await
+        .unwrap();
     assert_eq!(header.data_length, 48);
 
     drop(space);
@@ -86,7 +89,9 @@ async fn reclaiming_thousands_of_pages_bounds_the_info_page_instead_of_corruptin
     assert!(kept < 2_000, "the overflow condition was not constructed");
 
     // Page 1 must be untouched by the info persist.
-    let header = parse_general_header_by_index(&mut space.data_file, 1).await.unwrap();
+    let header = parse_general_header_by_index::<DEFAULT_PAGE_STRIDE>(&mut space.data_file, 1)
+        .await
+        .unwrap();
     assert_eq!(header.page_type, PageType::Data);
     drop(space);
 

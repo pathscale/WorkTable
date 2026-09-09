@@ -38,7 +38,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
             pub fn partition_or_create(
                 &self,
                 #key_name: #key_ty,
-            ) -> Result<std::sync::Arc<#table>, worktable::partition::PartitionError> {
+            ) -> Result<worktable::prelude::Arc<#table>, worktable::partition::PartitionError> {
                 self.inner.get_or_create(#key_name as u64, <#table as Default>::default)
             }
         }
@@ -82,7 +82,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
 
             /// The partition routed to by `#key_name`, if it exists.
             #[inline]
-            pub fn partition(&self, #key_name: #key_ty) -> Option<std::sync::Arc<#table>> {
+            pub fn partition(&self, #key_name: #key_ty) -> Option<worktable::prelude::Arc<#table>> {
                 self.inner.partition(#key_name as u64)
             }
 
@@ -94,7 +94,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
                 &self,
                 #key_name: #key_ty,
                 make: F,
-            ) -> Result<std::sync::Arc<#table>, worktable::partition::PartitionError>
+            ) -> Result<worktable::prelude::Arc<#table>, worktable::partition::PartitionError>
             where
                 F: FnOnce() -> #table,
             {
@@ -146,7 +146,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
             /// grace period). Removal and creation reclaim opportunistically,
             /// so a router shared behind an `Arc` does not accumulate removed
             /// partitions; `collect` is available for removal-only phases.
-            pub fn remove(&self, #key_name: #key_ty) -> Option<std::sync::Arc<#table>> {
+            pub fn remove(&self, #key_name: #key_ty) -> Option<worktable::prelude::Arc<#table>> {
                 self.inner.remove(#key_name as u64)
             }
 
@@ -156,7 +156,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
             }
 
             /// Every live partition with its key.
-            pub fn iter(&self) -> Vec<(#key_ty, std::sync::Arc<#table>)> {
+            pub fn iter(&self) -> Vec<(#key_ty, worktable::prelude::Arc<#table>)> {
                 self.inner
                     .iter()
                     .into_iter()

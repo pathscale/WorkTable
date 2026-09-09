@@ -29,22 +29,23 @@ impl_memstat_zero!(
     char,
     u128,
     i128,
-    std::num::NonZeroU8,
-    std::num::NonZeroU16,
-    std::num::NonZeroU32,
-    std::num::NonZeroU64,
-    std::num::NonZeroU128,
-    std::num::NonZeroUsize,
-    std::num::NonZeroI8,
-    std::num::NonZeroI16,
-    std::num::NonZeroI32,
-    std::num::NonZeroI64,
-    std::num::NonZeroI128,
-    std::num::NonZeroIsize,
-    std::time::Duration,
-    std::time::SystemTime,
-    std::time::Instant
+    core::num::NonZeroU8,
+    core::num::NonZeroU16,
+    core::num::NonZeroU32,
+    core::num::NonZeroU64,
+    core::num::NonZeroU128,
+    core::num::NonZeroUsize,
+    core::num::NonZeroI8,
+    core::num::NonZeroI16,
+    core::num::NonZeroI32,
+    core::num::NonZeroI64,
+    core::num::NonZeroI128,
+    core::num::NonZeroIsize,
+    core::time::Duration
 );
+
+#[cfg(feature = "std")]
+impl_memstat_zero!(std::time::SystemTime, std::time::Instant);
 
 impl_memstat_zero!(
     [u8],

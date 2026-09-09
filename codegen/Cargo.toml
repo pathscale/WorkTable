@@ -24,9 +24,17 @@ proc-macro = true
 # policy. beta.18.1 is the first DSL artifact that exports every validator this
 # code generator calls; beta.18 was published before that API landed.
 worktable_dsl = { path = "../dsl", version = "^1.0.0-beta.18.1" }
-rkyv = { version = "0.8" }
+# Test-only. As a normal dependency this proc-macro crate put `rkyv` with its
+# default features into the graph, which turned on `rkyv/std` for the target
+# build too and dragged `ptr_meta` with it. The generated code names `rkyv`
+# paths through `quote!`, which needs no dependency here at all.
+#
+# See the `[dev-dependencies]` section below.
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 convert_case = "0.6"
 indexmap = "2"
+
+[dev-dependencies]
+rkyv = { version = "0.8" }

@@ -67,10 +67,24 @@
 //! the stream by construction, so a recent window always covers it; the report
 //! states the window it holds so a reader can see that for themselves.
 
+// The ledger itself is arithmetic and bookkeeping, so it takes `core` and
+// `alloc`. Two of its capabilities genuinely need an operating system, and only
+// those are gated: `Backtrace`, and reading `WT_EVENT_LEDGER` from the
+// environment. Without `std` the ledger is simply never enabled, which is the
+// right answer for a diagnostic that an environment variable turns on.
+use alloc::borrow::ToOwned as _;
+// Only the gated backtrace field boxes anything.
+#[cfg(feature = "std")]
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString as _};
+use alloc::vec::Vec;
+use core::fmt::Write as _;
+use core::panic::Location;
+use hashbrown::HashMap;
+#[cfg(feature = "std")]
 use std::backtrace::Backtrace;
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write as _;
-use std::panic::Location;
+#[cfg(feature = "std")]
 use std::sync::LazyLock;
 
 use data_bucket::Link;
@@ -88,6 +102,7 @@ const WINDOW: usize = 8192;
 /// Gap ids listed individually in a report before it summarises the rest.
 const MAX_LISTED_GAP_IDS: usize = 64;
 
+#[cfg(feature = "std")]
 static ENABLED: LazyLock<bool> = LazyLock::new(|| {
     if cfg!(debug_assertions) {
         return true;
@@ -98,13 +113,27 @@ static ENABLED: LazyLock<bool> = LazyLock::new(|| {
     }
 });
 
+/// Without `std` there is no environment to read the switch from, so the
+/// ledger stays off. Everything below still compiles and can be driven
+/// directly by a caller that wants it; what is missing is the ambient way to
+/// turn it on.
+#[cfg(not(feature = "std"))]
+static ENABLED: bool = false;
+
 /// Whether event bookkeeping is recording in this process.
 ///
 /// See the module comment for why this is `debug_assertions` plus an
 /// environment override rather than a cargo feature.
 #[inline]
 pub fn enabled() -> bool {
-    *ENABLED
+    #[cfg(feature = "std")]
+    {
+        *ENABLED
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        ENABLED
+    }
 }
 
 /// Which index's event id sequence a record belongs to.
@@ -120,8 +149,8 @@ pub enum EventStream {
     Secondary(String),
 }
 
-impl std::fmt::Display for EventStream {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for EventStream {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             EventStream::Primary => f.write_str("primary"),
             EventStream::Secondary(index) => write!(f, "secondary {index}"),
@@ -163,8 +192,8 @@ impl Stages {
     }
 }
 
-impl std::fmt::Display for Stages {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Stages {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut first = true;
         for (flag, name) in [
             (Stages::QUEUED, "queued"),
@@ -199,6 +228,10 @@ struct IdRecord {
     /// Captured only when `RUST_BACKTRACE` is set; otherwise `Disabled` and
     /// free. Boxed so that the common empty case costs a pointer instead of an
     /// inline `Backtrace` in each of the thousands of records held per stream.
+    // Gated with the capture below: without `std` there is no `Backtrace`,
+    // and the ledger keeps the call site from `#[track_caller]` regardless,
+    // which is the half that names the producer.
+    #[cfg(feature = "std")]
     backtrace: Option<Box<Backtrace>>,
     collected: u32,
     requeued: u32,
@@ -211,6 +244,7 @@ impl IdRecord {
             op_id: None,
             op_type: None,
             site: None,
+            #[cfg(feature = "std")]
             backtrace: None,
             collected: 0,
             requeued: 0,
@@ -328,7 +362,9 @@ impl EventLedger {
         // `Disabled` without walking any frames. One capture per push, moved
         // onto the first newly recorded id, because every id in this vector
         // came from the same producer.
+        #[cfg(feature = "std")]
         let backtrace = Backtrace::capture();
+        #[cfg(feature = "std")]
         let mut backtrace =
             matches!(backtrace.status(), std::backtrace::BacktraceStatus::Captured).then_some(backtrace);
         let mut streams = self.streams.lock();
@@ -344,6 +380,7 @@ impl EventLedger {
                 // One backtrace per push, not per id: every id in this vector
                 // has the same producer, and keeping one each would multiply
                 // the cost of a `RUST_BACKTRACE` run for no extra signal.
+                #[cfg(feature = "std")]
                 if record.backtrace.is_none() {
                     record.backtrace = backtrace.take().map(Box::new);
                 }
@@ -553,10 +590,12 @@ fn bracketing_producers(ledger: &StreamLedger, last_applied: u64, next_available
             op_id = OptionDisplay(record.op_id.as_ref().map(|id| format!("{id:?}"))),
             site = OptionDisplay(record.site.map(|site| site.to_string())),
         );
+        #[cfg(feature = "std")]
         if let Some(backtrace) = &record.backtrace {
             let _ = write!(out, " Backtrace:\n{backtrace}\n");
         }
     }
+    #[cfg(feature = "std")]
     if !ledger.ids.values().any(|record| record.backtrace.is_some()) {
         let _ = write!(
             out,
@@ -574,8 +613,8 @@ impl Default for EventLedger {
 
 struct OptionDisplay(Option<String>);
 
-impl std::fmt::Display for OptionDisplay {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for OptionDisplay {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.0 {
             Some(value) => f.write_str(value),
             None => f.write_str("<unrecorded>"),

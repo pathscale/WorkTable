@@ -1,4 +1,5 @@
 use crate::prelude::IndexInfo;
+use alloc::vec::Vec;
 
 pub trait TableSecondaryIndexInfo {
     fn index_info(&self) -> Vec<IndexInfo>;

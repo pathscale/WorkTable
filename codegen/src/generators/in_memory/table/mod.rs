@@ -126,7 +126,7 @@ impl InMemoryGenerator {
                         #index_type,
                         #lock_ident,
                         <#primary_key_type as TablePrimaryKey>::Generator,
-                        { INNER_PAGE_SIZE },
+                        { #inner_const_name },
                         #node_type
                     >
                 );

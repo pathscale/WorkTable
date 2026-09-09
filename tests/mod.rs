@@ -46,12 +46,12 @@ pub fn check_if_dirs_are_same(got: String, expected: String) -> bool {
 
 pub async fn remove_file_if_exists(path: String) {
     if Path::new(path.as_str()).exists() {
-        tokio::fs::remove_file(path.as_str()).await.unwrap();
+        ::worktable::prelude::fsx::remove_file(path.as_str()).await.unwrap();
     }
 }
 
 pub async fn remove_dir_if_exists(path: String) {
     if Path::new(path.as_str()).exists() {
-        tokio::fs::remove_dir_all(path).await.unwrap()
+        ::worktable::prelude::fsx::remove_dir_all(path).await.unwrap()
     }
 }

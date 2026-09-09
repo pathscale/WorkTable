@@ -1,7 +1,9 @@
-use std::fmt::Debug;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::fsx::File;
 use data_bucket::page::PageId;
 use data_bucket::{
     GeneralHeader, GeneralPage, PageType, SizeMeasurable, SpaceId, TableOfContentsPage, parse_page, persist_page,
@@ -13,7 +15,6 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize, rancor};
-use tokio::fs::File;
 
 /// A table-of-contents entry whose serialized size can never fit a segment.
 ///
@@ -26,8 +27,8 @@ pub struct TocEntryOversizedError {
     pub segment_capacity: usize,
 }
 
-impl std::fmt::Display for TocEntryOversizedError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TocEntryOversizedError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             formatter,
             "table-of-contents entry needs {} bytes but a whole empty segment holds only {}",
@@ -36,16 +37,16 @@ impl std::fmt::Display for TocEntryOversizedError {
     }
 }
 
-impl std::error::Error for TocEntryOversizedError {}
+impl core::error::Error for TocEntryOversizedError {}
 
 #[derive(Debug)]
-pub struct IndexTableOfContents<T: Ord + Eq, const DATA_LENGTH: u32> {
+pub struct IndexTableOfContents<T: Ord + Eq, const DATA_LENGTH: u32, const STRIDE: u32> {
     current_page: usize,
     next_page_id: Arc<AtomicU32>,
     pub pages: Vec<GeneralPage<TableOfContentsPage<T>>>,
 }
 
-impl<T, const DATA_LENGTH: u32> IndexTableOfContents<T, DATA_LENGTH>
+impl<T, const DATA_LENGTH: u32, const STRIDE: u32> IndexTableOfContents<T, DATA_LENGTH, STRIDE>
 where
     T: Debug + SizeMeasurable + Ord + Eq,
 {
@@ -248,7 +249,7 @@ where
             + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
     {
         for page in &mut self.pages {
-            persist_page(page, file).await?;
+            persist_page::<_, STRIDE>(page, file).await?;
         }
 
         Ok(())
@@ -265,7 +266,7 @@ where
             + Eq
             + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
     {
-        let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, 1).await;
+        let first_page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH, STRIDE>(file, 1).await;
         let page = match first_page {
             Ok(page) => page,
             Err(error) => {
@@ -275,11 +276,14 @@ where
                 // file extends into page 1's slot, the parse failure means a
                 // torn or truncated table of contents, and silently starting
                 // empty would discard the whole index.
-                let file_length = file.metadata().await?.len();
+                let file_length = crate::fsx::file_metadata(file).await?;
                 if file_length <= data_bucket::PAGE_SIZE as u64 {
                     return Ok(Self::new(space_id, next_page_id));
                 }
-                return Err(error.wrap_err(format!(
+                // `wrap_err` belonged to `eyre::Report`. The parse error is a
+                // concrete `data_bucket::error::Error` now, so it becomes a report
+                // first and keeps the same context message.
+                return Err(eyre::Report::new(error).wrap_err(format!(
                     "table of contents page 1 failed to parse in a {file_length}-byte index file that should contain it"
                 )));
             }
@@ -297,7 +301,7 @@ where
                 let mut ind = false;
 
                 while !ind {
-                    let page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH>(file, index).await?;
+                    let page = parse_page::<TableOfContentsPage<T>, DATA_LENGTH, STRIDE>(file, index).await?;
                     ind = page.header.next_id.is_empty();
                     index = page.header.next_id.into();
                     table_of_contents_pages.push(page);
@@ -316,13 +320,14 @@ where
 #[cfg(test)]
 mod tests {
     use crate::persistence::space::index::table_of_contents::IndexTableOfContents;
+    use alloc::sync::Arc;
+    use core::sync::atomic::AtomicU32;
+    use data_bucket::DEFAULT_PAGE_STRIDE;
     use data_bucket::page::PageId;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicU32;
 
     #[test]
     fn empty() {
-        let toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        let toc = IndexTableOfContents::<u8, 128, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(0)));
         assert_eq!(
             toc.current_page, 0,
             "`current_page` is not set to 0, it is {}",
@@ -333,7 +338,7 @@ mod tests {
 
     #[test]
     fn insert_to_empty() {
-        let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        let mut toc = IndexTableOfContents::<u8, 128, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let key = 1;
         toc.insert(key, 1.into());
 
@@ -352,7 +357,7 @@ mod tests {
 
     #[test]
     fn checked_update_reports_a_missing_identity_without_mutating_the_toc() {
-        let mut toc = IndexTableOfContents::<u8, 128>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        let mut toc = IndexTableOfContents::<u8, 128, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(1)));
         toc.insert(7, 2.into());
 
         assert!(!toc.try_update_key(&8, 9).unwrap());
@@ -363,7 +368,10 @@ mod tests {
     #[test]
     fn growing_key_update_moves_the_entry_instead_of_overflowing_the_segment() {
         const DATA_LENGTH: u32 = 128;
-        let mut toc = IndexTableOfContents::<String, DATA_LENGTH>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        let mut toc = IndexTableOfContents::<String, DATA_LENGTH, DEFAULT_PAGE_STRIDE>::new(
+            0.into(),
+            Arc::new(AtomicU32::new(1)),
+        );
 
         // Fill the first segment close to capacity with short keys.
         let mut key = 0;
@@ -395,7 +403,10 @@ mod tests {
         use crate::persistence::TocEntryOversizedError;
 
         const DATA_LENGTH: u32 = 128;
-        let mut toc = IndexTableOfContents::<String, DATA_LENGTH>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        let mut toc = IndexTableOfContents::<String, DATA_LENGTH, DEFAULT_PAGE_STRIDE>::new(
+            0.into(),
+            Arc::new(AtomicU32::new(1)),
+        );
         toc.insert("small".to_string(), PageId::from(9));
 
         let oversized = "x".repeat(4 * DATA_LENGTH as usize);
@@ -411,7 +422,7 @@ mod tests {
 
     #[test]
     fn insert_more_than_one_page() {
-        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        let mut toc = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
         for key in 0..10 {
             toc.insert(key, 1.into());
@@ -437,7 +448,7 @@ mod tests {
 
     #[test]
     fn insert_reaches_existing_tail_after_reload_resets_cursor() {
-        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        let mut toc = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(0)));
         for key in 0..10 {
             toc.insert(key, u32::from(key).into());
         }
@@ -465,7 +476,7 @@ mod tests {
 
     #[test]
     fn insert_reports_a_truncated_segment_chain() {
-        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        let mut toc = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(0)));
         for key in 0..10 {
             toc.insert(key, u32::from(key).into());
         }
@@ -480,7 +491,7 @@ mod tests {
 
     #[test]
     fn reinsert_on_empty_space() {
-        let mut toc = IndexTableOfContents::<u8, 20>::new(0.into(), Arc::new(AtomicU32::new(0)));
+        let mut toc = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(0)));
         let mut keys = vec![];
         for key in 0..10 {
             toc.insert(key, 1.into());

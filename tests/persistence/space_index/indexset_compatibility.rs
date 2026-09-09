@@ -1,4 +1,5 @@
 mod sized {
+    use data_bucket::DEFAULT_PAGE_STRIDE;
     use std::fs::copy;
 
     use data_bucket::{INNER_PAGE_SIZE, Link};
@@ -11,7 +12,7 @@ mod sized {
     async fn test_indexset_node_creation() {
         remove_file_if_exists("tests/data/space_index/indexset/process_create_node.wt.idx".to_string()).await;
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/indexset/process_create_node.wt.idx",
             0.into(),
             1,
@@ -46,7 +47,7 @@ mod sized {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/indexset/process_insert_at.wt.idx",
             0.into(),
             1,
@@ -81,7 +82,7 @@ mod sized {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/indexset/process_insert_at_big_amount.wt.idx",
             0.into(),
             1,
@@ -124,6 +125,7 @@ mod sized {
 }
 
 mod unsized_ {
+    use data_bucket::DEFAULT_PAGE_STRIDE;
     use std::fs::copy;
 
     use crate::{check_if_files_are_same, remove_file_if_exists};
@@ -137,7 +139,7 @@ mod unsized_ {
     async fn test_indexset_node_creation() {
         remove_file_if_exists("tests/data/space_index_unsized/indexset/process_create_node.wt.idx".to_string()).await;
 
-        let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index_unsized/indexset/process_create_node.wt.idx",
             0.into(),
             1,
@@ -172,7 +174,7 @@ mod unsized_ {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index_unsized/indexset/process_insert_at.wt.idx",
             0.into(),
             1,
@@ -210,7 +212,7 @@ mod unsized_ {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndexUnsized::<String, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index_unsized/indexset/process_insert_at_big_amount.wt.idx",
             0.into(),
             1,

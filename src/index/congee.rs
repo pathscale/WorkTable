@@ -1,9 +1,10 @@
 //! Congee adapter for memory-only unique WorkTable indexes.
 
-use std::fmt::{self, Debug};
-use std::ops::{Bound, RangeBounds};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt::{self, Debug};
+use core::ops::{Bound, RangeBounds};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use congee::{CongeeRaw, DefaultAllocator};
 use parking_lot::Mutex;
@@ -53,7 +54,7 @@ pub struct CongeeIndex<K, V> {
     // serialize mutations until the backend offers the required visibility.
     mutation: Mutex<()>,
     len: AtomicUsize,
-    marker: std::marker::PhantomData<(K, V)>,
+    marker: core::marker::PhantomData<(K, V)>,
 }
 
 impl<K, V> Debug for CongeeIndex<K, V> {
@@ -79,7 +80,7 @@ where
             inner: CongeeRaw::new_with_drainer(DefaultAllocator {}, drainer),
             mutation: Mutex::new(()),
             len: AtomicUsize::new(0),
-            marker: std::marker::PhantomData,
+            marker: core::marker::PhantomData,
         }
     }
 }
@@ -113,7 +114,7 @@ where
         // SAFETY: callers guarantee that `pointer` was produced by
         // `Arc::into_raw(...).expose_provenance()` for the same `V` and still
         // owns one strong reference.
-        unsafe { Arc::from_raw(std::ptr::with_exposed_provenance(pointer)) }
+        unsafe { Arc::from_raw(core::ptr::with_exposed_provenance(pointer)) }
     }
 
     #[inline]
@@ -180,12 +181,13 @@ where
             .map(|(key, pointer)| {
                 // SAFETY: the pinned epoch keeps every returned tree-owned
                 // pointer alive until its value has been cloned.
-                let value = unsafe { &*std::ptr::with_exposed_provenance::<V>(pointer) };
+                let value = unsafe { &*core::ptr::with_exposed_provenance::<V>(pointer) };
                 (K::from_congee(key), value.clone())
             })
             .collect()
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn export_topology<T>(
         &mut self,
         mut encode: impl FnMut(&V) -> T,
@@ -193,10 +195,11 @@ where
         self.inner.export_topology(|pointer| {
             // SAFETY: every raw payload is a live tree-owned `Arc<V>` pointer,
             // and the exclusive borrow prevents removal while it is cloned.
-            unsafe { encode(&*std::ptr::with_exposed_provenance::<V>(pointer)) }
+            unsafe { encode(&*core::ptr::with_exposed_provenance::<V>(pointer)) }
         })
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn from_topology<T>(
         topology: congee::topology::Topology<T>,
         mut decode: impl FnMut(T) -> V,
@@ -217,7 +220,7 @@ where
             inner,
             mutation: Mutex::new(()),
             len: AtomicUsize::new(len),
-            marker: std::marker::PhantomData,
+            marker: core::marker::PhantomData,
         })
     }
 }
@@ -238,7 +241,7 @@ where
         let pointer = self.inner.get(&key.into_congee(), &guard)?;
         // SAFETY: the epoch guard keeps the tree-owned `Arc<V>` alive for the
         // duration of `read`, and the pointer originated from `Arc::into_raw`.
-        let value = unsafe { &*std::ptr::with_exposed_provenance::<V>(pointer) };
+        let value = unsafe { &*core::ptr::with_exposed_provenance::<V>(pointer) };
         Some(read(value))
     }
 
@@ -334,8 +337,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Bound;
-    use std::sync::{Arc, Barrier};
+    use alloc::sync::Arc;
+    use core::ops::Bound;
+    use std::sync::Barrier;
 
     use super::{CongeeIndex, UniqueIndex};
 

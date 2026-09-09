@@ -101,7 +101,7 @@ async fn insert_with_a_custom_initialiser_runs_once_per_key() {
         .partition_or_insert_with(11, || {
             let t = PriceWorkTable::default();
             for e in 0..3u8 {
-                futures::executor::block_on(t.insert(row(e, e as f64))).unwrap();
+                nagoya::block_on(t.insert(row(e, e as f64))).unwrap();
             }
             t
         })
@@ -177,7 +177,7 @@ fn concurrent_creation_and_reading_is_sound() {
                 let table = prices.partition_or_create(k).unwrap();
                 // Every thread writes the same row for a key, so whichever
                 // wins the insert the value must match the key.
-                let _ = futures::executor::block_on(table.insert(row(0, k as f64)));
+                let _ = nagoya::block_on(table.insert(row(0, k as f64)));
                 let got = prices.partition(k).unwrap().select(0).unwrap();
                 assert_eq!(got.bid, k as f64, "thread {t} saw a torn partition at {k}");
             }
@@ -426,7 +426,7 @@ async fn concurrent_writers_on_disjoint_partitions_do_not_interfere() {
             std::thread::spawn(move || {
                 let table = prices.partition_or_create(t).unwrap();
                 for e in 0..ROWS {
-                    futures::executor::block_on(table.insert(row(e, t as f64 * 1000.0 + e as f64))).unwrap();
+                    nagoya::block_on(table.insert(row(e, t as f64 * 1000.0 + e as f64))).unwrap();
                 }
             })
         })
@@ -490,7 +490,7 @@ async fn readers_survive_partitions_being_removed_under_them() {
             let t = prices
                 .partition_or_insert_with(k, || {
                     let t = PriceWorkTable::default();
-                    futures::executor::block_on(t.insert(row(0, k as f64))).unwrap();
+                    nagoya::block_on(t.insert(row(0, k as f64))).unwrap();
                     t
                 })
                 .unwrap();

@@ -1,15 +1,16 @@
+use alloc::vec::Vec;
 mod map;
 mod row_lock;
 
-use std::cell::Cell;
-use std::fmt::Debug;
-use std::future::Future;
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll};
+use alloc::sync::Arc;
+use core::cell::Cell;
+use core::fmt::Debug;
+use core::future::Future;
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::pin::Pin;
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::{Context, Poll};
 
 use futures::task::AtomicWaker;
 use parking_lot::Mutex;
@@ -261,7 +262,7 @@ impl Future for LockWait {
 
         // Spin phase: try up to MAX_SPINS before going async
         for _ in 0..MAX_SPINS {
-            std::hint::spin_loop();
+            core::hint::spin_loop();
             if !self.locked.load(Ordering::Acquire) {
                 return Poll::Ready(());
             }

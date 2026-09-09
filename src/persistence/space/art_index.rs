@@ -6,17 +6,18 @@
 //! applies the WAL, writes a new native checkpoint atomically, and drops the
 //! temporary tree; no duplicate ART is retained during normal operation.
 
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use crate::fsx::File;
 use data_bucket::{Link, page::PageId};
 use eyre::{Context, bail, eyre};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use nagoya::io::{Read as _, Seek as _, Write as _};
 
 use crate::index::{
     ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, PersistentArcticIndex,
@@ -76,14 +77,14 @@ macro_rules! impl_art_persistence_key {
     ($($type:ty),+ $(,)?) => {
         $(
             impl ArtPersistenceKey for $type {
-                const WIDTH: u8 = std::mem::size_of::<Self>() as u8;
+                const WIDTH: u8 = core::mem::size_of::<Self>() as u8;
 
                 fn encode_art_key(&self, output: &mut Vec<u8>) {
                     output.extend_from_slice(&self.to_be_bytes());
                 }
 
                 fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
-                    let bytes: [u8; std::mem::size_of::<Self>()] = bytes
+                    let bytes: [u8; core::mem::size_of::<Self>()] = bytes
                         .try_into()
                         .map_err(|_| eyre!("invalid {}-byte ART key", Self::WIDTH))?;
                     Ok(Self::from_be_bytes(bytes))
@@ -112,7 +113,7 @@ macro_rules! impl_art_persistence_key_signed {
     ($($type:ty => $raw:ty),+ $(,)?) => {
         $(
             impl ArtPersistenceKey for $type {
-                const WIDTH: u8 = std::mem::size_of::<Self>() as u8;
+                const WIDTH: u8 = core::mem::size_of::<Self>() as u8;
 
                 fn encode_art_key(&self, output: &mut Vec<u8>) {
                     let raw = (*self as $raw) ^ ((1 as $raw) << (<$raw>::BITS - 1));
@@ -120,7 +121,7 @@ macro_rules! impl_art_persistence_key_signed {
                 }
 
                 fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
-                    let bytes: [u8; std::mem::size_of::<Self>()] = bytes
+                    let bytes: [u8; core::mem::size_of::<Self>()] = bytes
                         .try_into()
                         .map_err(|_| eyre!("invalid {}-byte ART key", Self::WIDTH))?;
                     let raw = <$raw>::from_be_bytes(bytes) ^ ((1 as $raw) << (<$raw>::BITS - 1));
@@ -200,17 +201,17 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
         // with live state or block a future rename.
         let stale_temporary = temporary_path(&path);
         if stale_temporary.exists() {
-            tokio::fs::remove_file(&stale_temporary).await?;
+            crate::fsx::remove_file(&stale_temporary).await?;
         }
         if !path.exists() {
             Self::write_new_file(&path, backend, table_version, &empty_snapshot).await?;
         }
         let image = Self::read_image(&path, backend, table_version).await?;
-        let mut file = OpenOptions::new().read(true).write(true).open(&path).await?;
+        let mut file = crate::fsx::open(&path).await?;
         // Remove an incomplete final frame before appending. Leaving it in
         // place would make every later valid frame unreachable on recovery.
-        file.set_len(image.durable_len).await?;
-        file.seek(std::io::SeekFrom::End(0)).await?;
+        crate::fsx::set_len(&mut file, image.durable_len).await?;
+        file.seek(nagoya::io::SeekFrom::End(0)).await?;
         Ok(Self {
             path,
             file,
@@ -222,7 +223,7 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
     }
 
     async fn read_image(path: &Path, backend: Backend, table_version: u32) -> eyre::Result<Image<K>> {
-        let mut file = File::open(path)
+        let mut file = crate::fsx::open(path)
             .await
             .wrap_err_with(|| format!("open ART index {}", path.display()))?;
         let mut bytes = Vec::new();
@@ -339,8 +340,8 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
 
     async fn rewrite(&mut self, snapshot: &[u8]) -> eyre::Result<()> {
         Self::write_file_atomically(&self.path, self.backend, self.table_version, snapshot).await?;
-        self.file = OpenOptions::new().read(true).write(true).open(&self.path).await?;
-        self.file.seek(std::io::SeekFrom::End(0)).await?;
+        self.file = crate::fsx::open(&self.path).await?;
+        self.file.seek(nagoya::io::SeekFrom::End(0)).await?;
         self.wal_bytes = 0;
         Ok(())
     }
@@ -356,7 +357,7 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
     ) -> eyre::Result<()> {
         let temporary = temporary_path(path);
         Self::write_new_file(&temporary, backend, table_version, snapshot).await?;
-        tokio::fs::rename(&temporary, path).await?;
+        crate::fsx::rename(&temporary, path).await?;
         Ok(())
     }
 
@@ -372,11 +373,11 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
         header.extend_from_slice(&0u32.to_le_bytes());
         debug_assert_eq!(header.len(), HEADER_LEN);
 
-        let mut file = File::create(path).await?;
+        let mut file = crate::fsx::create(path).await?;
         file.write_all(&header).await?;
         file.write_all(snapshot).await?;
         file.flush().await?;
-        file.sync_data().await?;
+        crate::fsx::sync_data(&mut file).await?;
         Ok(())
     }
 }
@@ -384,7 +385,7 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
 fn encode_wal_record<K: ArtPersistenceKey>(record: &WalRecord<K>) -> Vec<u8> {
     let mut key = Vec::new();
     record.key.encode_art_key(&mut key);
-    let variable_prefix = usize::from(K::WIDTH == 0) * std::mem::size_of::<u32>();
+    let variable_prefix = usize::from(K::WIDTH == 0) * core::mem::size_of::<u32>();
     let mut bytes = Vec::with_capacity(9 + variable_prefix + key.len() + 12);
     bytes.extend_from_slice(&record.event_id.to_le_bytes());
     match record.op {
@@ -717,7 +718,7 @@ where
                 path,
                 Backend::ArcticVariable,
                 table_version,
-                encode_multi_pairs(std::iter::empty::<(K, Link)>()),
+                encode_multi_pairs(core::iter::empty::<(K, Link)>()),
             )
             .await?,
         })
@@ -922,7 +923,7 @@ where
     K: ArtPersistenceKey + ArcticKey,
 {
     async fn new(path: PathBuf, table_version: u32) -> eyre::Result<Self> {
-        let snapshot = encode_multi_pairs(std::iter::empty::<(K, Link)>());
+        let snapshot = encode_multi_pairs(core::iter::empty::<(K, Link)>());
         Ok(Self {
             file: ArtFile::open(path, Backend::ArcticMulti, table_version, snapshot).await?,
         })
@@ -1356,15 +1357,15 @@ mod tests {
         space.process_change_event(set_event(0, 7, link(7))).await.unwrap();
         drop(space);
 
-        let durable_len = tokio::fs::metadata(&path).await.unwrap().len();
-        let mut file = OpenOptions::new().append(true).open(&path).await.unwrap();
+        let durable_len = crate::fsx::metadata(&path).await.unwrap();
+        let mut file = crate::fsx::append(&path).await.unwrap();
         file.write_all(&WAL_MAGIC[..2]).await.unwrap();
         file.flush().await.unwrap();
         drop(file);
-        assert_eq!(tokio::fs::metadata(&path).await.unwrap().len(), durable_len + 2);
+        assert_eq!(crate::fsx::metadata(&path).await.unwrap(), durable_len + 2);
 
         let mut space = SpaceArcticIndex::<u64, 4096>::new(path.clone(), 1).await.unwrap();
-        assert_eq!(tokio::fs::metadata(&path).await.unwrap().len(), durable_len);
+        assert_eq!(crate::fsx::metadata(&path).await.unwrap(), durable_len);
         space.process_change_event(set_event(1, 8, link(8))).await.unwrap();
         drop(space);
 
@@ -1373,7 +1374,7 @@ mod tests {
             .unwrap();
         assert_eq!(index.get_value(&7).unwrap().0, link(7));
         assert_eq!(index.get_value(&8).unwrap().0, link(8));
-        tokio::fs::remove_file(path).await.unwrap();
+        crate::fsx::remove_file(path).await.unwrap();
     }
 
     #[tokio::test]
@@ -1401,7 +1402,7 @@ mod tests {
             .unwrap();
         assert_eq!(index.len(), 128);
         assert_eq!(index.get_value(&91).unwrap().0, link(92));
-        tokio::fs::remove_file(path).await.unwrap();
+        crate::fsx::remove_file(path).await.unwrap();
     }
 
     fn remove_event(id: u64, key: u64, value: Link) -> ChangeEvent<Pair<u64, Link>> {
@@ -1439,7 +1440,7 @@ mod tests {
         assert_eq!(decode_multi_pairs::<u64>(&bytes).unwrap(), pairs);
         assert!(decode_multi_pairs::<u64>(&bytes[..bytes.len() - 1]).is_err());
         assert_eq!(
-            decode_multi_pairs::<u64>(&encode_multi_pairs(std::iter::empty::<(u64, Link)>())).unwrap(),
+            decode_multi_pairs::<u64>(&encode_multi_pairs(core::iter::empty::<(u64, Link)>())).unwrap(),
             vec![]
         );
     }
@@ -1500,7 +1501,7 @@ mod tests {
 
         // A unique reader must refuse the multi file outright.
         assert!(ArtFile::<u64>::read_image(&path, Backend::Arctic, 5).await.is_err());
-        tokio::fs::remove_file(path).await.unwrap();
+        crate::fsx::remove_file(path).await.unwrap();
     }
 
     #[tokio::test]
@@ -1522,7 +1523,7 @@ mod tests {
             .unwrap();
         assert_eq!(reloaded.len(), 50);
         assert_eq!(reloaded.get(&(u128::MAX - 3)).len(), 10);
-        tokio::fs::remove_file(path).await.unwrap();
+        crate::fsx::remove_file(path).await.unwrap();
     }
 
     #[tokio::test]
@@ -1551,7 +1552,7 @@ mod tests {
             .unwrap();
         assert_eq!(reloaded.len(), 4);
         assert_eq!(reloaded.get_value(&"🦀".to_owned()).unwrap().0, link(4));
-        tokio::fs::remove_file(path).await.unwrap();
+        crate::fsx::remove_file(path).await.unwrap();
     }
 
     #[test]
@@ -1569,7 +1570,7 @@ mod tests {
 
         // A leftover temporary from a crashed checkpoint must be cleaned up
         // when the index opens.
-        tokio::fs::write(&temporary, b"crashed checkpoint leftovers")
+        crate::fsx::write(&temporary, b"crashed checkpoint leftovers")
             .await
             .unwrap();
         let mut space = SpaceArcticIndex::<u64, 4096>::new(path.clone(), 1).await.unwrap();
@@ -1597,7 +1598,7 @@ mod tests {
             .unwrap();
         assert_eq!(reloaded.get_value(&7).unwrap().0, link(7));
         assert_eq!(reloaded.get_value(&9).unwrap().0, link(9));
-        tokio::fs::remove_file(path).await.unwrap();
+        crate::fsx::remove_file(path).await.unwrap();
     }
 
     #[tokio::test]
@@ -1611,16 +1612,16 @@ mod tests {
         assert!(ArtFile::<u64>::read_image(&path, Backend::Congee, 7).await.is_err());
         assert!(ArtFile::<u32>::read_image(&path, Backend::Arctic, 7).await.is_err());
 
-        let mut file = OpenOptions::new().read(true).write(true).open(&path).await.unwrap();
-        file.seek(std::io::SeekFrom::End(-1)).await.unwrap();
+        let mut file = crate::fsx::open(&path).await.unwrap();
+        file.seek(nagoya::io::SeekFrom::End(-1)).await.unwrap();
         let mut last = [0u8; 1];
         file.read_exact(&mut last).await.unwrap();
-        file.seek(std::io::SeekFrom::End(-1)).await.unwrap();
+        file.seek(nagoya::io::SeekFrom::End(-1)).await.unwrap();
         file.write_all(&[last[0] ^ 0x80]).await.unwrap();
         file.flush().await.unwrap();
         drop(file);
 
         assert!(ArtFile::<u64>::read_image(&path, Backend::Arctic, 7).await.is_err());
-        tokio::fs::remove_file(path).await.unwrap();
+        crate::fsx::remove_file(path).await.unwrap();
     }
 }

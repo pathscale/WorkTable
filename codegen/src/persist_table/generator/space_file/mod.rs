@@ -241,7 +241,7 @@ impl Generator {
                         data.set_page_id(page_id.into());
                         page_id += 1;
 
-                        std::sync::Arc::new(data)
+                        worktable::prelude::Arc::new(data)
                     })
                         .collect();
                     let data = DataPages::from_data(data)
@@ -251,13 +251,13 @@ impl Generator {
                     #primary_index_init
 
                     let table = WorkTable {
-                        data: std::sync::Arc::new(data),
-                        primary_index: std::sync::Arc::new(primary_index),
-                        indexes: std::sync::Arc::new(indexes),
+                        data: worktable::prelude::Arc::new(data),
+                        primary_index: worktable::prelude::Arc::new(primary_index),
+                        indexes: worktable::prelude::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
-                        lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
+                        lock_manager: worktable::prelude::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
                         table_name: #table_name,
-                        pk_phantom: std::marker::PhantomData,
+                        pk_phantom: core::marker::PhantomData,
                     };
 
                     table.validate_persisted_state(path)?;
@@ -310,7 +310,7 @@ impl Generator {
                         data.set_page_id(page_id.into());
                         page_id += 1;
 
-                        std::sync::Arc::new(data)
+                        worktable::prelude::Arc::new(data)
                     })
                         .collect();
                     let data = DataPages::from_data(data)
@@ -320,13 +320,13 @@ impl Generator {
                     #primary_index_init
 
                     let table = WorkTable {
-                        data: std::sync::Arc::new(data),
-                        primary_index: std::sync::Arc::new(primary_index),
-                        indexes: std::sync::Arc::new(indexes),
+                        data: worktable::prelude::Arc::new(data),
+                        primary_index: worktable::prelude::Arc::new(primary_index),
+                        indexes: worktable::prelude::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
-                        lock_manager: std::sync::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
+                        lock_manager: worktable::prelude::Arc::new(LockMap::<#lock_type, #pk_type>::default()),
                         table_name: #table_name,
-                        pk_phantom: std::marker::PhantomData,
+                        pk_phantom: core::marker::PhantomData,
                     };
 
                     table.validate_persisted_state(path)?;
@@ -353,11 +353,11 @@ impl Generator {
 
         let parse_pk_page = if self.attributes.pk_unsized {
             quote! {
-                let index = parse_page::<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
+                let index = parse_page::<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
             }
         } else {
             quote! {
-                let index = parse_page::<IndexPage<#pk_type>, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
+                let index = parse_page::<IndexPage<#pk_type>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
             }
         };
 
@@ -372,17 +372,17 @@ impl Generator {
             quote! {
                 {
                     let mut primary_index = vec![];
-                    let mut primary_file = tokio::fs::File::open(format!("{}/primary{}", path, #index_extension)).await?;
-                    let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut primary_file, 0).await?;
-                    let file_length = primary_file.metadata().await?.len();
+                    let mut primary_file = worktable::prelude::fsx::open(format!("{}/primary{}", path, #index_extension)).await?;
+                    let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, 0).await?;
+                    let file_length = worktable::prelude::fsx::file_metadata(&mut primary_file).await?;
                     // Pages sit at a fixed #page_const_name stride with the
                     // general header inside the slot, so the next free page id
                     // is ceil(len / stride). The previous divisor added the
                     // header on top of the full stride and lagged one page
                     // behind roughly every 512 pages.
                     let count = file_length.div_ceil(#page_const_name as u64);
-                    let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(count as u32));
-                    let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut primary_file, 0.into(), next_page_id.clone()).await?;
+                    let next_page_id = worktable::prelude::Arc::new(core::sync::atomic::AtomicU32::new(count as u32));
+                    let toc = IndexTableOfContents::<_, { #inner_const_name as u32 }, { #page_const_name as u32 }>::parse_from_file(&mut primary_file, 0.into(), next_page_id.clone()).await?;
                     for page_id in toc.iter().map(|(_, page_id)| page_id) {
                         #parse_pk_page
                         primary_index.push(index);
@@ -399,9 +399,9 @@ impl Generator {
                 let indexes = #persisted_index_name::parse_from_file(path).await?;
                 let (data, data_info) = {
                     let mut data = vec![];
-                    let mut data_file = tokio::fs::File::open(format!("{}/{}", path, #data_extension)).await?;
-                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }>(&mut data_file, 0).await?;
-                    let file_length = data_file.metadata().await?.len();
+                    let mut data_file = worktable::prelude::fsx::open(format!("{}/{}", path, #data_extension)).await?;
+                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut data_file, 0).await?;
+                    let file_length = worktable::prelude::fsx::file_metadata(&mut data_file).await?;
                     // ceil(len / stride) counts every occupied page slot,
                     // including the info page at id 0, whether or not the last
                     // page fills its slot. The previous floor + inclusive
@@ -410,7 +410,7 @@ impl Generator {
                     // exactly fills its slot), failing the whole load.
                     let count = file_length.div_ceil(#page_const_name as u64);
                     for page_id in 1..count {
-                        let index = parse_data_page::<{ #page_const_name as u32}, { #inner_const_name as usize }>(&mut data_file, page_id as u32).await?;
+                        let index = parse_data_page::<{ #page_const_name as u32}, { #inner_const_name as usize }, { #page_const_name as u32 }>(&mut data_file, page_id as u32).await?;
                         data.push(index);
                     }
                     (data, info)

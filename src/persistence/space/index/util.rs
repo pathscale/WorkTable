@@ -1,16 +1,17 @@
 use crate::prelude::IndexTableOfContents;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::sync::atomic::{AtomicU32, Ordering};
 use data_bucket::{
     GeneralHeader, GeneralPage, IndexPage, Link, PageType, SizeMeasurable, UnsizedIndexPage, VariableSizeMeasurable,
 };
-use std::fmt::Debug;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 #[allow(clippy::type_complexity)]
-pub fn map_index_pages_to_toc_and_general<T, const DATA_LENGTH: u32>(
+pub fn map_index_pages_to_toc_and_general<T, const DATA_LENGTH: u32, const STRIDE: u32>(
     pages: Vec<IndexPage<T>>,
 ) -> (
-    IndexTableOfContents<(T, Link), DATA_LENGTH>,
+    IndexTableOfContents<(T, Link), DATA_LENGTH, STRIDE>,
     Vec<GeneralPage<IndexPage<T>>>,
 )
 where
@@ -31,10 +32,10 @@ where
 }
 
 #[allow(clippy::type_complexity)]
-pub fn map_unsized_index_pages_to_toc_and_general<T, const DATA_LENGTH: u32>(
+pub fn map_unsized_index_pages_to_toc_and_general<T, const DATA_LENGTH: u32, const STRIDE: u32>(
     pages: Vec<UnsizedIndexPage<T, DATA_LENGTH>>,
 ) -> (
-    IndexTableOfContents<(T, Link), DATA_LENGTH>,
+    IndexTableOfContents<(T, Link), DATA_LENGTH, STRIDE>,
     Vec<GeneralPage<UnsizedIndexPage<T, DATA_LENGTH>>>,
 )
 where

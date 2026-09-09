@@ -1,9 +1,12 @@
-use std::collections::VecDeque;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
+use std::time::Instant;
 
 /// How long retirements have to stop arriving for a delete burst to count as
 /// over. Short enough that a sweep still follows a delete promptly, long
@@ -85,7 +88,7 @@ pub struct EmptyDataVacuum<
     const DATA_LENGTH: usize,
     SecondaryEvents = (),
 > where
-    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static + Debug,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
@@ -139,7 +142,7 @@ impl<
     >
 where
     Row: TableRow<PrimaryKey> + StorableRow + Send + Clone + 'static,
-    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + core::hash::Hash,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
@@ -684,7 +687,7 @@ impl<
     >
 where
     Row: TableRow<PrimaryKey> + StorableRow + Send + Sync + Clone + 'static,
-    PrimaryKey: Debug + Clone + Ord + Send + Sync + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + Sync + TablePrimaryKey + core::hash::Hash,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>> + Send + Sync + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
@@ -737,9 +740,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, VecDeque};
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use alloc::collections::VecDeque;
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use hashbrown::HashMap;
 
     use data_bucket::Link;
     use data_bucket::page::PageId;
@@ -747,7 +751,7 @@ mod tests {
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;
-    use std::time::Duration;
+    use core::time::Duration;
 
     use crate::vacuum::vacuum::{CandidateMove, EmptyDataVacuum};
     use crate::vacuum::{VacuumGate, VacuumPacing, WorkTableVacuum};

@@ -1,9 +1,20 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 #![doc = include_str!("../docs/crate.md")]
 
+#[macro_use]
+extern crate alloc;
+
+/// Generated code names `worktable::` paths, which must also resolve inside
+/// this crate, where `worktable!` is invoked for the persistence queue.
+extern crate self as worktable;
+
+#[cfg(feature = "std")]
+pub mod fsx;
 pub mod in_memory;
 mod index;
 pub mod lock;
 mod mem_stat;
+#[cfg(feature = "std")]
 pub mod migration;
 pub mod partition;
 pub mod persistence;
@@ -16,6 +27,7 @@ mod util;
 pub mod features;
 
 pub use index::*;
+#[cfg(feature = "std")]
 pub use persistence::{
     LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError, UnloadFailure, UnloadReport,
 };
@@ -34,38 +46,56 @@ pub use worktable_dsl;
 pub use worktable_codegen::s3_sync_persistence;
 
 pub mod prelude {
+    /// The filesystem this crate goes through. Generated code opens files by
+    /// this path, so a consumer of `worktable!` gets the same backend the
+    /// crate itself uses without naming it.
+    #[cfg(feature = "std")]
+    pub use crate::fsx;
+    pub use alloc::collections::BTreeMap;
+    pub use alloc::sync::Arc;
+    pub use alloc::vec::IntoIter;
+    pub use hashbrown::{HashMap, HashSet};
+
     pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};
     pub use crate::lock::FullRowLock;
     pub use crate::lock::{Lock, RowLock};
     pub use crate::lock::{LockAcquirer, LockGuard, LockMap, PendingLock};
     pub use crate::mem_stat::MemStat;
     pub use crate::partition::{MAX_PARTITIONS, PartRef, PartitionError, PartitionSet};
+    pub use crate::persistence::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId};
+    #[cfg(feature = "std")]
     pub use crate::persistence::{
-        AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
-        IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, PersistedWorkTable, PersistenceConfig,
-        PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError, PersistenceMonitor,
-        PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine, SpaceArcticIndex,
-        SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps, SpaceIndex,
-        SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized, SpaceLogicalMultiIndex,
-        SpaceLogicalMultiIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError, UnloadFailure, UnloadReport,
-        UpdateOperation, load_persisted_state, map_index_pages_to_toc_and_general,
-        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
+        ArtPersistenceKey, DiskConfig, DiskPersistenceEngine, IndexTableOfContents, LoadMode, PersistedWorkTable,
+        PersistenceConfig, PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError,
+        PersistenceMonitor, PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine,
+        SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
+        SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized,
+        SpaceLogicalMultiIndex, SpaceLogicalMultiIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError,
+        UnloadFailure, UnloadReport, load_persisted_state, map_index_pages_to_toc_and_general,
+        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
     };
+    pub use crate::persistence::{OperationType, UpdateOperation, validate_events};
     pub use crate::primary_key::{
         PrimaryKeyGenerator, PrimaryKeyGeneratorRange, PrimaryKeyGeneratorState, TablePrimaryKey,
     };
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
+    #[allow(unused_imports)]
+    pub use crate::{};
     pub use crate::{
         ArcticEntry, ArcticIndex, ArcticKey, ArcticMultiIndex, ArcticStringKey, AvailableIndex, BatchDeleteError,
         BatchInsertError, CongeeIndex, CongeeKey, Difference, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
         PersistentArcticIndex, PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex,
         PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
         TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
-        UpstreamIndexMap, UpstreamIndexPair, WorkTable, WorkTableError, vacuum::EmptyDataVacuum,
-        vacuum::VacuumPersistence, vacuum::WorkTableVacuum, validate_arctic_link,
+        WorkTable, WorkTableError, validate_arctic_link,
     };
+    /// The upstream IndexSet backend, when the `vanilla-index` feature selects it.
+    #[cfg(feature = "vanilla-index")]
+    pub use crate::{UpstreamIndexMap, UpstreamIndexPair};
+    #[cfg(feature = "std")]
+    pub use crate::{vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum};
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,
         Link, PAGE_SIZE, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoPage,

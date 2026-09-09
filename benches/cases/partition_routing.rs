@@ -46,7 +46,7 @@ async fn populated() -> RoutePartitions {
 
 /// The four ways to reach a partition, single threaded, one hot key.
 fn lookup(c: &mut Criterion) {
-    let routes = futures::executor::block_on(populated());
+    let routes = nagoya::block_on(populated());
     let cached = routes.partition(7).unwrap();
 
     let mut group = c.benchmark_group("partition_lookup");
@@ -87,7 +87,7 @@ fn contended(c: &mut Criterion, name: &str, same_key: bool) {
         for api in ["partition_ref", "pinned_get", "partition_arc"] {
             group.bench_with_input(BenchmarkId::new(api, threads), &threads, |b, &threads| {
                 b.iter_custom(|iters| {
-                    let routes = Arc::new(futures::executor::block_on(populated()));
+                    let routes = Arc::new(nagoya::block_on(populated()));
                     let go = Arc::new(AtomicBool::new(false));
 
                     let workers: Vec<_> = (0..threads)
@@ -151,7 +151,7 @@ fn distinct_key_readers(c: &mut Criterion) {
 /// Accounting over 500 partitions. These were routed through `system_info`,
 /// which copied every data page, and through `keys` then `partition` per key.
 fn metrics(c: &mut Criterion) {
-    let routes = futures::executor::block_on(populated());
+    let routes = nagoya::block_on(populated());
     let mut group = c.benchmark_group("partition_metrics");
     group.bench_function("memory_total", |b| b.iter(|| black_box(routes.memory_total())));
     group.bench_function("rows_by_key", |b| b.iter(|| black_box(routes.rows_by_key())));

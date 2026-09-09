@@ -1,24 +1,32 @@
-use std::fmt::Debug;
-use std::hash::Hash;
+use core::fmt::Debug;
+use core::hash::Hash;
 
 use data_bucket::Link;
 use indexset::core::multipair::MultiPair;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
+#[cfg(feature = "vanilla-index")]
+use crate::UpstreamIndexMap;
 use crate::util::OffsetEqLink;
+#[allow(unused_imports)]
+use crate::{};
 use crate::{
     ArcticIndex, ArcticKey, ArcticMultiIndex, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, PersistentArcticIndex,
-    PersistentArcticMultiIndex, PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex, UpstreamIndexMap,
+    PersistentArcticMultiIndex, PersistentCongeeIndex, PersistentWtiIndex, UniqueIndex,
 };
 
 mod cdc;
 pub mod util;
 
 pub use cdc::TableIndexCdc;
-pub use util::{convert_change_events, convert_multi_change_events, convert_upstream_change_events};
+#[cfg(feature = "vanilla-index")]
+pub use util::convert_upstream_change_events;
+pub use util::{convert_change_events, convert_multi_change_events};
 
 pub trait TableIndex<T> {
     fn insert(&self, value: T, link: Link) -> Option<Link>;
@@ -114,6 +122,7 @@ where
     }
 }
 
+#[cfg(feature = "vanilla-index")]
 impl<T, Node> TableIndex<T> for UpstreamIndexMap<T, OffsetEqLink, Node>
 where
     T: Debug + Eq + Hash + Clone + Send + Ord,

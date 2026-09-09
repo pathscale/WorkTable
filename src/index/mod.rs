@@ -23,13 +23,15 @@ pub use persistent_art::{
 };
 pub use persistent_wti::PersistentWtiIndex;
 pub use primary_index::PrimaryIndex;
-pub use table_index::{
-    TableIndex, TableIndexCdc, convert_change_events, convert_multi_change_events, convert_upstream_change_events,
-};
+#[cfg(feature = "vanilla-index")]
+pub use table_index::convert_upstream_change_events;
+pub use table_index::{TableIndex, TableIndexCdc, convert_change_events, convert_multi_change_events};
 pub use table_secondary_index::{
     IndexError, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
 };
-pub use unique::{UniqueIndex, UpstreamIndexMap, UpstreamIndexPair};
+pub use unique::UniqueIndex;
+#[cfg(feature = "vanilla-index")]
+pub use unique::{UpstreamIndexMap, UpstreamIndexPair};
 pub use unsized_node::UnsizedNode;
 
 #[derive(Clone, Debug)]

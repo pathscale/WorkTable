@@ -1,4 +1,4 @@
-use tokio::fs::File;
+use data_bucket::DEFAULT_PAGE_STRIDE;
 use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 
@@ -10,8 +10,10 @@ use crate::remove_dir_if_exists;
 
 #[tokio::test]
 async fn test_info_parse() {
-    let mut file = File::open("tests/data/expected/test_persist/.wt.data").await.unwrap();
-    let info = parse_page::<SpaceInfoPage<u64>, { TEST_PERSIST_INNER_SIZE as u32 }>(&mut file, 0)
+    let mut file = worktable::prelude::fsx::open("tests/data/expected/test_persist/.wt.data")
+        .await
+        .unwrap();
+    let info = parse_page::<SpaceInfoPage<u64>, { TEST_PERSIST_INNER_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 0)
         .await
         .unwrap();
 
@@ -31,10 +33,10 @@ async fn test_info_parse() {
 
 #[tokio::test]
 async fn test_primary_index_parse() {
-    let mut file = File::open("tests/data/expected/test_persist/primary.wt.idx")
+    let mut file = worktable::prelude::fsx::open("tests/data/expected/test_persist/primary.wt.idx")
         .await
         .unwrap();
-    let index = parse_page::<IndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 2)
+    let index = parse_page::<IndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 2)
         .await
         .unwrap();
 
@@ -66,10 +68,10 @@ async fn test_primary_index_parse() {
 
 #[tokio::test]
 async fn test_another_idx_index_parse() {
-    let mut file = File::open("tests/data/expected/test_persist/another_idx.wt.idx")
+    let mut file = worktable::prelude::fsx::open("tests/data/expected/test_persist/another_idx.wt.idx")
         .await
         .unwrap();
-    let index = parse_page::<IndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }>(&mut file, 2)
+    let index = parse_page::<IndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 2)
         .await
         .unwrap();
 
@@ -101,10 +103,16 @@ async fn test_another_idx_index_parse() {
 
 #[tokio::test]
 async fn test_data_parse() {
-    let mut file = File::open("tests/data/expected/test_persist/.wt.data").await.unwrap();
-    let data = parse_data_page::<{ TEST_PERSIST_PAGE_SIZE as u32 }, { TEST_PERSIST_INNER_SIZE }>(&mut file, 1)
+    let mut file = worktable::prelude::fsx::open("tests/data/expected/test_persist/.wt.data")
         .await
         .unwrap();
+    let data = parse_data_page::<
+        { TEST_PERSIST_PAGE_SIZE as u32 },
+        { TEST_PERSIST_INNER_SIZE },
+        { TEST_PERSIST_PAGE_SIZE as u32 },
+    >(&mut file, 1)
+    .await
+    .unwrap();
 
     assert_eq!(data.header.space_id, 0.into());
     assert_eq!(data.header.page_id, 1.into());

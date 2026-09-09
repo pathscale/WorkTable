@@ -1,9 +1,13 @@
+use alloc::{string::String, vec::Vec};
 pub mod select;
 pub mod system_info;
+#[cfg(feature = "std")]
 pub mod vacuum;
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
-use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation, PersistenceLoadError};
+#[cfg(feature = "std")]
+use crate::persistence::PersistenceLoadError;
+use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation};
 use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
@@ -11,8 +15,13 @@ use crate::{
     AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
     TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, convert_change_events, in_memory,
 };
+use alloc::sync::Arc;
+use core::fmt::Debug;
+use core::marker::PhantomData;
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
+#[cfg(feature = "std")]
+use hashbrown::HashSet;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 #[cfg(feature = "perf_measurements")]
@@ -24,11 +33,8 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Portable, Serialize};
-use std::collections::HashSet;
-use std::fmt::Debug;
-use std::marker::PhantomData;
+#[cfg(feature = "std")]
 use std::path::Path;
-use std::sync::Arc;
 use uuid::Uuid;
 /// Keys per chunk when a bulk delete takes its mutation guards.
 ///
@@ -51,7 +57,7 @@ pub struct WorkTable<
     const DATA_LENGTH: usize = INNER_PAGE_SIZE,
     PkMap = IndexMap<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 > where
-    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
@@ -94,7 +100,7 @@ impl<
         PkMap,
     >
 where
-    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + core::hash::Hash,
     SecondaryIndexes: Default,
     PkGen: Default,
     PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
@@ -127,7 +133,7 @@ impl<
 > WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, PkMap>
 where
     Row: TableRow<PrimaryKey>,
-    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + core::hash::Hash,
     PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
@@ -138,6 +144,7 @@ where
     /// This load-only scan prevents a torn index link from turning zeroed or
     /// unrelated bytes into a plausible row. It deliberately does not run on
     /// steady-state operations.
+    #[cfg(feature = "std")]
     pub fn validate_persisted_state(&self, path: impl AsRef<Path>) -> Result<(), PersistenceLoadError>
     where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
@@ -146,7 +153,7 @@ where
     {
         let path = path.as_ref();
         let mut links = HashSet::with_capacity(self.primary_index.pk_map.len());
-        let mut cells_by_page = std::collections::HashMap::<data_bucket::page::PageId, u32>::new();
+        let mut cells_by_page = hashbrown::HashMap::<data_bucket::page::PageId, u32>::new();
 
         for (primary_key, offset_link) in self.primary_index.pk_map.iter_values() {
             if !links.insert(offset_link) {
@@ -211,7 +218,7 @@ where
     /// caller can iterate it directly while pre-assigning contiguous keys to a
     /// batch of rows for `insert_many`. Interleaved [`Self::get_next_pk`]
     /// calls keep working and never overlap a reservation.
-    pub fn reserve_pks<Raw>(&self, count: usize) -> std::ops::Range<Raw>
+    pub fn reserve_pks<Raw>(&self, count: usize) -> core::ops::Range<Raw>
     where
         PkGen: crate::primary_key::PrimaryKeyGeneratorRange<Raw>,
     {
@@ -238,7 +245,7 @@ where
             if current_link == Some(link) {
                 return None;
             }
-            std::hint::spin_loop();
+            core::hint::spin_loop();
         }
         None
     }
@@ -475,7 +482,7 @@ where
     /// Returns the keys actually deleted, in key order.
     pub fn delete_range<R>(&self, range: R) -> Result<Vec<PrimaryKey>, BatchDeleteError<PrimaryKey>>
     where
-        R: std::ops::RangeBounds<PrimaryKey>,
+        R: core::ops::RangeBounds<PrimaryKey>,
         Row: Archive
             + Clone
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
@@ -531,8 +538,8 @@ where
                 .primary_index
                 .pk_map
                 .range_values((
-                    std::ops::Bound::Included(chunk[0].clone()),
-                    std::ops::Bound::Included(chunk[chunk.len() - 1].clone()),
+                    core::ops::Bound::Included(chunk[0].clone()),
+                    core::ops::Bound::Included(chunk[chunk.len() - 1].clone()),
                 ))
                 .map(|(key, link)| (key, link.into()))
                 .collect();
@@ -1089,8 +1096,8 @@ where
             ops.push(Operation::Insert(InsertOperation {
                 id: OperationId::Multi(batch_id),
                 pk_gen_state: self.pk_gen.get_state(),
-                primary_key_events: std::mem::take(&mut forward_primary[row_index]),
-                secondary_keys_events: std::mem::take(&mut forward_secondary[row_index]),
+                primary_key_events: core::mem::take(&mut forward_primary[row_index]),
+                secondary_keys_events: core::mem::take(&mut forward_secondary[row_index]),
                 bytes,
                 link: *link,
             }));
@@ -1349,7 +1356,7 @@ pub enum BatchInsertError {
 /// batch needs to know the prefix already succeeded rather than assume nothing
 /// happened.
 #[derive(Debug, Display, Error)]
-pub enum BatchDeleteError<PrimaryKey: std::fmt::Debug> {
+pub enum BatchDeleteError<PrimaryKey: core::fmt::Debug> {
     /// One key could not be deleted. Everything before it was.
     #[display("batch delete stopped at {key:?} after {deleted} deleted: {source}")]
     Key {
@@ -1376,5 +1383,6 @@ pub enum WorkTableError {
     PrimaryUpdateTry,
     PagesError(in_memory::PagesExecutionError),
     #[display("{}", _0)]
-    PersistenceError(#[error(not(source))] std::sync::Arc<crate::persistence::PersistenceError>),
+    #[cfg(feature = "std")]
+    PersistenceError(#[error(not(source))] alloc::sync::Arc<crate::persistence::PersistenceError>),
 }

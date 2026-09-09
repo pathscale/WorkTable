@@ -133,14 +133,14 @@ impl ReadOnlyGenerator {
 
     fn get_generator_from_type(type_: &TokenStream, i: &Ident) -> syn::Result<TokenStream> {
         Ok(match type_.to_string().as_str() {
-            "u8" => quote! { std::sync::atomic::AtomicU8 },
-            "u16" => quote! { std::sync::atomic::AtomicU16 },
-            "u32" => quote! { std::sync::atomic::AtomicU32 },
-            "u64" => quote! { std::sync::atomic::AtomicU64 },
-            "i8" => quote! { std::sync::atomic::AtomicI8 },
-            "i16" => quote! { std::sync::atomic::AtomicI16 },
-            "i32" => quote! { std::sync::atomic::AtomicI32 },
-            "i64" => quote! { std::sync::atomic::AtomicI64 },
+            "u8" => quote! { core::sync::atomic::AtomicU8 },
+            "u16" => quote! { core::sync::atomic::AtomicU16 },
+            "u32" => quote! { core::sync::atomic::AtomicU32 },
+            "u64" => quote! { core::sync::atomic::AtomicU64 },
+            "i8" => quote! { core::sync::atomic::AtomicI8 },
+            "i16" => quote! { core::sync::atomic::AtomicI16 },
+            "i32" => quote! { core::sync::atomic::AtomicI32 },
+            "i64" => quote! { core::sync::atomic::AtomicI64 },
             // The accepted set is `worktable_dsl::AUTOINCREMENT_TYPES`, and the
             // arms above must stay equal to it. `check` uses that list to
             // answer "would the macro accept this", so a second copy drifting

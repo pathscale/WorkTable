@@ -15,8 +15,8 @@
 //! the preceding check. Every insert, delete and upsert passes through those
 //! stripes, including mutations that never ask for reclaimable space.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::time::Duration;
 
 use smart_default::SmartDefault;
 
@@ -114,7 +114,7 @@ pub trait ForegroundActivity {
 
 impl<LockType, PrimaryKey> ForegroundActivity for crate::lock::LockMap<LockType, PrimaryKey>
 where
-    PrimaryKey: Clone + std::fmt::Debug + Eq + std::hash::Hash,
+    PrimaryKey: Clone + core::fmt::Debug + Eq + core::hash::Hash,
 {
     fn mutations_in_flight(&self) -> usize {
         crate::lock::LockMap::mutations_in_flight(self)
@@ -163,8 +163,8 @@ impl VacuumPacing {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use super::*;
 

@@ -4,7 +4,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 #[rkyv(remote = ordered_float::OrderedFloat<f64>, archived = ArchivedF64)]
 #[rkyv(derive(Debug))]
 pub struct OrderedF64Def {
-    #[rkyv(getter = std::ops::Deref::deref)]
+    #[rkyv(getter = core::ops::Deref::deref)]
     value: f64,
 }
 
@@ -18,7 +18,7 @@ impl From<OrderedF64Def> for ordered_float::OrderedFloat<f64> {
 #[rkyv(remote = ordered_float::OrderedFloat<f32>, archived = ArchivedF32)]
 #[rkyv(derive(Debug))]
 pub struct OrderedF32Def {
-    #[rkyv(getter = std::ops::Deref::deref)]
+    #[rkyv(getter = core::ops::Deref::deref)]
     value: f32,
 }
 

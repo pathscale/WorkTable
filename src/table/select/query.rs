@@ -1,7 +1,8 @@
 use crate::WorkTableError;
 use crate::select::{Order, QueryParams};
+use alloc::vec::Vec;
 
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 
 pub struct SelectQueryBuilder<Row, I, ColumnRange, RowFields>
 where

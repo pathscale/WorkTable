@@ -115,7 +115,7 @@ macro_rules! backend_suite {
                         scope.spawn(move || {
                             for n in 0..per_writer {
                                 let id = w * per_writer + n;
-                                futures::executor::block_on(table.insert(row(id))).expect("insert");
+                                nagoya::block_on(table.insert(row(id))).expect("insert");
                                 // Read while the others write, so the scan and
                                 // the mutations actually overlap.
                                 let _ = table.select(id);
@@ -166,7 +166,7 @@ macro_rules! backend_suite {
                         scope.spawn(move || {
                             for n in 0..per_writer {
                                 let id = seed + w * per_writer + n;
-                                futures::executor::block_on(table.insert(row(id))).expect("insert");
+                                nagoya::block_on(table.insert(row(id))).expect("insert");
                             }
                         });
                     }
@@ -218,11 +218,11 @@ macro_rules! backend_suite {
                                     let rows: Vec<_> = (chunk..(chunk + 16).min(per_writer))
                                         .map(|n| row(base + n))
                                         .collect();
-                                    futures::executor::block_on(table.insert_many(rows)).expect("insert_many");
+                                    nagoya::block_on(table.insert_many(rows)).expect("insert_many");
                                 }
                             } else {
                                 for n in 0..per_writer {
-                                    futures::executor::block_on(table.insert(row(base + n))).expect("insert");
+                                    nagoya::block_on(table.insert(row(base + n))).expect("insert");
                                 }
                             }
                         });
@@ -263,7 +263,7 @@ macro_rules! backend_suite {
                         scope.spawn(move || {
                             // Distinct primary keys, one shared payload.
                             let contended = ConcRow { id: w, payload: 42, bucket: 0 };
-                            if futures::executor::block_on(table.insert(contended)).is_ok() {
+                            if nagoya::block_on(table.insert(contended)).is_ok() {
                                 winners.fetch_add(1, Ordering::Release);
                             }
                         });
@@ -363,8 +363,8 @@ macro_rules! backend_suite {
                                     (base + WINDOW, base)
                                 };
                                 for i in 0..WINDOW {
-                                    futures::executor::block_on(table.delete(from + i)).expect("delete");
-                                    futures::executor::block_on(table.insert(row(to + i))).expect("insert");
+                                    nagoya::block_on(table.delete(from + i)).expect("delete");
+                                    nagoya::block_on(table.insert(row(to + i))).expect("insert");
                                 }
                             }
                             finished.fetch_add(1, Ordering::Release);
@@ -452,7 +452,7 @@ macro_rules! backend_suite {
                         let table = Arc::clone(&table);
                         scope.spawn(move || {
                             for n in 0..per_writer {
-                                futures::executor::block_on(table.insert(row(w * per_writer + n))).expect("insert");
+                                nagoya::block_on(table.insert(row(w * per_writer + n))).expect("insert");
                             }
                         });
                     }

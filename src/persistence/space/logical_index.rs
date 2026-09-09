@@ -5,10 +5,12 @@
 //! this persistence-worker-owned index derives the structural events required
 //! by the unchanged WTI disk format.
 
-use std::fmt::Debug;
-use std::hash::Hash;
+use alloc::{string::String, vec::Vec};
+use core::fmt::Debug;
+use core::hash::Hash;
 use std::path::{Path, PathBuf};
 
+use crate::fsx::File;
 use data_bucket::{Link, SizeMeasurable, SpaceId, VariableSizeMeasurable};
 use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
@@ -23,7 +25,6 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize, rancor};
-use tokio::fs::File;
 
 use crate::UnsizedNode;
 use crate::convert_multi_change_events;
@@ -158,25 +159,25 @@ where
 /// Sized-key WTI persistence with foreground logical CDC and a background
 /// structural shadow. The wrapped `SpaceIndex` retains the existing file
 /// layout byte-for-byte.
-pub struct SpaceLogicalIndex<T, const INNER_PAGE_SIZE: u32>
+pub struct SpaceLogicalIndex<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32>
 where
     T: Send + Ord + Eq + Clone + 'static,
 {
     index_path: PathBuf,
     shadow: BTreeMap<T, Link>,
-    disk: SpaceIndex<T, INNER_PAGE_SIZE>,
+    disk: SpaceIndex<T, INNER_PAGE_SIZE, STRIDE>,
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> Debug for SpaceLogicalIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Send + Ord + Eq + Clone + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("SpaceLogicalIndex").finish_non_exhaustive()
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceLogicalIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceLogicalIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -208,7 +209,8 @@ where
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceIndexOps<T> for SpaceLogicalIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceIndexOps<T>
+    for SpaceLogicalIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -245,7 +247,7 @@ where
     }
 
     async fn bootstrap(file: &mut File, table_name: String, version: u32) -> eyre::Result<()> {
-        SpaceIndex::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name, version).await
+        SpaceIndex::<T, INNER_PAGE_SIZE, STRIDE>::bootstrap(file, table_name, version).await
     }
 
     async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
@@ -260,27 +262,27 @@ where
 }
 
 /// Variable-sized-key counterpart to [`SpaceLogicalIndex`].
-pub struct SpaceLogicalIndexUnsized<T, const INNER_PAGE_SIZE: u32>
+pub struct SpaceLogicalIndexUnsized<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32>
 where
     T: Send + Ord + Eq + Clone + Default + Debug + SizeMeasurable + VariableSizeMeasurable + 'static,
 {
     index_path: PathBuf,
     shadow: BTreeMap<T, Link, UnsizedNode<Pair<T, Link>>>,
-    disk: SpaceIndexUnsized<T, INNER_PAGE_SIZE>,
+    disk: SpaceIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>,
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalIndexUnsized<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> Debug for SpaceLogicalIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Send + Ord + Eq + Clone + Default + Debug + SizeMeasurable + VariableSizeMeasurable + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("SpaceLogicalIndexUnsized")
             .finish_non_exhaustive()
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceLogicalIndexUnsized<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceLogicalIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -313,7 +315,8 @@ where
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceIndexOps<T> for SpaceLogicalIndexUnsized<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceIndexOps<T>
+    for SpaceLogicalIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -351,7 +354,7 @@ where
     }
 
     async fn bootstrap(file: &mut File, table_name: String, version: u32) -> eyre::Result<()> {
-        SpaceIndexUnsized::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name, version).await
+        SpaceIndexUnsized::<T, INNER_PAGE_SIZE, STRIDE>::bootstrap(file, table_name, version).await
     }
 
     async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
@@ -368,25 +371,25 @@ where
 /// Sized-key WTI persistence for a non-unique runtime backend that emits
 /// logical `(key, link)` mutations. The WTI file layout and its node topology
 /// remain compatible with earlier WorkTable releases.
-pub struct SpaceLogicalMultiIndex<T, const INNER_PAGE_SIZE: u32>
+pub struct SpaceLogicalMultiIndex<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32>
 where
     T: Debug + Send + Ord + Eq + Clone + 'static,
 {
     index_path: PathBuf,
     shadow: BTreeMultiMap<T, Link>,
-    disk: SpaceIndex<T, INNER_PAGE_SIZE>,
+    disk: SpaceIndex<T, INNER_PAGE_SIZE, STRIDE>,
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalMultiIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> Debug for SpaceLogicalMultiIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Debug + Send + Ord + Eq + Clone + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("SpaceLogicalMultiIndex").finish_non_exhaustive()
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceLogicalMultiIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceLogicalMultiIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -418,7 +421,8 @@ where
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceIndexOps<T> for SpaceLogicalMultiIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceIndexOps<T>
+    for SpaceLogicalMultiIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -455,7 +459,7 @@ where
     }
 
     async fn bootstrap(file: &mut File, table_name: String, version: u32) -> eyre::Result<()> {
-        SpaceIndex::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name, version).await
+        SpaceIndex::<T, INNER_PAGE_SIZE, STRIDE>::bootstrap(file, table_name, version).await
     }
 
     async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
@@ -470,27 +474,28 @@ where
 }
 
 /// Variable-sized-key counterpart to [`SpaceLogicalMultiIndex`].
-pub struct SpaceLogicalMultiIndexUnsized<T, const INNER_PAGE_SIZE: u32>
+pub struct SpaceLogicalMultiIndexUnsized<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32>
 where
     T: Send + Ord + Eq + Clone + Default + Debug + SizeMeasurable + VariableSizeMeasurable + 'static,
 {
     index_path: PathBuf,
     shadow: BTreeMultiMap<T, Link, UnsizedNode<MultiPair<T, Link>>>,
-    disk: SpaceIndexUnsized<T, INNER_PAGE_SIZE>,
+    disk: SpaceIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>,
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> Debug for SpaceLogicalMultiIndexUnsized<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> Debug
+    for SpaceLogicalMultiIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Send + Ord + Eq + Clone + Default + Debug + SizeMeasurable + VariableSizeMeasurable + 'static,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("SpaceLogicalMultiIndexUnsized")
             .finish_non_exhaustive()
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceLogicalMultiIndexUnsized<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceLogicalMultiIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -523,7 +528,8 @@ where
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceIndexOps<T> for SpaceLogicalMultiIndexUnsized<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceIndexOps<T>
+    for SpaceLogicalMultiIndexUnsized<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -561,7 +567,7 @@ where
     }
 
     async fn bootstrap(file: &mut File, table_name: String, version: u32) -> eyre::Result<()> {
-        SpaceIndexUnsized::<T, INNER_PAGE_SIZE>::bootstrap(file, table_name, version).await
+        SpaceIndexUnsized::<T, INNER_PAGE_SIZE, STRIDE>::bootstrap(file, table_name, version).await
     }
 
     async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
@@ -577,7 +583,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap as StdBTreeMap;
+    use alloc::collections::BTreeMap as StdBTreeMap;
 
     use data_bucket::page::PageId;
 

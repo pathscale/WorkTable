@@ -1,3 +1,4 @@
+use data_bucket::DEFAULT_PAGE_STRIDE;
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -5,7 +6,6 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
-use tokio::fs::File;
 
 use crate::prelude::{GeneralPage, Persistable, SpaceInfoPage, WT_DATA_EXTENSION, parse_page};
 
@@ -24,7 +24,7 @@ where
     SpaceInfoPage<PkGenState>: Persistable,
 {
     let data_file_path = format!("{}/{}", table_path, WT_DATA_EXTENSION);
-    let mut file = File::open(&data_file_path).await?;
-    let info: GeneralPage<SpaceInfoPage<PkGenState>> = parse_page::<_, 4096>(&mut file, 0).await?;
+    let mut file = crate::fsx::open(&data_file_path).await?;
+    let info: GeneralPage<SpaceInfoPage<PkGenState>> = parse_page::<_, 4096, DEFAULT_PAGE_STRIDE>(&mut file, 0).await?;
     Ok(info.inner.version)
 }

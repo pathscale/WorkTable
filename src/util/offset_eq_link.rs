@@ -22,20 +22,20 @@ impl<const DATA_LENGTH: usize> OffsetEqLink<DATA_LENGTH> {
     }
 }
 
-impl<const DATA_LENGTH: usize> std::hash::Hash for OffsetEqLink<DATA_LENGTH> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl<const DATA_LENGTH: usize> core::hash::Hash for OffsetEqLink<DATA_LENGTH> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.absolute_index().hash(state);
     }
 }
 
 impl<const DATA_LENGTH: usize> PartialOrd for OffsetEqLink<DATA_LENGTH> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl<const DATA_LENGTH: usize> Ord for OffsetEqLink<DATA_LENGTH> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.absolute_index().cmp(&other.absolute_index())
     }
 }
@@ -48,7 +48,7 @@ impl<const DATA_LENGTH: usize> PartialEq for OffsetEqLink<DATA_LENGTH> {
 
 impl<const DATA_LENGTH: usize> Eq for OffsetEqLink<DATA_LENGTH> {}
 
-impl<const DATA_LENGTH: usize> std::ops::Deref for OffsetEqLink<DATA_LENGTH> {
+impl<const DATA_LENGTH: usize> core::ops::Deref for OffsetEqLink<DATA_LENGTH> {
     type Target = Link;
 
     fn deref(&self) -> &Self::Target {
@@ -85,7 +85,7 @@ impl<const DATA_LENGTH: usize> SizeMeasurable for OffsetEqLink<DATA_LENGTH> {
 mod tests {
     use super::*;
     use data_bucket::page::PageId;
-    use std::collections::HashSet;
+    use hashbrown::HashSet;
 
     const TEST_DATA_LENGTH: usize = 4096;
 

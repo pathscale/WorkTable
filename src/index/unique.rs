@@ -4,15 +4,23 @@
 //! backend's guard type. That keeps generated code independent from the
 //! concurrency and reclamation strategy used by each index implementation.
 
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops::RangeBounds;
+// Only `UpstreamIndexMap`'s default node type and the tests name `Vec`, and the
+// first of those is behind `vanilla-index`. Ungated, this warns on every
+// `--no-default-features` build, which is the build that has to stay quiet.
+#[cfg(any(feature = "vanilla-index", test))]
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::ops::RangeBounds;
 
 use crate::IndexMap;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::concurrent::map::BTreeMap as VanillaIndexMap;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
 /// Point, mutation, and ordered-scan operations used by generated unique
@@ -131,6 +139,7 @@ where
     }
 }
 
+#[cfg(feature = "vanilla-index")]
 impl<K, V, Node> UniqueIndex<K, V> for VanillaIndexMap<K, V, Node>
 where
     K: Debug + Eq + Hash + Clone + Send + Ord + 'static,
@@ -198,15 +207,16 @@ where
         self.range(range).map(|(_, value)| value.clone())
     }
 }
-
 /// Vanilla upstream IndexSet map, kept distinct from WorkTable's default
 /// WorkTablesIndex alias so both implementations may coexist in one binary.
+#[cfg(feature = "vanilla-index")]
 pub type UpstreamIndexMap<K, V, Node = Vec<VanillaPair<K, V>>> = VanillaIndexMap<K, V, Node>;
+#[cfg(feature = "vanilla-index")]
 pub type UpstreamIndexPair<K, V> = VanillaPair<K, V>;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     use super::{UniqueIndex, UpstreamIndexMap};
     use crate::{ArcticIndex, CongeeIndex, IndexMap};
@@ -260,7 +270,7 @@ mod tests {
                 let iterated = index.iter_values().find(|(candidate, _)| *candidate == key);
                 panic!(
                     "backend={}, key={key}, point={value:?}, iterated={iterated:?}",
-                    std::any::type_name::<I>(),
+                    core::any::type_name::<I>(),
                 );
             }
         }
@@ -292,7 +302,7 @@ mod tests {
             threads.push(std::thread::spawn(move || {
                 for sequence in 0..1_000_u64 {
                     let key = worker * 1_000 + sequence;
-                    let backend = std::any::type_name::<I>();
+                    let backend = core::any::type_name::<I>();
                     assert_eq!(
                         index.insert_value_checked(key, key + 1),
                         Some(()),

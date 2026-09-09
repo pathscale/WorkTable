@@ -1,11 +1,14 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::panic::Location;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use alloc::{borrow::ToOwned, string::String, string::ToString, vec::Vec};
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
+use core::panic::Location;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::time::Duration;
+use hashbrown::{HashMap, HashSet};
 
 use data_bucket::page::PageId;
 use parking_lot::Mutex as ParkingMutex;
@@ -542,8 +545,8 @@ where
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use hashbrown::HashMap;
 
     use super::*;
 
@@ -570,7 +573,7 @@ mod lifecycle_tests {
         }
 
         fn iter_event_ids(&self) -> impl Iterator<Item = (TestIndex, IndexChangeEventId)> {
-            std::iter::empty()
+            core::iter::empty()
         }
 
         fn sort(&mut self) {}
@@ -789,7 +792,7 @@ mod lifecycle_tests {
             .unwrap();
 
         assert_eq!(
-            batch.get(&1.into()).unwrap(),
+            batch.get(&PageId::from(1u32)).unwrap(),
             &vec![
                 (
                     Link {
@@ -853,7 +856,7 @@ mod lifecycle_tests {
             .get_batch_data_op()
             .unwrap();
 
-        let page_one_writes = batch.get(&1.into()).unwrap();
+        let page_one_writes = batch.get(&PageId::from(1u32)).unwrap();
         assert_eq!(
             page_one_writes,
             &vec![
@@ -877,7 +880,7 @@ mod lifecycle_tests {
             "the complete earlier group must be applied"
         );
         assert!(
-            !batch.contains_key(&2.into()),
+            !batch.contains_key(&PageId::from(2u32)),
             "the blocking group must stay queued, not be applied without its earlier events"
         );
         assert_eq!(analyzer.len(), 2, "both rows of the blocked group remain queued");
@@ -1266,7 +1269,7 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     /// [`event_ledger::enabled`].
     event_ledger: Arc<EventLedger>,
     #[cfg(test)]
-    pop_race_window_gate: Option<std::sync::Arc<PopRaceWindowGate>>,
+    pop_race_window_gate: Option<alloc::sync::Arc<PopRaceWindowGate>>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
@@ -1564,14 +1567,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     /// This is intentionally separate from `VacuumStats`: online vacuum makes
     /// freed pages durably reusable, but does not truncate `.wt.data`.
     /// Operators can sample this value to observe physical growth and reuse.
-    pub async fn persisted_data_file_size_bytes(&self) -> std::io::Result<u64> {
-        tokio::fs::metadata(format!(
+    pub async fn persisted_data_file_size_bytes(&self) -> Result<u64, crate::fsx::Error> {
+        // `metadata` answers with the length, which is the only thing anything
+        // here ever asked a metadata handle for.
+        crate::fsx::metadata(format!(
             "{}/{}",
             self.table_path.trim_end_matches('/'),
             WT_DATA_EXTENSION
         ))
         .await
-        .map(|metadata| metadata.len())
     }
 
     /// Returns a sink that lets vacuum queue persistence operations for row

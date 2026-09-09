@@ -481,9 +481,14 @@ mod tests {
         );
     }
 
+    /// This used to assert the opposite. A persisted table was refused any page
+    /// size but 16384, because the seeks computed every offset from a hardcoded
+    /// constant while the generated table threaded the configured one, so the
+    /// two disagreed and the file was silently corrupt. Both take the stride as
+    /// a parameter now.
     #[test]
-    fn persisted_tables_reject_non_default_page_size() {
-        let error = expand(quote! {
+    fn persisted_tables_accept_a_non_default_page_size() {
+        expand(quote! {
             name: PersistedSmallPages,
             persist: true,
             columns: {
@@ -493,10 +498,27 @@ mod tests {
                 page_size: 8192,
             }
         })
+        .expect("a persisted table may choose its page size");
+    }
+
+    /// What is left of the rule: a page on disk carries a 28-byte header, so
+    /// one this small is mostly header.
+    #[test]
+    fn persisted_tables_reject_a_page_smaller_than_the_floor() {
+        let error = expand(quote! {
+            name: PersistedTinyPages,
+            persist: true,
+            columns: {
+                id: u64 primary_key,
+            },
+            config: {
+                page_size: 64,
+            }
+        })
         .unwrap_err();
 
         assert!(
-            error.to_string().contains("cannot be combined with `persist: true`"),
+            error.to_string().contains("below the 512-byte"),
             "unexpected error: {error}"
         );
     }

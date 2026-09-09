@@ -19,31 +19,42 @@
 
 use crate::model::{Columns, IndexBackend, Persistence};
 
-/// data_bucket's on-disk layer seeks with its own hardcoded `PAGE_SIZE` of
-/// 16384 bytes (`seek_to_page_start`, `seek_by_link`, `persist_page`), while
-/// the generated table threads the user's `page_size` through its page-id and
-/// length arithmetic. Any other value therefore reads and writes the wrong
-/// file offsets as soon as the table persists, silently corrupting it.
-/// In-memory tables never seek a file: for them `page_size` only sizes index
-/// nodes and stays configurable.
-const DATA_BUCKET_PAGE_SIZE: u32 = 16384;
+/// Bytes of `GeneralHeader` at the front of every persisted page. A page has
+/// to be larger than this or there is no room left for a row.
+const GENERAL_HEADER_SIZE: u32 = 28;
 
+/// The smallest persisted page worth allowing. Below this the header is most
+/// of the page and the table spends its time on page transitions; the number
+/// is a floor against obvious mistakes, not a tuned value.
+///
+/// It applies to persisted tables only. An in-memory table writes no header,
+/// so its `page_size` only sizes index nodes and a small one is a legitimate
+/// choice rather than a mistake.
+const MINIMUM_PERSISTED_PAGE_SIZE: u32 = 512;
+
+/// A persisted table used to be refused any page size but 16384, because
+/// `data_bucket` computed every offset from a hardcoded `PAGE_SIZE` in
+/// `seek_to_page_start`, `seek_by_link` and `persist_page` while the generated
+/// table threaded the configured size through its page-id arithmetic. The two
+/// disagreed and the file was silently corrupt.
+///
+/// Those seeks take the stride as a parameter now, and the generated table
+/// passes its own constant to every one of them, in the data file and the index
+/// file alike. The restriction is gone. What is left is the arithmetic that
+/// still has to hold.
 pub fn validate_page_size(config: Option<&crate::model::Config>, persistence: Persistence) -> syn::Result<()> {
     let Some(config) = config else { return Ok(()) };
     let Some(page_size) = config.page_size else {
         return Ok(());
     };
-    if persistence.is_persisted() && page_size != DATA_BUCKET_PAGE_SIZE {
-        let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
+    let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
+    if persistence.is_persisted() && page_size < MINIMUM_PERSISTED_PAGE_SIZE {
         return Err(syn::Error::new(
             span,
             format!(
-                "`page_size: {page_size}` cannot be combined with `persist: true`: the on-disk \
-                 layer (data_bucket) hardcodes {DATA_BUCKET_PAGE_SIZE}-byte pages in every file \
-                 seek, so a persisted table with any other page size reads and writes the wrong \
-                 pages and corrupts its files. Remove `page_size` (or set it to \
-                 {DATA_BUCKET_PAGE_SIZE}); custom page sizes remain available for in-memory \
-                 tables, where they only size index nodes"
+                "`page_size: {page_size}` is below the {MINIMUM_PERSISTED_PAGE_SIZE}-byte \
+                 minimum for a persisted table. Each page on disk carries a \
+                 {GENERAL_HEADER_SIZE}-byte header, so a page this small is mostly header"
             ),
         ));
     }

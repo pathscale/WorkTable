@@ -8,7 +8,7 @@ does not provide multi-table transactions or multi-process access.
 ## In-memory quick start
 
 ```rust
-# fn main() { futures::executor::block_on(async {
+# fn main() { nagoya::block_on(async {
 use worktable::prelude::*;
 use worktable::worktable;
 
@@ -38,7 +38,7 @@ String and tuple primary keys accept borrowed forms, so callers do not need to
 write an explicit clone merely to perform a lookup or delete.
 
 ```rust
-# fn main() { futures::executor::block_on(async {
+# fn main() { nagoya::block_on(async {
 use worktable::prelude::*;
 use worktable::worktable;
 

@@ -1,4 +1,6 @@
 use crate::remove_dir_if_exists;
+// A tokio `TcpStream`, so tokio's extension traits: this is the mock S3
+// server the test talks to, not the storage path the crate took off tokio.
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;

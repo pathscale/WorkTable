@@ -59,7 +59,7 @@ fn every_broken_rule_is_reported() {
          persist: true,
          columns: { id: u64 primary_key, label: String },
          indexes: { label_idx: label unique using congee },
-         config: { page_size: 4096 }",
+         config: { page_size: 64 }",
     );
 
     assert!(checked.schema.is_some());

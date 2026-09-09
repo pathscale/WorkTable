@@ -186,7 +186,7 @@ impl InMemoryGenerator {
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
-                let pks = std::cell::RefCell::new(Vec::new());
+                let pks = core::cell::RefCell::new(Vec::new());
                 self.iter_with(|row| {
                     if row.#field == by {
                         pks.borrow_mut().push(row.get_primary_key());

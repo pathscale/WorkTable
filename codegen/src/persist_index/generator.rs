@@ -193,6 +193,7 @@ impl Generator {
     fn gen_persist_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_work_table_ident();
+        let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
@@ -216,15 +217,15 @@ impl Generator {
                     },
                     _ => quote! {
                         {
-                            let mut file = tokio::fs::File::create(format!("{}/{}{}", path, #index_name_literal, #index_extension)).await?;
+                            let mut file = worktable::prelude::fsx::create(format!("{}/{}{}", path, #index_name_literal, #index_extension)).await?;
                             let mut info = #ident::space_info_default();
                             info.inner.page_count = self.#i.1.len() as u32 + self.#i.0.len() as u32;
-                            persist_page(&mut info, &mut file).await?;
+                            persist_page::<_, { #page_const_name as u32 }>(&mut info, &mut file).await?;
                             for mut page in &mut self.#i.0 {
-                                persist_page(&mut page, &mut file).await?;
+                                persist_page::<_, { #page_const_name as u32 }>(&mut page, &mut file).await?;
                             }
                             for mut page in &mut self.#i.1 {
-                                persist_page(&mut page, &mut file).await?;
+                                persist_page::<_, { #page_const_name as u32 }>(&mut page, &mut file).await?;
                             }
                         }
                     },
@@ -295,18 +296,18 @@ impl Generator {
                     _ => quote! {
                         let #i: #parsed_type = {
                             let mut #i = vec![];
-                            let mut file = tokio::fs::File::open(format!("{}/{}{}", path, #literal, #index_extension)).await?;
-                            let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut file, 0).await?;
-                            let file_length = file.metadata().await?.len();
+                            let mut file = worktable::prelude::fsx::open(format!("{}/{}{}", path, #literal, #index_extension)).await?;
+                            let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut file, 0).await?;
+                            let file_length = worktable::prelude::fsx::file_metadata(&mut file).await?;
                             // Pages sit at a fixed #page_const_name stride
                             // (header inside the slot): the next free page id
                             // is ceil(len / stride). The previous divisor used
                             // stride + header and an unconditional +1.
                             let page_id = file_length.div_ceil(#page_const_name as u64);
-                            let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
-                            let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
+                            let next_page_id = worktable::prelude::Arc::new(core::sync::atomic::AtomicU32::new(page_id as u32));
+                            let toc = IndexTableOfContents::<_, { #inner_const_name as u32 }, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
                             for page_id in toc.iter().map(|(_, page_id)| page_id) {
-                                let index = parse_page::<_, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
+                                let index = parse_page::<_, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
                                 #i.push(index);
                             }
                             (toc.pages, #i)
@@ -370,6 +371,7 @@ impl Generator {
     fn gen_get_persisted_index_fn(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let const_name = name_generator.get_page_inner_size_const_ident();
+        let page_const_name = name_generator.get_page_size_const_ident();
 
         let idents = self
             .struct_def
@@ -401,7 +403,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                         }
-                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend == Some(ArtBackend::ArcticMulti) {
@@ -415,7 +417,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(IndexPage::from_node(&node, size));
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend == Some(ArtBackend::Arctic) && is_unsized(&ty.to_string()) {
@@ -428,7 +430,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                         }
-                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend == Some(ArtBackend::Arctic) {
@@ -442,7 +444,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(IndexPage::from_node(&node, size));
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend.is_some() {
@@ -462,7 +464,7 @@ impl Generator {
                                 let page = UnsizedIndexPage::from_node(node.as_ref());
                                 pages.push(page);
                             }
-                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                             let #i = (toc.pages, pages);
                         })
                     } else {
@@ -472,7 +474,7 @@ impl Generator {
                                 let page = UnsizedIndexPage::from_node(node.as_ref());
                                 pages.push(page);
                             }
-                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                             let #i = (toc.pages, pages);
                         })
                     }
@@ -491,7 +493,7 @@ impl Generator {
                                 .collect();
                             pages.push(IndexPage::from_node(&node, size));
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else {
@@ -502,7 +504,7 @@ impl Generator {
                             let page = IndexPage::from_node(&node, size);
                             pages.push(page);
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 }

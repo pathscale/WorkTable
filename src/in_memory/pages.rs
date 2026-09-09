@@ -1,6 +1,14 @@
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use alloc::{boxed::Box, vec::Vec};
 use arc_swap::ArcSwap;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
+use core::sync::atomic::{AtomicU64, Ordering};
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
+use hashbrown::HashSet;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 #[cfg(feature = "perf_measurements")]
@@ -11,14 +19,6 @@ use rkyv::{
     rancor::Strategy,
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
-};
-use std::collections::{HashSet, VecDeque};
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
-use std::{
-    fmt::Debug,
-    sync::Arc,
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
@@ -183,7 +183,7 @@ struct PageDirectoryChunk<T> {
 impl<T> PageDirectoryChunk<T> {
     fn new() -> Self {
         Self {
-            pages: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            pages: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
         }
     }
 }
@@ -203,7 +203,7 @@ struct PageDirectory<T> {
 impl<T> PageDirectory<T> {
     fn new(pages: &[Arc<T>]) -> Self {
         let directory = Self {
-            roots: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            roots: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
             chunks: Mutex::new(Vec::new()),
         };
         for (index, page) in pages.iter().enumerate() {
@@ -223,7 +223,7 @@ impl<T> PageDirectory<T> {
             chunk = root.load(Ordering::Acquire);
             if chunk.is_null() {
                 chunks.push(Box::new(PageDirectoryChunk::new()));
-                chunk = std::ptr::from_ref::<PageDirectoryChunk<T>>(
+                chunk = core::ptr::from_ref::<PageDirectoryChunk<T>>(
                     chunks.last().expect("the chunk was just appended").as_ref(),
                 )
                 .cast_mut();
@@ -466,7 +466,7 @@ where
     /// thread can later collect it; it executes only after every reader
     /// pinned right now has unpinned.
     fn retire(&self, item: Retired) {
-        self.retire_many(std::iter::once(item));
+        self.retire_many(core::iter::once(item));
     }
 
     /// Queue several retired items behind one grace marker.
@@ -1228,16 +1228,19 @@ where
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn page_has_cells(&self, page_id: PageId) -> Result<bool, ExecutionError> {
         let page = self.page_ref(page_id)?;
         Ok(page.has_live_cells())
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn page_live_cell_count(&self, page_id: PageId) -> Result<u32, ExecutionError> {
         let page = self.page_ref(page_id)?;
         Ok(page.live_cell_count())
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn set_loaded_row_count(&self, count: usize) -> Result<(), ExecutionError> {
         let count = u64::try_from(count).map_err(|_| ExecutionError::RowCountOverflow)?;
         self.row_count.store(count, Ordering::Release);
@@ -1246,6 +1249,7 @@ where
 
     /// Completes the vacuum's source-side accounting after every index has
     /// been swung to the destination link.
+    #[cfg(feature = "std")]
     pub(crate) fn remove_moved_cell(&self, link: Link) -> Result<(), ExecutionError> {
         self.remove_cell(link)
     }
@@ -1277,6 +1281,7 @@ where
     /// concurrent low-level mutation may access either physical row while the
     /// move is in progress. After success, the caller must swing every index
     /// reference to the returned link before retiring `from_link`.
+    #[cfg(feature = "std")]
     pub(crate) unsafe fn move_row_for_vacuum(
         &self,
         from_link: Link,
@@ -1347,7 +1352,7 @@ where
 
     /// Heap bytes reserved by the fixed-size data-page allocations.
     pub fn allocated_bytes(&self) -> usize {
-        self.pages.len() * std::mem::size_of::<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>()
+        self.pages.len() * core::mem::size_of::<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>()
     }
 
     /// Pages allocated but currently on the empty list, so reusable without
@@ -1391,6 +1396,7 @@ where
     /// current page serves as the sweep's first destination. Concurrent
     /// inserts are safe: the insert path rechecks `current_page_id` under the
     /// page barrier before writing and retries if the target changed.
+    #[cfg(feature = "std")]
     pub(crate) fn rotate_current_for_vacuum(&self, page_id: PageId) {
         debug_assert!(
             self.get_page(page_id).is_some(),
@@ -1437,12 +1443,12 @@ impl ExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use alloc::sync::Arc;
+    use core::sync::atomic::Ordering;
+    use core::time::Duration;
+    use hashbrown::HashSet;
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
     use std::time::Instant;
 
     use parking_lot::RwLock;
@@ -1716,7 +1722,7 @@ mod tests {
     impl Drop for RemoteReader {
         fn drop(&mut self) {
             let (disconnected, _rx) = mpsc::channel();
-            let _ = std::mem::replace(&mut self.commands, disconnected);
+            let _ = core::mem::replace(&mut self.commands, disconnected);
             if let Some(thread) = self.thread.take() {
                 thread.join().unwrap();
             }

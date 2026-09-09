@@ -84,7 +84,7 @@ fn select_by_key(c: &mut Criterion) {
     for (fan_out, keys) in SHAPES {
         group.throughput(Throughput::Elements(fan_out));
 
-        let table = futures::executor::block_on(populated_wti(fan_out, keys));
+        let table = nagoya::block_on(populated_wti(fan_out, keys));
         group.bench_with_input(BenchmarkId::new("wti_string", fan_out), &fan_out, |b, _| {
             b.iter(|| {
                 let key = string_key(fastrand::u64(0..keys));
@@ -92,7 +92,7 @@ fn select_by_key(c: &mut Criterion) {
             })
         });
 
-        let table = futures::executor::block_on(populated_arctic(fan_out, keys));
+        let table = nagoya::block_on(populated_arctic(fan_out, keys));
         group.bench_with_input(BenchmarkId::new("arctic_u128", fan_out), &fan_out, |b, _| {
             b.iter(|| {
                 let key = hash_of(fastrand::u64(0..keys));
@@ -108,7 +108,7 @@ fn insert(c: &mut Criterion) {
     for (fan_out, keys) in SHAPES {
         // Steady state: the table already holds `fan_out` rows per key and
         // each measured insert lands on an existing key.
-        let table = futures::executor::block_on(populated_wti(fan_out, keys));
+        let table = nagoya::block_on(populated_wti(fan_out, keys));
         group.bench_with_input(BenchmarkId::new("wti_string", fan_out), &fan_out, |b, _| {
             b.iter_batched(
                 || WtiStringAdjacencyRow {
@@ -116,12 +116,12 @@ fn insert(c: &mut Criterion) {
                     source: string_key(fastrand::u64(0..keys)),
                     payload: u64::MAX,
                 },
-                |row| futures::executor::block_on(table.insert(black_box(row))).unwrap(),
+                |row| nagoya::block_on(table.insert(black_box(row))).unwrap(),
                 BatchSize::SmallInput,
             )
         });
 
-        let table = futures::executor::block_on(populated_arctic(fan_out, keys));
+        let table = nagoya::block_on(populated_arctic(fan_out, keys));
         group.bench_with_input(BenchmarkId::new("arctic_u128", fan_out), &fan_out, |b, _| {
             b.iter_batched(
                 || ArcticHashAdjacencyRow {
@@ -129,7 +129,7 @@ fn insert(c: &mut Criterion) {
                     source: hash_of(fastrand::u64(0..keys)),
                     payload: u64::MAX,
                 },
-                |row| futures::executor::block_on(table.insert(black_box(row))).unwrap(),
+                |row| nagoya::block_on(table.insert(black_box(row))).unwrap(),
                 BatchSize::SmallInput,
             )
         });

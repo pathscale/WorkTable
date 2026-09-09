@@ -1,3 +1,4 @@
+use alloc::{string::String, string::ToString};
 pub trait AvailableIndex {
     fn to_string_value(&self) -> String;
 }

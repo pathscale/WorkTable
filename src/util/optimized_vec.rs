@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 /// Struct for storing data in a vector with stable indexes and slot reuse.
 /// Slots are `Option<T>`: `remove` is `Option::take`, so the value moves out
 /// without a `Clone` bound and the slot is freed immediately. The previous
@@ -201,7 +202,7 @@ mod tests {
     /// count proves the removed value is the only remaining owner.
     #[test]
     fn test_optimized_vec_remove_moves_without_clone() {
-        use std::rc::Rc;
+        use alloc::rc::Rc;
 
         struct NotClone(#[allow(dead_code)] Rc<()>);
 

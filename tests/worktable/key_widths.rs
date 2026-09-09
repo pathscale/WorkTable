@@ -66,7 +66,7 @@ macro_rules! width_case {
                 );
 
                 // And the entry comes out again.
-                futures::executor::block_on(table.delete(2u64)).expect("delete");
+                nagoya::block_on(table.delete(2u64)).expect("delete");
                 assert!(
                     table.select_by_key(42 as $key).is_none(),
                     "{}: {} index still resolves a deleted row",

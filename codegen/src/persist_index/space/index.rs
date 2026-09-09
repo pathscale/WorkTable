@@ -9,6 +9,7 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_space_secondary_index_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let page_const_name = name_generator.get_page_size_const_ident();
 
         let fields: Vec<_> = self
             .struct_def
@@ -20,31 +21,31 @@ impl Generator {
                 let t = self.field_types.get(i).expect("field type was collected");
                 Ok(match layout.art_backend {
                     Some(ArtBackend::Arctic) if is_unsized(&t.to_string()) => quote! {
-                        #i: SpaceLogicalIndexUnsized<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalIndexUnsized<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                     Some(ArtBackend::Arctic) => quote! {
-                        #i: SpaceLogicalIndex<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalIndex<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                     Some(ArtBackend::ArcticMulti) if is_unsized(&t.to_string()) => quote! {
-                        #i: SpaceLogicalMultiIndexUnsized<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalMultiIndexUnsized<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                     Some(ArtBackend::ArcticMulti) => quote! {
-                        #i: SpaceLogicalMultiIndex<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalMultiIndex<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                     Some(ArtBackend::Congee) => quote! {
                         #i: SpaceCongeeIndex<#t, { #inner_const_name as u32}>,
                     },
                     None if layout.logical_wti && is_unsized(&t.to_string()) => quote! {
-                        #i: SpaceLogicalIndexUnsized<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalIndexUnsized<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                     None if layout.logical_wti => quote! {
-                        #i: SpaceLogicalIndex<#t, { #inner_const_name as u32}>,
+                        #i: SpaceLogicalIndex<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                     None if is_unsized(&t.to_string()) => quote! {
-                        #i: SpaceIndexUnsized<#t, { #inner_const_name as u32}>,
+                        #i: SpaceIndexUnsized<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                     None => quote! {
-                        #i: SpaceIndex<#t, { #inner_const_name as u32}>,
+                        #i: SpaceIndex<#t, { #inner_const_name as u32}, { #page_const_name as u32 }>,
                     },
                 })
             })

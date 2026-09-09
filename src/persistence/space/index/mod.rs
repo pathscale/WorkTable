@@ -1,16 +1,18 @@
+use alloc::{string::String, string::ToString, vec::Vec};
 mod page_aliases;
 mod reconstruct;
 mod table_of_contents;
 mod unsized_;
 mod util;
 
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
+use alloc::sync::Arc;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::sync::atomic::{AtomicU32, Ordering};
+use hashbrown::HashMap;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::fsx::File;
 use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
@@ -22,6 +24,7 @@ use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
 use indexset::concurrent::multimap::BTreeMultiMap;
 use indexset::core::pair::Pair;
+use nagoya::io::Write as _;
 use rkyv::de::Pool;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -29,8 +32,6 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize, rancor};
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 
 use crate::persistence::SpaceIndexOps;
 use crate::persistence::space::{BatchChangeEvent, open_or_create_file};
@@ -42,16 +43,16 @@ pub use unsized_::SpaceIndexUnsized;
 pub use util::{map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general};
 
 #[derive(Debug)]
-pub struct SpaceIndex<T: Ord + Eq, const INNER_PAGE_SIZE: u32> {
+pub struct SpaceIndex<T: Ord + Eq, const INNER_PAGE_SIZE: u32, const STRIDE: u32> {
     space_id: SpaceId,
-    table_of_contents: IndexTableOfContents<(T, Link), INNER_PAGE_SIZE>,
+    table_of_contents: IndexTableOfContents<(T, Link), INNER_PAGE_SIZE, STRIDE>,
     next_page_id: Arc<AtomicU32>,
     index_file: File,
     #[allow(dead_code)]
     info: GeneralPage<SpaceInfoPage<()>>,
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -110,9 +111,9 @@ where
         } else {
             open_or_create_file(index_file_path).await?
         };
-        let info = parse_page::<_, INNER_PAGE_SIZE>(&mut index_file, 0).await?;
+        let info = parse_page::<_, INNER_PAGE_SIZE, STRIDE>(&mut index_file, 0).await?;
 
-        let file_length = index_file.metadata().await?.len();
+        let file_length = crate::fsx::file_metadata(&mut index_file).await?;
         let page_id = if file_length % (INNER_PAGE_SIZE as u64 + GENERAL_HEADER_SIZE as u64) == 0 {
             file_length / (INNER_PAGE_SIZE as u64 + GENERAL_HEADER_SIZE as u64)
         } else {
@@ -146,7 +147,7 @@ where
     async fn add_index_page(&mut self, node: IndexPage<T>, page_id: PageId) -> eyre::Result<()> {
         let header = GeneralHeader::new(page_id, PageType::Index, self.space_id);
         let mut general_page = GeneralPage { inner: node, header };
-        persist_page(&mut general_page, &mut self.index_file).await?;
+        persist_page::<_, STRIDE>(&mut general_page, &mut self.index_file).await?;
         Ok(())
     }
 
@@ -160,7 +161,7 @@ where
         let mut new_node_id = None;
 
         let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
-        let mut utility = IndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id).await?;
+        let mut utility = IndexPage::<T>::parse_index_page_utility::<STRIDE>(&mut self.index_file, page_id).await?;
         utility.slots.insert(index, utility.current_index);
         utility.slots.remove(size);
         utility.current_length += 1;
@@ -168,16 +169,21 @@ where
             key: value.key.clone(),
             link: value.value,
         };
-        utility.current_index =
-            IndexPage::<T>::persist_value(&mut self.index_file, page_id, size, index_value, utility.current_index)
-                .await?;
+        utility.current_index = IndexPage::<T>::persist_value::<STRIDE>(
+            &mut self.index_file,
+            page_id,
+            size,
+            index_value,
+            utility.current_index,
+        )
+        .await?;
 
         if node_id.key < value.key {
             utility.node_id = value.clone().into();
             new_node_id = Some(value);
         }
 
-        IndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility).await?;
+        IndexPage::<T>::persist_index_page_utility::<STRIDE>(&mut self.index_file, page_id, utility).await?;
 
         Ok(new_node_id)
     }
@@ -192,7 +198,7 @@ where
         let mut new_node_id = None;
 
         let size = get_index_page_size_from_data_length::<T>(INNER_PAGE_SIZE as usize);
-        let mut utility = IndexPage::<T>::parse_index_page_utility(&mut self.index_file, page_id).await?;
+        let mut utility = IndexPage::<T>::parse_index_page_utility::<STRIDE>(&mut self.index_file, page_id).await?;
         let value_position = *utility
             .slots
             .get(index)
@@ -203,7 +209,7 @@ where
         utility.slots.remove(index);
         utility.slots.push(0);
         utility.current_length -= 1;
-        IndexPage::<T>::remove_value(&mut self.index_file, page_id, size, utility.current_index).await?;
+        IndexPage::<T>::remove_value::<STRIDE>(&mut self.index_file, page_id, size, utility.current_index).await?;
 
         if node_id.key == value.key {
             let index = *utility
@@ -211,11 +217,12 @@ where
                 .get(index - 1)
                 .expect("slots always should exist in `size` bounds");
             utility.node_id =
-                IndexPage::<T>::read_value_with_index(&mut self.index_file, page_id, size, index as usize).await?;
+                IndexPage::<T>::read_value_with_index::<STRIDE>(&mut self.index_file, page_id, size, index as usize)
+                    .await?;
             new_node_id = Some(utility.node_id.clone().into())
         }
 
-        IndexPage::<T>::persist_index_page_utility(&mut self.index_file, page_id, utility).await?;
+        IndexPage::<T>::persist_index_page_utility::<STRIDE>(&mut self.index_file, page_id, utility).await?;
 
         Ok(new_node_id)
     }
@@ -292,7 +299,8 @@ where
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
             .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
-        let mut page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_id.into()).await?;
+        let mut page =
+            parse_page::<IndexPage<T>, INNER_PAGE_SIZE, STRIDE>(&mut self.index_file, page_id.into()).await?;
         let splitted_page = page.inner.split(split_index);
         let new_page_id = if let Some(id) = self.table_of_contents.pop_empty_page_id() {
             id
@@ -316,7 +324,7 @@ where
         // entries only). The reverse order left a durable TOC entry pointing
         // at absent or stale bytes.
         self.add_index_page(splitted_page, new_page_id).await?;
-        persist_page(&mut page, &mut self.index_file).await?;
+        persist_page::<_, STRIDE>(&mut page, &mut self.index_file).await?;
         self.table_of_contents.persist(&mut self.index_file).await?;
 
         Ok(())
@@ -327,7 +335,8 @@ where
         let indexset = BTreeMap::<T, Link>::with_maximum_node_size(size);
         let mut nodes = Vec::with_capacity(self.table_of_contents.iter().count());
         for (_, page_id) in self.table_of_contents.iter() {
-            let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, (*page_id).into()).await?;
+            let page =
+                parse_page::<IndexPage<T>, INNER_PAGE_SIZE, STRIDE>(&mut self.index_file, (*page_id).into()).await?;
             nodes.push(page.inner.get_node());
         }
         indexset.attach_nodes(nodes);
@@ -343,7 +352,8 @@ where
         let indexset = BTreeMultiMap::<T, Link>::with_maximum_node_size(size);
         let mut pages = Vec::with_capacity(self.table_of_contents.iter().count());
         for ((key, link), page_id) in self.table_of_contents.iter() {
-            let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, (*page_id).into()).await?;
+            let page =
+                parse_page::<IndexPage<T>, INNER_PAGE_SIZE, STRIDE>(&mut self.index_file, (*page_id).into()).await?;
             pages.push((
                 Pair {
                     key: key.clone(),
@@ -357,7 +367,7 @@ where
     }
 }
 
-impl<T, const INNER_PAGE_SIZE: u32> SpaceIndexOps<T> for SpaceIndex<T, INNER_PAGE_SIZE>
+impl<T, const INNER_PAGE_SIZE: u32, const STRIDE: u32> SpaceIndexOps<T> for SpaceIndex<T, INNER_PAGE_SIZE, STRIDE>
 where
     T: Archive
         + Ord
@@ -410,7 +420,7 @@ where
             header: GeneralHeader::new(0.into(), PageType::SpaceInfo, 0.into()),
             inner: info,
         };
-        persist_page(&mut page, file).await
+        Ok(persist_page::<_, STRIDE>(&mut page, file).await?)
     }
 
     async fn process_change_event(&mut self, event: ChangeEvent<Pair<T, Link>>) -> eyre::Result<()> {
@@ -442,7 +452,7 @@ where
             } => self.process_split_node(node_id, split_index).await,
         }?;
         // The partial page writes above can end with a buffered `write_all`
-        // that `tokio::fs::File` completes on a background blocking task.
+        // that the file behind `fsx` completes on the calling thread.
         // Flush before reporting the event processed so the bytes are visible
         // to any other handle that opens this file afterwards.
         self.index_file.flush().await?;
@@ -482,8 +492,11 @@ where
                     let page_to_update = if let Some(page) = page {
                         page
                     } else {
-                        let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_index.into())
-                            .await?;
+                        let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE, STRIDE>(
+                            &mut self.index_file,
+                            page_index.into(),
+                        )
+                        .await?;
                         pages.insert(page_index, page);
                         pages
                             .get_mut(&page_index)
@@ -564,8 +577,11 @@ where
                     let page_to_update = if let Some(page) = page {
                         page
                     } else {
-                        let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE>(&mut self.index_file, page_index.into())
-                            .await?;
+                        let page = parse_page::<IndexPage<T>, INNER_PAGE_SIZE, STRIDE>(
+                            &mut self.index_file,
+                            page_index.into(),
+                        )
+                        .await?;
                         pages.insert(page_index, page);
                         pages
                             .get_mut(&page_index)
@@ -628,7 +644,7 @@ where
         // authority (`parse_indexset` and the strict load audit iterate TOC
         // entries only). The reverse order left a durable TOC entry pointing
         // at absent or stale bytes.
-        persist_pages_batch(pages.values().cloned().collect(), &mut self.index_file).await?;
+        persist_pages_batch::<_, STRIDE>(pages.values().cloned().collect(), &mut self.index_file).await?;
         self.table_of_contents.persist(&mut self.index_file).await?;
         // The batch's last write is buffered; flush so the batch is visible
         // to other handles once it reports done.
@@ -639,6 +655,7 @@ where
 
 #[cfg(test)]
 mod test {
+    use data_bucket::DEFAULT_PAGE_STRIDE;
     use data_bucket::{INNER_PAGE_SIZE, IndexPage, IndexValue, Persistable, get_index_page_size_from_data_length};
 
     use super::*;
@@ -651,7 +668,7 @@ mod test {
     #[tokio::test]
     async fn orphan_page_from_crash_between_page_and_toc_write_is_ignored_on_reload() {
         use indexset::cdc::change::ChangeEvent;
-        use tokio::io::AsyncWriteExt;
+        use nagoya::io::Write as _;
 
         let dir = std::env::temp_dir().join(format!("wt_orphan_crash_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -669,7 +686,7 @@ mod test {
         };
 
         {
-            let mut index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(&path, 0.into(), 1)
+            let mut index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(&path, 0.into(), 1)
                 .await
                 .unwrap();
             index
@@ -687,7 +704,7 @@ mod test {
             index.index_file.flush().await.unwrap();
         }
 
-        let mut reloaded = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(&path, 0.into(), 1)
+        let mut reloaded = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(&path, 0.into(), 1)
             .await
             .unwrap();
         let restored = reloaded.parse_indexset().await.unwrap();

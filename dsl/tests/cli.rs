@@ -71,10 +71,13 @@ fn scan_finds_declarations_in_a_function_body() {
 /// declaration".
 ///
 /// The difference is not academic and this test exists because the first
-/// version of the binary got it wrong. `page_size: 4096` beside
-/// `persist: true` parses perfectly: it is a well-formed declaration. The
-/// macro refuses it, because the on-disk layer hardcodes 16384-byte pages and
-/// any other value reads and writes the wrong file offsets.
+/// version of the binary got it wrong. `page_size: 64` parses perfectly: it is
+/// a well-formed declaration. The macro refuses it, because a persisted page
+/// that small is mostly its own 28-byte header.
+///
+/// The fixture used to be `page_size: 4096` beside `persist: true`, refused
+/// while the on-disk layer hardcoded its stride. It takes the stride as a
+/// parameter now, so that combination is accepted and tests nothing.
 ///
 /// A round trip built on `Schema::parse` therefore reports success for output
 /// that does not compile, which is precisely the mistake a second
@@ -82,7 +85,7 @@ fn scan_finds_declarations_in_a_function_body() {
 /// to stop.
 #[test]
 fn a_declaration_the_macro_refuses_is_not_a_successful_round_trip() {
-    let refused = "name: T, persist: true, columns: { id: u64 primary_key }, config: { page_size: 4096 },";
+    let refused = "name: T, persist: true, columns: { id: u64 primary_key }, config: { page_size: 64 },";
 
     // It parses. That is the trap.
     assert!(

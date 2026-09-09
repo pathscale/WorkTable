@@ -1,17 +1,18 @@
+use alloc::{string::String, vec::Vec};
 mod art_index;
 mod data;
 mod index;
 mod logical_index;
 
-use std::collections::HashMap;
-use std::future::Future;
+use core::future::Future;
+use hashbrown::HashMap;
 use std::path::Path;
 
+use crate::fsx::File;
 use data_bucket::page::PageId;
 use data_bucket::{GeneralPage, Link, SpaceInfoPage};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
-use tokio::fs::{File, OpenOptions};
 
 pub use art_index::{
     ArtPersistenceKey, SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex,
@@ -88,10 +89,9 @@ pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
 
 pub async fn open_or_create_file<S: AsRef<str>>(path: S) -> eyre::Result<File> {
     let path = Path::new(path.as_ref());
-    Ok(OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create(!path.exists())
-        .open(path)
-        .await?)
+    Ok(if path.exists() {
+        crate::fsx::open(path).await?
+    } else {
+        crate::fsx::open_or_create(path).await?
+    })
 }

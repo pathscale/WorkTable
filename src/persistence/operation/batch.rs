@@ -1,8 +1,10 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::{string::ToString, vec::Vec};
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
+use hashbrown::HashMap;
 
 use data_bucket::page::PageId;
 use data_bucket::{Link, SizeMeasurable};
@@ -549,9 +551,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use data_bucket::Link;
+    use data_bucket::page::PageId;
     use indexset::core::pair::Pair;
     use uuid::Uuid;
 
@@ -599,7 +602,7 @@ mod tests {
         // Deliberately reverse vector order: operation ids, not incidental
         // collection order, define which bytes are newest.
         let batch = latest_data_writes(&[insert(2, new_link, vec![2; 6]), insert(1, old_link, vec![1; 4])]);
-        let writes = batch.get(&1.into()).unwrap();
+        let writes = batch.get(&PageId::from(1u32)).unwrap();
 
         assert_eq!(writes, &vec![(new_link, vec![2; 6])]);
     }
@@ -619,7 +622,7 @@ mod tests {
 
         for _ in 0..128 {
             let batch = latest_data_writes(&[insert(2, newer_link, vec![2; 8]), insert(1, older_link, vec![1; 8])]);
-            let writes = batch.get(&1.into()).unwrap();
+            let writes = batch.get(&PageId::from(1u32)).unwrap();
 
             assert_eq!(writes, &vec![(older_link, vec![1; 8]), (newer_link, vec![2; 8])]);
         }
@@ -644,7 +647,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            batch.get(&1.into()).unwrap(),
+            batch.get(&PageId::from(1u32)).unwrap(),
             &vec![(older_link, vec![1; 8]), (newer_link, vec![2; 8])]
         );
     }
@@ -667,7 +670,7 @@ mod tests {
             multi_insert(1, new_link, vec![2; 6]),
         ]);
 
-        assert_eq!(batch.get(&1.into()).unwrap(), &vec![(new_link, vec![2; 6])]);
+        assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(new_link, vec![2; 6])]);
     }
 
     #[tokio::test]
@@ -699,7 +702,7 @@ mod tests {
         }
 
         fn iter_event_ids(&self) -> impl Iterator<Item = (TestIndex, IndexChangeEventId)> {
-            std::iter::empty()
+            core::iter::empty()
         }
 
         fn sort(&mut self) {}
@@ -799,7 +802,7 @@ mod tests {
 
         let data = batch.get_batch_data_op().unwrap();
         assert_eq!(
-            data.get(&1.into()).unwrap(),
+            data.get(&PageId::from(1u32)).unwrap(),
             &vec![(survivor_link, vec![7; 4])],
             "the surviving data-only write must stay in the applied batch"
         );

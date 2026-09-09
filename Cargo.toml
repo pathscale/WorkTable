@@ -15,7 +15,17 @@ keywords = ["database", "embedded", "in-memory", "index", "storage"]
 categories = ["database-implementations", "data-structures", "caching"]
 
 [features]
-default = ["wti-predictable-search"]
+default = ["std", "wti-predictable-search", "vanilla-index"]
+# `futures/std` belongs here rather than on the dependency
+# line: written as `features = ["std"]` beside the version, a
+# `--no-default-features` build of this crate would still turn them on. The
+# s3 tests reach `futures::io`, whose traits live behind that feature.
+std = ["nagoya/std", "ps-reclaim/std", "congee/std", "indexset/std", "futures/std"]
+# The upstream IndexSet backend, selectable per index with `using indexset`.
+# Optional because it reaches `crossbeam-utils`, `parking_lot` and `serde`,
+# none of which build without `std`, and because it is one backend of four
+# rather than something the table needs.
+vanilla-index = ["dep:vanilla_indexset"]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
 s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
@@ -35,36 +45,52 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 [dependencies]
 # Read-mostly snapshots own page Arcs while the fixed directory supplies a
 # pointer-only fast path. Publication is append-only and asserted at each swap.
-arc-swap = "1"
+arc-swap = { version = "1", default-features = false }
 async-trait = "0.1"
 arctic = { package = "arctic-wt", version = "^0.1, >=0.1.11", default-features = false, features = ["smr-ps-reclaim"] }
-congee = { package = "congee-wt", version = "^0.4, >=0.4.4" }
-convert_case = "0.6"
-crc32fast = "1"
-data_bucket = { version = "^0.5, >=0.5.7" }
-derive_more = { version = "2", features = ["from", "error", "display", "debug", "into"] }
+# `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
+# crate links the standard library through a dependency. That matters for
+# EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
+# bare-metal target: we ship on Linux, macOS and Windows.
+congee = { package = "congee-wt", version = "^0.4, >=0.4.4", default-features = false }
+convert_case = { version = "0.6", default-features = false }
+crc32fast = { version = "1", default-features = false }
+# 0.6 because the page stride is a parameter now and the error type is
+# concrete: `^0.5` cannot resolve the crate this depends on.
+data_bucket = { version = "^0.6" }
+derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6"
 fastrand = "2"
-futures = "0.3"
+hashbrown = "0.15"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+# The file traits and the host implementation. `std` here; the crate takes it
+# without default features wherever the filesystem is not involved.
+nagoya = { version = "0.1", default-features = false }
 indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.12", default-features = false, features = ["concurrent", "cdc", "multimap"] }
-vanilla_indexset = { package = "indexset", version = "0.15", features = ["concurrent", "cdc", "multimap"] }
+# Pulls `serde` and `serde_core` into every build, and nothing here uses them.
+# They are not reachable from this line: `indexset` 0.15 declares `ftree` with
+# `features = ["serde"]` unconditionally, so no `default-features = false` here
+# removes them and forking `ftree` would not either. This is one of four
+# selectable index backends and making it optional is the fix.
+vanilla_indexset = { package = "indexset", version = "0.15", features = ["concurrent", "cdc", "multimap"], optional = true }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "^0.12", features = ["concurrent", "cdc", "multimap"] }
-log = "0.4"
-ordered-float = "5"
+log = { version = "0.4", default-features = false }
+ordered-float = { version = "5", default-features = false }
 parking_lot = "0.12"
 performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
-prettytable-rs = "0.10"
 psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
-rkyv = { version = "0.8", features = ["uuid-1"] }
+rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "uuid-1"] }
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
-ps-reclaim = { version = "^0.1, >=0.1.4" }
-rustc-hash = "2"
+# `spin` rather than `std`: without it this crate reaches for `thread_local!`,
+# which needs a platform. See its `slot` module for what it falls back to.
+ps-reclaim = { version = "^0.1, >=0.1.4", default-features = false, features = ["spin"] }
+rustc-hash = { version = "2", default-features = false }
 rusty-s3 = { version = "0.10", optional = true }
 smart-default = "0.7"
 tokio = { version = "1", features = ["full"] }
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false }
 url = { version = "2", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
@@ -95,3 +121,16 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(wt_loom)'] }
 [[bench]]
 name = "worktable_benchmarks"
 harness = false
+
+
+# None of these three are published yet, and `[patch]` only takes effect from
+# the workspace root, so the whole chain has to be named here: a dependency's
+# own patches do not reach its consumer. Without this the branch resolves
+# nowhere, for a reviewer and for CI alike.
+#
+# Delete as each publishes: ps-st3 0.5.1, then nagoya 0.1.0, then data_bucket
+# 0.6.0.
+[patch.crates-io]
+data_bucket = { git = "https://github.com/pathscale/DataBucket", branch = "feat/tunable-page-stride" }
+nagoya = { git = "https://github.com/pathscale/nagoya", branch = "feat/timers" }
+ps-st3 = { git = "https://github.com/pathscale/ps-st3", branch = "perf/skip-the-wake-when-nobody-sleeps" }

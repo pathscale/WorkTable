@@ -1,5 +1,5 @@
+use core::fmt::Debug;
 use rkyv::Archive;
-use std::fmt::Debug;
 
 pub trait PublicationSafe: Send + Sync + 'static {}
 

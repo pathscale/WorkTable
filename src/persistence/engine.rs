@@ -1,8 +1,9 @@
-use std::fmt::Debug;
+use alloc::{string::String, vec::Vec};
+use core::fmt::Debug;
+use core::future::Future;
+use core::hash::Hash;
+use core::marker::PhantomData;
 use std::fs;
-use std::future::Future;
-use std::hash::Hash;
-use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::path::Path;
 

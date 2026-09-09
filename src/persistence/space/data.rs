@@ -1,7 +1,9 @@
-use std::collections::HashSet;
-use std::io::SeekFrom;
+use alloc::{string::String, string::ToString, vec::Vec};
+use hashbrown::HashSet;
+use nagoya::io::SeekFrom;
 use std::path::Path;
 
+use crate::fsx::File;
 use crate::persistence::SpaceDataOps;
 use crate::persistence::space::{BatchData, open_or_create_file};
 use crate::prelude::WT_DATA_EXTENSION;
@@ -10,6 +12,7 @@ use data_bucket::{
     DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage,
     parse_data_pages_batch, parse_general_header_by_index, parse_page, persist_page, persist_pages_batch, update_at,
 };
+use nagoya::io::{Seek as _, Write as _};
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -17,8 +20,6 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
-use tokio::fs::File;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 fn link_sort_key(link: &Link) -> (u32, u32) {
     (link.page_id.into(), link.offset)
@@ -206,7 +207,7 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
     /// those writes can leak reusable space, but can never leave a live row
     /// described as free and eligible to be overwritten after reload.
     fn consume_reusable_ranges(&mut self, used_links: impl IntoIterator<Item = Link>) -> bool {
-        let free_ranges = std::mem::take(&mut self.info.inner.empty_links_list);
+        let free_ranges = core::mem::take(&mut self.info.inner.empty_links_list);
         let (remaining, changed) = subtract_used_ranges(free_ranges, used_links);
         self.info.inner.empty_links_list = remaining;
         changed
@@ -241,8 +242,8 @@ where
         } else {
             open_or_create_file(path).await?
         };
-        let info = parse_page::<_, PAGE_SIZE>(&mut data_file, 0).await?;
-        let file_length = data_file.metadata().await?.len();
+        let info = parse_page::<_, PAGE_SIZE, PAGE_SIZE>(&mut data_file, 0).await?;
+        let file_length = crate::fsx::file_metadata(&mut data_file).await?;
         // Mirror the index file's ceil logic: a file whose length is an exact
         // page multiple ends with a full last page, so the plain floor
         // division names a page id one past EOF and reopening the table fails
@@ -253,7 +254,7 @@ where
         } else {
             file_length / PAGE_SIZE as u64
         };
-        let last_page_header = parse_general_header_by_index(&mut data_file, page_id as u32).await?;
+        let last_page_header = parse_general_header_by_index::<PAGE_SIZE>(&mut data_file, page_id as u32).await?;
 
         Ok(Self {
             data_file,
@@ -279,7 +280,7 @@ where
             header: GeneralHeader::new(0.into(), PageType::SpaceInfo, 0.into()),
             inner: info,
         };
-        persist_page(&mut page, file).await
+        Ok(persist_page::<_, PAGE_SIZE>(&mut page, file).await?)
     }
 
     async fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
@@ -294,7 +295,7 @@ where
                     data: [0; 1],
                 },
             };
-            persist_page(&mut page, &mut self.data_file).await?;
+            persist_page::<_, PAGE_SIZE>(&mut page, &mut self.data_file).await?;
             self.current_data_length = 0;
             // High-water mark, as in the batch path below: the new page is the
             // one the link names, which can be more than one past the current
@@ -320,8 +321,8 @@ where
                 self.update_data_length().await?;
             }
         }
-        update_at::<{ PAGE_SIZE }>(&mut self.data_file, link, bytes).await?;
-        // `update_at` ends with a buffered `write_all` that `tokio::fs::File`
+        update_at::<{ PAGE_SIZE }, PAGE_SIZE>(&mut self.data_file, link, bytes).await?;
+        // `update_at` ends with a `write_all` that the file behind `fsx`
         // completes on a background blocking task. Flush before reporting the
         // save done so the bytes are visible to any other handle.
         self.data_file.flush().await?;
@@ -368,7 +369,7 @@ where
             })
             .collect::<Vec<_>>();
         let parsed_pages =
-            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE>(&mut self.data_file, ids_to_parse).await?;
+            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE, PAGE_SIZE>(&mut self.data_file, ids_to_parse).await?;
 
         let updated_pages = vec![parsed_pages, created_pages]
             .into_iter()
@@ -397,7 +398,7 @@ where
             self.current_data_length = page.inner.length;
         }
 
-        persist_pages_batch(updated_pages, &mut self.data_file).await?;
+        persist_pages_batch::<_, PAGE_SIZE>(updated_pages, &mut self.data_file).await?;
         // The batch's last page write is a buffered `write_all`; flush so the
         // batch is visible to other handles once it reports done.
         self.data_file.flush().await?;
@@ -447,7 +448,7 @@ where
         // Single choke point for the info page reaching disk: enforce the
         // page-0 slot budget however the free-range list was mutated.
         self.bound_empty_links_list();
-        persist_page(&mut self.info, &mut self.data_file).await?;
+        persist_page::<_, PAGE_SIZE>(&mut self.info, &mut self.data_file).await?;
         // A generated table may immediately reopen this file through a
         // separate handle. Make the updated metadata visible before reporting
         // success, just as `save_data` does for row bytes.

@@ -42,7 +42,7 @@ impl InMemoryGenerator {
             .keys()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -273,8 +273,8 @@ impl InMemoryGenerator {
             let avt_type_ident = name_generator.get_available_type_ident();
             quote! {
                 if let core::result::Result::Err(e) = #write {
-                    let mut reversed_diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> =
-                        std::collections::HashMap::new();
+                    let mut reversed_diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> =
+                        worktable::prelude::HashMap::new();
                     for (key, diff) in diffs {
                         reversed_diffs.insert(key, Difference { old: diff.new, new: diff.old });
                     }
@@ -460,7 +460,7 @@ impl InMemoryGenerator {
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 let row_new = row.clone();
                 let updated_bytes: Vec<u8> = vec![];
-                let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
+                let mut diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> = worktable::prelude::HashMap::new();
             }
         } else {
             quote! {
@@ -605,7 +605,7 @@ impl InMemoryGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -680,7 +680,7 @@ impl InMemoryGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -830,7 +830,7 @@ impl InMemoryGenerator {
                 pks.sort_unstable();
                 pks.dedup();
 
-                let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+                let mut guards: worktable::prelude::HashMap<_, _> = worktable::prelude::HashMap::new();
                 // Full-row locks, not per-column custom locks: each row's
                 // unsized reinsert path mutates the whole row under these
                 // guards, and one uniform lock kind keeps every concurrent
@@ -902,7 +902,7 @@ impl InMemoryGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();

@@ -5,6 +5,7 @@
 //! when a split or a max-remove re-keys a page mid-batch while later events
 //! still name a historical maximum.
 
+use alloc::vec::Vec;
 use data_bucket::Link;
 use data_bucket::page::PageId;
 use eyre::eyre;
@@ -35,7 +36,7 @@ pub(super) struct PageAliasEntry<T> {
 impl<T> Default for PageAliases<T> {
     fn default() -> Self {
         Self {
-            inline: std::array::from_fn(|_| None),
+            inline: core::array::from_fn(|_| None),
             overflow: Vec::new(),
         }
     }

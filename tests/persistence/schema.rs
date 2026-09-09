@@ -1,7 +1,6 @@
-use tokio::fs::File;
-
 use super::*;
 use crate::remove_dir_if_exists;
+use data_bucket::DEFAULT_PAGE_STRIDE;
 
 worktable!(
     name: SchemaMetadata,
@@ -37,8 +36,10 @@ async fn generated_schema_is_persisted_and_mismatches_are_rejected() {
     let table = SchemaMetadataWorkTable::load(engine).await.unwrap();
     table.close().await.unwrap();
 
-    let mut file = File::open(format!("{table_path}/{}", WT_DATA_EXTENSION)).await.unwrap();
-    let info = parse_page::<SpaceInfoPage<u64>, { PAGE_SIZE as u32 }>(&mut file, 0)
+    let mut file = worktable::prelude::fsx::open(format!("{table_path}/{}", WT_DATA_EXTENSION))
+        .await
+        .unwrap();
+    let info = parse_page::<SpaceInfoPage<u64>, { PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -80,8 +81,10 @@ async fn loading_a_legacy_empty_schema_does_not_rewrite_the_file() {
     let table = SchemaMetadataWorkTable::load(engine).await.unwrap();
     table.close().await.unwrap();
 
-    let mut file = File::open(format!("{table_path}/{}", WT_DATA_EXTENSION)).await.unwrap();
-    let info = parse_page::<SpaceInfoPage<u64>, { PAGE_SIZE as u32 }>(&mut file, 0)
+    let mut file = worktable::prelude::fsx::open(format!("{table_path}/{}", WT_DATA_EXTENSION))
+        .await
+        .unwrap();
+    let info = parse_page::<SpaceInfoPage<u64>, { PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 0)
         .await
         .unwrap();
     assert!(info.inner.row_schema.is_empty());
