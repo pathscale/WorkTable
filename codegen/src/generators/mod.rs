@@ -5,3 +5,4 @@ pub mod partitions;
 pub mod persist;
 pub(crate) mod primary_key;
 pub mod read_only;
+pub(crate) mod runtime_backend;

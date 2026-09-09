@@ -1,7 +1,9 @@
 use proc_macro2::TokenStream;
 
 use crate::common::Parser;
+use crate::common::model::RuntimeBackend;
 use crate::common::name_generator::WorktableNameGenerator;
+use crate::generators::runtime_backend::{resolve_runtime, runtime_type};
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     // Keep the tokens. The declaration is read a second time at the end, as
@@ -18,6 +20,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let mut indexes = None;
     let mut columnar_indexes = None;
     let mut config = None;
+    let mut runtime = None;
 
     let name = parser.parse_name()?;
     let version = parser.parse_version()?.unwrap_or(1);
@@ -44,6 +47,17 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             "config" => {
                 let res = parser.parse_configs()?;
                 config = Some(res)
+            }
+            "runtime" => {
+                // Free-order, but not repeatable: two `runtime:` keys would
+                // silently keep one of them, and which one is a detail of this
+                // loop rather than anything the author could read off the
+                // declaration.
+                if runtime.is_some() {
+                    return Err(syn::Error::new(ident.span(), "duplicate `runtime` section"));
+                }
+                let res = parser.parse_runtime()?;
+                runtime = Some(res)
             }
             "version" => {
                 return Err(syn::Error::new(
@@ -76,7 +90,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new(
                     ident.span(),
                     format!(
-                        "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, `queries`, `config`"
+                        "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, `queries`, `config`, `runtime`"
                     ),
                 ));
             }
@@ -132,6 +146,8 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         crate::generators::in_memory::expand_from_parsed(name.clone(), columns, queries, config)?
     };
 
+    generated.extend(gen_runtime_type(&name, runtime));
+
     if let Some(key) = partition_by {
         generated.extend(crate::generators::partitions::expand(&name, &key, persistence));
     }
@@ -139,6 +155,35 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     generated.extend(gen_schema_const(&worktable_dsl::Schema::from_tokens(declaration)?));
 
     Ok(generated)
+}
+
+/// Name the runtime the table resolved to, once, as a type.
+///
+/// This is the runtime half of what `index_backend` does for indexes: the DSL
+/// carries an enum, the enum becomes a concrete type, and the generated code
+/// names the type rather than knowing which backend was picked.
+///
+/// It is an alias rather than a generic argument on the emitted `WorkTable<..>`
+/// because `Runtime` is not a parameter of that type yet. When it becomes one,
+/// this alias is the argument to pass, and the six emitted `worktable::prelude`
+/// call sites become `<#ident as Runtime>::sleep` and friends, so the seam is
+/// already in the right place.
+///
+/// `allow(dead_code)` for the same reason `gen_schema_const` needs it: a
+/// `worktable!` inside a function body puts this alias in that body, where a
+/// user building with `-D warnings` would otherwise fail over a name they never
+/// wrote.
+fn gen_runtime_type(name: &proc_macro2::Ident, runtime: Option<RuntimeBackend>) -> TokenStream {
+    let ident = WorktableNameGenerator::from_table_name(name.to_string()).get_runtime_type_ident();
+    // An omitted `runtime:` resolves through the same chain as an unannotated
+    // section, so a declaration written before this key existed emits exactly
+    // what `runtime: nagoya` emits.
+    let ty = runtime_type(resolve_runtime(None, runtime));
+
+    quote::quote! {
+        #[allow(dead_code)]
+        pub type #ident = #ty;
+    }
 }
 
 /// Bake the declaration into the generated code, as the text it was written in.
@@ -1063,5 +1108,167 @@ mod schema_const {
         let baked = baked_schema(expand(declaration).expect("expands"), "REGENERATED_SCHEMA");
         let reparsed: TokenStream = syn::parse_str(&baked).expect("tokenises");
         expand(reparsed).expect("the baked declaration expands");
+    }
+}
+
+/// What the `runtime:` key generates.
+///
+/// The table's runtime is named once, as `#{Name}Runtime`, and these assert the
+/// mapping from `codegen::generators::runtime_backend` reaches that alias
+/// unchanged. The mapping itself is unit-tested next to the function; what is
+/// checked here is that a declaration selects it.
+#[cfg(test)]
+mod runtime_tests {
+    use quote::quote;
+
+    use super::expand;
+
+    /// Everything up to the alias, so a comparison is not defeated by the
+    /// unrelated tokens either side of it.
+    fn runtime_alias(declaration: proc_macro2::TokenStream) -> String {
+        let output = expand(declaration).expect("expands").to_string();
+        let alias = output
+            .split("pub type SelectRuntime = ")
+            .nth(1)
+            .expect("the generated runtime alias");
+        alias.split(';').next().expect("the alias body").trim().to_string()
+    }
+
+    fn declaration(runtime: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        quote! {
+            name: Select,
+            persist: false,
+            columns: {
+                id: u64 primary_key,
+                value: u64,
+            },
+            #runtime
+        }
+    }
+
+    #[test]
+    fn bare_nagoya_selects_the_locality_tuning() {
+        assert_eq!(
+            runtime_alias(declaration(quote! { runtime: nagoya, })),
+            "NagoyaRt < Locality >"
+        );
+    }
+
+    #[test]
+    fn each_flavor_selects_its_marker() {
+        assert_eq!(
+            runtime_alias(declaration(quote! { runtime: nagoya(locality), })),
+            "NagoyaRt < Locality >"
+        );
+        assert_eq!(
+            runtime_alias(declaration(quote! { runtime: nagoya(spread), })),
+            "NagoyaRt < Spread >"
+        );
+        assert_eq!(
+            runtime_alias(declaration(quote! { runtime: nagoya(throughput), })),
+            "NagoyaRt < Throughput >"
+        );
+    }
+
+    #[test]
+    fn tokio_selects_the_tokio_runtime() {
+        assert_eq!(runtime_alias(declaration(quote! { runtime: tokio, })), "TokioRt");
+    }
+
+    /// The no-regression guarantee, and the reason it is stated on the whole
+    /// expansion rather than on the alias: every `worktable!` written before
+    /// this key existed omits it, and none of them may generate a different
+    /// byte than they would with `runtime: nagoya` written in.
+    #[test]
+    fn omitting_the_key_emits_exactly_what_bare_nagoya_emits() {
+        let omitted = expand(declaration(quote! {})).expect("expands").to_string();
+        let declared = expand(declaration(quote! { runtime: nagoya, }))
+            .expect("expands")
+            .to_string();
+
+        assert_eq!(omitted, declared);
+    }
+
+    /// The free-order position: `runtime` is an arm beside the blocks, so it
+    /// may be written before or after any of them.
+    #[test]
+    fn the_key_may_be_written_before_or_after_the_blocks() {
+        let before = expand(quote! {
+            name: Select,
+            persist: false,
+            runtime: nagoya(spread),
+            columns: { id: u64 primary_key, value: u64 },
+        })
+        .expect("expands")
+        .to_string();
+        let after = expand(declaration(quote! { runtime: nagoya(spread), }))
+            .expect("expands")
+            .to_string();
+
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_second_runtime_key_is_a_duplicate_section() {
+        let error = expand(quote! {
+            name: Select,
+            persist: false,
+            columns: { id: u64 primary_key },
+            runtime: nagoya,
+            runtime: tokio,
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("duplicate `runtime` section"), "{error}");
+    }
+
+    #[test]
+    fn an_unimplemented_backend_is_refused_by_name() {
+        for name in ["forte", "blocking", "bwos"] {
+            let name: proc_macro2::TokenStream = name.parse().unwrap();
+            let error = expand(declaration(quote! { runtime: #name, })).unwrap_err().to_string();
+
+            assert!(error.contains("is not implemented"), "{error}");
+            assert!(error.contains("available backends: nagoya, tokio"), "{error}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_flavor_is_refused_with_the_three_that_exist() {
+        let error = expand(declaration(quote! { runtime: nagoya(banana), }))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("unknown flavor `banana`"), "{error}");
+        assert!(error.contains("`locality`, `spread`, or `throughput`"), "{error}");
+    }
+
+    #[test]
+    fn tokio_is_refused_a_flavor() {
+        let error = expand(declaration(quote! { runtime: tokio(spread), }))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("`tokio` has no flavors"), "{error}");
+    }
+
+    /// The middle step of the fallback chain, at the only site that can show it
+    /// today: a table that declares a runtime and annotates no section reaches
+    /// the declared backend, not the built-in default.
+    #[test]
+    fn an_unannotated_table_body_takes_the_tables_runtime() {
+        let alias = runtime_alias(quote! {
+            name: Select,
+            persist: false,
+            runtime: tokio,
+            columns: { id: u64 primary_key, value: u64 },
+            queries: {
+                update: { Value(value) by id, },
+                delete: { ById() by id, },
+            }
+        });
+
+        assert_eq!(alias, "TokioRt");
     }
 }
