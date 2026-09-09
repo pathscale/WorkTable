@@ -221,10 +221,32 @@ pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availabl
     event_ledger: Arc<EventLedger>,
 }
 
+/// How far each index's event stream has been applied.
+///
+/// `None` means nothing has been applied to that stream yet, and it has to be
+/// a separate value rather than a reserved id. Event ids start at **0** and
+/// `IndexChangeEventId::default()` is also 0, so using the id alone made
+/// "nothing applied" indistinguishable from "applied event 0". The gap check
+/// had to exempt the first batch to avoid deferring on that ambiguity, and the
+/// exemption is what let a first batch of ids 3..=28 be applied ahead of
+/// events 0..=2 and corrupt the index file.
 #[derive(Debug)]
 pub struct LastEventIds<AvailableIndexes> {
-    pub primary_id: IndexChangeEventId,
-    pub secondary_ids: HashMap<AvailableIndexes, IndexChangeEventId>,
+    pub primary_id: Option<IndexChangeEventId>,
+    pub secondary_ids: HashMap<AvailableIndexes, Option<IndexChangeEventId>>,
+}
+
+impl<AvailableIndexes> LastEventIds<AvailableIndexes> {
+    /// Whether `id` is the event this stream is waiting for.
+    ///
+    /// The first event of a stream is [`IndexChangeEventId::default`]; every
+    /// later one must be the immediate successor of the last applied.
+    pub fn follows(last: Option<IndexChangeEventId>, id: IndexChangeEventId) -> bool {
+        match last {
+            None => id == IndexChangeEventId::default(),
+            Some(last) => id.is_next_for(last),
+        }
+    }
 }
 
 impl<AvailableIndexes> Default for LastEventIds<AvailableIndexes>
@@ -244,11 +266,14 @@ where
     AvailableIndexes: Debug + Hash + Eq,
 {
     pub fn merge(&mut self, another: Self) {
-        if another.primary_id != IndexChangeEventId::default() {
+        // `None` is "this batch applied nothing to that stream", which must
+        // not move the watermark backwards. Previously the same test was
+        // `!= default`, which also discarded a genuine advance to event 0.
+        if another.primary_id.is_some() {
             self.primary_id = another.primary_id
         }
         for (index, id) in another.secondary_ids {
-            if id != IndexChangeEventId::default() || !self.secondary_ids.contains_key(&index) {
+            if id.is_some() || !self.secondary_ids.contains_key(&index) {
                 self.secondary_ids.insert(index, id);
             }
         }
@@ -504,12 +529,15 @@ where
             let previous_primary = self.last_events_ids.primary_id;
             let last_ids = op.get_last_event_ids();
             let advanced = last_ids.primary_id > previous_primary;
-            self.event_ledger
-                .record_applied_upto(EventStream::Primary, last_ids.primary_id.inner());
+            if let Some(id) = last_ids.primary_id {
+                self.event_ledger.record_applied_upto(EventStream::Primary, id.inner());
+            }
             if event_ledger::enabled() {
                 for (index, id) in &last_ids.secondary_ids {
-                    self.event_ledger
-                        .record_applied_upto(EventStream::Secondary(format!("{index:?}")), id.inner());
+                    if let Some(id) = id {
+                        self.event_ledger
+                            .record_applied_upto(EventStream::Secondary(format!("{index:?}")), id.inner());
+                    }
                 }
             }
             self.last_events_ids.merge(last_ids);
@@ -726,7 +754,7 @@ mod lifecycle_tests {
     async fn collection_recovers_when_event_order_and_operation_order_disagree() {
         let queue_inner_wt = Arc::new(QueueInnerWorkTable::default());
         let mut analyzer: QueueAnalyzer<(), u64, TestEvents, TestIndex> = QueueAnalyzer::new(queue_inner_wt);
-        analyzer.last_events_ids.primary_id = 1.into();
+        analyzer.last_events_ids.primary_id = Some(1.into());
 
         // Collecting page 5 from operation 1 also takes operation 3, and
         // advances past it. Operation 2 sits between them in operation order,

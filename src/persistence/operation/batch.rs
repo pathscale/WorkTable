@@ -329,11 +329,18 @@ where
     fn gap_report(
         &self,
         stream: &EventStream,
-        last_applied: IndexChangeEventId,
+        last_applied: Option<IndexChangeEventId>,
         next_available: IndexChangeEventId,
     ) -> String {
         match &self.event_ledger {
-            Some(ledger) => ledger.gap_report(stream, last_applied.inner(), next_available.inner()),
+            // Nothing applied yet reports as `0`, which is what the ledger
+            // means by "everything from the start is missing": the first id is
+            // 0, so there is no id below it to name.
+            Some(ledger) => ledger.gap_report(
+                stream,
+                last_applied.map_or(0, |id| id.inner()),
+                next_available.inner(),
+            ),
             None => {
                 " This batch was built without event bookkeeping attached, so the gap cannot be attributed.".to_owned()
             }
@@ -346,12 +353,11 @@ where
             .as_ref()
             .expect("should be set before 0 iteration");
 
-        let primary_id = prepared_evs.primary_evs.last().map(|ev| ev.id()).unwrap_or_default();
-        let secondary_ids = prepared_evs.secondary_evs.last_evs();
-        let secondary_ids = secondary_ids
-            .into_iter()
-            .map(|(i, v)| (i, v.unwrap_or_default()))
-            .collect();
+        // `None` where a stream contributed no events, rather than `default()`.
+        // Event ids start at 0 and so does `default()`, so collapsing the two
+        // reported "applied up to event 0" for a batch that applied nothing.
+        let primary_id = prepared_evs.primary_evs.last().map(|ev| ev.id());
+        let secondary_ids = prepared_evs.secondary_evs.last_evs().into_iter().collect();
         LastEventIds {
             primary_id,
             secondary_ids,
@@ -409,9 +415,26 @@ where
                 .prepared_index_evs
                 .as_ref()
                 .expect("should be set before 0 iteration");
+            // No exemption for the first batch any more. It used to carry
+            // `&& last_ids.primary_id != IndexChangeEventId::default()`, so a
+            // stream with nothing applied accepted *any* starting id, and that
+            // is exactly where the ids can be wrong: event ids are allocated
+            // during the index mutation while the operation is enqueued
+            // afterwards, so two concurrent writers invert the two orders (see
+            // `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`). Measured, a first batch of
+            // ids 3..=28 was internally gapless, passed the exemption, and
+            // advanced a node's maximum to key 28; events 0..=2 then arrived
+            // naming a node whose maximum was still 1, resolved against
+            // nothing, and failed with a missing page having already written
+            // the file.
+            //
+            // The exemption was not gratuitous, which is why the fix is in
+            // `LastEventIds` rather than here: ids start at 0 and `default()`
+            // is 0, so the old representation could not tell "nothing applied"
+            // from "applied event 0" and had to wave the first batch through.
+            // `follows` asks the question that representation could not.
             if let Some(id) = prepared_evs.primary_evs.first().map(|ev| ev.id())
-                && !id.is_next_for(last_ids.primary_id)
-                && last_ids.primary_id != IndexChangeEventId::default()
+                && !LastEventIds::<AvailableIndexes>::follows(last_ids.primary_id, id)
             {
                 // Change events are positional (InsertAt/RemoveAt carry node
                 // indices), so a stream with a missing id must never be applied:
@@ -439,9 +462,13 @@ where
                 let Some(last) = last_ids.secondary_ids.get(&index) else {
                     continue;
                 };
+                // Same rule as the primary above, including the absence of a
+                // first-batch exemption. A stream with no entry at all is
+                // skipped by the `continue` above; an entry holding `None` is
+                // a stream nothing has been applied to yet, which is the case
+                // that needs checking rather than the case to wave through.
                 if let Some(id) = id
-                    && !id.is_next_for(*last)
-                    && *last != IndexChangeEventId::default()
+                    && !LastEventIds::<AvailableIndexes>::follows(*last, id)
                 {
                     // Same rule as the primary index above: never apply a gapped
                     // stream, defer until the missing event arrives, and report
@@ -744,6 +771,72 @@ mod tests {
             bytes,
             link,
         })
+    }
+
+    async fn batch_of(op: Operation<(), u64, TestEvents>) -> BatchOperation<(), u64, TestEvents, TestIndex> {
+        let info_wt = BatchInnerWorkTable::default();
+        info_wt
+            .insert(BatchInnerRow {
+                id: 0,
+                operation_id: op.operation_id(),
+                page_id: op.link().page_id,
+                link: op.link(),
+                op_type: OperationType::Insert,
+                pos: 0,
+            })
+            .await
+            .unwrap();
+        BatchOperation::new(vec![op], info_wt)
+    }
+
+    fn link_at(offset: u32) -> Link {
+        Link {
+            page_id: 1.into(),
+            offset,
+            length: 4,
+        }
+    }
+
+    /// A first batch that does not start at the head of the stream must defer.
+    ///
+    /// The gap check used to exempt the first batch outright, because event
+    /// ids start at 0 and so does `IndexChangeEventId::default()`: the
+    /// watermark could not tell "nothing applied yet" from "applied event 0",
+    /// so asking whether the batch followed what came before would have
+    /// deferred every stream's opening batch forever.
+    ///
+    /// The cost of that exemption is this: a first batch of ids 3.. is
+    /// internally gapless, so event validation passes it and nothing else
+    /// looks. It gets applied, advancing the on-disk node maxima, and events
+    /// 0..=2 then arrive naming nodes whose maxima no longer exist. Making the
+    /// watermark an `Option` lets the question be asked of the first batch too.
+    #[tokio::test]
+    async fn a_first_batch_that_skips_the_head_of_the_stream_defers() {
+        let op = event_insert(1, link_at(0), vec![1; 4], vec![3, 4, 5]);
+        let mut batch = batch_of(op).await;
+
+        let outcome = batch.validate(&LastEventIds::default(), 0).await.unwrap();
+
+        assert!(
+            outcome.is_none(),
+            "a first batch starting at event 3 must be deferred until events 0..=2 arrive"
+        );
+    }
+
+    /// The other half: the exemption existed for a reason, and removing it
+    /// must not deadlock a legitimate opening batch. Event 0 is a real id, not
+    /// the absence of one.
+    #[tokio::test]
+    async fn a_first_batch_starting_at_event_zero_applies() {
+        let op = event_insert(1, link_at(0), vec![1; 4], vec![0, 1, 2]);
+        let mut batch = batch_of(op).await;
+
+        let outcome = batch.validate(&LastEventIds::default(), 0).await.unwrap();
+
+        assert!(
+            outcome.is_some(),
+            "a first batch starting at the first event must be applied, not deferred"
+        );
     }
 
     /// Regression: removing the last event-carrying operation from a batch

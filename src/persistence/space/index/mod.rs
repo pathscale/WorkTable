@@ -481,11 +481,20 @@ where
                     // identity without predicting DataBucket's mutation rules.
                     let Some((page_index, aliased_page_key)) = self.resolve_batch_page(&page_aliases, &event_page_key)
                     else {
+                        // Naming the event and the identity it wanted, not
+                        // just the sizes. The counts alone say a lookup failed
+                        // and nothing about why; the id and the key together
+                        // say which event arrived out of order and against
+                        // what node maximum, which is what distinguishes a
+                        // stream applied out of order from two writers sharing
+                        // one file.
                         return Err(eyre!(
-                            "index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
+                            "index event {:?} references a missing page {:?} (toc_segments={}, buffered_pages={}, aliases={})",
+                            ev.id(),
+                            event_page_key,
                             self.table_of_contents.pages.len(),
                             pages.len(),
-                            page_aliases.len()
+                            page_aliases.len(),
                         ));
                     };
                     let page = pages.get_mut(&page_index);
