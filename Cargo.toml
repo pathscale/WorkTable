@@ -34,6 +34,12 @@ tokio-runtime = ["dep:tokio", "std"]
 # rather than something the table needs.
 vanilla-index = ["dep:vanilla_indexset"]
 perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
+# Test-only, and empty on purpose: it compiles the four-backend arms of
+# `tests/worktable/runtime_backends.rs`, which declare `runtime:` on a table.
+# Off by default because the DSL keyword and the `Runtime` trait land
+# separately, and a default-on flag would make this branch red until they do.
+# The arm that runs today declares no runtime and is not behind this flag.
+runtime-backends = []
 s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
 # path and into the background persistence worker. The persisted page format

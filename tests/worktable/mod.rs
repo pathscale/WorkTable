@@ -25,6 +25,7 @@ mod nonunique_arctic;
 mod option;
 mod partitioned;
 mod reinsert_visibility;
+mod runtime_backends;
 mod schema_const;
 mod tuple_primary_key;
 mod unique_fixed_unsized;
