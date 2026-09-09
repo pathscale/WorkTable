@@ -21,10 +21,10 @@ pub mod partition;
 pub mod persistence;
 /// Which async runtime a table's work runs on.
 ///
-/// `std` because the trait's reason to exist is `spawn`, and spawning needs
-/// threads. A `no_std` build has neither persistence nor vacuum, which are the
-/// only two things here that spawn.
-#[cfg(feature = "std")]
+/// The module is available to a `no_std` build even though the backends inside
+/// it are not. The trait and the profile machinery are types a table names, and
+/// a table names them whether or not it ever spawns; only the impls need
+/// threads, and those are gated within.
 pub mod runtime;
 
 mod primary_key;
@@ -69,12 +69,14 @@ pub mod prelude {
     /// The runtime a table names, and the three nagoya pool flavors it can
     /// pick between. `worktable!` emits these type names, so they have to
     /// resolve in the consumer's crate for the same reason `fsx` does.
-    #[cfg(feature = "std")]
     pub use crate::runtime::{
-        Elapsed, FlavorMarker, Locality, NagoyaRt, Profile, Runtime, RuntimeJoinHandle, RuntimeNotified, RuntimeNotify,
-        RuntimeRwLock, RuntimeSemaphore, RuntimeSemaphorePermit, RuntimeUnpinned, Spread, TableRuntime, Throughput,
-        Tuning,
+        Elapsed, FlavorMarker, Profile, Runtime, RuntimeJoinHandle, RuntimeNotified, RuntimeNotify, RuntimeRwLock,
+        RuntimeSemaphore, RuntimeSemaphorePermit, RuntimeUnpinned, TableRuntime, Tuning,
     };
+    /// The house backend and its three pool flavors. Gated with the backends
+    /// themselves: a `no_std` build has the trait but nothing that spawns.
+    #[cfg(feature = "std")]
+    pub use crate::runtime::{Locality, NagoyaRt, Spread, Throughput};
     #[cfg(all(feature = "std", feature = "tokio-runtime"))]
     pub use crate::runtime::{TokioJoinHandle, TokioRt};
     /// The three async primitives generated code awaits on. Re-exported for

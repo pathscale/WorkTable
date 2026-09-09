@@ -64,19 +64,26 @@ pub use nagoya::Elapsed;
 /// which is otherwise a transitive dependency nobody here mentions.
 pub use st3::fanout::Tuning;
 
+/// The backends themselves need `std`, because the only reason a backend
+/// exists is to spawn and spawning needs threads. The trait, the flavor
+/// markers' contract and the profile machinery do not, so they stay available
+/// to a `no_std` build: a table that never spawns still names its runtime in
+/// types that have to resolve.
+#[cfg(feature = "std")]
 mod nagoya_rt;
 
 mod profile;
-#[cfg(feature = "tokio-runtime")]
+#[cfg(all(feature = "std", feature = "tokio-runtime"))]
 mod tokio_rt;
 
+#[cfg(feature = "std")]
 pub use nagoya_rt::{Locality, NagoyaRt, Spread, Throughput};
 
 pub use profile::{Profile, RuntimeUnpinned, TableRuntime};
-#[cfg(feature = "tokio-runtime")]
+#[cfg(all(feature = "std", feature = "tokio-runtime"))]
 pub use tokio_rt::{TokioJoinHandle, TokioRt};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests;
 
 /// An async runtime, named by a table rather than assumed.
