@@ -50,7 +50,7 @@ mod tests {
             }
         };
         let mut parser = Parser::new(tokens);
-        let ops = parser.parse_updates().unwrap();
+        let (_, ops) = parser.parse_updates().unwrap();
 
         assert_eq!(ops.len(), 2);
         let op = ops.get(&Ident::new("TestQuery", Span::mixed_site())).unwrap();

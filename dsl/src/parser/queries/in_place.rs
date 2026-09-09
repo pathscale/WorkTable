@@ -6,7 +6,10 @@ use crate::Parser;
 use crate::model::Operation;
 
 impl Parser {
-    pub fn parse_in_place(&mut self) -> syn::Result<IndexMap<Ident, Operation>> {
+    /// The `in_place` block, and the profile it was annotated with. See
+    /// [`Parser::parse_updates`] for why the annotation rides beside the
+    /// operations.
+    pub fn parse_in_place(&mut self) -> syn::Result<(Option<Ident>, IndexMap<Ident, Operation>)> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
             "Expected `in_place` field in declaration",
@@ -18,6 +21,8 @@ impl Parser {
         } else {
             return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
+
+        let runtime = self.try_parse_section_runtime()?;
 
         self.parse_colon()?;
 
@@ -31,7 +36,7 @@ impl Parser {
             // Symmetry with `parse_updates`: consume a comma after the block,
             // so a `in_place` block is not required to be written last.
             self.try_parse_comma()?;
-            Ok(operations)
+            Ok((runtime, operations))
         } else {
             Err(syn::Error::new(ops.span(), "Expected operation declarations"))
         }
@@ -53,7 +58,7 @@ mod tests {
             }
         };
         let mut parser = Parser::new(tokens);
-        let ops = parser.parse_in_place().unwrap();
+        let (_, ops) = parser.parse_in_place().unwrap();
 
         assert_eq!(ops.len(), 1);
         let op = ops.get(&Ident::new("TestQuery", Span::mixed_site())).unwrap();
