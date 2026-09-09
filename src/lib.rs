@@ -19,6 +19,13 @@ mod mem_stat;
 pub mod migration;
 pub mod partition;
 pub mod persistence;
+/// Which async runtime a table's work runs on.
+///
+/// `std` because the trait's reason to exist is `spawn`, and spawning needs
+/// threads. A `no_std` build has neither persistence nor vacuum, which are the
+/// only two things here that spawn.
+#[cfg(feature = "std")]
+pub mod runtime;
 
 mod primary_key;
 mod row;
@@ -57,6 +64,16 @@ pub mod prelude {
     /// crate itself uses without naming it.
     #[cfg(feature = "std")]
     pub use crate::fsx;
+    /// The runtime a table names, and the three nagoya pool flavors it can
+    /// pick between. `worktable!` emits these type names, so they have to
+    /// resolve in the consumer's crate for the same reason `fsx` does.
+    #[cfg(feature = "std")]
+    pub use crate::runtime::{
+        Elapsed, FlavorMarker, Locality, NagoyaRt, Runtime, RuntimeJoinHandle, RuntimeNotified, RuntimeNotify,
+        RuntimeRwLock, RuntimeSemaphore, RuntimeSemaphorePermit, Spread, Throughput, Tuning,
+    };
+    #[cfg(all(feature = "std", feature = "tokio-runtime"))]
+    pub use crate::runtime::{TokioJoinHandle, TokioRt};
     /// The three async primitives generated code awaits on. Re-exported for
     /// the same reason `fsx` is: `worktable!` expands inside the consumer's
     /// crate, so every path it emits has to resolve there. Emitting `tokio::`
