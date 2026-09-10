@@ -23,6 +23,11 @@
 /// A file this crate reads and writes.
 pub type File = nagoya::io::HostFile;
 
+/// Open a snapshot for reading without requesting write permission.
+pub async fn open_read_only(path: impl AsRef<std::path::Path>) -> Result<File, nagoya::io::Error> {
+    std::fs::File::open(path).map(File::new).map_err(Into::into)
+}
+
 pub use nagoya::io::{
     Error, SeekFrom, append, create, create_dir_all, open, open_or_create, read, remove_dir_all, remove_file, rename,
     write,

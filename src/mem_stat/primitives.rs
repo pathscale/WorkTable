@@ -13,6 +13,7 @@ macro_rules! impl_memstat_zero {
 }
 
 impl_memstat_zero!(
+    (),
     u8,
     i8,
     u16,

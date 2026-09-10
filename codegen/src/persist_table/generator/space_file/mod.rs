@@ -372,7 +372,7 @@ impl Generator {
             quote! {
                 {
                     let mut primary_index = vec![];
-                    let mut primary_file = worktable::prelude::fsx::open(format!("{}/primary{}", path, #index_extension)).await?;
+                    let mut primary_file = worktable::prelude::fsx::open_read_only(format!("{}/primary{}", path, #index_extension)).await?;
                     let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, 0).await?;
                     let file_length = worktable::prelude::fsx::file_metadata(&mut primary_file).await?;
                     // Pages sit at a fixed #page_const_name stride with the
@@ -399,7 +399,7 @@ impl Generator {
                 let indexes = #persisted_index_name::parse_from_file(path).await?;
                 let (data, data_info) = {
                     let mut data = vec![];
-                    let mut data_file = worktable::prelude::fsx::open(format!("{}/{}", path, #data_extension)).await?;
+                    let mut data_file = worktable::prelude::fsx::open_read_only(format!("{}/{}", path, #data_extension)).await?;
                     let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut data_file, 0).await?;
                     let file_length = worktable::prelude::fsx::file_metadata(&mut data_file).await?;
                     // ceil(len / stride) counts every occupied page slot,

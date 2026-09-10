@@ -152,6 +152,17 @@ struct WorkerCompletionGuard {
     armed: bool,
 }
 
+/// A private blocking-I/O worker must stop its detached pool on every exit.
+struct StopWorkerPool<F: FnOnce()>(Option<F>);
+
+impl<F: FnOnce()> Drop for StopWorkerPool<F> {
+    fn drop(&mut self) {
+        if let Some(stop) = self.0.take() {
+            stop();
+        }
+    }
+}
+
 impl WorkerCompletionGuard {
     fn new(lifecycle: Arc<PersistenceLifecycle>) -> Self {
         Self { lifecycle, armed: true }
@@ -1547,7 +1558,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
         if values.is_empty() {
             return Ok(());
         }
-        let queued = values.iter().map(QueuedEventIds::of).collect::<Vec<_>>();
+        let queued = if crate::persistence::event_ledger::enabled() {
+            values.iter().map(QueuedEventIds::of).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let state = self.lifecycle.state.lock();
         match &*state {
             PersistenceState::Running => {}
@@ -1957,22 +1972,21 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         // Constructed outside the async block so cancellation before its first
         // poll still drops the guard and publishes terminal failure.
         let completion_guard = WorkerCompletionGuard::new(lifecycle.clone());
+        // HostFile performs blocking I/O. Do not occupy a compute-pool worker
+        // with writes or fsync. Only this persistence task uses the private pool.
+        let engine_runtime = nagoya::runtime::Runtime::new(1);
+        let weak_pool = Arc::downgrade(engine_runtime.pool());
+        let stop_pool = StopWorkerPool(Some(move || {
+            if let Some(pool) = weak_pool.upgrade() {
+                pool.shut_down();
+            }
+        }));
         let task = async move {
+            let _stop_pool = stop_pool;
             worker.await;
             completion_guard.disarm();
         };
-        // This worker is the engine's business, not the caller's: a flush loop
-        // drains a queue, so unlike the vacuum sweep there is no foreground
-        // task it could be folded into. It needs a thread whether or not
-        // anything else does, which is why an ambient runtime was reached for
-        // in the first place, and `nagoya::runtime::background` is that same
-        // convenience with the gate tokio's global never had.
-        //
-        // Which pool that is, is a process-level choice rather than a hardcoded
-        // one: see `runtime::engine_executor`. Leaving it pinned to the
-        // locality pool while a benchmark moved its client tasks elsewhere
-        // would put the two halves of the stack on different schedulers.
-        let engine_task_handle = crate::runtime::engine_executor().spawn(task);
+        let engine_task_handle = engine_runtime.spawn(task);
         Self {
             queue,
             engine_task_handle: Some(engine_task_handle),

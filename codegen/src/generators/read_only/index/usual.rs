@@ -19,9 +19,11 @@ impl ReadOnlyGenerator {
         let process_difference_insert_fn = self.gen_process_difference_insert_index_fn();
         let process_difference_remove_fn = self.gen_process_difference_remove_index_fn();
         let delete_from_indexes = self.gen_index_delete_from_indexes_fn();
+        let publication_guard = crate::generators::columnar::publication_guard(&self.columns);
 
         quote! {
             impl TableSecondaryIndex<#row_type_ident, #avt_type_ident, #avt_index_ident> for #index_type_ident {
+                #publication_guard
                 #save_row_fn
                 #reinsert_row_fn
                 #delete_row_fn

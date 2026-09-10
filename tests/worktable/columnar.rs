@@ -2,6 +2,24 @@ use std::sync::Arc;
 use worktable::prelude::*;
 use worktable::worktable;
 
+#[test]
+fn columnar_publication_guard_excludes_rebuilds() {
+    let table = ColumnarMetricsWorkTable::default();
+    let guard = table
+        .0
+        .indexes
+        .row_publication()
+        .expect("columnar tables need a publication gate");
+    assert!(table.0.indexes.columnar_publication.try_write().is_none());
+    drop(guard);
+    assert!(table.0.indexes.columnar_publication.try_write().is_some());
+}
+
+#[test]
+fn persisted_index_capacity_fits_slot_identifiers() {
+    assert!(get_index_page_size_from_data_length::<u64>(4 * 1024 * 1024) <= usize::from(u16::MAX));
+}
+
 worktable!(
     name: ColumnarMetrics,
     persist: false,

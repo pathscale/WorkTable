@@ -60,7 +60,9 @@ pub(crate) fn index_struct_field(table: &Ident, columns: &Columns, persisted: bo
     let skip = persisted.then(|| quote! { #[index(skip)] });
     quote! {
         #skip
-        columnar: ParkingRwLock<#data>
+        columnar: ParkingRwLock<#data>,
+        #skip
+        columnar_publication: ParkingRwLock<()>
     }
 }
 
@@ -68,7 +70,10 @@ pub(crate) fn index_default_field(columns: &Columns) -> TokenStream {
     if columns.columnar_fields.is_empty() {
         quote! {}
     } else {
-        quote! { columnar: ParkingRwLock::new(Default::default()), }
+        quote! {
+            columnar: ParkingRwLock::new(Default::default()),
+            columnar_publication: ParkingRwLock::new(()),
+        }
     }
 }
 
@@ -84,6 +89,26 @@ pub(crate) fn save_row(columns: &Columns) -> TokenStream {
                 });
             }
         }
+    }
+}
+
+pub(crate) fn publication_guard(columns: &Columns) -> TokenStream {
+    if columns.columnar_fields.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            fn row_publication(&self) -> Option<worktable::prelude::ParkingRwLockReadGuard<'_, ()>> {
+                Some(self.columnar_publication.read())
+            }
+        }
+    }
+}
+
+pub(crate) fn table_publication_guard(columns: &Columns) -> TokenStream {
+    if columns.columnar_fields.is_empty() {
+        quote! {}
+    } else {
+        quote! { let _publication = self.0.indexes.columnar_publication.read(); }
     }
 }
 
@@ -435,10 +460,13 @@ pub(crate) fn table_methods(table: &Ident, columns: &Columns) -> TokenStream {
 
     quote! {
         fn ensure_columnar_current(&self) -> Result<(), WorkTableError> {
-            // Take the writer lock before reading authoritative rows. A row
-            // mutation publishes to this same lock after changing row storage,
-            // so it either lands in this rebuild or dirties/updates the replica
-            // after the rebuild.
+            if !self.0.indexes.columnar.read().dirty {
+                return Ok(());
+            }
+            // Publication gate must precede the replica lock. Writers hold its
+            // read side through both secondary maintenance and the primary
+            // pointer/visibility update, so a rebuild cannot snapshot that gap.
+            let _publication = self.0.indexes.columnar_publication.write();
             let mut columnar = self.0.indexes.columnar.write();
             if !columnar.dirty {
                 return Ok(());
@@ -450,9 +478,7 @@ pub(crate) fn table_methods(table: &Ident, columns: &Columns) -> TokenStream {
                     self.0.data.select_non_ghosted(link.0).ok()
                 }).collect()
             };
-            // Retain every assigned primary-key/slot pair. A concurrent
-            // reinsert may temporarily publish a ghost link while waiting for
-            // this lock; absence from this scan is not proof of deletion.
+            // Preserve primary-key/slot identity across rebuilding derived values.
             let mut rebuilt: #data = Default::default();
             rebuilt.next_slot_position = columnar.next_slot_position;
             rebuilt.free_slot_ids = core::mem::take(&mut columnar.free_slot_ids);

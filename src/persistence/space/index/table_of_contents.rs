@@ -277,7 +277,7 @@ where
                 // torn or truncated table of contents, and silently starting
                 // empty would discard the whole index.
                 let file_length = crate::fsx::file_metadata(file).await?;
-                if file_length <= data_bucket::PAGE_SIZE as u64 {
+                if file_length <= u64::from(STRIDE) {
                     return Ok(Self::new(space_id, next_page_id));
                 }
                 // `wrap_err` belonged to `eyre::Report`. The parse error is a

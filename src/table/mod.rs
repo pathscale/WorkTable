@@ -309,6 +309,7 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
         LockType: 'static,
     {
+        let _publication = TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
         let pk = row.get_primary_key().clone();
         let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
         if self.primary_index.insert_checked(pk.clone(), link).is_none() {
@@ -415,6 +416,8 @@ where
             // delete and a batch insert cannot deadlock against each other. Chunks
             // release before the next is taken, so that ordering holds across them.
             let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
+            let _publication =
+                TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
             let mut links: Vec<Link> = Vec::with_capacity(chunk.len());
 
@@ -530,6 +533,8 @@ where
         // takes, so it is the one that most needs not to hold every stripe.
         for chunk in keys.chunks(DELETE_CHUNK_KEYS) {
             let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
+            let _publication =
+                TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
             // Second walk, under the guards. Links for guarded keys cannot move
             // and are used directly; keys that appeared since the first walk are
@@ -627,6 +632,7 @@ where
         }
         let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
         let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+        let _publication = TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
         let mut links: Vec<Link> = Vec::with_capacity(rows.len());
         for (row_index, row) in rows.iter().enumerate() {
@@ -776,6 +782,7 @@ where
     {
         let pk = row.get_primary_key().clone();
         let _mutation_guard = self.lock_manager.mutation_guard(&pk);
+        let _publication = TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
         let (link, _) = match self.data.insert_cdc(row.clone()) {
             Ok(result) => result,
@@ -953,6 +960,7 @@ where
         }
         let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
         let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+        let _publication = TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
         let mut links: Vec<Link> = Vec::with_capacity(rows.len());
         let mut forward_primary: Vec<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> = Vec::with_capacity(rows.len());
@@ -1183,6 +1191,7 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
         LockType: 'static,
     {
+        let _publication = TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
         let pk = row_new.get_primary_key().clone();
         if pk != row_old.get_primary_key() {
             return Err(WorkTableError::PrimaryUpdateTry);
@@ -1271,6 +1280,7 @@ where
         AvailableIndexes: Debug + AvailableIndex,
         PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
     {
+        let _publication = TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
         let pk = row_new.get_primary_key().clone();
         if pk != row_old.get_primary_key() {
             return (None, Err(WorkTableError::PrimaryUpdateTry));

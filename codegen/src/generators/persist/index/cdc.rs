@@ -212,6 +212,11 @@ impl PersistGenerator {
                 } else {
                     quote! { row.#i }
                 };
+                let key = if self.columns.columnar_fields.is_empty() {
+                    key
+                } else {
+                    quote! { #key.clone() }
+                };
                 quote! {
                     let (_, events) = TableIndexCdc::remove_cdc(&self.#index_field_name, #key, link);
                     let #index_field_name = events.into_iter().map(|ev| ev.into()).collect();

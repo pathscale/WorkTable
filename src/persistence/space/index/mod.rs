@@ -17,7 +17,7 @@ use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
     GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, IndexPage, IndexPageUtility, Link, PageType, SizeMeasurable,
-    SpaceId, SpaceInfoPage, get_index_page_size_from_data_length, parse_page, persist_page, persist_pages_batch,
+    SpaceId, SpaceInfoPage, parse_page, persist_page, persist_pages_batch,
 };
 use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
@@ -41,6 +41,12 @@ pub use reconstruct::reconstruct_multi_index_nodes;
 pub use table_of_contents::{IndexTableOfContents, TocEntryOversizedError};
 pub use unsized_::SpaceIndexUnsized;
 pub use util::{map_index_pages_to_toc_and_general, map_unsized_index_pages_to_toc_and_general};
+
+// Both the live B-tree node and its persisted page must use this same capacity.
+// Large byte strides do not widen the page's u16 counts and slot identifiers.
+fn get_index_page_size_from_data_length<T: Default + SizeMeasurable>(length: usize) -> usize {
+    crate::prelude::get_index_page_size_from_data_length::<T>(length)
+}
 
 #[derive(Debug)]
 pub struct SpaceIndex<T: Ord + Eq, const INNER_PAGE_SIZE: u32, const STRIDE: u32> {

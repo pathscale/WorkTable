@@ -14,6 +14,11 @@ pub use index_events::TableSecondaryIndexEventsOps;
 pub use info::TableSecondaryIndexInfo;
 
 pub trait TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> {
+    /// Hold through secondary maintenance and authoritative row publication.
+    /// Non-columnar indexes pay no synchronization cost.
+    fn row_publication(&self) -> Option<parking_lot::RwLockReadGuard<'_, ()>> {
+        None
+    }
     fn save_row(&self, row: Row, link: Link) -> Result<(), IndexError<AvailableIndexes>>;
     fn reinsert_row(
         &self,

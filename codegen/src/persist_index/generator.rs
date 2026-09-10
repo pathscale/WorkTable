@@ -324,7 +324,7 @@ impl Generator {
                     _ => quote! {
                         let #i: #parsed_type = {
                             let mut #i = vec![];
-                            let mut file = worktable::prelude::fsx::open(format!("{}/{}{}", path, #literal, #index_extension)).await?;
+                            let mut file = worktable::prelude::fsx::open_read_only(format!("{}/{}{}", path, #literal, #index_extension)).await?;
                             let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut file, 0).await?;
                             let file_length = worktable::prelude::fsx::file_metadata(&mut file).await?;
                             // Pages sit at a fixed #page_const_name stride

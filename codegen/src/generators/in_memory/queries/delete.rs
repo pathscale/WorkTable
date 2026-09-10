@@ -38,6 +38,7 @@ impl InMemoryGenerator {
         let pk_ident = name_generator.get_primary_key_type_ident();
         let delete_logic = self.gen_delete_logic(true);
         let full_row_lock = self.gen_full_lock_for_update();
+        let publication = crate::generators::columnar::table_publication_guard(&self.columns);
 
         quote! {
             pub async fn delete<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -46,6 +47,7 @@ impl InMemoryGenerator {
                 let pk: #pk_ident = pk.into();
                 let pending_lock = { #full_row_lock };
                 let _guard = pending_lock.into_guard_with_mutation();
+                #publication
 
                 #delete_logic
 
@@ -58,6 +60,7 @@ impl InMemoryGenerator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_ident = name_generator.get_primary_key_type_ident();
         let delete_logic = self.gen_delete_logic(false);
+        let publication = crate::generators::columnar::table_publication_guard(&self.columns);
 
         quote! {
             pub async fn delete_without_lock<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -65,6 +68,7 @@ impl InMemoryGenerator {
             {
                 let pk: #pk_ident = pk.into();
                 let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
+                #publication
                 #delete_logic
                 core::result::Result::Ok(())
             }

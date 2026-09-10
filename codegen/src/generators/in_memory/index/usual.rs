@@ -15,6 +15,7 @@ impl InMemoryGenerator {
         let avt_index_ident = name_generator.get_available_indexes_ident();
 
         let save_row_fn = self.gen_save_row_index_fn();
+        let publication_guard = crate::generators::columnar::publication_guard(&self.columns);
         let reinsert_row_fn = self.gen_reinsert_row_index_fn();
         let delete_row_fn = self.gen_delete_row_index_fn();
         let process_difference_insert_fn = self.gen_process_difference_insert_index_fn();
@@ -24,6 +25,7 @@ impl InMemoryGenerator {
         quote! {
             impl TableSecondaryIndex<#row_type_ident, #avt_type_ident, #avt_index_ident> for #index_type_ident {
                 #save_row_fn
+                #publication_guard
                 #reinsert_row_fn
                 #delete_row_fn
                 #process_difference_insert_fn

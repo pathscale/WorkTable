@@ -190,8 +190,7 @@ pub mod prelude {
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,
         Link, PAGE_SIZE, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoPage,
         TableOfContentsPage, UnsizedIndexPage, VariableSizeMeasurable, VariableSizeMeasure, align,
-        get_index_page_size_from_data_length, map_data_pages_to_general, parse_data_page, parse_page, persist_page,
-        seek_to_page_start, update_at,
+        map_data_pages_to_general, parse_data_page, parse_page, persist_page, seek_to_page_start, update_at,
     };
     pub use derive_more::{Display as MoreDisplay, From, Into};
     pub use indexset::{
@@ -200,6 +199,12 @@ pub mod prelude {
     };
     pub use ordered_float::OrderedFloat;
     pub use parking_lot::RwLock as ParkingRwLock;
+    pub use parking_lot::RwLockReadGuard as ParkingRwLockReadGuard;
+
+    /// Node capacity representable by the persisted index's u16 slot format.
+    pub fn get_index_page_size_from_data_length<T: Default + SizeMeasurable>(length: usize) -> usize {
+        data_bucket::get_index_page_size_from_data_length::<T>(length).min(usize::from(u16::MAX))
+    }
     pub use worktable_codegen::{MemStat, PersistIndex, PersistTable};
 
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
