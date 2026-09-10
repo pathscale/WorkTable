@@ -53,11 +53,17 @@ use crate::runtime::Tuning;
 pub enum Flavor {
     /// Keep a woken task on the worker that woke it.
     ///
-    /// `local_wakes: true`, `injector_batch: 1`. The default, and what
-    /// `nagoya::runtime::background()` already runs with. For work whose wakes
-    /// are a chain: an update path handing a row lock to its successor wants
-    /// the lines the releasing worker just touched.
-    #[default]
+    /// `local_wakes: true`, `injector_batch: 1`. For work whose wakes are a
+    /// chain: an update path handing a row lock to its successor wants the
+    /// lines the releasing worker just touched.
+    ///
+    /// **Not the default, and the reason is a tail.** It is the fastest flavor
+    /// on lock-bound work, by about 6% on a 50% update workload and 8% on
+    /// read-modify-write. It also lets a worker hoard self-waking tasks that
+    /// nothing else can reach, and at sixteen client threads on a read-only
+    /// workload its worst run in four was 3,174,506 against 13,601,775 for the
+    /// old engine: a 4x cliff. Pick it deliberately, for a table whose work
+    /// contends rather than fans out.
     Locality = 0,
     /// Send every wake to the injector, where any worker can take it.
     ///
@@ -98,11 +104,16 @@ pub enum Flavor {
     /// read-only client tasks: four runs in eight collapsed to a single active
     /// worker at exactly the one-thread rate.
     ///
-    /// It is not a strict improvement, which is why it is a flavor and not a
-    /// fix. Every displacement costs an injector push and a wake, and on work
-    /// that contends on row locks there is no parallelism to win and the churn
-    /// is pure cost: a 50% update workload fell from 943,606 to 651,554 while
-    /// cores busy went from 1.13 to 13.16.
+    /// **The default**, because it is the only flavor with no cliff. Judged on
+    /// median alone it ties [`Locality`](Flavor::Locality) at a worst case of
+    /// 0.77 of the old engine, on workload B. Judged on its worst *run*, which
+    /// is what a default has to be judged on, it holds 0.79 where locality
+    /// falls to 0.23.
+    ///
+    /// It is not free and it is not a strict improvement: it gives up about 1%
+    /// on a 50% update workload and 6% on read-modify-write, which is what
+    /// [`Locality`](Flavor::Locality) exists to take back.
+    #[default]
     SharedSlot = 5,
 }
 
@@ -421,9 +432,18 @@ mod tests {
         assert!(error.contains("closing parenthesis"), "{error}");
     }
 
+    /// The default is the flavor with no cliff, not the fastest one.
+    ///
+    /// `locality` is quicker on lock-bound work and its worst run on a
+    /// read-only workload at sixteen client threads was a quarter of the old
+    /// engine's median. A default is judged on that number, not on its median.
     #[test]
-    fn the_default_is_locality() {
-        assert_eq!(Flavor::default(), Flavor::Locality);
+    fn the_default_is_the_one_that_cannot_collapse() {
+        assert_eq!(Flavor::default(), Flavor::SharedSlot);
+        assert!(
+            Flavor::default().tuning().share_displaced,
+            "the default must not let a worker hoard work nothing else can reach"
+        );
     }
 
     #[test]

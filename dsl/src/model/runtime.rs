@@ -12,12 +12,12 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Flavor {
-    #[default]
     Locality,
     Spread,
     Throughput,
     LowLatency,
     WideInjector,
+    #[default]
     SharedSlot,
 }
 
@@ -65,9 +65,9 @@ impl Flavor {
 
 /// Async runtime a generated table is built against.
 ///
-/// Nagoya is the default, in its locality flavor, so a declaration that says
-/// nothing about a runtime gets the same table as one that writes
-/// `runtime: nagoya`.
+/// Nagoya is the default, in the flavor `Flavor::default()` names, so a
+/// declaration that says nothing about a runtime gets the same table as one
+/// that writes `runtime: nagoya`.
 ///
 /// There is deliberately no variant for a backend WorkTable cannot generate
 /// against. `forte`, `blocking` and `bwos` are recognised by the parser only
@@ -83,7 +83,7 @@ pub enum RuntimeBackend {
 
 impl Default for RuntimeBackend {
     fn default() -> Self {
-        Self::Nagoya(Flavor::Locality)
+        Self::Nagoya(Flavor::default())
     }
 }
 

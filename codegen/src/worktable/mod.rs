@@ -1166,12 +1166,13 @@ mod runtime_tests {
         }
     }
 
+    /// A bare `nagoya` is whatever flavor is currently the default, spelled
+    /// out of the registry rather than named here, so that moving the default
+    /// is one edit rather than a hunt through the tests.
     #[test]
-    fn bare_nagoya_selects_the_locality_tuning() {
-        assert_eq!(
-            runtime_alias(declaration(quote! { runtime: nagoya, })),
-            "NagoyaRt < Locality >"
-        );
+    fn bare_nagoya_selects_the_default_tuning() {
+        let expected = format!("NagoyaRt < {} >", worktable_dsl::model::Flavor::default().type_name());
+        assert_eq!(runtime_alias(declaration(quote! { runtime: nagoya, })), expected);
     }
 
     #[test]

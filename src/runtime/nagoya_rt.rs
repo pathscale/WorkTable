@@ -172,7 +172,7 @@ pub(crate) fn resolved(declared: Flavor) -> Flavor {
 /// the arm would describe a configuration nobody would ship.
 #[must_use]
 pub fn engine_executor() -> &'static Executor {
-    executor_for(resolved(Flavor::Locality))
+    executor_for(engine_flavor())
 }
 
 /// The flavor the engine's background work resolved to, for a benchmark to
@@ -182,7 +182,7 @@ pub fn engine_executor() -> &'static Executor {
 /// to publish a wrong table, and it has happened on this project already.
 #[must_use]
 pub fn engine_flavor() -> Flavor {
-    resolved(Flavor::Locality)
+    resolved(Flavor::default())
 }
 
 /// A pool at this flavor's tuning, with its threads marked as pool workers.

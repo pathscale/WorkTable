@@ -91,11 +91,15 @@ mod tests {
         assert_eq!(before, rendered.len(), "two flavors emit the same type: {rendered:?}");
     }
 
+    /// An omitted `runtime:` and a bare `runtime: nagoya` are the same table,
+    /// whichever flavor is currently the default. Asserted against
+    /// `Flavor::default()` rather than a named flavor, so that moving the
+    /// default is one edit rather than a hunt through the tests.
     #[test]
-    fn the_default_backend_is_nagoya_locality() {
+    fn the_default_backend_is_nagoya_at_the_default_flavor() {
         assert_eq!(
             rendered(RuntimeBackend::default()),
-            rendered(RuntimeBackend::Nagoya(Flavor::Locality))
+            rendered(RuntimeBackend::Nagoya(Flavor::default()))
         );
     }
 
@@ -124,6 +128,6 @@ mod tests {
 
     #[test]
     fn neither_declared_resolves_to_the_built_in_default() {
-        assert_eq!(resolve_runtime(None, None), RuntimeBackend::Nagoya(Flavor::Locality));
+        assert_eq!(resolve_runtime(None, None), RuntimeBackend::Nagoya(Flavor::default()));
     }
 }

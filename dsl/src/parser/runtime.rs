@@ -200,12 +200,15 @@ mod tests {
     use crate::Parser;
     use crate::model::{Flavor, RuntimeBackend};
 
+    /// A bare `nagoya` is whatever flavor is currently the default. Named out
+    /// of the registry rather than written here, so moving the default does
+    /// not turn this into a failure about a word.
     #[test]
-    fn parses_bare_nagoya_as_locality() {
+    fn parses_bare_nagoya_as_the_default_flavor() {
         let mut parser = Parser::new(quote! { runtime: nagoya, });
         assert_eq!(
             parser.parse_runtime().unwrap(),
-            RuntimeBackend::Nagoya(Flavor::Locality)
+            RuntimeBackend::Nagoya(Flavor::default())
         );
     }
 
@@ -218,7 +221,7 @@ mod tests {
     #[test]
     fn parses_all_backends() {
         for (tokens, expected) in [
-            (quote! { runtime: nagoya, }, RuntimeBackend::Nagoya(Flavor::Locality)),
+            (quote! { runtime: nagoya, }, RuntimeBackend::Nagoya(Flavor::default())),
             (
                 quote! { runtime: nagoya(locality), },
                 RuntimeBackend::Nagoya(Flavor::Locality),
