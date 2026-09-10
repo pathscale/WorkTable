@@ -24,6 +24,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 
     let name = parser.parse_name()?;
     let version = parser.parse_version()?.unwrap_or(1);
+    let storage = parser.parse_storage()?;
     let persistence = parser.parse_persist()?;
     let partition_by = parser.parse_partition_by()?;
     while let Some(ident) = parser.peek_next() {
@@ -68,16 +69,22 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             // Positional declarations that landed after the blocks began, or in
             // the wrong relative order, would otherwise die as a bare
             // "Unexpected identifier" and cost the next person a bisect.
+            "storage" => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "`storage` is positional and must come before `persist`; the required order is: name, version, storage, persist, partition_by, then columns/indexes/queries/config",
+                ));
+            }
             "persist" => {
                 return Err(syn::Error::new(
                     ident.span(),
-                    "`persist` is positional and must come before `partition_by` and the blocks; the required order is: name, version, persist, partition_by, then columns/indexes/queries/config",
+                    "`persist` is positional and must come after `storage` and before `partition_by` and the blocks; the required order is: name, version, storage, persist, partition_by, then columns/indexes/queries/config",
                 ));
             }
             "partition_by" => {
                 return Err(syn::Error::new(
                     ident.span(),
-                    "`partition_by` is positional and must come after `persist` and before the blocks; the required order is: name, version, persist, partition_by, then columns/indexes/queries/config",
+                    "`partition_by` is positional and must come after `persist` and before the blocks; the required order is: name, version, storage, persist, partition_by, then columns/indexes/queries/config",
                 ));
             }
             "attributes" => {
@@ -103,6 +110,52 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     }
     if let Some(i) = columnar_indexes {
         columns.columnar_indexes = i.indexes;
+    }
+
+    // `storage: vec` generates a different table, so it leaves here rather
+    // than falling through the paging, columnar and runtime machinery below.
+    //
+    // The keys it refuses are refused with an error naming what to use
+    // instead. A silent no-op would be worse: `runtime: nagoya(locality)` on a
+    // synchronous table is a reasonable thing to write and a completely
+    // meaningless thing to have accepted.
+    if storage.is_vec() {
+        if !columns.columnar_indexes.is_empty() || !columns.columnar_fields.is_empty() {
+            return Err(syn::Error::new(
+                name.span(),
+                "`storage: vec` has no pages, and columnar storage is a paging feature. Remove \
+                 the columnar declarations or use the default `storage: paged`.",
+            ));
+        }
+        if queries.is_some() {
+            return Err(syn::Error::new(
+                name.span(),
+                "`storage: vec` does not generate queries yet; use the select, update and delete \
+                 methods directly, or use the default `storage: paged`.",
+            ));
+        }
+        if runtime.is_some() {
+            return Err(syn::Error::new(
+                name.span(),
+                "`storage: vec` is synchronous and never reaches a runtime. Remove `runtime:` or \
+                 use the default `storage: paged`.",
+            ));
+        }
+        if partition_by.is_some() {
+            return Err(syn::Error::new(
+                name.span(),
+                "`storage: vec` is one contiguous `Vec` and has nothing to partition. Remove \
+                 `partition_by:` or use the default `storage: paged`.",
+            ));
+        }
+        if config.is_some() {
+            return Err(syn::Error::new(
+                name.span(),
+                "`storage: vec` has no page size and no columnar chunking to configure. Remove \
+                 `config:` or use the default `storage: paged`.",
+            ));
+        }
+        return crate::generators::vec_table::expand(name, columns, persistence);
     }
 
     let columnar_chunk_rows = config
@@ -842,7 +895,7 @@ mod position_tests {
         .expect_err("wrong order must be an error")
         .to_string();
         assert!(
-            error.contains("name, version, persist, partition_by"),
+            error.contains("name, version, storage, persist, partition_by"),
             "the error must name the required order, got: {error}"
         );
     }
@@ -857,7 +910,7 @@ mod position_tests {
         .expect_err("late partition_by must be an error")
         .to_string();
         assert!(
-            error.contains("name, version, persist, partition_by"),
+            error.contains("name, version, storage, persist, partition_by"),
             "the error must name the required order, got: {error}"
         );
     }

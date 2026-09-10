@@ -46,7 +46,7 @@
 use proc_macro2::TokenStream;
 use syn::spanned::Spanned as _;
 
-use crate::model::{Columns, GeneratorType, IndexBackend, Persistence, Queries, RuntimeBackend};
+use crate::model::{Columns, GeneratorType, IndexBackend, Persistence, Queries, RuntimeBackend, Storage};
 use crate::parser::Parser;
 
 mod diff;
@@ -71,6 +71,11 @@ pub struct Schema {
     /// resolved value rather than the absence, because a consumer comparing an
     /// on-disk version against a declared one wants a number either way.
     pub version: u32,
+    /// What holds the rows. `serde(default)` is [`Storage::Paged`], so a
+    /// schema written before this field existed reads back as the table it
+    /// was: every declaration then was paged.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub storage: Storage,
     /// Whether persistence was selected, and whether it was selected at all.
     pub persist: Persistence,
     /// The routing key of a partitioned table. Not a column: it is stored once
@@ -272,6 +277,7 @@ impl Schema {
 
         let name = parser.parse_name()?;
         let version = parser.parse_version()?.unwrap_or(1);
+        let storage = parser.parse_storage()?;
         let persist = parser.parse_persist()?;
         let partition_by = parser.parse_partition_by()?.map(|key| PartitionKeySpec {
             name: key.name.to_string(),
@@ -308,11 +314,11 @@ impl Schema {
                         "version must be specified before columns/indexes/queries/config",
                     ));
                 }
-                "persist" | "partition_by" => {
+                "storage" | "persist" | "partition_by" => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "`persist` and `partition_by` are positional; the required order is: \
-                         name, version, persist, partition_by, then columns/indexes/queries/config",
+                        "`storage`, `persist` and `partition_by` are positional; the required order is: \
+                         name, version, storage, persist, partition_by, then columns/indexes/queries/config",
                     ));
                 }
                 other => {
@@ -339,6 +345,7 @@ impl Schema {
         Ok(Self {
             name: name.to_string(),
             version,
+            storage,
             persist,
             partition_by,
             runtime: runtime.unwrap_or_default(),

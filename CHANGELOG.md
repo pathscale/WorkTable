@@ -18,31 +18,32 @@ Change Log
   code and no rebuild.
 - `page_size` on a persisted table, at any size with a 512-byte floor. It was
   refused outright while the on-disk seeks used a hardcoded constant.
-- `worktable_vec!`: the same declaration backed by a `Vec` and an index, with
-  none of the paging, archived rows, lock map, CDC or async surface a
-  `worktable!` carries. `insert`, `upsert`, `select`, `select_all`,
-  `select_by_<column>` and `delete` are the same words doing the same job, so
-  the two tables read alike. They are **not** interchangeable, and that is
-  deliberate: the signatures differ four ways, so swapping macros breaks every
-  call site rather than silently weakening a table's guarantees. `worktable!`
-  insert is `async fn(&self, Row) -> Result<Pk, WorkTableError>`; this one is
-  `fn(&mut self, Row) -> Result<(), Row>`. Select clones a row out there and
-  lends one here.
+- `storage: vec`, a `worktable!` whose rows live in one contiguous `Vec` with
+  an index of positions into it, and which pays for none of the paging,
+  archived rows, lock map, CDC or async surface a paged table carries.
 
-  It refuses `persist`, `queries`, `columnar_indexes`, `config` and `runtime`
-  with an error naming what to use instead, rather than accepting them as
+  It is a key rather than a second macro. `worktable_vec!` existed briefly and
+  emitted `<Name>VecRow` and `<Name>VecTable`, which is a parallel vocabulary
+  to learn and a redefinition error when one table was declared both ways. One
+  macro means one `<Name>Row` and one `<Name>WorkTable` whatever the storage
+  is. `storage` is positional: name, version, storage, persist, partition_by,
+  then the blocks.
+
+  The two are **not** interchangeable, deliberately. The signatures differ four
+  ways, so moving a declaration between them fails to compile at every call
+  site rather than silently weakening its guarantees. A paged `insert` is
+  `async fn(&self, Row) -> Result<Pk, WorkTableError>`; a vec one is
+  `fn(&mut self, Row) -> Result<(), Row>`. Select clones a row out of the first
+  and lends one from the second.
+
+  `queries`, `columnar_indexes`, `runtime`, `partition_by` and `config` are
+  refused with an error naming what to use instead, rather than accepted as
   no-ops.
 
-  It emits `<Name>VecRow` and `<Name>VecTable`, so the same `name:` can be
-  declared through both macros in one module. Declaring a table both ways is
-  how you compare them, and a migration has both present at once; sharing
-  `<Name>Row` made that fail with a redefinition and no hint about which macro
-  to rename.
-
-  It honours `using` as `worktable!` does, and defaults to the same backend:
-  arctic, with `worktables_index`, `congee` and `indexset` (a plain
-  `BTreeMap`) available. A non-unique index needs a multimap, which only
-  arctic and indexset have, so the other two are refused for one by name.
+  It honours `using` as a paged table does and defaults to the same backend:
+  arctic, with `worktables_index`, `congee` and `indexset` (a plain `BTreeMap`)
+  available. A non-unique index needs a multimap, which only arctic and
+  indexset have, so the other two are refused for one by name.
 
   Measured at 200,000 rows, nine interleaved rounds, p50: 6.4 ms against the
   13.6 ms a hand-written `Vec` plus `BTreeMap` takes, and level with
@@ -52,9 +53,28 @@ Change Log
   `using indexset` is the reason to pick `BTreeMap` deliberately: `delete`
   moves every position above the hole, which a `BTreeMap` does in place and an
   ART does by reinserting each affected entry.
+- `storage: vec` with `persist: true` generates `unload` and `load`: rows out
+  as 16 KiB pages and back, each page standing alone so damage is local and an
+  append does not rewrite the file. Every page carries a CRC-32 of its body and
+  a row directory, and a row-type fingerprint refuses another table's file
+  rather than reading it as debris.
 
-### Changed
+  The indexes are not written. They are positions into the row vector, so they
+  are rebuilt on load, which is cheaper than writing, validating and keeping
+  them consistent with the rows on disk.
 
+  The codec is ported from `worktable-vec`'s `hydrate`, where the format was
+  designed. **The files are not interchangeable**: that crate stores
+  `Vec<(K, V)>` because its value type has no key in it, and a `worktable!` row
+  already carries its primary key as a column, so this stores `Vec<Row>` and
+  does not write the key twice. Different archives, different fingerprints, and
+  the fingerprint is what turns that from silent misreading into a refusal.
+
+  rkyv's derives are emitted only when `persist: true`, because an `Archived`
+  type and a resolver per row are not free to a caller who never writes one
+  out. They are emitted through `worktable::prelude::rkyv` with
+  `#[rkyv(crate = ..)]`, so a consumer does not have to declare rkyv. The paged
+  path still emits a bare `rkyv::` and is the remaining half of that leak.
 - The default index backend is `arctic`, not `worktables_index`. A composite
   primary key keeps `worktables_index`, because arctic cannot represent a tuple
   key. **Arctic cannot key an optional or variable-width column**, so an index

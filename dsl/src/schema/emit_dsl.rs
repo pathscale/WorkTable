@@ -30,6 +30,15 @@ impl Schema {
         let _ = writeln!(out, "name: {},", self.name);
         let _ = writeln!(out, "version: {},", self.version);
 
+        // Only when it is not the default. `storage: paged` is what every
+        // declaration written before this key existed meant, so writing it
+        // out would add a line to every emitted schema in the corpus to say
+        // nothing. `storage: vec` changes which table is generated, so it is
+        // never omitted.
+        if self.storage.is_vec() {
+            let _ = writeln!(out, "storage: vec,");
+        }
+
         match self.persist {
             // An omitted `persist` is not the same as `persist: false`: the
             // macro requires the acknowledgement before it will accept an
@@ -237,4 +246,39 @@ fn write_query_block(out: &mut String, kind: &str, runtime: Option<&str>, operat
     // also what versions before 1.0.0-beta.17 accept, and emitted text is
     // routinely fed to a macro older than the emitter that wrote it.
     let _ = writeln!(out, "{INDENT}}}");
+}
+
+#[cfg(test)]
+mod storage_round_trip {
+    use crate::schema::Schema;
+
+    /// `storage: vec` survives a parse and an emit.
+    ///
+    /// The emitter is fed back to the macro, so a key it drops is a key that
+    /// silently changes which table a regenerated declaration produces. Paged
+    /// is the default and is deliberately not written; vec always is.
+    #[test]
+    fn storage_vec_survives_but_paged_is_never_written() {
+        let declared = "name: T,\nversion: 1,\nstorage: vec,\ncolumns: {\n    id: u64 primary_key,\n}\n";
+        let schema = Schema::parse(declared).expect("valid");
+        assert!(schema.storage.is_vec());
+        assert!(schema.to_dsl().contains("storage: vec,"), "got: {}", schema.to_dsl());
+
+        let paged = "name: T,\nversion: 1,\ncolumns: {\n    id: u64 primary_key,\n}\n";
+        let schema = Schema::parse(paged).expect("valid");
+        assert!(!schema.storage.is_vec());
+        assert!(!schema.to_dsl().contains("storage"), "got: {}", schema.to_dsl());
+    }
+
+    /// And the emitted text parses back to the same schema.
+    #[test]
+    fn the_emitted_text_round_trips() {
+        let declared = "name: T,\nversion: 1,\nstorage: vec,\npersist: true,\ncolumns: {\n    id: u64 primary_key,\n    value: u64,\n}\n";
+        let once = Schema::parse(declared).expect("valid");
+        let text = once.to_dsl();
+        let twice = Schema::parse(&text).expect("the emitter writes valid text");
+        assert_eq!(once.storage, twice.storage);
+        assert_eq!(once.persist, twice.persist);
+        assert_eq!(text, twice.to_dsl());
+    }
 }

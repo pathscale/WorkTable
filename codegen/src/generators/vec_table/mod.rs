@@ -90,7 +90,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
-use worktable_dsl::{Columns, IndexBackend};
+use worktable_dsl::{Columns, IndexBackend, Persistence};
 
 use crate::generators::index_backend::primitive_name;
 
@@ -299,7 +299,7 @@ fn unique_shift(repr: Repr, map: &TokenStream, at: &TokenStream) -> TokenStream 
     }
 }
 
-pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
+pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::Result<TokenStream> {
     if columns.primary_keys.len() != 1 {
         return Err(syn::Error::new(
             name.span(),
@@ -315,20 +315,16 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         ));
     }
 
-    // `{Name}VecRow`, not `{Name}Row`, which is what `worktable!` emits.
+    // `{Name}Row` and `{Name}WorkTable`, the same names the paged table gets.
     //
-    // Both macros are meant to be usable in one module, and the whole point of
-    // declaring the same table both ways is to compare them, so the same
-    // `name:` in both is the expected case rather than a strange one. Sharing
-    // the row identifier made that case fail with `the name PointRow is
-    // defined multiple times` and no hint about which macro to rename.
-    //
-    // The table was already `{Name}VecTable`, so the row follows the same
-    // prefix. The two rows are different types with different guarantees, and
-    // this is the same principle as the differing signatures above: what keeps
-    // the divergence safe is that it is visible in the type.
-    let row_ident = Ident::new(&format!("{name}VecRow"), name.span());
-    let table_ident = Ident::new(&format!("{name}VecTable"), name.span());
+    // This was `{Name}VecRow` and `{Name}VecTable` while a second macro
+    // generated it, because two macros naming one table collided on the row.
+    // One macro and a `storage:` key removes the collision at the source, so
+    // there is no reason left to make a caller learn a parallel vocabulary:
+    // the storage is a property of the declaration, not of every identifier
+    // that comes out of it.
+    let row_ident = Ident::new(&format!("{name}Row"), name.span());
+    let table_ident = Ident::new(&format!("{name}WorkTable"), name.span());
 
     let pk = columns.primary_keys.first().expect("checked above").clone();
     let pk_type = columns
@@ -541,10 +537,79 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     let pk_remove = unique_remove(pk_repr, &pk_map, &quote! { key });
     let pk_shift = unique_shift(pk_repr, &pk_map, &at_expr);
 
+    // rkyv's derives only when the table can be written out. They are not free
+    // to a caller who never persists: an `Archived` type per row, a resolver
+    // per row, and the compile time to produce both.
+    //
+    // The crate path is `worktable::prelude::rkyv`, and `#[rkyv(crate = ..)]`
+    // redirects the derive's own generated paths to it. Emitting a bare `rkyv`
+    // would make the consumer's manifest part of this macro's contract, which
+    // is the leak `worktable!` still has.
+    let row_derives = if persistence.is_persisted() {
+        quote! {
+            #[derive(
+                Clone,
+                Debug,
+                PartialEq,
+                worktable::prelude::rkyv::Archive,
+                worktable::prelude::rkyv::Serialize,
+                worktable::prelude::rkyv::Deserialize,
+            )]
+            #[rkyv(crate = worktable::prelude::rkyv)]
+        }
+    } else {
+        quote! { #[derive(Clone, Debug, PartialEq)] }
+    };
+
+    let hydrate = if persistence.is_persisted() {
+        quote! {
+            /// Every row as pages, ready to be written somewhere.
+            ///
+            /// A page stands alone, so damage is local to one page and an
+            /// append does not rewrite the file.
+            ///
+            /// # Errors
+            ///
+            /// [`worktable::prelude::RowTooLarge`] when one row's archive does
+            /// not fit a page body. Nothing is produced in that case, rather
+            /// than a file that will not load.
+            pub fn unload(&self) -> Result<worktable::prelude::Vec<u8>, worktable::prelude::RowTooLarge> {
+                worktable::prelude::to_pages(&self.rows)
+            }
+
+            /// A table back from pages, with every index rebuilt.
+            ///
+            /// The indexes are not stored. They are positions into the row
+            /// vector, so they are cheaper to rebuild on load than to write,
+            /// validate and keep consistent with the rows on disk.
+            ///
+            /// # Errors
+            ///
+            /// [`worktable::prelude::LoadError`], naming the page that went
+            /// wrong. A different row type's file is refused by its
+            /// fingerprint rather than read as debris.
+            pub fn load(bytes: &[u8]) -> Result<Self, worktable::prelude::LoadError> {
+                let rows: worktable::prelude::Vec<#row_ident> = worktable::prelude::from_pages(bytes)?;
+                let mut table = Self::new();
+                for row in rows {
+                    // A duplicate key in a loaded file is a corrupt file, not a
+                    // caller error, and `insert` is the only thing that builds
+                    // every index. Refusing here would be better still, but
+                    // `LoadError` describes bytes rather than rows and there is
+                    // no variant that could honestly say this.
+                    let _ = table.insert(row);
+                }
+                Ok(table)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         #(#width_guards)*
 
-        #[derive(Clone, Debug, PartialEq)]
+        #row_derives
         pub struct #row_ident {
             #(pub #field_names: #field_types,)*
         }
@@ -618,6 +683,8 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             }
 
             #(#select_by)*
+
+            #hydrate
 
             /// Remove the row this key names, returning it.
             ///

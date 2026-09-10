@@ -28,6 +28,8 @@ pub mod persistence;
 pub mod runtime;
 
 mod primary_key;
+/// The page codec behind `storage: vec` plus `persist: true`.
+pub mod vec_hydrate;
 mod row;
 mod table;
 mod util;
@@ -52,9 +54,6 @@ pub use worktable_codegen::migration_engine;
 /// Declares the process's runtime profiles. See `runtime::Profile`.
 pub use worktable_codegen::runtimes;
 pub use worktable_codegen::worktable;
-/// The same declaration, backed by a `Vec` instead of pages. See
-/// `codegen::generators::vec_table` for what it drops and why.
-pub use worktable_codegen::worktable_vec;
 pub use worktable_codegen::worktable_version;
 /// The schema language, so the declaration each table embeds can be read
 /// without taking a second dependency and matching its version by hand.
@@ -123,7 +122,7 @@ pub mod prelude {
     pub use alloc::collections::{BTreeMap, BTreeSet};
     /// The `BTreeMap` entry, under a name a macro expansion can write.
     ///
-    /// `worktable_vec!` needs it to refuse a duplicate key in one traversal
+    /// A `storage: vec` table needs it to refuse a duplicate key in one traversal
     /// rather than a `contains_key` followed by an `insert`. The path is
     /// re-exported rather than emitted, for the same reason everything else
     /// here is: `alloc::` does not resolve in a consumer that never declared
@@ -165,6 +164,12 @@ pub mod prelude {
     pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
+    /// The page codec a `storage: vec` table unloads and loads through.
+    pub use crate::vec_hydrate::{Codec, LoadError, NotAnArchive, RowTooLarge, from_pages, to_pages};
+    /// rkyv itself, so a generated row can derive its traits without the
+    /// consumer declaring rkyv. `worktable!`'s paged path still emits a bare
+    /// `rkyv::` and is the remaining half of that leak.
+    pub use rkyv;
     #[allow(unused_imports)]
     pub use crate::{};
     pub use crate::{
@@ -195,7 +200,7 @@ pub mod prelude {
     };
     pub use ordered_float::OrderedFloat;
     pub use parking_lot::RwLock as ParkingRwLock;
-    pub use worktable_codegen::{MemStat, PersistIndex, PersistTable, worktable_vec};
+    pub use worktable_codegen::{MemStat, PersistIndex, PersistTable};
 
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
     pub const WT_DATA_EXTENSION: &str = ".wt.data";

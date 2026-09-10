@@ -1,7 +1,7 @@
 use proc_macro2::TokenTree;
 use syn::spanned::Spanned as _;
 
-use crate::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence};
+use crate::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence, Storage};
 use crate::parser::Parser;
 
 // TODO: Move this to separate attributes section because now it only parses persist.
@@ -98,7 +98,7 @@ mod tests {
     use quote::quote;
 
     use crate::Parser;
-    use crate::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence};
+    use crate::model::{PARTITION_KEY_TYPES, PartitionKey, Persistence, Storage};
 
     #[test]
     fn test_empty() {
@@ -241,5 +241,54 @@ mod tests {
         let key = parser.parse_partition_by().unwrap().expect("declared");
         assert_eq!(key.ty.to_string(), "u32");
         assert_eq!(parser.parse_persist().unwrap(), Persistence::MemoryOnly);
+    }
+}
+
+impl Parser {
+    /// Parse an optional `storage: vec,` or `storage: paged,` declaration.
+    ///
+    /// Positional, like `version` and `persist`, and for the strongest form of
+    /// their reason: this does not describe part of the table, it decides
+    /// which table is generated. A paged table is concurrent, durable and
+    /// async; a `Vec` table is single-writer and synchronous. Reading it after
+    /// the blocks would mean reading three screens of columns before learning
+    /// what they are columns of.
+    ///
+    /// It replaces a second macro. `worktable_vec!` existed for one release
+    /// and generated its own `<Name>VecRow` and `<Name>VecTable`, which is a
+    /// parallel set of names to learn and, when both macros named one table,
+    /// a redefinition error. One macro and one key means one `<Name>Row` and
+    /// one `<Name>WorkTable` whatever the storage is.
+    pub fn parse_storage(&mut self) -> syn::Result<Storage> {
+        let Some(ident) = self.input_iter.peek().cloned() else {
+            return Ok(Storage::Paged);
+        };
+        let TokenTree::Ident(ident) = ident else {
+            return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
+        };
+        if ident.to_string().as_str() != "storage" {
+            return Ok(Storage::Paged);
+        }
+        let _ = self.input_iter.next();
+        self.parse_colon()?;
+        let value = self
+            .input_iter
+            .next()
+            .ok_or_else(|| syn::Error::new(self.input.span(), "Expected `vec` or `paged`."))?;
+        let TokenTree::Ident(value) = value else {
+            return Err(syn::Error::new(value.span(), "Expected `vec` or `paged`."));
+        };
+        let storage = match value.to_string().as_str() {
+            "vec" => Storage::Vec,
+            "paged" => Storage::Paged,
+            other => {
+                return Err(syn::Error::new(
+                    value.span(),
+                    format!("expected `vec` or `paged`, found `{other}`"),
+                ));
+            }
+        };
+        self.try_parse_comma()?;
+        Ok(storage)
     }
 }

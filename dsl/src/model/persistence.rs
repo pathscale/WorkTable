@@ -17,3 +17,37 @@ impl Persistence {
         matches!(self, Self::Persisted)
     }
 }
+
+/// What holds the rows.
+///
+/// The two are not variants of one table. A paged table is concurrent,
+/// durable and async, bought with an archived row, links into pages, a
+/// row-level lock map and change-data-capture. A `Vec` table is a contiguous
+/// `Vec<Row>` and an index into it, single-writer and synchronous, and pays
+/// for none of that.
+///
+/// It is a key on `worktable!` rather than a second macro because a second
+/// macro means a second set of generated names: `worktable_vec!` shipped for
+/// one release emitting `<Name>VecRow` and `<Name>VecTable`, which is a
+/// parallel vocabulary to learn and a redefinition error when one table is
+/// declared both ways. One macro means one `<Name>Row` and one
+/// `<Name>WorkTable` whatever the storage is.
+///
+/// The choice is still loud rather than silent: the two tables have different
+/// method signatures, so moving a declaration between them fails to compile at
+/// every call site instead of quietly weakening its guarantees.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Storage {
+    /// Pages behind links, which is what a `worktable!` has always been.
+    #[default]
+    Paged,
+    /// One contiguous `Vec<Row>` and an index of positions into it.
+    Vec,
+}
+
+impl Storage {
+    pub fn is_vec(self) -> bool {
+        matches!(self, Self::Vec)
+    }
+}

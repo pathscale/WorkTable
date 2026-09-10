@@ -18,7 +18,7 @@ pub use config::Config;
 pub use index::{Index, IndexBackend};
 pub use operation::Operation;
 pub use partition::{PARTITION_KEY_TYPES, PartitionKey};
-pub use persistence::Persistence;
+pub use persistence::{Persistence, Storage};
 pub use primary_key::{GeneratorType, PrimaryKey};
 pub use queries::Queries;
 pub use runtime::{Flavor, RuntimeBackend};
