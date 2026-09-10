@@ -28,11 +28,33 @@
 //! - **The async surface.** `insert` and friends are synchronous, because
 //!   nothing here can queue. That also takes the executor off the hot path.
 //!
-//! # What it keeps
+//! # What it keeps, and what it deliberately does not
 //!
-//! The declaration and the method names. `insert`, `upsert`, `select`,
-//! `select_all` and `delete` mean what they mean on a `worktable!`, so a table
-//! can be moved between the two by changing which macro is called.
+//! It keeps the declaration and the method names. `insert`, `upsert`,
+//! `select`, `select_all` and `delete` are the same words doing the same job,
+//! so the two tables read alike and a reader carries one vocabulary.
+//!
+//! It does **not** keep the signatures, and that is the safety property here
+//! rather than an omission. This comment used to claim a table "can be moved
+//! between the two by changing which macro is called", which is false and was
+//! advertising the one hazard worth avoiding: a swap that changes a table's
+//! concurrency and durability guarantees while every call site still compiles.
+//!
+//! Every call site breaks instead:
+//!
+//! | | `worktable!` | `worktable_vec!` |
+//! |---|---|---|
+//! | `insert` | `async fn(&self, Row) -> Result<Pk, WorkTableError>` | `fn(&mut self, Row) -> Result<(), Row>` |
+//! | `upsert` | `async fn(&self, Row) -> Result<(), WorkTableError>` | `fn(&mut self, Row)` |
+//! | `delete` | `async fn(&self, Pk) -> Result<(), WorkTableError>` | `fn(&mut self, &Pk) -> Option<Row>` |
+//! | `select` | `fn(&self, Pk) -> Option<Row>`, cloned out | `fn(&self, &Pk) -> Option<&Row>`, borrowed |
+//!
+//! A missing `.await`, `&self` against `&mut self`, an owned row against a
+//! borrowed one: the compiler rejects the swap four different ways before it
+//! can silently weaken anything. The guarantees differ, so the types differ.
+//! That is what makes the difference safe to live with, not the fact that this
+//! is a separate macro. A second macro, or a second crate, would relabel the
+//! divergence without catching it.
 //!
 //! **And the index backend.** This is not a detail. The first version of this
 //! generator hardcoded `BTreeMap` and accepted `using arctic` without
