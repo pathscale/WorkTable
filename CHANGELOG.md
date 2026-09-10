@@ -21,11 +21,23 @@ Change Log
 - `worktable_vec!`: the same declaration backed by a `Vec` and an index, with
   none of the paging, archived rows, lock map, CDC or async surface a
   `worktable!` carries. `insert`, `upsert`, `select`, `select_all`,
-  `select_by_<column>` and `delete` mean what they mean on a `worktable!`, so a
-  single-writer, never-persisted table can move between the two by changing
-  which macro is called. It refuses `persist`, `queries`, `columnar_indexes`,
-  `config` and `runtime` with an error naming what to use instead, rather than
-  accepting them as no-ops.
+  `select_by_<column>` and `delete` are the same words doing the same job, so
+  the two tables read alike. They are **not** interchangeable, and that is
+  deliberate: the signatures differ four ways, so swapping macros breaks every
+  call site rather than silently weakening a table's guarantees. `worktable!`
+  insert is `async fn(&self, Row) -> Result<Pk, WorkTableError>`; this one is
+  `fn(&mut self, Row) -> Result<(), Row>`. Select clones a row out there and
+  lends one here.
+
+  It refuses `persist`, `queries`, `columnar_indexes`, `config` and `runtime`
+  with an error naming what to use instead, rather than accepting them as
+  no-ops.
+
+  It emits `<Name>VecRow` and `<Name>VecTable`, so the same `name:` can be
+  declared through both macros in one module. Declaring a table both ways is
+  how you compare them, and a migration has both present at once; sharing
+  `<Name>Row` made that fail with a redefinition and no hint about which macro
+  to rename.
 
   It honours `using` as `worktable!` does, and defaults to the same backend:
   arctic, with `worktables_index`, `congee` and `indexset` (a plain

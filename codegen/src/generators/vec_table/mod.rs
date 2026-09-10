@@ -92,7 +92,6 @@ use quote::quote;
 use syn::Ident;
 use worktable_dsl::{Columns, IndexBackend};
 
-use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::index_backend::primitive_name;
 
 // Paths are written through `worktable::prelude`, never as bare `alloc::` or
@@ -316,8 +315,19 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         ));
     }
 
-    let generator = WorktableNameGenerator::from_table_name(name.to_string());
-    let row_ident = generator.get_row_type_ident();
+    // `{Name}VecRow`, not `{Name}Row`, which is what `worktable!` emits.
+    //
+    // Both macros are meant to be usable in one module, and the whole point of
+    // declaring the same table both ways is to compare them, so the same
+    // `name:` in both is the expected case rather than a strange one. Sharing
+    // the row identifier made that case fail with `the name PointRow is
+    // defined multiple times` and no hint about which macro to rename.
+    //
+    // The table was already `{Name}VecTable`, so the row follows the same
+    // prefix. The two rows are different types with different guarantees, and
+    // this is the same principle as the differing signatures above: what keeps
+    // the divergence safe is that it is visible in the type.
+    let row_ident = Ident::new(&format!("{name}VecRow"), name.span());
     let table_ident = Ident::new(&format!("{name}VecTable"), name.span());
 
     let pk = columns.primary_keys.first().expect("checked above").clone();

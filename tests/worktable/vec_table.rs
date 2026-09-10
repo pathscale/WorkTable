@@ -8,7 +8,8 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use worktable::worktable_vec;
+use worktable::prelude::*;
+use worktable::{worktable, worktable_vec};
 
 worktable_vec!(
     name: Point,
@@ -26,9 +27,9 @@ worktable_vec!(
 fn it_behaves_like_a_table() {
     let mut table = PointVecTable::new();
 
-    table.insert(PointRow { id: 1, value: 10, tag: 7 }).expect("fresh");
-    table.insert(PointRow { id: 2, value: 20, tag: 7 }).expect("fresh");
-    assert!(table.insert(PointRow { id: 1, value: 99, tag: 9 }).is_err(), "duplicate key");
+    table.insert(PointVecRow { id: 1, value: 10, tag: 7 }).expect("fresh");
+    table.insert(PointVecRow { id: 2, value: 20, tag: 7 }).expect("fresh");
+    assert!(table.insert(PointVecRow { id: 1, value: 99, tag: 9 }).is_err(), "duplicate key");
 
     assert_eq!(table.select(&1).expect("present").value, 10);
     assert_eq!(table.len(), 2);
@@ -39,7 +40,7 @@ fn it_behaves_like_a_table() {
     assert_eq!(tagged.len(), 2);
     assert_eq!(tagged[0].id, 1);
 
-    table.upsert(PointRow { id: 1, value: 11, tag: 7 });
+    table.upsert(PointVecRow { id: 1, value: 11, tag: 7 });
     assert_eq!(table.select(&1).expect("present").value, 11, "upsert replaces");
     assert_eq!(table.len(), 2, "upsert does not grow the table");
 
@@ -97,7 +98,7 @@ fn it_costs_what_a_vec_costs() {
     let started = Instant::now();
     let mut table = PointVecTable::new();
     for id in 0..ROWS {
-        table.insert(PointRow { id, value: id * 2, tag: id % 64 }).expect("fresh");
+        table.insert(PointVecRow { id, value: id * 2, tag: id % 64 }).expect("fresh");
     }
     let mut table_sum = 0u64;
     for id in 0..ROWS {
@@ -191,8 +192,8 @@ fn deleting_from_the_middle_reindexes_both_backends() {
         }};
     }
 
-    check!(PointVecTable, PointRow);
-    check!(OrderedVecTable, OrderedRow);
+    check!(PointVecTable, PointVecRow);
+    check!(OrderedVecTable, OrderedVecRow);
 }
 
 /// Arctic takes a `String` key, so the macro does not have to refuse one.
@@ -203,9 +204,9 @@ fn deleting_from_the_middle_reindexes_both_backends() {
 #[test]
 fn a_string_keyed_table_works() {
     let mut table = NamedVecTable::new();
-    table.insert(NamedRow { key: "beta".to_string(), value: 2 }).expect("fresh");
-    table.insert(NamedRow { key: "alpha".to_string(), value: 1 }).expect("fresh");
-    assert!(table.insert(NamedRow { key: "alpha".to_string(), value: 9 }).is_err());
+    table.insert(NamedVecRow { key: "beta".to_string(), value: 2 }).expect("fresh");
+    table.insert(NamedVecRow { key: "alpha".to_string(), value: 1 }).expect("fresh");
+    assert!(table.insert(NamedVecRow { key: "alpha".to_string(), value: 9 }).is_err());
 
     assert_eq!(table.select(&"alpha".to_string()).expect("present").value, 1);
     assert_eq!(table.delete(&"beta".to_string()).expect("present").value, 2);
@@ -247,9 +248,9 @@ worktable_vec!(
 fn the_backends_without_a_multimap_still_work() {
     let mut congee = CongeedVecTable::new();
     for id in 1..=5u64 {
-        congee.insert(CongeedRow { id, value: id * 10 }).expect("fresh");
+        congee.insert(CongeedVecRow { id, value: id * 10 }).expect("fresh");
     }
-    assert!(congee.insert(CongeedRow { id: 3, value: 99 }).is_err(), "duplicate key");
+    assert!(congee.insert(CongeedVecRow { id: 3, value: 99 }).is_err(), "duplicate key");
     assert_eq!(congee.delete(&3).expect("present").value, 30);
     for id in [1u64, 2, 4, 5] {
         assert_eq!(congee.select(&id).unwrap_or_else(|| panic!("{id} gone")).value, id * 10);
@@ -259,11 +260,11 @@ fn the_backends_without_a_multimap_still_work() {
 
     let mut wti = WtidVecTable::new();
     for id in 1..=5u64 {
-        wti.insert(WtidRow { id, value: id * 10, code: id + 100 }).expect("fresh");
+        wti.insert(WtidVecRow { id, value: id * 10, code: id + 100 }).expect("fresh");
     }
     // The unique secondary refuses independently of the primary key.
     assert!(
-        wti.insert(WtidRow { id: 6, value: 60, code: 103 }).is_err(),
+        wti.insert(WtidVecRow { id: 6, value: 60, code: 103 }).is_err(),
         "duplicate code should be refused even though the id is fresh"
     );
     // ...and refusing it must not have left the fresh id behind.
@@ -274,4 +275,45 @@ fn the_backends_without_a_multimap_still_work() {
     assert_eq!(wti.delete(&3).expect("present").value, 30);
     assert!(wti.select_by_code(&103).is_none(), "the secondary kept a deleted row");
     assert_eq!(wti.select_by_code(&104).expect("present").value, 40);
+}
+
+// The same `name:` through both macros, in one module.
+//
+// This is the expected case, not a strange one: declaring a table both ways is
+// how you compare them, and a migration has both present at once. It used to
+// fail with `the name CoexistRow is defined multiple times`, because both
+// macros emitted `{Name}Row`.
+worktable!(
+    name: Coexist,
+    columns: {
+        id: u64 primary_key,
+        value: u64,
+    },
+);
+
+worktable_vec!(
+    name: Coexist,
+    columns: {
+        id: u64 primary_key,
+        value: u64,
+    },
+);
+
+/// Both macros can name the same table in one module.
+///
+/// The test is that this file compiles at all; the body only checks that the
+/// two really are separate types holding separate data, so a future collapse
+/// of the two names into one cannot pass by accident.
+#[test]
+fn both_macros_can_declare_the_same_table() {
+    let mut vec_table = CoexistVecTable::new();
+    vec_table.insert(CoexistVecRow { id: 1, value: 10 }).expect("fresh");
+
+    let work_table = CoexistWorkTable::default();
+    let key: CoexistPrimaryKey = 1u64.into();
+    assert_eq!(work_table.select(key), None, "a separate table, separately empty");
+    assert_eq!(vec_table.select(&1).expect("present").value, 10);
+
+    // And the row types are distinct: this one does not exist on the other.
+    let _: CoexistRow = CoexistRow { id: 2, value: 20 };
 }
