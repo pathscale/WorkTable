@@ -116,9 +116,17 @@ pub mod prelude {
     /// carried it whether or not they ran one.
     pub use nagoya::{sleep, timeout, yield_now};
 
+    pub use alloc::boxed::Box;
     pub use alloc::collections::{BTreeMap, BTreeSet};
     pub use alloc::sync::Arc;
-    pub use alloc::vec::IntoIter;
+    /// `Vec` and `vec!` for the same reason as `Arc` above: a `no_std`
+    /// consumer has neither in scope, and the expansion uses both.
+    pub use alloc::vec;
+    pub use alloc::vec::{IntoIter, Vec};
+    /// The one combinator generated code awaits on, re-exported for the same
+    /// reason as `sleep` and `timeout`: emitting `futures::` made that crate
+    /// part of the macro's contract, so every consumer had to depend on it.
+    pub use futures::future::join_all;
     pub use hashbrown::{HashMap, HashSet};
 
     pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};

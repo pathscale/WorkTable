@@ -124,7 +124,7 @@ impl InMemoryGenerator {
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
             let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
-            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
             pending_lock
         }
     }
@@ -153,7 +153,7 @@ impl InMemoryGenerator {
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
             let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
-            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
             pending_lock
         }
     }

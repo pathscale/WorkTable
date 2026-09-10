@@ -1,0 +1,18 @@
+# A consumer that takes worktable without `std` and invokes the macro.
+#
+# Deliberately outside the workspace: it has to resolve `worktable` with
+# `default-features = false`, and a workspace member shares the feature
+# unification of everything built alongside it, which would quietly turn `std`
+# back on and make this pass for the wrong reason.
+[package]
+name = "nostd-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+worktable = { path = "../..", default-features = false }
+rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "uuid-1"] }
+derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
+
+[workspace]
