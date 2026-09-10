@@ -32,21 +32,23 @@ worktable!(
 /// Deliberately `multi_thread`: on the default current-thread runtime the
 /// tasks never overlap and the batch path only ever sees one writer, which is
 /// how a bug in it stays hidden. See `tests/worktable/multi_thread_discipline`.
-/// **Currently failing, and ignored so the suite stays honest rather than
-/// green.** Remove the `ignore` when the bug below is fixed; it is the
-/// regression test for it.
 ///
-/// Two panics, reliably:
+/// It used to panic twice, reliably:
 ///
 /// ```text
-/// src/persistence/space/data.rs:381  should be available as pages parsed from these ids
-/// async-task/src/task.rs:452         Task polled after completion
+/// src/persistence/space/data.rs  should be available as pages parsed from these ids
+/// async-task/src/task.rs:452     Task polled after completion
 /// ```
 ///
-/// Writers alone do not reproduce it: a four-writer version of this test
-/// passes. It needs readers overlapping the writers, which is what a service
-/// actually does and what no existing persistence test does.
-#[ignore = "reproduces an open bug in the persisted batch save path, see the comment above"]
+/// The cause was a gap in the page sequence, reduced to two calls in
+/// `SpaceData::create_pages_up_to`'s test. Writers alone do not reproduce it:
+/// a four-writer version of this test passes. It needs readers overlapping the
+/// writers, because that is what makes two writers allocate pages at once.
+///
+/// The size matters and is not arbitrary. At 5,000 rows this passed even with
+/// the bug, and the wall time was the tell rather than the panic: 0.43s
+/// passing at 5,000, 158s failing at 10,000, 0.89s passing at 10,000 once
+/// fixed. The minutes were the panic's aftermath, not the cost of persisting.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_upserts_do_not_lose_a_page() {
     let dir = "tests/data/concurrent_upsert_batch/persisted";
@@ -57,9 +59,7 @@ async fn concurrent_upserts_do_not_lose_a_page() {
         ConcurrentUpsertWorkTable::name_snake_case(),
         ConcurrentUpsertWorkTable::version(),
     );
-    let engine = ConcurrentUpsertPersistenceEngine::new(config)
-        .await
-        .expect("an engine");
+    let engine = ConcurrentUpsertPersistenceEngine::new(config).await.expect("an engine");
     let table = std::sync::Arc::new(ConcurrentUpsertWorkTable::load(engine).await.expect("a table"));
 
     const ROWS: u64 = 20_000;
@@ -114,5 +114,11 @@ async fn concurrent_upserts_do_not_lose_a_page() {
         assert!(table.select(id).is_some(), "row {id} went missing");
     }
     let table = std::sync::Arc::try_unwrap(table).unwrap_or_else(|_| panic!("the writers are joined"));
-    table.close().await.expect("a clean close");
+    // Bounded, because the failure mode this test guards against is a drain
+    // that takes minutes rather than one that returns an error. An unbounded
+    // `close` turns that regression into a hung suite instead of a red test.
+    tokio::time::timeout(std::time::Duration::from_secs(30), table.close())
+        .await
+        .expect("close must drain in seconds, not minutes")
+        .expect("a clean close");
 }
