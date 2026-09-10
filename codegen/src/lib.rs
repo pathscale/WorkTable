@@ -16,6 +16,7 @@ mod runtimes;
 #[cfg(feature = "s3-support")]
 mod s3_persistence;
 mod worktable;
+mod worktable_vec;
 mod worktable_version;
 
 use proc_macro::TokenStream;
@@ -74,6 +75,16 @@ pub fn persist_table(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(MemStat)]
 pub fn mem_stat(input: TokenStream) -> TokenStream {
     mem_stat::expand(input.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// The same declaration, backed by a `Vec` instead of pages.
+///
+/// See `generators::vec_table` for what it drops and why.
+#[proc_macro]
+pub fn worktable_vec(input: TokenStream) -> TokenStream {
+    worktable_vec::expand(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

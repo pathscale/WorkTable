@@ -52,6 +52,9 @@ pub use worktable_codegen::migration_engine;
 /// Declares the process's runtime profiles. See `runtime::Profile`.
 pub use worktable_codegen::runtimes;
 pub use worktable_codegen::worktable;
+/// The same declaration, backed by a `Vec` instead of pages. See
+/// `codegen::generators::vec_table` for what it drops and why.
+pub use worktable_codegen::worktable_vec;
 pub use worktable_codegen::worktable_version;
 /// The schema language, so the declaration each table embeds can be read
 /// without taking a second dependency and matching its version by hand.
@@ -184,7 +187,7 @@ pub mod prelude {
     };
     pub use ordered_float::OrderedFloat;
     pub use parking_lot::RwLock as ParkingRwLock;
-    pub use worktable_codegen::{MemStat, PersistIndex, PersistTable};
+    pub use worktable_codegen::{MemStat, PersistIndex, PersistTable, worktable_vec};
 
     pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
     pub const WT_DATA_EXTENSION: &str = ".wt.data";
