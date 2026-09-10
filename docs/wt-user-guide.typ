@@ -28,16 +28,13 @@
 
 = What this is
 
-Embedded table storage for Rust. You declare a table with a macro and get a typed
-struct back: a primary key, secondary indexes, and generated queries. Rows live in
-memory as paged, zero-copy records. Persisting them to local disk or to S3 is opt-in.
+Embedded table storage for Rust. Declare a table with a macro, get a typed struct back:
+a primary key, secondary indexes, generated queries. Rows live in memory as paged,
+zero-copy records. Persisting them to local disk or S3 is opt-in.
 
-If you have used .NET's `DataTable` this will feel familiar. The differences are that
-the type is generated for you, and that persistence is one feature away.
-
-#note("What it is not")[There is no transaction journal and no fsync on every batch.
-A mutation returning means the change was accepted and queued, not that it is on
-stable storage. Section 6 says exactly what each boundary guarantees.]
+#note("What it is not")[No transaction journal, no fsync per batch. A mutation
+returning means the change was accepted and queued, not that it is on stable storage.
+See #link(<persistence>)[Persistence].]
 
 = Getting started
 
@@ -45,73 +42,314 @@ stable storage. Section 6 says exactly what each boundary guarantees.]
 cargo add worktable
 ```
 
-A table is one macro invocation. The name is the only required key beyond the columns.
-
 ```rust
 use worktable::prelude::*;
 use worktable::worktable;
+```
 
+Everything the macro emits resolves through `worktable::prelude`, so that one import is
+the whole setup.
+
+= Examples <examples>
+
+Every clause the macro accepts appears below, labelled where it is used.
+
+== 1. The smallest table
+
+```rust
 worktable! (
-    name: Order,
+    name: Order,              // required, and must come first. CamelCase.
     columns: {
-        id: u64 primary_key autoincrement,
-        symbol: String,
-        quantity: u64,
+        id: u64 primary_key,  // exactly one primary key is required
+        total: u64,
     },
-    indexes: {
-        symbol_idx: symbol,
-    }
+);
+
+let table = OrderWorkTable::default();
+table.insert(OrderRow { id: 1, total: 500 })?;   // errors if the key exists
+table.upsert(OrderRow { id: 1, total: 600 })?;   // overwrites instead
+let row = table.select(1).expect("just inserted");
+```
+
+`name: Order` generates `OrderWorkTable`, `OrderRow`, `OrderPrimaryKey`, and for a
+persisted table `OrderPersistenceEngine`.
+
+== 2. Column clauses
+
+```rust
+worktable! (
+    name: Account,
+    columns: {
+        id: u64 primary_key autoincrement,  // the table assigns keys
+        email: String,                      // any sized type
+        nickname: String optional,          // becomes Option<String>
+        balance: i64,
+    },
 );
 ```
 
-That generates `OrderWorkTable`, `OrderRow`, `OrderPrimaryKey`, and a `select_by_symbol`
-method from the index. Nothing is written by hand per table.
+Clause order inside a column is fixed by the grammar and is not the order you might
+guess: `<name>: <Type> [primary_key [autoincrement|custom]] [optional] [columnar(..)]
+[using <backend>]`. The generator binds to `primary_key`, and `optional` follows both.
 
 ```rust
-let table = OrderWorkTable::default();
-table
-    .insert(OrderRow { id: table.get_next_pk().into(), symbol: "ETH".into(), quantity: 3 })
-    .await?;
-let found = table.select_by_symbol("ETH".into()).execute()?;
+let id = table.insert(AccountRow {
+    id: 0,                     // ignored under autoincrement
+    email: "a@b.c".to_string(),
+    nickname: None,            // optional column
+    balance: 0,
+})?;
 ```
 
-Mutations are `async`; reads are not. This declaration and these three calls are
-compiled and run by `examples/guide_check.rs`, so the guide cannot drift from the API
-without the build noticing.
+`custom` replaces `autoincrement` when you generate keys yourself and still want the
+table to track the high-water mark.
 
-= Declaring a table
+== 3. Composite primary keys
 
-The grammar is positional at the top and block-structured below it. The order is
-*name, version, persist, partition_by*, and then the blocks `columns`, `indexes`,
-`queries`, `config`, in any order. Putting `persist` after a block is an error that
-names the required order rather than failing as an unexpected token.
+```rust
+worktable! (
+    name: Quote,
+    columns: {
+        exchange: u32 primary_key,   // both columns carry primary_key
+        symbol: u32 primary_key,     // one generator is shared between them
+        price: f64,
+    },
+);
 
-== Columns
+let row = table.select((1_u32, 42_u32).into()).expect("present");
+```
 
-Each column is `name: Type` followed by any inline attributes. `primary_key` is
-required on exactly one column, or on several to form a tuple key. `autoincrement`
-asks the table to generate the key. `optional` makes the column an `Option`.
+A composite key keeps `worktables_index` even though the default is `arctic`, because
+arctic cannot represent a tuple key.
 
-== Indexes
+== 4. Secondary indexes
 
-Each entry is `name: column`, optionally `unique`, optionally `using <backend>`.
-A non-unique index maps one key to many rows. Every index adds a `select_by_<column>`
-method.
+```rust
+worktable! (
+    name: Customer,
+    columns: {
+        id: u64 primary_key,
+        email: String,
+        country: u16,
+    },
+    indexes: {
+        // <name>: <column> [unique] [using <backend>]
+        email_idx: email unique using worktables_index,  // one row back
+        country_idx: country using arctic,               // many rows back
+    },
+);
 
-== Queries
+let one = table.select_by_email("a@b.c".to_string());     // Option<Row>
+let many = table.select_by_country(44).execute()?;        // Vec<Row>
+```
 
-Beyond the generated `select`, `insert`, `insert_many`, `upsert`, `update`, `delete`
-and `select_all`, the `queries` block declares your own update and delete shapes.
+`using` is optional and defaults to `arctic`. An index over an optional or
+variable-width column must say `using worktables_index`; arctic cannot key one.
 
-#note("in_place queries")[An `in_place` query hands you a mutable reference to the
-archived column bytes and skips index maintenance entirely, so a column covered by any
-index cannot be mutated that way. The macro refuses it rather than letting an index go
-stale.]
+== 5. Declared queries
+
+```rust
+worktable! (
+    name: Invoice,
+    columns: {
+        id: u64 primary_key,
+        amount: u64,
+        state: u8,
+    },
+    queries: {
+        update: {
+            AmountById(amount) by id,   // <Name>(<columns>) by <key>
+        },
+        delete: {
+            ById() by id,               // empty parens: names no columns
+        },
+        in_place: {
+            StateById(state) by id,     // only `by <primary key>` is supported
+        },
+    },
+);
+```
+
+CamelCase declared, snake_case generated:
+
+```rust
+table.update_amount_by_id(AmountByIdQuery { amount: 900 }, 1).await?;  // name + "Query"
+table.delete_by_id(1).await?;
+table.update_state_by_id_in_place(1, |state| *state = 2).await?;
+```
+
+`update` reads, changes and writes. `in_place` mutates without selecting first and locks
+internally, so it is safe from several threads without the caller holding anything.
+
+== 6. Selects you do not declare
+
+Generated from the columns and indexes, so none of these appear in the macro:
+
+```rust
+table.select(id)                                  // primary key
+table.select_by_email("a@b.c".to_string())        // unique index
+table.select_by_country(44).execute()?            // non-unique index
+table.select_by_pk_range(10..=20).execute()?      // range over the primary key
+table.select_by_country_range(40..=50).execute()?  // range over an indexed column
+table.select_all().execute()?
+table.select_all()
+     .order_on(InvoiceRowFields::Amount, Order::Desc)   // generated field enum
+     .limit(10)
+     .execute()?
+```
+
+== 7. Columnar fields and indexes
+
+```rust
+worktable! (
+    name: Reading,
+    columns: {
+        id: u64 primary_key,          // must NOT say columnar: implicit already
+        host_id: u64 columnar(chunk_rows(2), compression(none)),
+        timestamp: i64 columnar,      // bare form, not the same as columnar(..)
+        payload: String,              // row-wise only
+    },
+    columnar_indexes: {
+        host_time: {                  // <name>: { cluster_by: [..] }
+            cluster_by: [host_id, timestamp],   // every field must be columnar
+        },
+    },
+    config: {
+        columnar_slot_id: ColumnSlotId16,   // slot width, default ColumnSlotId32
+        columnar_chunk_rows: 4096,          // default chunk size, default 65536
+    },
+);
+```
+
+A `columnar` column is stored column-wise as well as row-wise, so a scan over that field
+reads only that field's bytes.
+
+== 8. Page size and row derives
+
+```rust
+worktable! (
+    name: Small,
+    columns: { id: u64 primary_key, v: u64 },
+    config: {
+        page_size: 4096,             // 512 minimum, 65535 max under arctic
+        row_derives: Clone, Debug,   // bare identifiers, NOT [Clone, Debug]
+    },                               // row_derives must be written last
+);
+```
+
+`row_derives` reads identifiers until it meets another config key, which is why it goes
+last. The `config` block takes no trailing comma after its closing brace.
+
+== 9. Partitioned tables
+
+```rust
+worktable! (
+    name: Book,
+    persist: false,
+    partition_by: symbol_id: u16,   // <name>: <unsigned type>, stored per partition
+    columns: {
+        exchange_id: u8 primary_key,
+        bid: f64,
+        ask: f64,
+    },
+);
+```
+
+The partition key is stored once per partition rather than once per row, and no query
+can name it.
+
+== 10. Choosing a runtime
+
+```rust
+worktable! (
+    name: Orders,
+    runtime: nagoya(shared_slot),   // or `tokio`, which takes no flavor
+    columns: { id: u64 primary_key, total: u64 },
+);
+```
+
+Omitting `runtime:` and writing `runtime: nagoya(shared_slot)` describe the same table.
+A per-query-block form parses but codegen ignores it today:
+
+```rust
+queries: {
+    update runtime fast_local: {    // parses, currently has no effect
+        TotalById(total) by id,
+    },
+},
+```
+
+== 11. A persisted table, end to end
+
+```rust
+worktable! (
+    name: Ledger,
+    version: 2,           // optional, defaults to 1. Must precede persist.
+    persist: true,        // generates LedgerPersistenceEngine
+    columns: {
+        id: u64 primary_key,
+        amount: i64,
+    },
+);
+
+let config = DiskConfig::new_with_table_name(
+    dir,
+    LedgerWorkTable::name_snake_case(),
+    LedgerWorkTable::version(),
+);
+let engine = LedgerPersistenceEngine::new(config).await?;
+let table = LedgerWorkTable::load(engine).await?;   // replays what is on disk
+
+table.upsert(LedgerRow { id: 1, amount: 42 }).await?;   // queued, not durable
+
+table.close().await?;   // the only thing that proves the queue drained
+```
+
+== 12. Everything at once
+
+The prefix is ordered. Everything after `partition_by` is free-order.
+
+```rust
+worktable! (
+    name: Kitchen,                  // 1, required
+    version: 3,                     // 2, optional
+    persist: false,                 // 3, optional
+    partition_by: shard: u16,       // 4, optional
+    runtime: nagoya(locality),      // free-order from here down
+    columns: {
+        id: u64 primary_key autoincrement,
+        nickname: String optional,
+        bucket: u32 columnar,
+        score: i64,
+    },
+    indexes: {
+        nickname_idx: nickname unique using worktables_index,
+        score_idx: score,
+    },
+    columnar_indexes: {
+        by_bucket: { cluster_by: [bucket] },
+    },
+    queries: {
+        update: { ScoreById(score) by id },
+        delete: { ById() by id },
+        in_place: { ScoreById(score) by id },
+    },
+    config: {
+        page_size: 4096,
+        columnar_chunk_rows: 4096,
+        row_derives: Clone, Debug,
+    },
+);
+```
+
+#note("Writing `version` or `persist` late")[The prefix keys are positional and the
+error says so rather than reporting an unexpected token. `version` after `columns` is
+refused; so is `persist` or `partition_by`.]
 
 = Index backends
 
-An index can name its physical structure with `using`. Four are available and they
-differ in what they can express, not only in speed.
+`using` names the physical structure. They differ in what they can express, not only in
+speed.
 
 #table(
   columns: (auto, 1fr),
@@ -124,20 +362,17 @@ differ in what they can express, not only in speed.
   [`congee`], [Fixed-width integer keys. Refuses `String` and other variable-width types.],
 )
 
-Congee must state `persist: true` or `persist: false` explicitly, because its
-persistence uses native checkpoint and WAL adapters rather than the shared page format.
+Rules:
 
-Omitting `using` gives `arctic`, with one exception: a composite primary key keeps
-`worktables_index`, because arctic's key contract cannot represent a tuple.
-
-#note("The default cannot key everything")[Arctic takes fixed-width keys only, so an
-index on an optional or variable-width column must name `worktables_index` explicitly.
-`by_name: name unique` over a `String optional` is rejected, and the message names the
-type rather than the omission.]
-
-#note("Arctic and page size")[Arctic packs a link into 64 bits with 16-bit offset and
-length fields, so it cannot address a page larger than 65535 bytes. The macro checks
-this and refuses the combination.]
+- Omitting `using` gives `arctic`. A composite primary key keeps `worktables_index`,
+  because arctic cannot represent a tuple key.
+- Congee must state `persist` explicitly. Its persistence uses native checkpoint and WAL
+  adapters rather than the shared page format.
+- Arctic cannot key an optional or variable-width column. `nickname_idx: nickname unique`
+  over a `String optional` is rejected, and the message names the type rather than the
+  omission. Say `using worktables_index`.
+- Arctic caps page size at 65535: it packs a link into 64 bits with 16-bit offset and
+  length fields. The macro refuses the combination.
 
 = Page size
 
@@ -165,47 +400,20 @@ hardcoded constant while the table threaded the configured one. Every location t
 decides a page size, and the three silent bugs found while making them agree, are in
 `docs/page-size.md`.]
 
-= Columnar fields and indexes
+= Columnar rules
 
-A column marked `columnar` is stored column-wise as well as row-wise, so a scan over
-that one field reads only that field's bytes instead of walking whole rows.
+Syntax is in #link(<examples>)[Example 7]. The constraints:
 
-```rust
-worktable! (
-    name: Reading,
-    columns: {
-        id: u64 primary_key,
-        host_id: u64 columnar(chunk_rows(2), compression(none)),
-        timestamp: i64 columnar,
-        payload: String,
-    },
-    columnar_indexes: {
-        host_time: {
-            cluster_by: [host_id, timestamp],
-        },
-    },
-);
-```
+- Every field in `cluster_by` must itself declare `columnar`.
+- A primary-key column must not declare `columnar`. It participates in columnar identity
+  implicitly, and declaring it again generates duplicate scan methods.
+- `columnar_indexes` requires at least one `columnar` field.
+- A columnar index must not take the name of a columnar field, which would generate two
+  scan methods with one name.
+- `columnar_slot_id` and `columnar_chunk_rows` live in `config` because they apply to the
+  table. Defaults are `ColumnSlotId32` and 65,536.
 
-`columnar` takes optional settings. `chunk_rows(n)` sets how many rows go in a chunk
-and `compression(name)` selects the codec; `none` is the only one today. A bare
-`columnar` is not `columnar(...)` with the defaults filled in, and the two are written
-back differently, so what you wrote is what you get.
-
-`columnar_indexes` names an ordering over columnar fields. `cluster_by` lists the
-fields, in order, and every one of them must itself be `columnar`. A table with
-columnar fields and no `columnar_indexes` is fine; the reverse is not.
-
-Two settings live in `config` rather than on a column, because they apply to the table:
-`columnar_slot_id` picks the width of the slot identifier (`ColumnSlotId8` through
-`ColumnSlotId64`, default `ColumnSlotId32`) and `columnar_chunk_rows` sets the default
-chunk size for fields that do not name their own.
-
-#note("The primary key is already there")[A primary-key column must not declare
-`columnar`: it participates in columnar identity implicitly, and declaring it again
-generates duplicate scan methods. The macro refuses it.]
-
-= Persistence
+= Persistence <persistence>
 
 Persistence is implemented, not planned. Add `persist: true` and load the table through
 an engine.
@@ -222,8 +430,6 @@ S3 layers on top of the disk engine rather than replacing it:
 
 == The durability contract
 
-This is the part to read before relying on it.
-
 #table(
   columns: (auto, 1fr),
   stroke: 0.4pt + rgb("#cccccc"),
@@ -236,13 +442,12 @@ This is the part to read before relying on it.
   [Power loss], [No atomic-batch or stable-storage guarantee.],
 )
 
-Call `close()` during orderly shutdown. `wait_for_ops()` is not a shutdown boundary on
-its own: it does not stop another task from queueing later work, so it needs
-application-level writer quiescence to mean anything.
+Call `close()` on orderly shutdown. `wait_for_ops()` is not a shutdown boundary: it does
+not stop another task queueing more work, so it means nothing without writer quiescence.
 
-A persistence failure is terminal. An unrecoverable event gap, queue-analysis error,
-batch-apply error or engine-task failure moves the table into a failed state, and the
-original error is returned to waiters, to `close()`, and to later mutations.
+Persistence failure is terminal. An event gap, queue-analysis error, batch-apply error or
+engine-task failure fails the table, and the original error goes to waiters, to `close()`
+and to later mutations.
 
 == Loading a torn store
 
@@ -263,39 +468,22 @@ moved rows. It does not truncate `.wt.data`. Watch physical growth with
 
 = The filesystem
 
-WorkTable reaches the filesystem through one module, `worktable::prelude::fsx`, and
-names no async runtime. The file type is `std::fs::File` behind `AllowStdIo`, which
-carries the `futures-io` traits the storage layer asks for while keeping blocking
-semantics.
+One module, `worktable::prelude::fsx`, naming no async runtime. The file type is
+`std::fs::File` behind `AllowStdIo`: blocking semantics, `futures-io` traits.
 
-That is a deliberate choice and it was measured: `tokio::fs` ran scattered updates at
-12,316 rows per second against 74,728 for the same code on `std::fs`, a factor of 6.1,
-with bulk insert within noise and the in-memory control matching. A scattered update is
-many small IOs and `tokio::fs` pays a thread-pool round trip for each one.
+Measured, not assumed. `tokio::fs` ran scattered updates at 12,316 rows per second
+against 74,728 on `std::fs`, a factor of 6.1, with bulk insert within noise. A scattered
+update is many small IOs and `tokio::fs` pays a thread-pool round trip for each.
 
-#note("Where to put the work")[Because the calls block, a persistence engine should own
-a thread rather than share a runtime's worker pool. The calls were never waiting on the
-disk through a runtime anyway: the persistence path measured 89 voluntary context
-switches across 25,000 inserts.]
+#note("Where to put the work")[The calls block, so a persistence engine should own a
+thread rather than share a worker pool. They were never waiting on the disk anyway: 89
+voluntary context switches across 25,000 inserts.]
 
-= Choosing a runtime
+= Choosing a runtime <runtime>
 
-A table names the async runtime its generated code awaits on.
-
-```rust
-worktable! (
-    name: Orders,
-    runtime: nagoya(shared_slot),
-    columns: { id: u64 primary_key, total: u64 },
-);
-```
-
-`nagoya` is the default and `tokio` is the alternative. Omitting `runtime:` and writing
-`runtime: nagoya(shared_slot)` describe the same table.
-
-The parenthesised name is a *flavor*: a set of scheduler tunings, not a different
-scheduler. All flavors share one pool implementation, so choosing between them costs no
-extra code and no rebuild of the engine.
+Syntax is in #link(<examples>)[Example 10]. The parenthesised name is a *flavor*: a set
+of scheduler tunings, not a different scheduler. All flavors share one pool, so choosing
+between them costs no extra code and no rebuild.
 
 #table(
   columns: (auto, 1fr),
@@ -310,27 +498,24 @@ extra code and no rebuild of the engine.
   [`low_latency`], [`locality`, looking for work more often before parking.],
 )
 
-#note("Take the default")[Measured across a read/write mix, YCSB, and a persisted mix,
-every flavor lands inside the run-to-run noise of every other, on 9 to 16 repetitions
-per point. The one choice that changes anything is a *negative*: putting a flavor that
-sends wakes to the injector (`spread`, `throughput`, `wide_injector`) on a write-heavy
-table costs 55% to 57%, because the workload wakes on every await. The default does not
-do that.
+#note("Take the default")[Measured across a read/write mix, YCSB and a persisted mix,
+every flavor lands inside the run-to-run noise of every other, on 9 to 16 repetitions per
+point. The one choice that changes anything is a negative: putting an injector-waking
+flavor (`spread`, `throughput`, `wide_injector`) on a write-heavy table costs 55% to 57%,
+because the workload wakes on every await. The default does not do that.
 
-So this is not a knob to tune per table. It is a knob to leave alone unless you have a
-measurement that says otherwise, and the measurement should report a range rather than a
-median: a 3-run reading of this reversed twice under 16 runs.]
+Not a knob to tune per table. If you do measure, report a range rather than a median: a
+3-run reading of this reversed twice under 16 runs.]
 
 = Concurrency
 
-Indexes are lock-free with change-data-capture, and a row-level `LockMap` gives ordered
-access when you need it. Generated reads always use immutable row-version publication,
-including in `default-features = false` builds: turning off a Cargo feature must never
-expose a safe API that races deserialization against page-byte mutation.
+Indexes are lock-free with change-data-capture; a row-level `LockMap` gives ordered
+access when you want it. Reads always use immutable row-version publication, including
+under `default-features = false`: turning off a feature must never expose a safe API that
+races deserialization against page-byte mutation.
 
-Point lookups use a strict backend-specific visibility contract by default.
-WorkTablesIndex pins the structural mapping until its selected node is locked, so both
-hits and misses are definitive.
+Point lookups use a strict backend-specific visibility contract. WorkTablesIndex pins the
+structural mapping until its node is locked, so hits and misses are both definitive.
 
 = Feature flags worth knowing
 

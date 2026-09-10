@@ -316,7 +316,7 @@ worktable_version!(
 ```rust
 config: {
     page_size: 16384,
-    row_derives: [Clone, Debug],
+    row_derives: Clone, Debug,
 }
 ```
 
