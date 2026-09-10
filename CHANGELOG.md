@@ -1,6 +1,60 @@
 Change Log
 ==========
 
+## [1.9.0-alpha1]
+
+### Added
+
+- `no_std` support. A consumer with `default-features = false` can invoke
+  `worktable!` and use `insert`, `select` and `select_all`. Verified by
+  `tests/nostd-consumer`, a crate outside the workspace that invokes the macro:
+  this crate builds without `std` whether or not the macro is sound, because the
+  expansion only happens where the macro is called.
+- Columnar fields and columnar indexes: `columnar(chunk_rows(n),
+  compression(name))` on a column, a `columnar_indexes` block with `cluster_by`,
+  and `columnar_slot_id` / `columnar_chunk_rows` in `config`.
+- A schema-selected runtime: `runtime: nagoya(<flavor>)` or `runtime: tokio`.
+  Six flavors, all sharing one pool implementation, so the choice costs no extra
+  code and no rebuild.
+- `page_size` on a persisted table, at any size with a 512-byte floor. It was
+  refused outright while the on-disk seeks used a hardcoded constant.
+
+### Changed
+
+- The default index backend is `arctic`, not `worktables_index`. A composite
+  primary key keeps `worktables_index`, because arctic cannot represent a tuple
+  key. **Arctic cannot key an optional or variable-width column**, so an index
+  over `String optional` must now say `using worktables_index` where it
+  previously needed nothing.
+- Only `congee` requires `persist` to be stated explicitly. Arctic no longer
+  does, having become the default.
+- The filesystem goes through `worktable::prelude::fsx` and names no async
+  runtime. Measured: `tokio::fs` ran scattered updates at 12,316 rows per second
+  against 74,728 on `std::fs`.
+
+### Fixed
+
+- A page gap in the persisted batch save. Two writers allocating at once could
+  hand the queue the higher page first, leaving the skipped ids as holes of
+  zeros that the file spanned; the next batch touching one parsed the hole and
+  looked up a key it never held. Reduced from a 40 minute reproduction to a
+  0.01s unit test.
+- Batch collection was quadratic on scattered writes. It grouped by page while
+  validity is decided by event order, so a workload writing to scattered pages
+  re-collected almost everything each round: 4,000 operations cost 202,000
+  collections and 198,000 requeues. Selection is event-ordered now, 16.1s to
+  0.14s.
+- A 500 ms sleep on every collection retry that needed no wait.
+- Eight tests named for concurrency ran on a current-thread runtime, where
+  spawned tasks never overlap.
+- The macro emitted names a `no_std` consumer could not resolve, and
+  `futures::future::join_all` where the prelude should have been.
+- `worktable-schemas` counted the `tests/ui` refusal corpus as rejections, so it
+  reported nine failures on a healthy tree.
+- `Schema` parsed `columnar_indexes` and dropped it, so `to_dsl` emitted a
+  columnar table without its clustering and every consumer downstream, including
+  the TypeScript emitter, was blind to it.
+
 ## [1.0.0-beta.19]
 
 ### Changed

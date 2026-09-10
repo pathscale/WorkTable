@@ -16,6 +16,19 @@ from a macro, and that persisting it is one feature flag away.
 cargo add worktable@1.0.0-beta.5
 ```
 
+## New in 1.9
+
+- **`no_std`.** `default-features = false` and the macro still works. Persistence,
+  vacuum and the disk index need an operating system and are gated out.
+- **Columnar fields and indexes.** `columnar` on a column, `columnar_indexes` with
+  `cluster_by`, so a scan over one field reads only that field's bytes.
+- **A schema-selected runtime.** `runtime: nagoya(<flavor>)` or `runtime: tokio`.
+- **`page_size` on a persisted table**, at any size above a 512-byte floor.
+- **The default index backend is `arctic`**, not `worktables_index`. Arctic cannot
+  key an optional or variable-width column, so an index over `String optional`
+  must now say `using worktables_index`. Only `congee` still requires `persist`
+  to be stated explicitly.
+
 ## What you get
 
 | | |
