@@ -52,15 +52,25 @@ fn it_behaves_like_a_table() {
     assert_eq!(table.select_by_tag(&7).len(), 1);
 }
 
-/// The generated table must cost what the hand-written pattern costs.
+/// The generated table must not be categorically slower than a plain `Vec`.
 ///
 /// The baseline is what an application writes when it has no table: a `Vec` of
-/// rows and a `BTreeMap` from key to position. Identical data structures, so a
-/// gap is overhead the macro added rather than a different algorithm.
+/// rows and a `BTreeMap` from key to position.
 ///
-/// The bound is loose because this is a wall clock on a shared machine. It is
-/// here to catch a table that is *categorically* slower, a linear scan where
-/// the baseline does a map lookup, not to police a few percent.
+/// **This is not the parity measurement, and cannot be.** It used to be: the
+/// generated table also held a `BTreeMap`, so the two were the same data
+/// structures and a gap was the macro. The default backend is arctic now, so
+/// the arms differ in the index as well, and the two disagree about which way.
+/// Optimized, the generated table runs 0.64x the baseline. Unoptimized, which
+/// is how `cargo test` runs it, it runs 1.77x, because an ART's generics are a
+/// pile of uninlined calls until the optimizer sees them and `BTreeMap` suffers
+/// far less. A tight bound here would encode whichever build happened to be
+/// used to pick it.
+///
+/// Parity is measured in `perf-benchmarks`, in `benchmarks/wt-vec-generated.rs`,
+/// against `worktable-vec`'s own `ArcticTable` and `IndexedTable`, optimized
+/// and interleaved. What is left here is the check that survives a debug
+/// build: that the table still does a map lookup and not a linear scan.
 #[test]
 fn it_costs_what_a_vec_costs() {
     const ROWS: u64 = 50_000;
@@ -107,8 +117,10 @@ fn it_costs_what_a_vec_costs() {
     assert!(
         ratio < 4.0,
         "the generated table took {ratio:.2}x the hand-written Vec plus BTreeMap. \
-         It maintains one extra index here, so it is not expected to tie, but a \
-         categorical gap means it is doing something the baseline is not."
+         It maintains one extra index and a different backend, so it is not \
+         expected to tie in either direction, but this much means it is scanning \
+         where the baseline looks up. See the doc comment for where parity is \
+         actually measured."
     );
 }
 
