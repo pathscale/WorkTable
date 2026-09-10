@@ -18,6 +18,27 @@ Change Log
   code and no rebuild.
 - `page_size` on a persisted table, at any size with a 512-byte floor. It was
   refused outright while the on-disk seeks used a hardcoded constant.
+- `worktable_vec!`: the same declaration backed by a `Vec` and an index, with
+  none of the paging, archived rows, lock map, CDC or async surface a
+  `worktable!` carries. `insert`, `upsert`, `select`, `select_all`,
+  `select_by_<column>` and `delete` mean what they mean on a `worktable!`, so a
+  single-writer, never-persisted table can move between the two by changing
+  which macro is called. It refuses `persist`, `queries`, `columnar_indexes`,
+  `config` and `runtime` with an error naming what to use instead, rather than
+  accepting them as no-ops.
+
+  It honours `using` as `worktable!` does, and defaults to the same backend:
+  arctic, with `worktables_index` and `indexset` (a plain `BTreeMap`)
+  available. `congee` is refused, because it needs the persistence declaration
+  this macro has none of. Measured at 200,000 rows against the hand-written
+  `Vec` plus `BTreeMap` an application grows without it: 8.4 ms p50 against
+  15.1 ms, or 11.6 ms once it also maintains a secondary index the baseline
+  does not have. Against the same hand-written plumbing holding an
+  `ArcticIndex`, the macro itself costs 1.29x.
+
+  `using indexset` is the reason to pick `BTreeMap` deliberately: `delete`
+  moves every position above the hole, which a `BTreeMap` does in place and an
+  ART does by reinserting each affected entry.
 
 ### Changed
 
