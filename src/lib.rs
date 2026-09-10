@@ -66,17 +66,21 @@ pub mod prelude {
     /// crate itself uses without naming it.
     #[cfg(feature = "std")]
     pub use crate::fsx;
-    /// The runtime a table names, and the three nagoya pool flavors it can
+    /// The runtime a table names, and the registry of pool flavors it can
     /// pick between. `worktable!` emits these type names, so they have to
     /// resolve in the consumer's crate for the same reason `fsx` does.
     pub use crate::runtime::{
-        Elapsed, FlavorMarker, Profile, Runtime, RuntimeJoinHandle, RuntimeNotified, RuntimeNotify, RuntimeRwLock,
-        RuntimeSemaphore, RuntimeSemaphorePermit, RuntimeUnpinned, TableRuntime, Tuning,
+        Elapsed, FLAVOR_COUNT, Flavor, FlavorMarker, Profile, Runtime, RuntimeJoinHandle, RuntimeNotified,
+        RuntimeNotify, RuntimeRwLock, RuntimeSemaphore, RuntimeSemaphorePermit, RuntimeUnpinned, TableRuntime, Tuning,
     };
-    /// The house backend and its three pool flavors. Gated with the backends
-    /// themselves: a `no_std` build has the trait but nothing that spawns.
+    /// The house backend and its pool flavors, plus the process-level
+    /// selection a benchmark reads. Gated with the backends themselves: a
+    /// `no_std` build has the trait but nothing that spawns.
     #[cfg(feature = "std")]
-    pub use crate::runtime::{Locality, NagoyaRt, Spread, Throughput};
+    pub use crate::runtime::{
+        Locality, LowLatency, NagoyaRt, Spread, Throughput, WideInjector, engine_executor, engine_flavor, env_override,
+        parse_selection,
+    };
     #[cfg(all(feature = "std", feature = "tokio-runtime"))]
     pub use crate::runtime::{TokioJoinHandle, TokioRt};
     /// The three async primitives generated code awaits on. Re-exported for

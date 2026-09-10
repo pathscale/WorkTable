@@ -2,16 +2,16 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
 use core::time::Duration;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use nagoya::Executor;
-use st3::fanout::{Pool, StdHost, Tuning};
+use st3::fanout::{Pool, StdHost};
 
+use super::flavor::{FLAVOR_COUNT, Flavor, env_override};
 use super::{
     Elapsed, FlavorMarker, Runtime, RuntimeJoinHandle, RuntimeNotified, RuntimeNotify, RuntimeRwLock, RuntimeSemaphore,
     RuntimeSemaphorePermit,
@@ -39,22 +39,37 @@ pub struct Spread;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Throughput;
 
+/// Locality's wake routing, with a worker looking again eight times sooner.
+///
+/// `backoff_spins: 128`. Buys wake latency and spends CPU; see
+/// [`Flavor::LowLatency`] for what has to be reported alongside it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LowLatency;
+
+/// Spread's wake routing, with one long trip to the injector.
+///
+/// `injector_batch: 32`, for work submitted in chunks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WideInjector;
+
 impl FlavorMarker for Locality {
-    fn tuning() -> Tuning {
-        Tuning::locality()
-    }
+    const FLAVOR: Flavor = Flavor::Locality;
 }
 
 impl FlavorMarker for Spread {
-    fn tuning() -> Tuning {
-        Tuning::spread()
-    }
+    const FLAVOR: Flavor = Flavor::Spread;
 }
 
 impl FlavorMarker for Throughput {
-    fn tuning() -> Tuning {
-        Tuning::throughput()
-    }
+    const FLAVOR: Flavor = Flavor::Throughput;
+}
+
+impl FlavorMarker for LowLatency {
+    const FLAVOR: Flavor = Flavor::LowLatency;
+}
+
+impl FlavorMarker for WideInjector {
+    const FLAVOR: Flavor = Flavor::WideInjector;
 }
 
 /// The nagoya backend, at one of the [`FlavorMarker`] tunings.
@@ -74,56 +89,108 @@ fn workers() -> usize {
     std::thread::available_parallelism().map_or(2, core::num::NonZeroUsize::get)
 }
 
-/// One started pool per distinct tuning, plus the shared one for the default.
+/// The pool for a flavor, started on first use and shared thereafter.
 ///
-/// # Why the registry, rather than a `OnceLock` per flavor
+/// # Why an array and not a registry
 ///
-/// A `static` inside a generic function is shared across every instantiation
-/// of that function, so `NagoyaRt::<Spread>` and `NagoyaRt::<Throughput>`
-/// would race for the same slot and whichever ran first would decide the
-/// tuning for both. Keying on the tuning itself is correct for any
-/// [`FlavorMarker`], including one this crate did not write.
+/// This is called from `spawn`, so it runs once per spawned task. It used to
+/// build a `Tuning` struct, compare it field by field against
+/// `Tuning::locality()`, and then, for anything that was not locality, take a
+/// **process-wide mutex and linear-scan a `Vec` comparing `Tuning` structs by
+/// value**. Locality returned before the lock and paid none of it.
 ///
-/// Entries are leaked. There is one per distinct tuning a process uses, which
-/// is three at most today, and a pool whose threads are detached has nothing
-/// useful to do with a `Drop` anyway.
-fn executor_for(tuning: Tuning) -> &'static Executor {
-    // `Tuning::default()` is `Tuning::locality()`, so the shared pool is
-    // already at that tuning. Taking it rather than starting a fourth pool is
-    // not only cheaper: `nagoya::runtime::Runtime` marks its threads as pool
-    // workers, and `nagoya::task::mark_current` is private, so a pool started
-    // from here cannot. That marker is exactly what makes `local_wakes` do
-    // anything, and `Tuning::locality` is the only one of the three that turns
-    // it on. Spread and throughput both set it to `false`, where a wake takes
-    // the injector whether the thread is marked or not, so for those two the
-    // pool below behaves identically to one nagoya started itself.
-    if tuning == Tuning::locality() {
+/// That is not a small constant, it is a serialization point, and it fell on
+/// precisely the flavors that are supposed to win. Any A/B run through it
+/// would have measured the incumbent running free against every challenger
+/// through a contended lock, and the conclusion would have come out backwards.
+///
+/// A fixed array indexed by the discriminant has no lock, no allocation and
+/// nothing to compare. When the caller is `NagoyaRt<F>` the index is a
+/// compile-time constant, so a warm lookup is one acquire load and a branch,
+/// and every flavor pays the same, which is the property the A/B depends on.
+///
+/// Entries are leaked. There is one per flavor a process actually uses, and a
+/// pool whose threads are detached has nothing useful to do with a `Drop`.
+static EXECUTORS: [OnceLock<&'static Executor>; FLAVOR_COUNT] = [const { OnceLock::new() }; FLAVOR_COUNT];
+
+#[inline]
+fn executor_for(flavor: Flavor) -> &'static Executor {
+    EXECUTORS[flavor as usize].get_or_init(|| start_or_share(flavor))
+}
+
+/// The flavor a spawn actually runs on, given the one its type names.
+///
+/// `WT_DEFAULT_RUNTIME` outranks the declared flavor, which is what lets one
+/// benchmark binary sweep every flavor with no rebuild. One acquire load and
+/// a branch; see [`env_override`] for why the variable is read exactly once.
+#[inline]
+pub(crate) fn resolved(declared: Flavor) -> Flavor {
+    env_override().unwrap_or(declared)
+}
+
+/// The pool the **engine's own** background work runs on.
+///
+/// The persistence worker and the vacuum sweep are the whole of the engine's
+/// async spawning; everything else runs inline on the caller's executor. They
+/// are not generic over a runtime, so they cannot read a table's declared
+/// flavor and instead take the process-level selection: `WT_DEFAULT_RUNTIME`,
+/// or locality.
+///
+/// Routing them matters more than their two call sites suggest. A benchmark
+/// that moved only its client tasks to a flavor would leave the engine's
+/// flush loop and vacuum sweep on the locality pool, so the two halves of the
+/// stack would be on different schedulers contending for the same cores, and
+/// the arm would describe a configuration nobody would ship.
+#[must_use]
+pub fn engine_executor() -> &'static Executor {
+    executor_for(resolved(Flavor::Locality))
+}
+
+/// The flavor the engine's background work resolved to, for a benchmark to
+/// print and record next to its numbers.
+///
+/// An A/B where one arm silently fell back to the default is the easiest way
+/// to publish a wrong table, and it has happened on this project already.
+#[must_use]
+pub fn engine_flavor() -> Flavor {
+    resolved(Flavor::Locality)
+}
+
+/// The shared pool for locality, or a fresh one at this flavor's tuning.
+///
+/// `Tuning::default()` is `Tuning::locality()`, so the process-wide pool is
+/// already at that tuning and taking it beats starting a second one. It is
+/// not only cheaper: `nagoya::runtime::Runtime` marks its threads as pool
+/// workers and `nagoya::task::mark_current` is private, so a pool started from
+/// here cannot. **That marker is exactly what makes `local_wakes` do
+/// anything.**
+///
+/// Which is a real limitation, not a footnote. Spread, throughput and
+/// wide_injector all set `local_wakes: false`, where a wake takes the injector
+/// whether the thread is marked or not, so for those three the pool below
+/// behaves identically to one nagoya started itself. `low_latency` does not:
+/// it asks for local wakes on a pool that is not the process-wide one, so it
+/// runs with local wakes inert until nagoya exposes either `mark_current` or a
+/// tuned constructor. It is therefore measured as "locality's routing minus
+/// the marker, at a shorter backoff", and a result from it means less than it
+/// looks like until that is fixed.
+fn start_or_share(flavor: Flavor) -> &'static Executor {
+    if flavor == Flavor::Locality {
         return nagoya::runtime::background().executor();
     }
-
-    static POOLS: OnceLock<Mutex<Vec<(Tuning, &'static Executor)>>> = OnceLock::new();
-    let pools = POOLS.get_or_init(|| Mutex::new(Vec::new()));
-    let mut pools = pools
-        .lock()
-        .expect("the pool registry holds no state a panic could corrupt");
-    if let Some((_, executor)) = pools.iter().find(|(known, _)| *known == tuning) {
-        return executor;
-    }
-    let executor: &'static Executor = Box::leak(Box::new(start_pool(tuning)));
-    pools.push((tuning, executor));
-    executor
+    Box::leak(Box::new(start_pool(flavor)))
 }
 
 /// Start a pool at `tuning` and hand back an executor over it.
-fn start_pool(tuning: Tuning) -> Executor {
+fn start_pool(flavor: Flavor) -> Executor {
     let workers = workers();
     let host = Arc::new(StdHost::new(workers));
-    let pool = Pool::with_tuning(workers, 1024, host, tuning);
+    let pool = Pool::with_tuning(workers, 1024, host, flavor.tuning());
     for id in 0..workers {
         let pool = pool.clone();
         let runner = pool.runner(id);
         std::thread::Builder::new()
-            .name(alloc::format!("worktable-rt-{id}"))
+            .name(alloc::format!("wt-{}-{id}", flavor.name()))
             .spawn(move || {
                 let _ = pool.run(runner);
             })
@@ -143,7 +210,7 @@ impl<F: FlavorMarker> Runtime for NagoyaRt<F> {
         Fut: Future + Send + 'static,
         Fut::Output: Send + 'static,
     {
-        executor_for(F::tuning()).spawn(future)
+        executor_for(resolved(F::FLAVOR)).spawn(future)
     }
 
     fn sleep(duration: Duration) -> impl Future<Output = ()> + Send {

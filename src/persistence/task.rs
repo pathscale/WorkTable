@@ -1792,7 +1792,12 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         // anything else does, which is why an ambient runtime was reached for
         // in the first place, and `nagoya::runtime::background` is that same
         // convenience with the gate tokio's global never had.
-        let engine_task_handle = nagoya::runtime::background().spawn(task);
+        //
+        // Which pool that is, is a process-level choice rather than a hardcoded
+        // one: see `runtime::engine_executor`. Leaving it pinned to the
+        // locality pool while a benchmark moved its client tasks elsewhere
+        // would put the two halves of the stack on different schedulers.
+        let engine_task_handle = crate::runtime::engine_executor().spawn(task);
         Self {
             queue,
             engine_task_handle: Some(engine_task_handle),

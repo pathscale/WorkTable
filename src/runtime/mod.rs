@@ -72,12 +72,16 @@ pub use st3::fanout::Tuning;
 #[cfg(feature = "std")]
 mod nagoya_rt;
 
+mod flavor;
 mod profile;
 #[cfg(all(feature = "std", feature = "tokio-runtime"))]
 mod tokio_rt;
 
+pub use flavor::{FLAVOR_COUNT, Flavor, RESERVED};
 #[cfg(feature = "std")]
-pub use nagoya_rt::{Locality, NagoyaRt, Spread, Throughput};
+pub use flavor::{env_override, parse_selection};
+#[cfg(feature = "std")]
+pub use nagoya_rt::{Locality, LowLatency, NagoyaRt, Spread, Throughput, WideInjector, engine_executor, engine_flavor};
 
 pub use profile::{Profile, RuntimeUnpinned, TableRuntime};
 #[cfg(all(feature = "std", feature = "tokio-runtime"))]
@@ -239,6 +243,21 @@ pub trait RuntimeJoinHandle<T>: Future<Output = Option<T>> + Send + Sized + 'sta
 /// trades, and note that the numbers behind them were measured on one machine
 /// against one workload shape.
 pub trait FlavorMarker: Send + Sync + 'static {
+    /// Which pool this flavor selects, as one byte.
+    ///
+    /// **This is what the hot path reads.** `spawn` resolves a flavor to a
+    /// pool on every call, so the flavor's representation is a per-task cost.
+    /// Because `F` is a type parameter the discriminant is a compile-time
+    /// constant, the array index folds, and a warm lookup is one acquire load
+    /// and a branch.
+    const FLAVOR: Flavor;
+
     /// The idle policy the pool for this flavor runs with.
-    fn tuning() -> Tuning;
+    ///
+    /// Called once, to build the pool, and never on the hot path. Defaulted
+    /// through [`Flavor::tuning`] so the registry is the only place a flavor's
+    /// numbers are written down.
+    fn tuning() -> Tuning {
+        Self::FLAVOR.tuning()
+    }
 }

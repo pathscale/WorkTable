@@ -142,7 +142,10 @@ impl VacuumManager {
     /// [`VacuumPacing::wait_until_quiet`]: crate::vacuum::VacuumPacing
     #[cfg(feature = "std")]
     pub fn run_vacuum_task(self: Arc<Self>) -> JoinHandle<()> {
-        nagoya::runtime::background().spawn(async move {
+        // The engine's pool, not nagoya's process-wide one: see
+        // `runtime::engine_executor` for why the sweep has to follow whatever
+        // the client tasks were put on.
+        crate::runtime::engine_executor().spawn(async move {
             loop {
                 self.wait_for_work().await;
 
