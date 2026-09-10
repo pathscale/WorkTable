@@ -175,6 +175,24 @@ pub fn engine_executor() -> &'static Executor {
     executor_for(engine_flavor())
 }
 
+/// The pool for one named flavor, started on first use.
+///
+/// **This is the primitive a per-query runtime selection would need**, and it
+/// exists so that the idea can be measured before it is designed into the
+/// grammar. A caller can hold two of these and put its reads on one and its
+/// writes on the other, which is the thing `update runtime fast_local:` would
+/// eventually compile to.
+///
+/// Note what it costs: work handed to a pool other than the one the calling
+/// thread belongs to takes the injector and a wake, which was around 2,250 ns
+/// on the machine this was developed on. That is the number any per-class
+/// routing has to earn back, and it is why routing individual short reads is
+/// unlikely to pay.
+#[must_use]
+pub fn executor_for_flavor(flavor: Flavor) -> &'static Executor {
+    executor_for(flavor)
+}
+
 /// The flavor the engine's background work resolved to, for a benchmark to
 /// print and record next to its numbers.
 ///

@@ -85,6 +85,7 @@ pub use flavor::{describe_tuning, env_override, parse_selection, tuning_override
 #[cfg(feature = "std")]
 pub use nagoya_rt::{
     Locality, LowLatency, NagoyaRt, SharedSlot, Spread, Throughput, WideInjector, engine_executor, engine_flavor,
+    executor_for_flavor,
 };
 
 pub use profile::{Profile, RuntimeUnpinned, TableRuntime};

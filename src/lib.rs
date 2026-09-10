@@ -79,7 +79,7 @@ pub mod prelude {
     #[cfg(feature = "std")]
     pub use crate::runtime::{
         Locality, LowLatency, NagoyaRt, SharedSlot, Spread, Throughput, WideInjector, describe_tuning, engine_executor,
-        engine_flavor, env_override, parse_selection,
+        engine_flavor, env_override, executor_for_flavor, parse_selection,
     };
     #[cfg(all(feature = "std", feature = "tokio-runtime"))]
     pub use crate::runtime::{TokioJoinHandle, TokioRt};
