@@ -43,8 +43,9 @@ use crate::runtime::Tuning;
 /// | 2 | [`Throughput`](Flavor::Throughput) | `nagoya(throughput)` | spread, plus a fatter injector trip |
 /// | 3 | [`LowLatency`](Flavor::LowLatency) | `nagoya(low_latency)` | looks again eight times sooner |
 /// | 4 | [`WideInjector`](Flavor::WideInjector) | `nagoya(wide_injector)` | one long intake trip, for chunky submissions |
+/// | 5 | [`SharedSlot`](Flavor::SharedSlot) | `nagoya(shared_slot)` | locality, but at most one task stays private |
 ///
-/// Discriminants 5 to 9 are reserved for the flavors that need a scheduler
+/// Discriminants 6 to 9 are reserved for the flavors that need a scheduler
 /// mechanism ps-st3 does not expose yet, so that adding one later does not
 /// renumber the five above. See [`RESERVED`].
 #[repr(u8)]
@@ -84,10 +85,29 @@ pub enum Flavor {
     /// and then sits on, so this wins only where submissions are already
     /// chunky and uniform.
     WideInjector = 4,
+    /// Locality's routing, but at most one task stays private to a worker.
+    ///
+    /// A job displaced from a worker's LIFO slot goes to the injector rather
+    /// than to a private inbox behind it, so it is reachable by any worker.
+    ///
+    /// This is the flavor for read-mostly work with independent tasks. Under
+    /// [`Locality`](Flavor::Locality) such work can pile several self-waking
+    /// tasks onto one worker and keep them there, because neither the slot nor
+    /// the inbox is stealable and the heartbeat that would share them is
+    /// starved by the slot itself. Measured on sixteen workers with eight
+    /// read-only client tasks: four runs in eight collapsed to a single active
+    /// worker at exactly the one-thread rate.
+    ///
+    /// It is not a strict improvement, which is why it is a flavor and not a
+    /// fix. Every displacement costs an injector push and a wake, and on work
+    /// that contends on row locks there is no parallelism to win and the churn
+    /// is pure cost: a 50% update workload fell from 943,606 to 651,554 while
+    /// cores busy went from 1.13 to 13.16.
+    SharedSlot = 5,
 }
 
 /// How many flavors there are, and the length of the executor table.
-pub const FLAVOR_COUNT: usize = 5;
+pub const FLAVOR_COUNT: usize = 6;
 
 /// Discriminants held back for the flavors that need ps-st3 to grow a
 /// mechanism first, recorded so a later release does not renumber the ones
@@ -95,7 +115,6 @@ pub const FLAVOR_COUNT: usize = 5;
 ///
 /// | # | name | needs |
 /// |---|---|---|
-/// | 5 | `steal_slot` | a thief may take the LIFO slot on second sight |
 /// | 6 | `stealable_deque` | local wakes onto the stealable deque, not a private slot |
 /// | 7 | `self_wake` | only a task's *own* wake stays local |
 /// | 8 | `idle_gated` | stay local only when no worker is idle |
@@ -105,7 +124,6 @@ pub const FLAVOR_COUNT: usize = 5;
 /// practice, so each one is a ps-st3 release rather than a `Tuning` field this
 /// crate can set.
 pub const RESERVED: &[(u8, &str)] = &[
-    (5, "steal_slot"),
     (6, "stealable_deque"),
     (7, "self_wake"),
     (8, "idle_gated"),
@@ -123,6 +141,7 @@ impl Flavor {
         Flavor::Throughput,
         Flavor::LowLatency,
         Flavor::WideInjector,
+        Flavor::SharedSlot,
     ];
 
     /// The spelling that selects this flavor.
@@ -138,6 +157,7 @@ impl Flavor {
             Flavor::Throughput => "throughput",
             Flavor::LowLatency => "low_latency",
             Flavor::WideInjector => "wide_injector",
+            Flavor::SharedSlot => "shared_slot",
         }
     }
 
@@ -170,6 +190,16 @@ impl Flavor {
         Err(alloc::format!("unknown nagoya flavor `{name}`; expected one of `{known}`").to_string())
     }
 
+    /// The idle policy the pool for this flavor runs with, after any
+    /// environment overrides.
+    ///
+    /// See [`tuning_overrides`] for the four knobs and why they exist.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn tuned(self) -> Tuning {
+        tuning_overrides(self.tuning())
+    }
+
     /// The idle policy the pool for this flavor runs with.
     ///
     /// Built from a preset and then overridden rather than written as a
@@ -182,13 +212,32 @@ impl Flavor {
             Flavor::Locality => Tuning::locality(),
             Flavor::Spread => Tuning::spread(),
             Flavor::Throughput => Tuning::throughput(),
-            // Locality's wake routing, because that is what won A and F, with
-            // only the idle policy changed. Changing two things at once makes
-            // the measurement unreadable.
-            Flavor::LowLatency => Tuning::locality().with_backoff_spins(128),
+            // Locality's wake routing, with the *shape* of the idle policy
+            // changed and its total length held constant.
+            //
+            // `backoff_spins` alone was wrong and the failure was not subtle.
+            // A worker parks after `rounds_before_park` empty rounds of
+            // `backoff_spins` each, so dropping the spins from 1024 to 128
+            // does not only make a worker look more often, it makes it park
+            // **eight times sooner in wall-clock time**. Workers were then
+            // asleep during the window when client tasks arrive, the tasks
+            // concentrated onto whichever worker was awake, and a private LIFO
+            // slot is not stealable, so they stayed there. Measured: YCSB C
+            // fell to 2,665,801 at exactly one core busy, against 13,049,077
+            // for locality.
+            //
+            // 512 rounds of 128 spins is the same 65,536 spins before parking
+            // as 64 rounds of 1024. The worker looks eight times as often,
+            // which is the whole point, and sleeps no sooner, which was never
+            // the point.
+            Flavor::LowLatency => Tuning::locality().with_backoff_spins(128).with_rounds_before_park(512),
             // Spread's wake routing, because a wide intake is pointless if a
             // wake never reaches the injector to be batched with anything.
             Flavor::WideInjector => Tuning::spread().with_injector_batch(32),
+            // Locality's routing exactly, with only the overflow policy
+            // changed. Changing the wake routing too would make it a second
+            // spelling of `spread` rather than a third point between them.
+            Flavor::SharedSlot => Tuning::locality().with_share_displaced(true),
         }
     }
 }
@@ -277,6 +326,7 @@ mod tests {
         assert_eq!(Flavor::Throughput as u8, 2);
         assert_eq!(Flavor::LowLatency as u8, 3);
         assert_eq!(Flavor::WideInjector as u8, 4);
+        assert_eq!(Flavor::SharedSlot as u8, 5);
     }
 
     #[test]
@@ -397,14 +447,38 @@ mod tests {
         }
     }
 
+    /// The idle policy changes shape, not length.
+    ///
+    /// A worker parks after `rounds_before_park * backoff_spins` spins, so
+    /// cutting the spins without raising the rounds parks it that much sooner.
+    /// That is a different change from the one `low_latency` is asking for,
+    /// and it cost YCSB C 79% of its throughput by putting workers to sleep
+    /// during the window when client tasks arrive.
     #[test]
-    fn low_latency_changes_only_the_idle_policy() {
+    fn low_latency_looks_more_often_without_sleeping_sooner() {
         let base = Flavor::Locality.tuning();
         let fast = Flavor::LowLatency.tuning();
         assert_eq!(fast.backoff_spins, 128);
+        assert!(fast.backoff_spins < base.backoff_spins, "it has to look more often");
+        assert_eq!(
+            u64::from(fast.rounds_before_park) * u64::from(fast.backoff_spins),
+            u64::from(base.rounds_before_park) * u64::from(base.backoff_spins),
+            "the budget before parking has to be the same, or this is a park-sooner flavor wearing a \
+             look-sooner name"
+        );
         assert_eq!(fast.local_wakes, base.local_wakes);
         assert_eq!(fast.injector_batch, base.injector_batch);
-        assert_eq!(fast.rounds_before_park, base.rounds_before_park);
+    }
+
+    #[test]
+    fn shared_slot_changes_only_the_overflow_policy() {
+        let base = Flavor::Locality.tuning();
+        let shared = Flavor::SharedSlot.tuning();
+        assert!(shared.share_displaced);
+        assert!(!base.share_displaced, "locality keeps its overflow private");
+        assert_eq!(shared.local_wakes, base.local_wakes);
+        assert_eq!(shared.backoff_spins, base.backoff_spins);
+        assert_eq!(shared.injector_batch, base.injector_batch);
     }
 
     #[test]
@@ -415,4 +489,82 @@ mod tests {
         assert_eq!(wide.local_wakes, base.local_wakes);
         assert_eq!(wide.backoff_spins, base.backoff_spins);
     }
+}
+
+/// The four free parameters, overridden per process.
+///
+/// # Why these are knobs and not flavors
+///
+/// A flavor is a named point somebody has measured and can recommend. These
+/// are the axes those points sit on, and sweeping an axis is how a new point
+/// gets found. Turning every value of every axis into a flavor would be four
+/// nested loops of names nobody chose.
+///
+/// So they exist for the sweep, they are read once each, and a run that sets
+/// one is not running a flavor any more: it is running an unnamed tuning that
+/// happens to start from one. Anything reporting a number from such a run has
+/// to say so, which is why [`describe_tuning`] exists.
+///
+/// | variable | field | default |
+/// |---|---|---|
+/// | `WT_ROUNDS` | `rounds_before_park` | 64 |
+/// | `WT_BACKOFF` | `backoff_spins` | 1024, or 128 under `low_latency` |
+/// | `WT_PROMOTE` | `promote_every` | 64 |
+/// | `WT_BATCH` | `injector_batch` | per flavor |
+///
+/// The names match the `ROUNDS` / `BACKOFF` / `PROMOTE` / `BATCH` variables
+/// the `perf-benchmarks` examples already take, prefixed so they cannot
+/// collide with a host's own environment.
+#[cfg(feature = "std")]
+#[must_use]
+pub fn tuning_overrides(base: Tuning) -> Tuning {
+    fn read<T: core::str::FromStr>(name: &str) -> Option<T> {
+        std::env::var(name).ok()?.trim().parse().ok()
+    }
+    static OVERRIDES: std::sync::OnceLock<(Option<u32>, Option<u32>, Option<u64>, Option<usize>)> =
+        std::sync::OnceLock::new();
+    let (rounds, backoff, promote, batch) = *OVERRIDES.get_or_init(|| {
+        (
+            read("WT_ROUNDS"),
+            read("WT_BACKOFF"),
+            read("WT_PROMOTE"),
+            read("WT_BATCH"),
+        )
+    });
+
+    let mut tuning = base;
+    if let Some(rounds) = rounds {
+        tuning = tuning.with_rounds_before_park(rounds);
+    }
+    if let Some(backoff) = backoff {
+        tuning = tuning.with_backoff_spins(backoff);
+    }
+    if let Some(promote) = promote {
+        tuning = tuning.with_promote_every(promote);
+    }
+    if let Some(batch) = batch {
+        tuning = tuning.with_injector_batch(batch);
+    }
+    tuning
+}
+
+/// One line naming the pool a run actually used.
+///
+/// A results row that says only `spread` when `WT_BACKOFF` was set describes a
+/// tuning nobody can reproduce from the flavor name, so this prints the fields
+/// rather than the label.
+#[cfg(feature = "std")]
+#[must_use]
+pub fn describe_tuning(flavor: Flavor) -> alloc::string::String {
+    let tuning = flavor.tuned();
+    alloc::format!(
+        "nagoya({}) rounds={} backoff={} promote={} batch={} local_wakes={} share_displaced={}",
+        flavor.name(),
+        tuning.rounds_before_park,
+        tuning.backoff_spins,
+        tuning.promote_every,
+        tuning.injector_batch,
+        tuning.local_wakes,
+        tuning.share_displaced,
+    )
 }

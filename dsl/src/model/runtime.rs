@@ -18,16 +18,18 @@ pub enum Flavor {
     Throughput,
     LowLatency,
     WideInjector,
+    SharedSlot,
 }
 
 impl Flavor {
     /// Every flavor, in the registry's discriminant order.
-    pub const ALL: [Flavor; 5] = [
+    pub const ALL: [Flavor; 6] = [
         Self::Locality,
         Self::Spread,
         Self::Throughput,
         Self::LowLatency,
         Self::WideInjector,
+        Self::SharedSlot,
     ];
 
     /// The spelling that selects this flavor, identical to the one
@@ -39,6 +41,7 @@ impl Flavor {
             Self::Throughput => "throughput",
             Self::LowLatency => "low_latency",
             Self::WideInjector => "wide_injector",
+            Self::SharedSlot => "shared_slot",
         }
     }
 
@@ -55,6 +58,7 @@ impl Flavor {
             Self::Throughput => "Throughput",
             Self::LowLatency => "LowLatency",
             Self::WideInjector => "WideInjector",
+            Self::SharedSlot => "SharedSlot",
         }
     }
 }

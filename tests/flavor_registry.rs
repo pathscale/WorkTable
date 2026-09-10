@@ -59,6 +59,7 @@ fn every_mirrored_marker_type_is_spelled_the_way_the_prelude_exports_it() {
         ("throughput", "Throughput"),
         ("low_latency", "LowLatency"),
         ("wide_injector", "WideInjector"),
+        ("shared_slot", "SharedSlot"),
     ];
     assert_eq!(exported.len(), Flavor::ALL.len(), "a flavor has no marker listed here");
     for (name, type_name) in exported {
@@ -77,23 +78,27 @@ fn every_mirrored_marker_type_is_spelled_the_way_the_prelude_exports_it() {
         <worktable::prelude::LowLatency as worktable::prelude::FlavorMarker>::tuning;
     let _: fn() -> worktable::prelude::Tuning =
         <worktable::prelude::WideInjector as worktable::prelude::FlavorMarker>::tuning;
+    let _: fn() -> worktable::prelude::Tuning =
+        <worktable::prelude::SharedSlot as worktable::prelude::FlavorMarker>::tuning;
 }
 
 /// A marker's `FLAVOR` byte and its `tuning()` have to agree, or the pool a
 /// table dispatches to is not the pool its declared flavor names.
 #[test]
 fn each_marker_resolves_to_its_own_registry_row() {
-    use worktable::prelude::{FlavorMarker, Locality, LowLatency, Spread, Throughput, WideInjector};
+    use worktable::prelude::{FlavorMarker, Locality, LowLatency, SharedSlot, Spread, Throughput, WideInjector};
 
     assert_eq!(Locality::FLAVOR, Flavor::Locality);
     assert_eq!(Spread::FLAVOR, Flavor::Spread);
     assert_eq!(Throughput::FLAVOR, Flavor::Throughput);
     assert_eq!(LowLatency::FLAVOR, Flavor::LowLatency);
     assert_eq!(WideInjector::FLAVOR, Flavor::WideInjector);
+    assert_eq!(SharedSlot::FLAVOR, Flavor::SharedSlot);
 
     assert_eq!(Locality::tuning(), Flavor::Locality.tuning());
     assert_eq!(Spread::tuning(), Flavor::Spread.tuning());
     assert_eq!(Throughput::tuning(), Flavor::Throughput.tuning());
     assert_eq!(LowLatency::tuning(), Flavor::LowLatency.tuning());
     assert_eq!(WideInjector::tuning(), Flavor::WideInjector.tuning());
+    assert_eq!(SharedSlot::tuning(), Flavor::SharedSlot.tuning());
 }

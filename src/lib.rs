@@ -78,8 +78,8 @@ pub mod prelude {
     /// `no_std` build has the trait but nothing that spawns.
     #[cfg(feature = "std")]
     pub use crate::runtime::{
-        Locality, LowLatency, NagoyaRt, Spread, Throughput, WideInjector, engine_executor, engine_flavor, env_override,
-        parse_selection,
+        Locality, LowLatency, NagoyaRt, SharedSlot, Spread, Throughput, WideInjector, describe_tuning, engine_executor,
+        engine_flavor, env_override, parse_selection,
     };
     #[cfg(all(feature = "std", feature = "tokio-runtime"))]
     pub use crate::runtime::{TokioJoinHandle, TokioRt};

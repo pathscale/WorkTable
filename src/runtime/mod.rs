@@ -60,9 +60,11 @@ use core::time::Duration;
 pub use nagoya::Elapsed;
 /// The idle policy a nagoya pool runs with.
 ///
-/// Re-exported so a [`FlavorMarker`] can be written without naming `ps-st3`,
-/// which is otherwise a transitive dependency nobody here mentions.
-pub use st3::fanout::Tuning;
+/// Through nagoya rather than from `ps-st3` directly. Selecting an idle
+/// policy is a nagoya-level decision, and naming the type through the crate
+/// that owns that decision is what lets this crate stop depending on the
+/// queues underneath it for one struct.
+pub use nagoya::Tuning;
 
 /// The backends themselves need `std`, because the only reason a backend
 /// exists is to spawn and spawning needs threads. The trait, the flavor
@@ -79,9 +81,11 @@ mod tokio_rt;
 
 pub use flavor::{FLAVOR_COUNT, Flavor, RESERVED};
 #[cfg(feature = "std")]
-pub use flavor::{env_override, parse_selection};
+pub use flavor::{describe_tuning, env_override, parse_selection, tuning_overrides};
 #[cfg(feature = "std")]
-pub use nagoya_rt::{Locality, LowLatency, NagoyaRt, Spread, Throughput, WideInjector, engine_executor, engine_flavor};
+pub use nagoya_rt::{
+    Locality, LowLatency, NagoyaRt, SharedSlot, Spread, Throughput, WideInjector, engine_executor, engine_flavor,
+};
 
 pub use profile::{Profile, RuntimeUnpinned, TableRuntime};
 #[cfg(all(feature = "std", feature = "tokio-runtime"))]

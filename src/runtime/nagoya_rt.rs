@@ -9,7 +9,6 @@ use core::time::Duration;
 use std::sync::OnceLock;
 
 use nagoya::Executor;
-use st3::fanout::{Pool, StdHost};
 
 use super::flavor::{FLAVOR_COUNT, Flavor, env_override};
 use super::{
@@ -72,6 +71,16 @@ impl FlavorMarker for WideInjector {
     const FLAVOR: Flavor = Flavor::WideInjector;
 }
 
+/// Locality's routing, with at most one task private to a worker.
+///
+/// See [`Flavor::SharedSlot`] for the two failure modes this sits between.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SharedSlot;
+
+impl FlavorMarker for SharedSlot {
+    const FLAVOR: Flavor = Flavor::SharedSlot;
+}
+
 /// The nagoya backend, at one of the [`FlavorMarker`] tunings.
 ///
 /// This is a type-level selection and never a value: every [`Runtime`] method
@@ -86,7 +95,27 @@ pub struct NagoyaRt<F: FlavorMarker>(PhantomData<fn() -> F>);
 /// and what `tokio::spawn` gave the callers this replaces. Changing the count
 /// and the tuning in one step makes any measurement of the tuning unreadable.
 fn workers() -> usize {
-    std::thread::available_parallelism().map_or(2, core::num::NonZeroUsize::get)
+    // `WT_RUNTIME_WORKERS` overrides it, read once for the same reason
+    // `WT_DEFAULT_RUNTIME` is: this is on the pool-construction path, and a
+    // sweep over worker counts should not need a rebuild per arm.
+    //
+    // The default is the machine's parallelism, which is what
+    // `nagoya::runtime::background` uses and what `tokio::spawn` gave the
+    // callers this replaces. Changing the count and the tuning in one step
+    // makes any measurement of the tuning unreadable, so the count is a knob
+    // rather than something a flavor sets.
+    //
+    // Worth sweeping on a heterogeneous machine: `available_parallelism`
+    // counts efficiency cores, so on a 12P + 4E part it starts four workers
+    // that drain their queues substantially slower than the other twelve.
+    static WORKERS: OnceLock<usize> = OnceLock::new();
+    *WORKERS.get_or_init(|| {
+        std::env::var("WT_RUNTIME_WORKERS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|count| *count > 0)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(2, core::num::NonZeroUsize::get))
+    })
 }
 
 /// The pool for a flavor, started on first use and shared thereafter.
@@ -115,7 +144,7 @@ static EXECUTORS: [OnceLock<&'static Executor>; FLAVOR_COUNT] = [const { OnceLoc
 
 #[inline]
 fn executor_for(flavor: Flavor) -> &'static Executor {
-    EXECUTORS[flavor as usize].get_or_init(|| start_or_share(flavor))
+    EXECUTORS[flavor as usize].get_or_init(|| start_pool(flavor))
 }
 
 /// The flavor a spawn actually runs on, given the one its type names.
@@ -156,47 +185,36 @@ pub fn engine_flavor() -> Flavor {
     resolved(Flavor::Locality)
 }
 
-/// The shared pool for locality, or a fresh one at this flavor's tuning.
+/// A pool at this flavor's tuning, with its threads marked as pool workers.
 ///
-/// `Tuning::default()` is `Tuning::locality()`, so the process-wide pool is
-/// already at that tuning and taking it beats starting a second one. It is
-/// not only cheaper: `nagoya::runtime::Runtime` marks its threads as pool
-/// workers and `nagoya::task::mark_current` is private, so a pool started from
-/// here cannot. **That marker is exactly what makes `local_wakes` do
-/// anything.**
+/// # Why every flavor gets its own pool, including the default
 ///
-/// Which is a real limitation, not a footnote. Spread, throughput and
-/// wide_injector all set `local_wakes: false`, where a wake takes the injector
-/// whether the thread is marked or not, so for those three the pool below
-/// behaves identically to one nagoya started itself. `low_latency` does not:
-/// it asks for local wakes on a pool that is not the process-wide one, so it
-/// runs with local wakes inert until nagoya exposes either `mark_current` or a
-/// tuned constructor. It is therefore measured as "locality's routing minus
-/// the marker, at a shorter backoff", and a result from it means less than it
-/// looks like until that is fixed.
-fn start_or_share(flavor: Flavor) -> &'static Executor {
-    if flavor == Flavor::Locality {
-        return nagoya::runtime::background().executor();
-    }
-    Box::leak(Box::new(start_pool(flavor)))
-}
-
-/// Start a pool at `tuning` and hand back an executor over it.
-fn start_pool(flavor: Flavor) -> Executor {
-    let workers = workers();
-    let host = Arc::new(StdHost::new(workers));
-    let pool = Pool::with_tuning(workers, 1024, host, flavor.tuning());
-    for id in 0..workers {
-        let pool = pool.clone();
-        let runner = pool.runner(id);
-        std::thread::Builder::new()
-            .name(alloc::format!("wt-{}-{id}", flavor.name()))
-            .spawn(move || {
-                let _ = pool.run(runner);
-            })
-            .expect("a runtime thread");
-    }
-    Executor::new(pool)
+/// It would be cheaper for locality to take `nagoya::runtime::background()`,
+/// which is already at that tuning, and that is what this did. It is also
+/// what made a flavor comparison unreadable: the shared pool is started by
+/// nagoya, which sizes it from `available_parallelism`, while every other
+/// flavor got a pool started here. Two arms that differ in who started the
+/// threads are not two tunings, they are two configurations, and the tuning
+/// is only one of the differences between them.
+///
+/// Building all of them the same way costs one extra pool in a process that
+/// also calls `nagoya::spawn` directly, and buys arms that differ in exactly
+/// the thing being measured.
+fn start_pool(flavor: Flavor) -> &'static Executor {
+    // `Runtime::with_tuning` rather than a hand-built `Pool`, and this is the
+    // whole reason nagoya grew that constructor. `nagoya::task::mark_current`
+    // is private, and that marker is the only thing that makes `local_wakes`
+    // do anything: without it a wake takes the injector whatever the tuning
+    // says. A pool built here by hand therefore ran every locality-flavored
+    // tuning as if it were spread, silently, which is how `low_latency` would
+    // have been measured as a backoff change with its routing quietly
+    // disabled.
+    let runtime = Box::leak(Box::new(nagoya::runtime::Runtime::with_tuning(
+        workers(),
+        flavor.tuned(),
+        "wt",
+    )));
+    runtime.executor()
 }
 
 impl<F: FlavorMarker> Runtime for NagoyaRt<F> {
