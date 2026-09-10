@@ -549,32 +549,43 @@ pub fn tuning_overrides(base: Tuning) -> Tuning {
     fn read<T: core::str::FromStr>(name: &str) -> Option<T> {
         std::env::var(name).ok()?.trim().parse().ok()
     }
-    static OVERRIDES: std::sync::OnceLock<(Option<u32>, Option<u32>, Option<u64>, Option<usize>, Option<u32>)> =
-        std::sync::OnceLock::new();
-    let (rounds, backoff, promote, batch, lifo) = *OVERRIDES.get_or_init(|| {
-        (
-            read("WT_ROUNDS"),
-            read("WT_BACKOFF"),
-            read("WT_PROMOTE"),
-            read("WT_BATCH"),
-            read("WT_LIFO"),
-        )
+    /// The five knobs, each present only if its variable was set.
+    ///
+    /// A struct rather than a tuple so the fields are named at the one place
+    /// that reads them; getting `promote` and `batch` the wrong way round in a
+    /// destructuring would be silent and would show up as a tuning nobody
+    /// asked for.
+    struct Overrides {
+        rounds: Option<u32>,
+        backoff: Option<u32>,
+        promote: Option<u64>,
+        batch: Option<usize>,
+        lifo: Option<u32>,
+    }
+
+    static OVERRIDES: std::sync::OnceLock<Overrides> = std::sync::OnceLock::new();
+    let overrides = OVERRIDES.get_or_init(|| Overrides {
+        rounds: read("WT_ROUNDS"),
+        backoff: read("WT_BACKOFF"),
+        promote: read("WT_PROMOTE"),
+        batch: read("WT_BATCH"),
+        lifo: read("WT_LIFO"),
     });
 
     let mut tuning = base;
-    if let Some(rounds) = rounds {
+    if let Some(rounds) = overrides.rounds {
         tuning = tuning.with_rounds_before_park(rounds);
     }
-    if let Some(backoff) = backoff {
+    if let Some(backoff) = overrides.backoff {
         tuning = tuning.with_backoff_spins(backoff);
     }
-    if let Some(promote) = promote {
+    if let Some(promote) = overrides.promote {
         tuning = tuning.with_promote_every(promote);
     }
-    if let Some(batch) = batch {
+    if let Some(batch) = overrides.batch {
         tuning = tuning.with_injector_batch(batch);
     }
-    if let Some(lifo) = lifo {
+    if let Some(lifo) = overrides.lifo {
         tuning = tuning.with_lifo_run_limit(lifo);
     }
     tuning
