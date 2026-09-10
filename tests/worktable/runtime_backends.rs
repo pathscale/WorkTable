@@ -154,7 +154,7 @@ macro_rules! runtime_backend_suite {
             /// Bounds every drain and shutdown in this file. A backend whose
             /// `close` never returns must fail the test, not stall the suite
             /// until CI's own timeout kills the run with no attribution.
-            const SHUTDOWN_BUDGET: Duration = Duration::from_secs(30);
+            const SHUTDOWN_BUDGET: Duration = Duration::from_secs(5);
 
             /// Concurrent writers. Four is enough to have two of them actually
             /// running at once on the four-worker harness runtime, and small

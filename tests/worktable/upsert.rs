@@ -86,14 +86,14 @@ async fn raw_insert_delete_churn_never_panics_or_stalls() {
         }));
     }
 
-    let (insert_successes, insert_conflicts, delete_successes, delete_misses) = timeout(Duration::from_secs(60), churn)
+    let (insert_successes, insert_conflicts, delete_successes, delete_misses) = timeout(Duration::from_secs(5), churn)
         .await
         .expect("raw insert/delete churn starved")
         .unwrap();
     assert_eq!(insert_successes + insert_conflicts, 5_000);
     assert_eq!(delete_successes + delete_misses, 5_000);
     for handle in upserters {
-        timeout(Duration::from_secs(60), handle)
+        timeout(Duration::from_secs(5), handle)
             .await
             .expect("upserter starved during raw insert/delete churn")
             .unwrap();
@@ -188,12 +188,12 @@ async fn churn_run(churn_flips: u64, upserts_per_task: u64) {
         }));
     }
 
-    timeout(Duration::from_secs(60), churn)
+    timeout(Duration::from_secs(5), churn)
         .await
         .expect("churn task starved")
         .unwrap();
     for handle in upserters {
-        timeout(Duration::from_secs(60), handle)
+        timeout(Duration::from_secs(5), handle)
             .await
             .expect("upserter starved")
             .unwrap();

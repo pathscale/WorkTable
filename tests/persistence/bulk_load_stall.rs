@@ -86,7 +86,7 @@ fn test_bulk_insert_delete_persistence() {
                 table.delete(*id).await.unwrap();
             }
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on bulk insert+delete")
                 .expect("persistence engine failed");

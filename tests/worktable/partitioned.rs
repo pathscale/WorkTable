@@ -509,7 +509,7 @@ async fn readers_survive_partitions_being_removed_under_them() {
 
     // Reclamation happened through the shared `Arc` while readers were
     // running; drain whatever grace period is still open the same way.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while prices.retired_len() > 0 && std::time::Instant::now() < deadline {
         prices.collect();
     }

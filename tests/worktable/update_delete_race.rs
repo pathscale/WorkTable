@@ -77,7 +77,7 @@ async fn concurrent_update_and_delete_never_panics() {
         })
     };
 
-    tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         updater.await.expect("updater must not panic");
         deleter.await.expect("deleter must not panic");
     })

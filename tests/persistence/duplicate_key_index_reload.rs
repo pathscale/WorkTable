@@ -218,7 +218,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
 
             model.assert_matches(&table, "in-memory before first persist");
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on bulk insert")
                 .expect("persistence engine failed");
@@ -281,7 +281,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
 
             model.assert_matches(&table, "in-memory after post-reload mutations");
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on post-reload mutations")
                 .expect("persistence engine failed");
@@ -334,7 +334,7 @@ fn test_single_key_all_duplicates_survives_reload() {
             }
             assert_eq!(table.select_by_score(42).execute().unwrap().len() as u64, ROWS);
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on bulk insert")
                 .expect("persistence engine failed");
@@ -368,7 +368,7 @@ fn test_single_key_all_duplicates_survives_reload() {
                 })
                 .await
                 .unwrap();
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on post-reload insert")
                 .expect("persistence engine failed");
@@ -420,7 +420,7 @@ fn test_duplicate_key_mutations_without_reload() {
                 .unwrap();
             model.insert(i, i % KEYS, bucket);
         }
-        timeout(Duration::from_secs(30), table.wait_for_ops())
+        timeout(Duration::from_secs(5), table.wait_for_ops())
             .await
             .expect("persistence stalled on bulk insert")
             .expect("persistence engine failed");
@@ -469,7 +469,7 @@ fn test_duplicate_key_mutations_without_reload() {
 
         model.assert_matches(&table, "in-memory after mutations (no reload)");
 
-        timeout(Duration::from_secs(30), table.wait_for_ops())
+        timeout(Duration::from_secs(5), table.wait_for_ops())
             .await
             .expect("persistence stalled on mutations without any reload")
             .expect("persistence engine failed");

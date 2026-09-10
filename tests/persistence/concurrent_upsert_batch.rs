@@ -117,7 +117,9 @@ async fn concurrent_upserts_do_not_lose_a_page() {
     // Bounded, because the failure mode this test guards against is a drain
     // that takes minutes rather than one that returns an error. An unbounded
     // `close` turns that regression into a hung suite instead of a red test.
-    tokio::time::timeout(std::time::Duration::from_secs(30), table.close())
+    // Five seconds against the 1.9 this whole test takes: a bound loose enough
+    // to need minutes to trip is not a bound.
+    tokio::time::timeout(std::time::Duration::from_secs(5), table.close())
         .await
         .expect("close must drain in seconds, not minutes")
         .expect("a clean close");

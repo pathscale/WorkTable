@@ -107,7 +107,7 @@ fn keep_inserting_four_kilobyte_rows() {
         .unwrap();
     runtime.block_on(async {
         let payload = "x".repeat(4096);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             let table = InsertShapeWorkTable::default();
             for id in 0..20_000u64 {
