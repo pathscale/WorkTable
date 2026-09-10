@@ -34,42 +34,16 @@ use std::path::{Path, PathBuf};
 
 /// Tests that spawn tokio tasks from a current-thread runtime today.
 ///
-/// Every entry is coverage that is weaker than its name suggests. The list is
-/// here to stop the count growing, not to bless what is on it, and the test
-/// fails if an entry stops offending so that fixing one forces its removal.
+/// Empty, and meant to stay that way. Every entry was coverage weaker than its
+/// name suggested: six had "concurrent" or "races" in the name or doc comment
+/// and proved no such thing, and the two `base.rs` ones asserted only that a
+/// spawned mutation future is `Send` and joins.
 ///
-/// The two `base.rs` entries are the mildest: they assert that a spawned
-/// mutation future is `Send` and joins, which a single thread can show. The
-/// other six all have "concurrent" or "races" in the name or the doc comment
-/// and prove no such thing as written.
-const KNOWN_CURRENT_THREAD_SPAWNERS: &[(&str, &str)] = &[
-    (
-        "generation_swap_requirement.rs",
-        "a_retired_generation_releases_its_memory",
-    ),
-    ("worktable/base.rs", "update_spawn"),
-    ("worktable/base.rs", "upsert_spawn"),
-    (
-        "worktable/index_backends.rs",
-        "logical_wti_recovers_concurrent_same_row_updates",
-    ),
-    (
-        "worktable/index_backends.rs",
-        "native_art_backends_recover_concurrent_same_row_updates",
-    ),
-    (
-        "worktable/nonunique_arctic.rs",
-        "concurrent_deletes_leave_no_stale_links",
-    ),
-    (
-        "worktable/nonunique_arctic.rs",
-        "non_unique_arctic_recovers_concurrent_shared_key_writes",
-    ),
-    (
-        "worktable/upsert_guard.rs",
-        "upsert_still_serialises_concurrent_writers",
-    ),
-];
+/// The list is retained rather than deleted because the check is two-sided.
+/// A new offender fails against the empty list, which is the point, and an
+/// entry that stops offending also fails, so re-adding one to silence a
+/// failure cannot be done quietly.
+const KNOWN_CURRENT_THREAD_SPAWNERS: &[(&str, &str)] = &[];
 
 fn tests_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests")

@@ -66,7 +66,7 @@ fn inserting_under_a_held_mutation_gate_completes() {
 
 /// And the ordinary path still takes the gate, so a caller that is not already
 /// holding one is still serialised.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn upsert_still_serialises_concurrent_writers() {
     use std::sync::Arc;
     let table = Arc::new(UpsertGuardWorkTable::default());

@@ -398,7 +398,7 @@ async fn native_art_backends_survive_wal_reload_and_further_mutation() {
     remove_dir_if_exists(CONGEE_ROOT.to_string()).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn native_art_backends_recover_concurrent_same_row_updates() {
     use std::sync::Arc;
 
@@ -462,7 +462,7 @@ async fn native_art_backends_recover_concurrent_same_row_updates() {
 }
 
 #[cfg(feature = "logical-index-persistence")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn logical_wti_recovers_concurrent_same_row_updates() {
     use std::sync::Arc;
 

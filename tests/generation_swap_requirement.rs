@@ -97,7 +97,7 @@ async fn fill(table: &GenerationSwapWorkTable) {
     table.wait_for_ops().await.expect("the queue drains");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_retired_generation_releases_its_memory() {
     let _ = std::fs::remove_dir_all(RETIRED_DIR);
     std::fs::create_dir_all(RETIRED_DIR).expect("a directory");

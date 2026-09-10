@@ -109,7 +109,7 @@ async fn iter_with_async() {
     table.iter_with_async(|_| async move { Ok(()) }).await.unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn update_spawn() {
     let table = Arc::new(TestWorkTable::default());
     let row = TestRow {
@@ -137,7 +137,7 @@ async fn update_spawn() {
     assert!(table.select(2).is_none())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn upsert_spawn() {
     let table = Arc::new(TestWorkTable::default());
     let row = TestRow {
