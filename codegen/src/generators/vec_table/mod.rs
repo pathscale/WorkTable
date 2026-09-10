@@ -529,12 +529,61 @@ pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::R
         })
         .collect();
 
+    // Per-index fragments for `update`: what the key was before the edit, and
+    // the repair when it changed. A non-unique index moves one pair; a unique
+    // one re-keys a single entry.
+    let index_before: Vec<Ident> = index_fields
+        .iter()
+        .map(|field| Ident::new(&format!("was_{field}"), field.span()))
+        .collect();
+    let mut index_repair = Vec::new();
+    for (((field, column), repr), unique) in index_fields
+        .iter()
+        .zip(index_columns.iter())
+        .zip(index_reprs.iter().copied())
+        .zip(index_unique.iter().copied())
+    {
+        let map = quote! { self.#field };
+        let before = Ident::new(&format!("was_{field}"), field.span());
+        let now = quote! { self.rows[at].#column.clone() };
+        let repair = if unique {
+            let remove = unique_remove(repr, &map, &quote! { &#before });
+            let insert = unique_insert(repr, &map, &now, &quote! { at });
+            quote! { let _ = #remove; #insert }
+        } else {
+            match repr {
+                Repr::Arctic => quote! {
+                    let _ = #map.remove_pair(&#before, &(at as u64));
+                    #map.insert_pair(#now, at as u64);
+                },
+                _ => quote! {
+                    if let Some(positions) = #map.get_mut(&#before) {
+                        positions.retain(|p| *p != at);
+                    }
+                    #map.entry(#now).or_default().push(at);
+                },
+            }
+        };
+        index_repair.push(quote! {
+            if self.rows[at].#column != #before {
+                #repair
+            }
+        });
+    }
+
     let pk_map = quote! { self.by_pk };
     let at_expr = quote! { at };
     let pk_insert_checked = unique_insert_checked(pk_repr, &pk_map, &quote! { row.#pk.clone() }, &at_expr);
     let pk_get_for_select = unique_get(pk_repr, &pk_map, &quote! { key });
     let pk_get_for_upsert = unique_get(pk_repr, &pk_map, &quote! { &row.#pk });
     let pk_remove = unique_remove(pk_repr, &pk_map, &quote! { key });
+    let pk_get_for_moved_row = unique_get(pk_repr, &pk_map, &quote! { &self.rows[at].#pk });
+    let pk_remove_old = {
+        let remove = unique_remove(pk_repr, &pk_map, &quote! { &was_pk });
+        quote! { let _ = #remove; }
+    };
+    let pk_reinsert_moved =
+        unique_insert(pk_repr, &pk_map, &quote! { self.rows[at].#pk.clone() }, &quote! { at });
     let pk_shift = unique_shift(pk_repr, &pk_map, &at_expr);
 
     // rkyv's derives only when the table can be written out. They are not free
@@ -631,6 +680,50 @@ pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::R
                 Self::default()
             }
 
+            /// A table whose row vector can hold `capacity` rows without
+            /// reallocating.
+            ///
+            /// Only the rows are sized. The indexes are trees and have no
+            /// equivalent knob, so an accurate capacity removes the row
+            /// vector's growth entirely and leaves theirs alone.
+            #[must_use]
+            pub fn with_capacity(capacity: usize) -> Self {
+                Self {
+                    rows: worktable::prelude::Vec::with_capacity(capacity),
+                    ..Self::default()
+                }
+            }
+
+            /// How many rows fit before the row vector grows again.
+            #[must_use]
+            pub fn capacity(&self) -> usize {
+                self.rows.capacity()
+            }
+
+            /// Make room for `additional` more rows.
+            pub fn reserve(&mut self, additional: usize) {
+                self.rows.reserve(additional);
+            }
+
+            /// Every row, in insertion order.
+            ///
+            /// The same order as `select_all`, as an iterator rather than a
+            /// slice, so a caller that only walks the table does not name the
+            /// slice type.
+            pub fn iter(&self) -> impl Iterator<Item = &#row_ident> {
+                self.rows.iter()
+            }
+
+            /// The rows, leaving the indexes behind.
+            ///
+            /// For handing the data to something that does not want a table.
+            /// The indexes are positions into this vector and mean nothing
+            /// without it, so they are dropped rather than returned.
+            #[must_use]
+            pub fn into_rows(self) -> worktable::prelude::Vec<#row_ident> {
+                self.rows
+            }
+
             #[must_use]
             pub fn len(&self) -> usize {
                 self.rows.len()
@@ -683,6 +776,50 @@ pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::R
             }
 
             #(#select_by)*
+
+            /// Edit a row where it sits, then repair whatever indexes it moved
+            /// under.
+            ///
+            /// `worktable-vec` hands out `&mut (K, V)` for this, but only from
+            /// `LinearTable`, which has no indexes to invalidate. Doing that
+            /// here would let a caller change an indexed column and leave the
+            /// index pointing at a key the row no longer has, which is silent
+            /// and unfindable. A closure lets the table see what changed.
+            ///
+            /// Returns `false` when no row has that key, leaving the table
+            /// untouched.
+            ///
+            /// # Panics
+            ///
+            /// If the edit gives the row a primary key that another row
+            /// already holds. The row is restored first, so the table is
+            /// unchanged; this is a panic rather than an error because the
+            /// alternative is a table with two rows under one key, and there
+            /// is no return value a caller could sensibly ignore.
+            pub fn update(&mut self, key: &#pk_type, edit: impl FnOnce(&mut #row_ident)) -> bool {
+                let Some(at) = #pk_get_for_select else {
+                    return false;
+                };
+                // Only the key columns are copied, not the row. They are what
+                // the indexes are keyed on, so they are the only things whose
+                // "before" the repair below needs.
+                let was_pk = self.rows[at].#pk.clone();
+                #(let #index_before = self.rows[at].#index_columns.clone();)*
+
+                edit(&mut self.rows[at]);
+
+                if self.rows[at].#pk != was_pk {
+                    let taken = #pk_get_for_moved_row;
+                    if taken.is_some_and(|other| other != at) {
+                        self.rows[at].#pk = was_pk;
+                        panic!("update gave a row a primary key another row already holds");
+                    }
+                    #pk_remove_old
+                    #pk_reinsert_moved
+                }
+                #(#index_repair)*
+                true
+            }
 
             #hydrate
 

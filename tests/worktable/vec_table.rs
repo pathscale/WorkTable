@@ -439,3 +439,68 @@ fn rows_across_many_pages_come_back_in_order() {
     assert_eq!(ids, (0..5_000u64).collect::<Vec<_>>());
     assert_eq!(loaded.select(&4_999).expect("last row").label, "a fairly long label for row 4999");
 }
+
+/// `update` edits in place and repairs every index the edit moved the row
+/// under.
+///
+/// The reason it takes a closure rather than handing out `&mut Row`: a caller
+/// with `&mut Row` can change an indexed column, and the index then points at
+/// a key the row no longer has. That is silent, and the row is unfindable by
+/// either key. The closure lets the table compare before against after.
+#[test]
+fn update_edits_in_place_and_repairs_the_indexes() {
+    let mut table = PointWorkTable::new();
+    for id in 0..4u64 {
+        table.insert(PointRow { id, value: id * 10, tag: id % 2 }).expect("fresh");
+    }
+
+    // An unindexed column: nothing to repair, and nothing should move.
+    assert!(table.update(&2, |row| row.value = 999));
+    assert_eq!(table.select(&2).expect("present").value, 999);
+    assert_eq!(table.select_by_tag(&0).len(), 2);
+
+    // An indexed column: the row has to leave one posting list and join another.
+    assert!(table.update(&2, |row| row.tag = 1));
+    let evens: Vec<u64> = table.select_by_tag(&0).iter().map(|row| row.id).collect();
+    assert_eq!(evens, vec![0], "row 2 stayed in its old posting list");
+    let odds: Vec<u64> = table.select_by_tag(&1).iter().map(|row| row.id).collect();
+    assert_eq!(odds, vec![1, 2, 3], "row 2 never joined its new one");
+
+    // The primary key itself: findable under the new key, gone from the old.
+    assert!(table.update(&2, |row| row.id = 42));
+    assert!(table.select(&2).is_none(), "the old key still resolves");
+    assert_eq!(table.select(&42).expect("present").value, 999);
+    assert_eq!(table.len(), 4, "a re-key is not an insert");
+
+    // A key that does not exist changes nothing.
+    assert!(!table.update(&1000, |row| row.value = 1));
+}
+
+/// A re-key onto an occupied key is refused, and refused without damage.
+#[test]
+#[should_panic(expected = "primary key another row already holds")]
+fn update_refuses_to_collide_two_rows_onto_one_key() {
+    let mut table = PointWorkTable::new();
+    table.insert(PointRow { id: 1, value: 10, tag: 0 }).expect("fresh");
+    table.insert(PointRow { id: 2, value: 20, tag: 0 }).expect("fresh");
+    table.update(&1, |row| row.id = 2);
+}
+
+/// Sizing the row vector up front, and handing the rows back out.
+#[test]
+fn capacity_and_into_rows() {
+    let mut table = PointWorkTable::with_capacity(64);
+    assert!(table.capacity() >= 64);
+    table.reserve(256);
+    assert!(table.capacity() >= 256);
+
+    for id in 0..3u64 {
+        table.insert(PointRow { id, value: id, tag: 0 }).expect("fresh");
+    }
+    assert_eq!(table.iter().count(), 3);
+    assert_eq!(table.iter().map(|row| row.id).collect::<Vec<_>>(), vec![0, 1, 2]);
+
+    let rows = table.into_rows();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[2].id, 2);
+}
