@@ -300,7 +300,7 @@ impl PersistGenerator {
                     + 'static,
                 C: Clone + PersistenceConfig,
             {
-                async fn new(mut engine: E) -> eyre::Result<Self> {
+                async fn new(mut engine: E) -> worktable::prelude::eyre::Result<Self> {
                     let schema = Self::space_info_default().inner;
                     engine
                         .ensure_schema(
@@ -318,11 +318,11 @@ impl PersistGenerator {
                     ))
                 }
 
-                async fn load(engine: E) -> eyre::Result<Self> {
+                async fn load(engine: E) -> worktable::prelude::eyre::Result<Self> {
                     Self::load_with(engine, LoadMode::Strict).await
                 }
 
-                async fn load_with(mut engine: E, mode: LoadMode) -> eyre::Result<Self> {
+                async fn load_with(mut engine: E, mode: LoadMode) -> worktable::prelude::eyre::Result<Self> {
                     let schema = Self::space_info_default().inner;
                     engine
                         .validate_schema(
@@ -337,7 +337,7 @@ impl PersistGenerator {
                     };
                     let table = load_persisted_state(&table_path, async {
                         let space = #space_ident::parse_file(&table_path).await?;
-                        Ok::<_, eyre::Report>(space.into_worktable_with_mode(engine, &table_path, mode).await?)
+                        Ok::<_, worktable::prelude::eyre::Report>(space.into_worktable_with_mode(engine, &table_path, mode).await?)
                     }).await?;
                     Ok(table)
                 }

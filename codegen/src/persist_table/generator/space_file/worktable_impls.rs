@@ -50,7 +50,7 @@ impl Generator {
                 if worktable::prelude::timeout(timeout, quiesce()).await.is_err() {
                     return Err(UnloadFailure::retained(
                         self,
-                        eyre::eyre!("timed out waiting for generation leases to quiesce"),
+                        worktable::prelude::eyre::eyre!("timed out waiting for generation leases to quiesce"),
                     ));
                 }
 
@@ -60,12 +60,12 @@ impl Generator {
                         let outstanding = worktable::prelude::Arc::strong_count(&arc).saturating_sub(1);
                         return Err(UnloadFailure::retained(
                             arc,
-                            eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain"),
+                            worktable::prelude::eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain"),
                         ));
                     }
                 };
                 owned.close().await.map_err(|error| {
-                    UnloadFailure::after_close(eyre::Report::new(error))
+                    UnloadFailure::after_close(worktable::prelude::eyre::Report::new(error))
                 })?;
                 Ok(UnloadReport { estimated_released_bytes })
             }

@@ -69,12 +69,12 @@ impl PersistGenerator {
         let column_types = if types.len() == 1 {
             let t = types[0];
             quote! {
-                &mut <#t as rkyv::Archive>::Archived
+                &mut <#t as worktable::prelude::rkyv::Archive>::Archived
             }
         } else {
             let types = types.iter().map(|t| {
                 quote! {
-                    &mut <#t as rkyv::Archive>::Archived
+                    &mut <#t as worktable::prelude::rkyv::Archive>::Archived
                 }
             });
             quote! {
@@ -104,7 +104,7 @@ impl PersistGenerator {
                 &self,
                 mut f: F,
                 by: Pk,
-            ) -> eyre::Result<()>
+            ) -> worktable::prelude::eyre::Result<()>
             where #pk_type: From<Pk>
             {
                 let pk: #pk_type = by.into();
@@ -129,7 +129,7 @@ impl PersistGenerator {
                 // reverted on restart. In-place queries cannot touch indexed
                 // columns (rejected at parse time), so the event vectors stay
                 // empty.
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
                 let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
                 let mut op: Operation<
                     <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,

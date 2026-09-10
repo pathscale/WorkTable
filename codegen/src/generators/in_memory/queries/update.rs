@@ -73,10 +73,10 @@ impl InMemoryGenerator {
         let full_row_in_place_eligible = !self.columns.is_sized && self.columns.indexes.is_empty();
         let update_body = if self.columns.is_sized {
             quote! {
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe {
-                    rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                    worktable::prelude::rkyv::access_unchecked_mut::<<#row_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                         .unseal_unchecked()
                 };
 
@@ -520,7 +520,7 @@ impl InMemoryGenerator {
 
                                 // Create AcknowledgeOperation with all events
                                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                                     primary_key_events: vec![],  // Updates don't modify primary key
                                     secondary_keys_events: merged_events,
                                 });
@@ -542,7 +542,7 @@ impl InMemoryGenerator {
                                 merged_events.extend(rollback_secondary_events);
 
                                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                                     primary_key_events: vec![],
                                     secondary_keys_events: merged_events,
                                 });
@@ -688,8 +688,8 @@ impl InMemoryGenerator {
                         .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
 
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+                let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe { worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
                 #size_check
                 #finish_update
@@ -895,11 +895,11 @@ impl InMemoryGenerator {
                         continue;
                     }
                     let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
-                    let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                    let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                         .map_err(|_| WorkTableError::SerializeError)?;
 
                     let mut archived_row = unsafe {
-                        rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                        worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                             .unseal_unchecked()
                     };
 
@@ -1006,11 +1006,11 @@ impl InMemoryGenerator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
-                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                 let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
 
                 let mut archived_row = unsafe {
-                    rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                    worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                         .unseal_unchecked()
                 };
 

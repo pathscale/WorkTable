@@ -75,7 +75,7 @@ impl Generator {
         });
 
         quote! {
-            fn get_primary_index_info(&self) -> eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
+            fn get_primary_index_info(&self) -> worktable::prelude::eyre::Result<GeneralPage<SpaceInfoPage<()>>> {
                 let mut info = {
                     let inner = SpaceInfoPage {
                         id: 0.into(),
@@ -393,7 +393,7 @@ impl Generator {
         };
 
         quote! {
-            pub async fn parse_file(path: &str) -> eyre::Result<Self> {
+            pub async fn parse_file(path: &str) -> worktable::prelude::eyre::Result<Self> {
                 let primary_index = #parse_primary;
 
                 let indexes = #persisted_index_name::parse_from_file(path).await?;

@@ -279,25 +279,25 @@ impl ReadOnlyGenerator {
                     + 'static,
                 C: Clone + PersistenceConfig,
             {
-                async fn new(engine: E) -> eyre::Result<Self> {
+                async fn new(engine: E) -> worktable::prelude::eyre::Result<Self> {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
                     #index_setup
                     core::result::Result::Ok(Self(inner))
                 }
 
-                async fn load(engine: E) -> eyre::Result<Self> {
+                async fn load(engine: E) -> worktable::prelude::eyre::Result<Self> {
                     Self::load_with(engine, LoadMode::Strict).await
                 }
 
-                async fn load_with(engine: E, mode: LoadMode) -> eyre::Result<Self> {
+                async fn load_with(engine: E, mode: LoadMode) -> worktable::prelude::eyre::Result<Self> {
                     let table_path = engine.config().table_path().to_owned();
                     if !std::path::Path::new(&table_path).exists() {
                         return Self::new(engine).await;
                     };
                     let table = load_persisted_state(&table_path, async {
                         let space = #space_ident::parse_file(&table_path).await?;
-                        Ok::<_, eyre::Report>(space.into_worktable_with_mode(&table_path, mode)?)
+                        Ok::<_, worktable::prelude::eyre::Report>(space.into_worktable_with_mode(&table_path, mode)?)
                     }).await?;
                     Ok(table)
                 }

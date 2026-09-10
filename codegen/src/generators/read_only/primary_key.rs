@@ -66,19 +66,69 @@ impl ReadOnlyGenerator {
             primary_key_backend_impl(self.columns.primary_index_backend, &ident, types)?;
         let borrowed_impl = gen_borrowed_primary_key_impl(&ident, types);
 
+
+        // `From` written out rather than derived. `derive_more::From` puts
+        // `::derive_more::` paths in its expansion, which made that crate part
+        // of this macro's contract: a consumer who never wrote `derive_more`
+        // had to declare it anyway. A newtype conversion is three lines.
+        //
+        // A composite key converts from the tuple, which is the shape
+        // `derive_more` produced for a multi-field tuple struct.
+        let from_impl = if types.len() == 1 {
+            let ty = &types[0];
+            quote! {
+                impl From<#ty> for #ident {
+                    fn from(value: #ty) -> Self {
+                        Self(value)
+                    }
+                }
+            }
+        } else {
+            let binding: Vec<_> = (0..types.len())
+                .map(|i| syn::Ident::new(&format!("field{i}"), proc_macro2::Span::mixed_site()))
+                .collect();
+            quote! {
+                impl From<(#(#types),*)> for #ident {
+                    fn from((#(#binding),*): (#(#types),*)) -> Self {
+                        Self(#(#binding),*)
+                    }
+                }
+            }
+        };
+
+        // And the reverse direction, which was `derive_more::Into`. Same
+        // reasoning: it is one impl, and deriving it dragged the crate in.
+        let into_impl = if types.len() == 1 {
+            let ty = &types[0];
+            quote! {
+                impl From<#ident> for #ty {
+                    fn from(value: #ident) -> Self {
+                        value.0
+                    }
+                }
+            }
+        } else {
+            let index: Vec<_> = (0..types.len()).map(syn::Index::from).collect();
+            quote! {
+                impl From<#ident> for (#(#types),*) {
+                    fn from(value: #ident) -> Self {
+                        (#(value.#index),*)
+                    }
+                }
+            }
+        };
+
         Ok(quote! {
             #[derive(
                 Clone,
                 #backend_derive
-                rkyv::Archive,
+                worktable::prelude::rkyv::Archive,
                 Debug,
                 Default,
-                rkyv::Deserialize,
+                worktable::prelude::rkyv::Deserialize,
                 Hash,
-                rkyv::Serialize,
-                From,
+                worktable::prelude::rkyv::Serialize,
                 Eq,
-                Into,
                 PartialEq,
                 PartialOrd,
                 Ord,
@@ -86,8 +136,12 @@ impl ReadOnlyGenerator {
                 MemStat,
                 #unsized_derive
             )]
+            #[rkyv(crate = worktable::prelude::rkyv)]
             #[rkyv(derive(PartialEq, Eq, PartialOrd, Ord, Debug))]
             pub struct #ident(#(#types),*);
+
+            #from_impl
+            #into_impl
 
             #borrowed_impl
             #backend_impl

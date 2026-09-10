@@ -102,7 +102,7 @@ pub(crate) fn primary_key_backend_impl(
                             self.0.encode_art_key(output)
                         }
 
-                        fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+                        fn decode_art_key(bytes: &[u8]) -> worktable::prelude::eyre::Result<Self> {
                             Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
                         }
                     }
@@ -139,7 +139,7 @@ pub(crate) fn primary_key_backend_impl(
                             self.0.encode_art_key(output)
                         }
 
-                        fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+                        fn decode_art_key(bytes: &[u8]) -> worktable::prelude::eyre::Result<Self> {
                             Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
                         }
                     }

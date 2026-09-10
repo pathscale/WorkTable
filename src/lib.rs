@@ -170,6 +170,13 @@ pub mod prelude {
     /// consumer declaring rkyv. `worktable!`'s paged path still emits a bare
     /// `rkyv::` and is the remaining half of that leak.
     pub use rkyv;
+    /// `eyre` and `uuid`, for the same reason as `rkyv` above: `worktable!`
+    /// expands in the consumer's crate, so every path it emits has to resolve
+    /// there. Emitting a bare `eyre::` made that crate part of the macro's
+    /// contract, and a consumer who never mentions eyre had to depend on it
+    /// anyway to compile a table declaration.
+    pub use ::eyre;
+    pub use ::uuid;
     #[allow(unused_imports)]
     pub use crate::{};
     pub use crate::{

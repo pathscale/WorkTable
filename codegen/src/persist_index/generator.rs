@@ -263,7 +263,7 @@ impl Generator {
             .expect("generated index layouts were validated");
 
         quote! {
-            pub async fn persist(&mut self, path: &str) -> eyre::Result<()>
+            pub async fn persist(&mut self, path: &str) -> worktable::prelude::eyre::Result<()>
             {
                 #(#persist_logic)*
                 Ok(())
@@ -355,7 +355,7 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            pub async fn parse_from_file(path: &str) -> eyre::Result<Self> {
+            pub async fn parse_from_file(path: &str) -> worktable::prelude::eyre::Result<Self> {
                 #(#field_names_literals)*
 
                 Ok(Self {

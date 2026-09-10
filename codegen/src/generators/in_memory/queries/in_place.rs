@@ -66,12 +66,12 @@ impl InMemoryGenerator {
         let column_types = if types.len() == 1 {
             let t = types[0];
             quote! {
-                &mut <#t as rkyv::Archive>::Archived
+                &mut <#t as worktable::prelude::rkyv::Archive>::Archived
             }
         } else {
             let types = types.iter().map(|t| {
                 quote! {
-                    &mut <#t as rkyv::Archive>::Archived
+                    &mut <#t as worktable::prelude::rkyv::Archive>::Archived
                 }
             });
             quote! {
@@ -101,7 +101,7 @@ impl InMemoryGenerator {
                 &self,
                 mut f: F,
                 by: Pk,
-            ) -> eyre::Result<()>
+            ) -> worktable::prelude::eyre::Result<()>
             where #pk_type: From<Pk>
             {
                 let pk: #pk_type = by.into();

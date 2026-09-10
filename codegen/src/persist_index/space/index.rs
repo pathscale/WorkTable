@@ -122,7 +122,7 @@ impl Generator {
             .expect("generated index layouts were validated");
 
         quote! {
-            async fn from_table_files_path<S: AsRef<str>>(path: S, version: u32) -> eyre::Result<Self> {
+            async fn from_table_files_path<S: AsRef<str>>(path: S, version: u32) -> worktable::prelude::eyre::Result<Self> {
                 let path = path.as_ref();
                 Ok(Self {
                     #(#fields)*
@@ -148,7 +148,7 @@ impl Generator {
             .collect();
 
         quote! {
-            async fn process_change_events(&mut self, events: #events_ident) -> eyre::Result<()> {
+            async fn process_change_events(&mut self, events: #events_ident) -> worktable::prelude::eyre::Result<()> {
                 #(#process)*
                 core::result::Result::Ok(())
             }
@@ -170,7 +170,7 @@ impl Generator {
             .collect();
 
         quote! {
-            async fn process_change_event_batch(&mut self, events: #events_ident) -> eyre::Result<()> {
+            async fn process_change_event_batch(&mut self, events: #events_ident) -> worktable::prelude::eyre::Result<()> {
                 #(#process)*
                 core::result::Result::Ok(())
             }

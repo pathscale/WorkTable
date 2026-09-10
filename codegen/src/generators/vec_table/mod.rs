@@ -99,7 +99,7 @@ use crate::generators::index_backend::primitive_name;
 // to resolve there: emitting `alloc::` requires the consumer to have declared
 // `extern crate alloc`, and emitting a crate name makes that crate part of this
 // macro's contract. The same mistake has been made here with `tokio::`,
-// `futures::` and `rkyv::`.
+// `futures::` and `worktable::prelude::rkyv::`.
 
 /// What a resolved backend actually stores.
 ///

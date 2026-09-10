@@ -46,20 +46,38 @@ impl InMemoryGenerator {
                     .expect("should be valid because parsed from declaration");
                 let type_upper = map_to_uppercase(s);
                 let type_upper = Ident::new(type_upper.as_str(), Span::mixed_site());
-                Some(quote! {
-                    #[from]
-                    #type_upper(#type_ident),
-                })
+                Some((
+                    quote! {
+                        #type_upper(#type_ident),
+                    },
+                    // Written out rather than derived. `derive_more::From`
+                    // generates `::derive_more::` paths inside its expansion,
+                    // which makes that crate part of this macro's contract:
+                    // a consumer who never wrote `derive_more` still had to
+                    // declare it to compile a table. One newtype variant per
+                    // type is a two-line impl, so the dependency bought
+                    // nothing that could not be spelled here.
+                    quote! {
+                        impl From<#type_ident> for #avt_type_ident {
+                            fn from(value: #type_ident) -> Self {
+                                Self::#type_upper(value)
+                            }
+                        }
+                    },
+                ))
             })
             .collect();
+        let (rows, from_impls): (Vec<_>, Vec<_>) = rows.into_iter().flatten().unzip();
 
         if !rows.is_empty() {
             Ok(quote! {
-                #[derive(Clone, Debug, From,  PartialEq)]
+                #[derive(Clone, Debug, PartialEq)]
                 #[non_exhaustive]
                 pub enum #avt_type_ident {
                     #(#rows)*
                 }
+
+                #(#from_impls)*
             })
         } else {
             Ok(quote! {
@@ -122,7 +140,8 @@ impl InMemoryGenerator {
 
                     Ok::<_, syn::Error>(quote! {
 
-                        #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize)]
+                        #[derive(worktable::prelude::rkyv::Archive, Debug, worktable::prelude::rkyv::Deserialize, Clone, worktable::prelude::rkyv::Serialize)]
+                        #[rkyv(crate = worktable::prelude::rkyv)]
                         #[repr(C)]
                         pub struct #ident {
                             #(#rows)*

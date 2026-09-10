@@ -211,9 +211,20 @@ impl InMemoryGenerator {
             }
         } else {
             quote! {
-                #[derive(Debug, Clone, Copy, MoreDisplay, PartialEq, PartialOrd, Ord, Hash, Eq)]
+                #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Hash, Eq)]
                 pub enum #avt_type_ident {
                     #(#indexes)*
+                }
+
+                // Delegated to `Debug` rather than derived. Every variant here
+                // is fieldless, so `Debug` prints exactly the variant name,
+                // which is what `derive_more::Display` produced. Deriving it
+                // put `::derive_more::` paths in the expansion and so put that
+                // crate into this macro's contract.
+                impl core::fmt::Display for #avt_type_ident {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        core::fmt::Debug::fmt(self, f)
+                    }
                 }
 
                 impl AvailableIndex for #avt_type_ident {
