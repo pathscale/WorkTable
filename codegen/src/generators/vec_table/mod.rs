@@ -5,8 +5,8 @@
 //! `worktable!` buys concurrency and durability with an archived row, paged
 //! storage behind links, a row-level lock map and change-data-capture. A
 //! single-threaded table that never persists pays all of that for nothing, and
-//! the pattern applications otherwise grow by hand is a `Vec` plus a
-//! `BTreeMap`.
+//! what applications otherwise grow by hand is a `Vec` plus a map from key to
+//! position.
 //!
 //! So this generates that, from the same declaration, so the two can sit side
 //! by side and be compared on identical rows.
@@ -34,16 +34,37 @@
 //! `select_all` and `delete` mean what they mean on a `worktable!`, so a table
 //! can be moved between the two by changing which macro is called.
 //!
-//! Secondary indexes become `BTreeMap<Key, Vec<usize>>` over row positions.
-//! Unique ones still reject a duplicate, which is the behaviour a caller
-//! depends on rather than an implementation detail.
+//! **And the index backend.** This is not a detail. The first version of this
+//! generator hardcoded `BTreeMap` and accepted `using arctic` without
+//! honouring it, which is the worst of both: a stated choice silently dropped,
+//! and the slower structure chosen on the caller's behalf. `worktable-vec`
+//! measures the same two arms over a five-field row and one million point
+//! lookups and reports 32.34 ns/query for `Vec + BTreeMap` against 5.25 for
+//! `Vec + Arctic`. Defaulting to `BTreeMap` gave away roughly six times the
+//! lookup, for a macro whose entire claim is that it costs what a `Vec` costs.
+//!
+//! So the default here is Arctic, which is `worktable!`'s default, and `using`
+//! selects as it does there:
+//!
+//! | clause | this macro emits |
+//! |---|---|
+//! | absent, or `using arctic` | `ArcticIndex` / `ArcticMultiIndex` |
+//! | `using worktables_index` | WTI's `IndexMap` |
+//! | `using indexset` | `BTreeMap`, the plain ordered map |
+//! | `using congee` | refused: it needs a persistence declaration this macro has none of |
+//!
+//! `using indexset` is the way to ask for `BTreeMap` deliberately, and there
+//! is one reason to: `delete` shifts every position above the hole, and a
+//! `BTreeMap` shifts them in place while an ART has to reinsert each one. A
+//! delete-heavy table should measure both.
 
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
-use worktable_dsl::Columns;
+use worktable_dsl::{Columns, IndexBackend};
 
 use crate::common::name_generator::WorktableNameGenerator;
+use crate::generators::index_backend::primitive_name;
 
 // Paths are written through `worktable::prelude`, never as bare `alloc::` or
 // `std::`. The macro expands in the consumer's crate, so anything it names has
@@ -51,6 +72,143 @@ use crate::common::name_generator::WorktableNameGenerator;
 // `extern crate alloc`, and emitting a crate name makes that crate part of this
 // macro's contract. The same mistake has been made here with `tokio::`,
 // `futures::` and `rkyv::`.
+
+/// What a resolved backend actually stores.
+///
+/// Arctic and WTI collapse into one arm for unique indexes because both
+/// implement `UniqueIndex`, so the emitted calls are identical and only the
+/// type name differs. They separate again for non-unique ones, where the two
+/// multimaps do not share a trait.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Repr {
+    Arctic,
+    Wti,
+    Ordered,
+}
+
+impl Repr {
+    /// Does this store positions through the `UniqueIndex` trait rather than
+    /// through inherent `BTreeMap` methods?
+    fn is_trait_backed(self) -> bool {
+        matches!(self, Repr::Arctic | Repr::Wti)
+    }
+}
+
+/// Resolve a declared backend, refusing what this table cannot honour.
+///
+/// `what` names the index in the error, because a table with four of them
+/// otherwise reports a refusal with nothing to attach it to.
+fn resolve(backend: IndexBackend, ty: &TokenStream, span: proc_macro2::Span, what: &str) -> syn::Result<Repr> {
+    match backend {
+        IndexBackend::Arctic => {
+            let supported = worktable_dsl::validate::supported_key_types(IndexBackend::Arctic)
+                .expect("arctic declares a key-type list");
+            let primitive = primitive_name(ty);
+            if primitive.as_deref().is_some_and(|name| supported.contains(&name)) {
+                Ok(Repr::Arctic)
+            } else {
+                Err(syn::Error::new(
+                    span,
+                    format!(
+                        "arctic indexes {what} on a fixed-width primitive, and `{ty}` is not one of {}. \
+                         Add `using worktables_index` to index it, or `using indexset` for a plain \
+                         ordered map. (Type aliases cannot be resolved by the macro.)",
+                        supported.join(", ")
+                    ),
+                ))
+            }
+        }
+        IndexBackend::WorktablesIndex => Ok(Repr::Wti),
+        IndexBackend::Indexset => Ok(Repr::Ordered),
+        IndexBackend::Congee => Err(syn::Error::new(
+            span,
+            format!(
+                "`using congee` requires the persistence declaration worktable_vec! refuses, so {what} \
+                 cannot use it. Use arctic, worktables_index or indexset."
+            ),
+        )),
+    }
+}
+
+/// The stored type for a unique key-to-position map.
+fn unique_type(repr: Repr, ty: &TokenStream) -> TokenStream {
+    match repr {
+        Repr::Arctic => quote! { worktable::prelude::ArcticIndex<#ty, u64> },
+        Repr::Wti => quote! { worktable::prelude::IndexMap<#ty, u64> },
+        Repr::Ordered => quote! { worktable::prelude::BTreeMap<#ty, usize> },
+    }
+}
+
+/// The stored type for a non-unique key-to-positions map.
+fn multi_type(repr: Repr, ty: &TokenStream) -> TokenStream {
+    match repr {
+        Repr::Arctic => quote! { worktable::prelude::ArcticMultiIndex<#ty, u64> },
+        // Refused before reaching here.
+        Repr::Wti => quote! { compile_error!("unreachable: wti multimap refused during resolution") },
+        Repr::Ordered => quote! { worktable::prelude::BTreeMap<#ty, worktable::prelude::Vec<usize>> },
+    }
+}
+
+// The five operations a unique map has to answer, emitted for whichever
+// representation was resolved. `map` is the field access, already qualified.
+
+fn unique_contains(repr: Repr, map: &TokenStream, key: &TokenStream) -> TokenStream {
+    if repr.is_trait_backed() {
+        quote! { worktable::prelude::UniqueIndex::contains_key(&#map, #key) }
+    } else {
+        quote! { #map.contains_key(#key) }
+    }
+}
+
+fn unique_get(repr: Repr, map: &TokenStream, key: &TokenStream) -> TokenStream {
+    if repr.is_trait_backed() {
+        quote! { worktable::prelude::UniqueIndex::get_value(&#map, #key).map(|at| at as usize) }
+    } else {
+        quote! { #map.get(#key).copied() }
+    }
+}
+
+fn unique_insert(repr: Repr, map: &TokenStream, key: &TokenStream, at: &TokenStream) -> TokenStream {
+    if repr.is_trait_backed() {
+        quote! { let _ = worktable::prelude::UniqueIndex::insert_value(&#map, #key, #at as u64); }
+    } else {
+        quote! { #map.insert(#key, #at); }
+    }
+}
+
+fn unique_remove(repr: Repr, map: &TokenStream, key: &TokenStream) -> TokenStream {
+    if repr.is_trait_backed() {
+        quote! { worktable::prelude::UniqueIndex::remove_value(&#map, #key).map(|(_, at)| at as usize) }
+    } else {
+        quote! { #map.remove(#key) }
+    }
+}
+
+/// Close the hole `delete` left: every position above it moves down one.
+///
+/// A `BTreeMap` rewrites its values in place. An ART cannot, so this reads the
+/// affected entries out and puts them back at the new position. That is the
+/// whole reason `using indexset` stays available.
+fn unique_shift(repr: Repr, map: &TokenStream, at: &TokenStream) -> TokenStream {
+    if repr.is_trait_backed() {
+        quote! {
+            let shifted: worktable::prelude::Vec<_> = worktable::prelude::UniqueIndex::iter_values(&#map)
+                .filter(|(_, position)| (*position as usize) > #at)
+                .collect();
+            for (key, position) in shifted {
+                let _ = worktable::prelude::UniqueIndex::insert_value(&#map, key, position - 1);
+            }
+        }
+    } else {
+        quote! {
+            for position in #map.values_mut() {
+                if *position > #at {
+                    *position -= 1;
+                }
+            }
+        }
+    }
+}
 
 pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     if columns.primary_keys.len() != 1 {
@@ -79,13 +237,22 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         .expect("the primary key is a column")
         .clone();
 
+    let pk_repr = resolve(
+        columns.primary_index_backend,
+        &pk_type,
+        pk.span(),
+        "the primary key",
+    )?;
+    let pk_map_type = unique_type(pk_repr, &pk_type);
+
     let field_names: Vec<_> = columns.columns_map.keys().cloned().collect();
     let field_types: Vec<_> = columns.columns_map.values().cloned().collect();
 
-    // Secondary indexes, as position lists. Unique ones keep the reject.
+    // Secondary indexes, as positions. Unique ones keep the reject.
     let mut index_fields = Vec::new();
-    let mut index_types = Vec::new();
+    let mut index_map_types = Vec::new();
     let mut index_columns = Vec::new();
+    let mut index_reprs = Vec::new();
     let mut index_unique = Vec::new();
     for (index_name, index) in &columns.indexes {
         let column = &index.field;
@@ -93,40 +260,184 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             .columns_map
             .get(column)
             .ok_or_else(|| syn::Error::new(index_name.span(), format!("no column `{column}`")))?;
+        // `columns.indexes` is keyed by the indexed *column*; the name the
+        // author wrote is `index.name`. Errors quote that one, because it is
+        // the token they can go and edit.
+        let declared = &index.name;
+        let repr = resolve(index.backend, ty, index_name.span(), &format!("`{declared}`"))?;
+        if repr == Repr::Wti && !index.is_unique {
+            return Err(syn::Error::new(
+                index_name.span(),
+                format!(
+                    "worktable_vec! does not yet index the non-unique `{declared}` with \
+                     worktables_index: WTI's multimap and Arctic's do not share a trait, so this \
+                     would be a second code path with no measurement behind it. Use arctic (the \
+                     default), `using indexset`, or declare the index `unique`."
+                ),
+            ));
+        }
         index_fields.push(Ident::new(&format!("{index_name}_map"), index_name.span()));
-        index_types.push(ty.clone());
+        index_map_types.push(if index.is_unique {
+            unique_type(repr, ty)
+        } else {
+            multi_type(repr, ty)
+        });
         index_columns.push(column.clone());
+        index_reprs.push(repr);
         index_unique.push(index.is_unique);
+    }
+
+    // Per-index statement fragments, so the method bodies below stay readable.
+    let mut index_reject_duplicate = Vec::new();
+    let mut index_insert = Vec::new();
+    let mut index_upsert_move = Vec::new();
+    let mut index_delete_remove = Vec::new();
+    let mut index_delete_shift = Vec::new();
+    for ((field, (column, (repr, unique))), _) in index_fields
+        .iter()
+        .zip(index_columns.iter().zip(index_reprs.iter().copied().zip(index_unique.iter().copied())))
+        .zip(0..)
+    {
+        let map = quote! { self.#field };
+        let key = quote! { &row.#column };
+        let owned = quote! { row.#column.clone() };
+        let at = quote! { at };
+
+        index_reject_duplicate.push(if unique {
+            let contains = unique_contains(repr, &map, &key);
+            quote! { if #contains { return Err(row); } }
+        } else {
+            quote! {}
+        });
+
+        index_insert.push(if unique {
+            unique_insert(repr, &map, &owned, &at)
+        } else {
+            match repr {
+                Repr::Arctic => quote! { #map.insert_pair(#owned, at as u64); },
+                _ => quote! { #map.entry(#owned).or_default().push(at); },
+            }
+        });
+
+        // On upsert the row keeps its position and only its key changes, so
+        // the old pair comes out and the new one goes in at the same `at`.
+        index_upsert_move.push(if unique {
+            let old_key = quote! { &self.rows[at].#column };
+            let remove = unique_remove(repr, &map, &old_key);
+            let insert = unique_insert(repr, &map, &owned, &at);
+            quote! { let _ = #remove; #insert }
+        } else {
+            match repr {
+                Repr::Arctic => quote! {
+                    let _ = #map.remove_pair(&self.rows[at].#column, &(at as u64));
+                    #map.insert_pair(#owned, at as u64);
+                },
+                _ => quote! {
+                    if let Some(positions) = #map.get_mut(&self.rows[at].#column) {
+                        positions.retain(|p| *p != at);
+                    }
+                    #map.entry(#owned).or_default().push(at);
+                },
+            }
+        });
+
+        index_delete_remove.push(if unique {
+            let key = quote! { &row.#column };
+            let remove = unique_remove(repr, &map, &key);
+            quote! { let _ = #remove; }
+        } else {
+            match repr {
+                Repr::Arctic => quote! { let _ = #map.remove_pair(&row.#column, &(at as u64)); },
+                _ => quote! {
+                    #map.retain(|_, positions| {
+                        positions.retain(|p| *p != at);
+                        !positions.is_empty()
+                    });
+                },
+            }
+        });
+
+        index_delete_shift.push(if unique {
+            unique_shift(repr, &map, &at)
+        } else {
+            match repr {
+                Repr::Arctic => quote! {
+                    let shifted: worktable::prelude::Vec<_> = #map
+                        .iter()
+                        .filter(|(_, position)| (*position as usize) > at)
+                        .collect();
+                    for (key, position) in &shifted {
+                        let _ = #map.remove_pair(key, position);
+                    }
+                    for (key, position) in shifted {
+                        #map.insert_pair(key, position - 1);
+                    }
+                },
+                _ => quote! {
+                    for positions in #map.values_mut() {
+                        for position in positions.iter_mut() {
+                            if *position > at {
+                                *position -= 1;
+                            }
+                        }
+                    }
+                },
+            }
+        });
     }
 
     let select_by: Vec<_> = columns
         .indexes
         .iter()
-        .map(|(index_name, index)| {
+        .zip(index_reprs.iter().copied())
+        .map(|((index_name, index), repr)| {
             let column = &index.field;
             let fn_name = Ident::new(&format!("select_by_{column}"), index_name.span());
-            let map = Ident::new(&format!("{index_name}_map"), index_name.span());
+            let field = Ident::new(&format!("{index_name}_map"), index_name.span());
+            let map = quote! { self.#field };
             let ty = columns.columns_map.get(column).expect("checked above");
             if index.is_unique {
+                let get = unique_get(repr, &map, &quote! { key });
                 quote! {
                     /// The row this key indexes, if any.
                     pub fn #fn_name(&self, key: &#ty) -> Option<&#row_ident> {
-                        self.#map.get(key).and_then(|positions| positions.first()).map(|at| &self.rows[*at])
+                        #get.map(|at| &self.rows[at])
                     }
                 }
             } else {
+                let positions = match repr {
+                    Repr::Arctic => quote! {
+                        let mut positions: worktable::prelude::Vec<usize> =
+                            #map.get(key).map(|(_, at)| at as usize).collect();
+                        // Arctic orders pairs by value, which is position, which
+                        // is insertion order. Sorting states that rather than
+                        // relying on it.
+                        positions.sort_unstable();
+                    },
+                    _ => quote! {
+                        let positions: worktable::prelude::Vec<usize> =
+                            #map.get(key).map(|found| found.clone()).unwrap_or_default();
+                    },
+                };
                 quote! {
                     /// Every row this key indexes, in insertion order.
                     pub fn #fn_name(&self, key: &#ty) -> Vec<&#row_ident> {
-                        self.#map
-                            .get(key)
-                            .map(|positions| positions.iter().map(|at| &self.rows[*at]).collect())
-                            .unwrap_or_default()
+                        #positions
+                        positions.into_iter().map(|at| &self.rows[at]).collect()
                     }
                 }
             }
         })
         .collect();
+
+    let pk_map = quote! { self.by_pk };
+    let at_expr = quote! { at };
+    let pk_contains = unique_contains(pk_repr, &pk_map, &quote! { &row.#pk });
+    let pk_insert = unique_insert(pk_repr, &pk_map, &quote! { row.#pk.clone() }, &at_expr);
+    let pk_get_for_select = unique_get(pk_repr, &pk_map, &quote! { key });
+    let pk_get_for_upsert = unique_get(pk_repr, &pk_map, &quote! { &row.#pk });
+    let pk_remove = unique_remove(pk_repr, &pk_map, &quote! { key });
+    let pk_shift = unique_shift(pk_repr, &pk_map, &at_expr);
 
     Ok(quote! {
         #[derive(Clone, Debug, PartialEq)]
@@ -141,8 +452,8 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         pub struct #table_ident {
             rows: worktable::prelude::Vec<#row_ident>,
             /// Primary key to position. The lookup a bare `Vec` does linearly.
-            by_pk: worktable::prelude::BTreeMap<#pk_type, usize>,
-            #(#index_fields: worktable::prelude::BTreeMap<#index_types, worktable::prelude::Vec<usize>>,)*
+            by_pk: #pk_map_type,
+            #(#index_fields: #index_map_types,)*
         }
 
         impl #table_ident {
@@ -166,38 +477,21 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             /// `Err` carries the row back rather than dropping it, so a caller
             /// that wants `upsert` semantics on failure still has the value.
             pub fn insert(&mut self, row: #row_ident) -> Result<(), #row_ident> {
-                if self.by_pk.contains_key(&row.#pk) {
+                if #pk_contains {
                     return Err(row);
                 }
-                #(
-                    if #index_unique && self.#index_fields.contains_key(&row.#index_columns) {
-                        return Err(row);
-                    }
-                )*
+                #(#index_reject_duplicate)*
                 let at = self.rows.len();
-                self.by_pk.insert(row.#pk.clone(), at);
-                #(
-                    self.#index_fields
-                        .entry(row.#index_columns.clone())
-                        .or_default()
-                        .push(at);
-                )*
+                #pk_insert
+                #(#index_insert)*
                 self.rows.push(row);
                 Ok(())
             }
 
             /// Insert, or replace the row this key already names.
             pub fn upsert(&mut self, row: #row_ident) {
-                if let Some(at) = self.by_pk.get(&row.#pk).copied() {
-                    #(
-                        if let Some(positions) = self.#index_fields.get_mut(&self.rows[at].#index_columns) {
-                            positions.retain(|p| *p != at);
-                        }
-                        self.#index_fields
-                            .entry(row.#index_columns.clone())
-                            .or_default()
-                            .push(at);
-                    )*
+                if let Some(at) = #pk_get_for_upsert {
+                    #(#index_upsert_move)*
                     self.rows[at] = row;
                     return;
                 }
@@ -207,7 +501,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             /// The row this key names, if any.
             #[must_use]
             pub fn select(&self, key: &#pk_type) -> Option<&#row_ident> {
-                self.by_pk.get(key).map(|at| &self.rows[*at])
+                #pk_get_for_select.map(|at| &self.rows[at])
             }
 
             /// Every row, in insertion order.
@@ -223,25 +517,17 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             /// A swap-remove would be cheaper and is not used: it reorders the
             /// table, and `select_all` promising insertion order is the point
             /// of comparing against a `Vec` at all.
+            ///
+            /// The cost is that every position above the hole moves down one,
+            /// in every index. On a `BTreeMap` that is an in-place walk; on an
+            /// ART it is a read-and-reinsert of each affected entry, which is
+            /// why `using indexset` exists.
             pub fn delete(&mut self, key: &#pk_type) -> Option<#row_ident> {
-                let at = self.by_pk.remove(key)?;
+                let at = #pk_remove?;
                 let row = self.rows.remove(at);
-                for position in self.by_pk.values_mut() {
-                    if *position > at {
-                        *position -= 1;
-                    }
-                }
-                #(
-                    self.#index_fields.retain(|_, positions| {
-                        positions.retain(|p| *p != at);
-                        for position in positions.iter_mut() {
-                            if *position > at {
-                                *position -= 1;
-                            }
-                        }
-                        !positions.is_empty()
-                    });
-                )*
+                #(#index_delete_remove)*
+                #pk_shift
+                #(#index_delete_shift)*
                 Some(row)
             }
         }

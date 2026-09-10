@@ -111,3 +111,92 @@ fn it_costs_what_a_vec_costs() {
          categorical gap means it is doing something the baseline is not."
     );
 }
+
+worktable_vec!(
+    name: Ordered,
+    columns: {
+        id: u64 primary_key using indexset,
+        value: u64,
+        tag: u64,
+    },
+    indexes: {
+        tag_idx: tag using indexset,
+    },
+);
+
+worktable_vec!(
+    name: Named,
+    columns: {
+        key: String primary_key,
+        value: u64,
+    },
+);
+
+/// Deleting from the middle has to move every position above the hole, in
+/// every index, on whichever backend is holding them.
+///
+/// The `BTreeMap` arm rewrites its values in place. The Arctic arm cannot, so
+/// it reads the affected entries out and reinserts them, and that path is new
+/// enough to be the one worth testing. Doing it three rows in, with a
+/// non-unique index whose posting list straddles the hole, is what makes an
+/// off-by-one visible: a shift that skips the boundary leaves a row reachable
+/// by the wrong key rather than by none, which `select_all` alone would not
+/// catch.
+#[test]
+fn deleting_from_the_middle_reindexes_both_backends() {
+    macro_rules! check {
+        ($table:ty, $row:ident) => {{
+            let mut table = <$table>::new();
+            for id in 0..6u64 {
+                table.insert($row { id, value: id * 10, tag: id % 2 }).expect("fresh");
+            }
+
+            assert_eq!(table.delete(&2).expect("present").value, 20);
+
+            // Every survivor still answers to its own key, with its own value.
+            for id in [0u64, 1, 3, 4, 5] {
+                let row = table.select(&id).unwrap_or_else(|| panic!("{id} should survive"));
+                assert_eq!(row.value, id * 10, "{id} came back as another row");
+            }
+            assert!(table.select(&2).is_none());
+            assert_eq!(table.len(), 5);
+
+            // Insertion order survives the hole.
+            let ids: Vec<u64> = table.select_all().iter().map(|row| row.id).collect();
+            assert_eq!(ids, vec![0, 1, 3, 4, 5]);
+
+            // The non-unique index straddled the hole: tag 0 held 0, 2 and 4.
+            let even: Vec<u64> = table.select_by_tag(&0).iter().map(|row| row.id).collect();
+            assert_eq!(even, vec![0, 4], "tag 0 kept a deleted row or lost a live one");
+            let odd: Vec<u64> = table.select_by_tag(&1).iter().map(|row| row.id).collect();
+            assert_eq!(odd, vec![1, 3, 5]);
+
+            // And the table still takes writes afterwards.
+            table.insert($row { id: 9, value: 90, tag: 1 }).expect("fresh");
+            assert_eq!(table.select(&9).expect("present").value, 90);
+            let odd: Vec<u64> = table.select_by_tag(&1).iter().map(|row| row.id).collect();
+            assert_eq!(odd, vec![1, 3, 5, 9]);
+        }};
+    }
+
+    check!(PointVecTable, PointRow);
+    check!(OrderedVecTable, OrderedRow);
+}
+
+/// Arctic takes a `String` key, so the macro does not have to refuse one.
+///
+/// This is here because the refusal test next to it uses `bool`, and the two
+/// together say where the line actually is. A reader who sees only the refusal
+/// would reasonably assume every non-integer key is out.
+#[test]
+fn a_string_keyed_table_works() {
+    let mut table = NamedVecTable::new();
+    table.insert(NamedRow { key: "beta".to_string(), value: 2 }).expect("fresh");
+    table.insert(NamedRow { key: "alpha".to_string(), value: 1 }).expect("fresh");
+    assert!(table.insert(NamedRow { key: "alpha".to_string(), value: 9 }).is_err());
+
+    assert_eq!(table.select(&"alpha".to_string()).expect("present").value, 1);
+    assert_eq!(table.delete(&"beta".to_string()).expect("present").value, 2);
+    assert_eq!(table.select(&"alpha".to_string()).expect("present").value, 1);
+    assert_eq!(table.len(), 1);
+}

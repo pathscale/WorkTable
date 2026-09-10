@@ -185,7 +185,7 @@ fn single_supported_field<'a>(
     Ok(field)
 }
 
-fn primitive_name(field: &TokenStream) -> Option<String> {
+pub(crate) fn primitive_name(field: &TokenStream) -> Option<String> {
     let syn::Type::Path(type_path) = syn::parse2::<syn::Type>(field.clone()).ok()? else {
         return None;
     };
