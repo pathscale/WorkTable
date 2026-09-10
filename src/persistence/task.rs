@@ -567,6 +567,22 @@ where
         }
     }
 
+    /// Whether the last `None` from collection means "wait for more operations".
+    ///
+    /// Collection returns `None` in two situations that look identical to the
+    /// caller. While it is still escalating it has more to try on its own: a
+    /// wider page limit, and then `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`, where
+    /// it stops grouping by page and takes everything queued. Only once it has
+    /// taken the whole queue and *still* found a hole does the missing event
+    /// have to arrive from somewhere else.
+    ///
+    /// `no_progress` is at least `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS` when a
+    /// call takes the whole queue and is incremented again when that call
+    /// fails, so strictly greater is exactly "the whole queue was not enough".
+    fn needs_more_operations(&self) -> bool {
+        self.no_progress > COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS
+    }
+
     pub fn len(&self) -> usize {
         self.queue_inner_wt.count()
     }
@@ -857,6 +873,54 @@ mod lifecycle_tests {
         task.close().await.unwrap();
 
         assert_eq!(batches.load(Ordering::Relaxed), 1);
+    }
+
+    /// A collection retry must not cost half a second of doing nothing.
+    ///
+    /// Collection returns `None` when it could not assemble a gapless event
+    /// stream out of the operations it grouped. That is not a signal to wait.
+    /// The operations it needs are already queued, and the retry itself is what
+    /// makes progress possible: each attempt widens the page limit, and after
+    /// `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS` it stops grouping by page and takes
+    /// everything. Sleeping between those attempts delays the only thing that
+    /// can help.
+    ///
+    /// The drain loop slept 500 ms on every `None` regardless, so a shutdown
+    /// needing 580 retries took 290 seconds while the work itself took 0.03.
+    /// It was invisible because it is data-dependent: a run with no inverted
+    /// event closed in 0.89s, and the same table with the same row count closed
+    /// in 290s on the next run.
+    ///
+    /// Operation ids 1, 2, 3 carry event ids 1, 0, 2 across two pages, which is
+    /// the inversion documented on `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`.
+    /// Page-grouped collection from operation 1 visits page 5 and takes events
+    /// 1 and 2, so the batch has no valid prefix at all: event 0 sits on page
+    /// 9, which that walk never reaches. Collection returns `None` until the
+    /// whole-queue fallback, and before the fix those four retries were four
+    /// sleeps.
+    #[tokio::test]
+    async fn a_collection_retry_does_not_cost_half_a_second() {
+        let batches = Arc::new(AtomicUsize::new(0));
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: batches.clone(),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::None,
+        });
+
+        task.apply_operation(insert_operation_with_event(1, 5, 1)).unwrap();
+        task.apply_operation(insert_operation_with_event(2, 9, 0)).unwrap();
+        task.apply_operation(insert_operation_with_event(3, 5, 2)).unwrap();
+
+        let closing = std::time::Instant::now();
+        task.close().await.unwrap();
+        let elapsed = closing.elapsed();
+
+        assert!(batches.load(Ordering::Relaxed) > 0, "the batch has to apply");
+        assert!(
+            elapsed < Duration::from_millis(400),
+            "draining three operations took {elapsed:?}, which is retry sleep and not work"
+        );
     }
 
     /// Regression: the blocker filter kept the operations *after* a blocking
@@ -1756,7 +1820,13 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                             engine_lifecycle.fail(e);
                             return;
                         }
-                    } else {
+                    } else if analyzer.needs_more_operations() {
+                        // Only here is waiting the right thing: collection has
+                        // already taken the whole queue and the stream still
+                        // has a hole, so the event it needs is not yet queued.
+                        // Sleeping on the escalating retries instead charged
+                        // 500 ms for each step towards the fallback that fixes
+                        // them, which is how a 0.03s drain became 290s.
                         nagoya::sleep(Duration::from_millis(500)).await;
                     }
                 } else if let Some(page_ids) = pending_reclaim.take() {
