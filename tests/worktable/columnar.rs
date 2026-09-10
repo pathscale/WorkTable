@@ -302,3 +302,68 @@ async fn columnar_side_indexes_compose_with_congee_and_arctic_using_backends() {
     exercise!(CongeeColumnarSideIndexWorkTable, CongeeColumnarSideIndexRow);
     exercise!(ArcticColumnarSideIndexWorkTable, ArcticColumnarSideIndexRow);
 }
+
+/// The `ColumnSlotIdExhausted` rollback arms, verified by construction.
+///
+/// PR #58 rolled back by re-inserting the old link into the primary index.
+/// On this tree the primary index is swung only *after* every index check has
+/// passed, so that rollback was dropped from `reinsert` and `reinsert_cdc`.
+/// Dropping a rollback in a persistence path is exactly the change that shows
+/// up as silent corruption on reload rather than as a failing operation, so
+/// what the arms leave behind is asserted here rather than read.
+///
+/// Two claims, and the second is the one that was never re-derived:
+///
+/// 1. a failed insert leaves **no** primary-index entry for the key, and the
+///    key is free for a later insert
+/// 2. an update at capacity does not fail at all, because `replace_row` reuses
+///    the row's existing slot, so the dropped rollback is on a path an update
+///    cannot reach with a live row
+#[tokio::test]
+async fn a_capacity_failure_never_leaves_a_primary_index_entry_behind() {
+    let table = TinyColumnarIdsWorkTable::default();
+    for id in 0..=u8::MAX as u16 {
+        table.insert(TinyColumnarIdsRow { id, value: id }).await.unwrap();
+    }
+    assert_eq!(table.columnar_slots_in_use(), 256);
+
+    // Claim 2, and it has to be asserted before the table is disturbed: an
+    // update of a row that already holds a slot reuses that slot, so a full
+    // table is not a reason for it to fail. This is what makes the dropped
+    // rollback unreachable for a live row rather than merely unlikely.
+    let before = table.select(42).expect("row 42 is present");
+    table
+        .reinsert(before.clone(), TinyColumnarIdsRow { id: 42, value: 4242 })
+        .await
+        .expect("an update at capacity reuses the row's own slot");
+    assert_eq!(table.select(42).expect("row 42 survives").value, 4242);
+    assert_eq!(
+        table.columnar_slots_in_use(),
+        256,
+        "an update must not consume a second slot"
+    );
+
+    // Claim 1: the failed insert.
+    let error = table
+        .insert(TinyColumnarIdsRow { id: 300, value: 300 })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, WorkTableError::ColumnSlotIdExhausted(8)), "{error:?}");
+    assert!(
+        table.select(300).is_none(),
+        "a failed insert must leave no primary index entry, or the index points at a row that was never written"
+    );
+
+    // The key is free, which is the observable consequence of the index entry
+    // having actually been removed rather than merely being unreadable.
+    table.delete(7).await.unwrap();
+    table
+        .insert(TinyColumnarIdsRow { id: 300, value: 300 })
+        .await
+        .expect("the key a failed insert used is free");
+    assert_eq!(table.select(300).expect("row 300 is present").value, 300);
+    assert_eq!(table.columnar_slots_in_use(), 256);
+
+    // And nothing the failure touched disturbed the update above.
+    assert_eq!(table.select(42).expect("row 42 still present").value, 4242);
+}
