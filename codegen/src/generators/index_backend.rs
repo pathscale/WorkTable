@@ -92,6 +92,9 @@ pub(crate) fn primary_key_backend_impl(
                         }
                     }
 
+                    // Std only, for the same reason as the generated `vacuum`
+                    // method: the trait lives behind the persistence module.
+                    worktable::__wt_if_std! {
                     impl ArtPersistenceKey for #primary_key {
                         const WIDTH: u8 = <#field as ArtPersistenceKey>::WIDTH;
 
@@ -102,6 +105,7 @@ pub(crate) fn primary_key_backend_impl(
                         fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
                             Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
                         }
+                    }
                     }
                 },
             ))
@@ -125,6 +129,9 @@ pub(crate) fn primary_key_backend_impl(
                         }
                     }
 
+                    // Std only, for the same reason as the generated `vacuum`
+                    // method: the trait lives behind the persistence module.
+                    worktable::__wt_if_std! {
                     impl ArtPersistenceKey for #primary_key {
                         const WIDTH: u8 = <#field as ArtPersistenceKey>::WIDTH;
 
@@ -135,6 +142,7 @@ pub(crate) fn primary_key_backend_impl(
                         fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
                             Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
                         }
+                    }
                     }
                 },
             ))

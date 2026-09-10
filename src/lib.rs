@@ -60,6 +60,32 @@ pub use worktable_dsl;
 #[cfg(feature = "s3-support")]
 pub use worktable_codegen::s3_sync_persistence;
 
+/// Emits its body only when `worktable` itself was built with `std`.
+///
+/// `worktable!` expands in the consumer's crate, so a `#[cfg(feature = "std")]`
+/// it emits would test the *consumer's* feature of that name, which is a
+/// different flag or no flag at all. This macro is expanded here, against this
+/// crate's features, and so says what the macro actually needs to ask: does the
+/// `worktable` I am generating against have a disk and threads?
+///
+/// It exists for the generated `vacuum` method and the `ArtPersistenceKey`
+/// impl. Both name types that are std-only for real reasons rather than by
+/// grouping: `EmptyDataVacuum` is not empty despite the name and holds the
+/// data pages, lock manager and persistence sink.
+#[cfg(feature = "std")]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wt_if_std {
+    ($($item:tt)*) => { $($item)* };
+}
+
+#[cfg(not(feature = "std"))]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wt_if_std {
+    ($($item:tt)*) => {};
+}
+
 pub mod prelude {
     /// The filesystem this crate goes through. Generated code opens files by
     /// this path, so a consumer of `worktable!` gets the same backend the

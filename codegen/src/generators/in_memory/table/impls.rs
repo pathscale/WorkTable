@@ -435,7 +435,13 @@ impl InMemoryGenerator {
         let table_name = name_generator.get_work_table_literal_name();
         let lock_type = name_generator.get_lock_type_ident();
 
+        // Only when `worktable` itself has `std`. `EmptyDataVacuum` is not
+        // empty despite the name and holds the data pages, lock manager and
+        // persistence sink, so it cannot exist without one. A plain
+        // `#[cfg(feature = "std")]` emitted here would test the *consumer's*
+        // feature of that name, which is a different flag or none at all.
         quote! {
+            worktable::__wt_if_std! {
             pub fn vacuum(&self) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
                 worktable::prelude::Arc::new(EmptyDataVacuum::<
                     _,
@@ -453,6 +459,7 @@ impl InMemoryGenerator {
                     worktable::prelude::Arc::clone(&self.0.primary_index),
                     worktable::prelude::Arc::clone(&self.0.indexes),
                 ))
+            }
             }
         }
     }
