@@ -5,6 +5,7 @@ use worktable::worktable;
 mod bulk_delete_durability;
 mod bulk_load_stall;
 mod concurrent;
+mod concurrent_upsert_batch;
 mod custom_page_size;
 mod duplicate_key_index_reload;
 mod exact_boundary_load;
