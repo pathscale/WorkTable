@@ -69,6 +69,16 @@ impl Schema {
             let _ = writeln!(out, "}},");
         }
 
+        if !self.columnar_indexes.is_empty() {
+            let _ = writeln!(out, "columnar_indexes: {{");
+            for index in &self.columnar_indexes {
+                let _ = writeln!(out, "{INDENT}{}: {{", index.name);
+                let _ = writeln!(out, "{INDENT}{INDENT}cluster_by: [{}],", index.cluster_by.join(", "));
+                let _ = writeln!(out, "{INDENT}}},");
+            }
+            let _ = writeln!(out, "}},");
+        }
+
         if !self.queries.is_empty() {
             let _ = writeln!(out, "queries: {{");
             write_query_block(
@@ -96,6 +106,12 @@ impl Schema {
             let _ = writeln!(out, "config: {{");
             if let Some(page_size) = self.config.page_size {
                 let _ = writeln!(out, "{INDENT}page_size: {page_size},");
+            }
+            if let Some(slot_id) = &self.config.columnar_slot_id {
+                let _ = writeln!(out, "{INDENT}columnar_slot_id: {slot_id},");
+            }
+            if let Some(chunk_rows) = self.config.columnar_chunk_rows {
+                let _ = writeln!(out, "{INDENT}columnar_chunk_rows: {chunk_rows},");
             }
             if !self.config.row_derives.is_empty() {
                 // `row_derives` reads identifiers until it meets another config
@@ -141,6 +157,23 @@ fn column_to_dsl(column: &ColumnSpec) -> String {
 
     if column.optional {
         out.push_str(" optional");
+    }
+
+    // `columnar`, with only the options that were written. A bare `columnar`
+    // and `columnar(chunk_rows(2))` are different declarations, and the second
+    // is not the first plus a default, so nothing is filled in here.
+    if let Some(columnar) = &column.columnar {
+        out.push_str(" columnar");
+        let mut options = Vec::new();
+        if let Some(chunk_rows) = columnar.chunk_rows {
+            options.push(format!("chunk_rows({chunk_rows})"));
+        }
+        if let Some(compression) = &columnar.compression {
+            options.push(format!("compression({compression})"));
+        }
+        if !options.is_empty() {
+            let _ = write!(out, "({})", options.join(", "));
+        }
     }
 
     // A primary-key column always carries a backend once parsed, because the

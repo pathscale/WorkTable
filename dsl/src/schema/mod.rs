@@ -90,6 +90,44 @@ pub struct Schema {
     pub queries: QueriesSpec,
     /// The `config` block.
     pub config: ConfigSpec,
+    /// Columnar indexes in declaration order.
+    ///
+    /// **This was parsed and then dropped.** `from_tokens` read the block into
+    /// the model and the `Schema` it returned never carried it, so a columnar
+    /// table emitted by `to_dsl` came back without its clustering, and every
+    /// consumer downstream of this type, including the TypeScript emitter and
+    /// the JSON dump, was blind to it.
+    ///
+    /// The round-trip test could not catch that: the property is
+    /// `parse(emit(parse(s))) == parse(s)`, which holds trivially for anything
+    /// this type does not model. See `columnar_survives_the_round_trip`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar_indexes: Vec<ColumnarIndexSpec>,
+}
+
+/// A column's `columnar(...)` options.
+///
+/// `Some` means the column declared `columnar`, with or without options.
+/// Absent options are absent rather than defaulted, so an emitted declaration
+/// says what was written: `columnar` and `columnar(chunk_rows(2))` are
+/// different text and the second is not the first plus a default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ColumnarSpec {
+    /// `chunk_rows(n)`, when written.
+    pub chunk_rows: Option<usize>,
+    /// `compression(name)`, when it differs from the default.
+    pub compression: Option<String>,
+}
+
+/// A columnar index: `name: { cluster_by: [field, ..] }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ColumnarIndexSpec {
+    /// Index name.
+    pub name: String,
+    /// The fields it clusters by, in declaration order.
+    pub cluster_by: Vec<String>,
 }
 
 /// A column declaration: `name: Type [primary_key] [autoincrement|custom] [optional] [using backend]`.
@@ -108,6 +146,9 @@ pub struct ColumnSpec {
     /// The primary-key generator. Only meaningful when `primary_key` is set,
     /// and shared by every column of a composite key.
     pub generator: GeneratorType,
+    /// The `columnar(...)` options, when the column declared them.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar: Option<ColumnarSpec>,
     /// The primary index backend. `Some` on primary-key columns, carrying the
     /// declared backend or the default when `using` was omitted; `None`
     /// elsewhere, because `using` on a non-key column is a parse error.
@@ -187,12 +228,26 @@ pub struct ConfigSpec {
     pub page_size: Option<u32>,
     /// Extra derives placed on the generated row type.
     pub row_derives: Vec<String>,
+    /// `columnar_slot_id`, when it differs from the default.
+    ///
+    /// Stored as the difference rather than the resolved value, because the
+    /// parser applies defaults and a resolved value cannot be told from a
+    /// written one. Emitting a default that was never written is noise; not
+    /// emitting a written non-default loses it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar_slot_id: Option<String>,
+    /// `columnar_chunk_rows`, when it differs from the default.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar_chunk_rows: Option<usize>,
 }
 
 impl ConfigSpec {
     /// Whether anything was configured.
     pub fn is_empty(&self) -> bool {
-        self.page_size.is_none() && self.row_derives.is_empty()
+        self.page_size.is_none()
+            && self.row_derives.is_empty()
+            && self.columnar_slot_id.is_none()
+            && self.columnar_chunk_rows.is_none()
     }
 }
 
@@ -291,11 +346,26 @@ impl Schema {
             indexes: indexes_from_model(&model),
             queries: queries.map(queries_from_model).unwrap_or_default(),
             config: config
-                .map(|config| ConfigSpec {
-                    page_size: config.page_size,
-                    row_derives: config.row_derives.iter().map(ToString::to_string).collect(),
+                .map(|config| {
+                    let defaults = crate::model::Config::default();
+                    ConfigSpec {
+                        page_size: config.page_size,
+                        row_derives: config.row_derives.iter().map(ToString::to_string).collect(),
+                        columnar_slot_id: (config.columnar_slot_id != defaults.columnar_slot_id)
+                            .then(|| config.columnar_slot_id.type_name().to_owned()),
+                        columnar_chunk_rows: (config.columnar_chunk_rows != defaults.columnar_chunk_rows)
+                            .then_some(config.columnar_chunk_rows),
+                    }
                 })
                 .unwrap_or_default(),
+            columnar_indexes: model
+                .columnar_indexes
+                .values()
+                .map(|index| ColumnarIndexSpec {
+                    name: index.name.to_string(),
+                    cluster_by: index.cluster_by.iter().map(ToString::to_string).collect(),
+                })
+                .collect(),
         })
     }
 
@@ -330,6 +400,14 @@ fn columns_from_model(model: &Columns) -> syn::Result<Vec<ColumnSpec>> {
                 } else {
                     GeneratorType::None
                 },
+                columnar: model.columnar_fields.get(name).map(|config| {
+                    let defaults = crate::model::ColumnarFieldConfig::default();
+                    ColumnarSpec {
+                        chunk_rows: config.chunk_rows,
+                        compression: (config.compression != defaults.compression)
+                            .then(|| config.compression.name().to_owned()),
+                    }
+                }),
                 index_backend: primary_key.then_some(model.primary_index_backend),
             })
         })
