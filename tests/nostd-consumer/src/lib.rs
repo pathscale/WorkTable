@@ -23,3 +23,22 @@ worktable!(
         value: u64,
     }
 );
+
+/// Proof that the table's *operations* compile without `std`, not merely its
+/// declaration.
+///
+/// The `worktable!` invocation above only proves the macro expands. That is a
+/// weaker claim than it looks: a type can name itself fine and still be
+/// unusable. This calls the three operations any consumer actually needs, so a
+/// std-only path inside one of them fails the build.
+///
+/// Not run, because running needs an allocator and an executor that a
+/// `no_std` target brings itself. Compiling is the claim being made.
+pub fn smoke(table: &NoStdTableWorkTable) -> Option<u64> {
+    let inserted = table.insert(NoStdTableRow { id: 1, value: 42 });
+    core::mem::drop(inserted);
+    let selected = table.select(NoStdTablePrimaryKey::from(1u64))?;
+    let all = table.select_all().execute().ok()?;
+    core::mem::drop(all);
+    Some(selected.value)
+}
