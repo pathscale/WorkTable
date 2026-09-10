@@ -119,6 +119,7 @@ mod tests {
         for (clause, expected) in [
             (quote! { arctic }, "ArcticIndex < u64 , u64 >"),
             (quote! { worktables_index }, "IndexMap < u64 , u64 >"),
+            (quote! { congee }, "CongeeIndex < u64 , u64 >"),
             (quote! { indexset }, "BTreeMap < u64 , usize >"),
         ] {
             let text = expand_text(quote! {
@@ -206,18 +207,63 @@ mod tests {
         );
     }
 
-    /// Congee is refused because it needs the persistence this macro has none of.
+    /// Congee is accepted, and carries the 64-bit guard its key packing needs.
+    ///
+    /// It was refused here for a while, on the grounds that `worktable!`
+    /// demands an explicit `persist` before accepting it. That rule exists
+    /// because congee behaves differently persisted and the author has to say
+    /// which they meant; this macro has no persistence at all, so the question
+    /// is already answered. Refusing on the rule's name rather than its reason
+    /// cost the caller a backend for nothing.
     #[test]
-    fn congee_is_refused_with_its_reason() {
-        let error = super::expand(quote! {
+    fn congee_is_accepted_with_its_width_guard() {
+        let text = expand_text(quote! {
             name: Congeed,
             columns: {
                 id: u64 primary_key using congee,
                 value: u64,
             },
+        });
+        assert!(text.contains("by_pk : worktable :: prelude :: CongeeIndex < u64 , u64 >"), "got: {text}");
+        assert!(
+            text.contains("target_pointer_width") && text.contains("compile_error"),
+            "a u64 congee key needs the 64-bit guard: {text}"
+        );
+    }
+
+    /// A key congee cannot pack into a `usize` is refused by name.
+    #[test]
+    fn a_key_congee_cannot_pack_is_refused() {
+        let error = super::expand(quote! {
+            name: Signed,
+            columns: {
+                id: i64 primary_key using congee,
+                value: u64,
+            },
         })
-        .expect_err("congee needs persistence");
-        assert!(error.to_string().contains("persistence"), "got: {error}");
+        .expect_err("congee takes unsigned keys only");
+        let message = error.to_string();
+        assert!(message.contains("congee"), "must name the backend: {message}");
+        assert!(message.contains("i64"), "must name the type it refused: {message}");
+    }
+
+    /// A non-unique congee index is refused: congee has no multimap.
+    #[test]
+    fn a_non_unique_congee_index_is_refused() {
+        let error = super::expand(quote! {
+            name: CongeeMulti,
+            columns: {
+                id: u64 primary_key,
+                tag: u64,
+            },
+            indexes: {
+                tag_idx: tag using congee,
+            },
+        })
+        .expect_err("congee has no multimap");
+        let message = error.to_string();
+        assert!(message.contains("tag_idx"), "must name the declared index: {message}");
+        assert!(message.contains("congee"), "must name the backend: {message}");
     }
 
     /// A non-unique WTI index is refused rather than quietly becoming something else.

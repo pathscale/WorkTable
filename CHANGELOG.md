@@ -28,13 +28,14 @@ Change Log
   accepting them as no-ops.
 
   It honours `using` as `worktable!` does, and defaults to the same backend:
-  arctic, with `worktables_index` and `indexset` (a plain `BTreeMap`)
-  available. `congee` is refused, because it needs the persistence declaration
-  this macro has none of. Measured at 200,000 rows against the hand-written
-  `Vec` plus `BTreeMap` an application grows without it: 8.4 ms p50 against
-  15.1 ms, or 11.6 ms once it also maintains a secondary index the baseline
-  does not have. Against the same hand-written plumbing holding an
-  `ArcticIndex`, the macro itself costs 1.29x.
+  arctic, with `worktables_index`, `congee` and `indexset` (a plain
+  `BTreeMap`) available. A non-unique index needs a multimap, which only
+  arctic and indexset have, so the other two are refused for one by name.
+
+  Measured at 200,000 rows, nine interleaved rounds, p50: 6.4 ms against the
+  13.6 ms a hand-written `Vec` plus `BTreeMap` takes, and level with
+  `worktable-vec`'s own `ArcticTable` at 6.4 ms. 10.0 ms once it also
+  maintains a secondary index nothing it is compared against has.
 
   `using indexset` is the reason to pick `BTreeMap` deliberately: `delete`
   moves every position above the hole, which a `BTreeMap` does in place and an

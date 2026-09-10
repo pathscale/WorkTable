@@ -121,6 +121,14 @@ pub mod prelude {
 
     pub use alloc::boxed::Box;
     pub use alloc::collections::{BTreeMap, BTreeSet};
+    /// The `BTreeMap` entry, under a name a macro expansion can write.
+    ///
+    /// `worktable_vec!` needs it to refuse a duplicate key in one traversal
+    /// rather than a `contains_key` followed by an `insert`. The path is
+    /// re-exported rather than emitted, for the same reason everything else
+    /// here is: `alloc::` does not resolve in a consumer that never declared
+    /// `extern crate alloc`.
+    pub use alloc::collections::btree_map::Entry as BTreeMapEntry;
     pub use alloc::sync::Arc;
     /// `Vec` and `vec!` for the same reason as `Arc` above: a `no_std`
     /// consumer has neither in scope, and the expansion uses both.

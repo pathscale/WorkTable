@@ -46,12 +46,19 @@
 //! So the default here is Arctic, which is `worktable!`'s default, and `using`
 //! selects as it does there:
 //!
-//! | clause | this macro emits |
-//! |---|---|
-//! | absent, or `using arctic` | `ArcticIndex` / `ArcticMultiIndex` |
-//! | `using worktables_index` | WTI's `IndexMap` |
-//! | `using indexset` | `BTreeMap`, the plain ordered map |
-//! | `using congee` | refused: it needs a persistence declaration this macro has none of |
+//! | clause | this macro emits | non-unique |
+//! |---|---|---|
+//! | absent, or `using arctic` | `ArcticIndex` | `ArcticMultiIndex` |
+//! | `using worktables_index` | WTI's `IndexMap` | refused, no shared multimap trait |
+//! | `using congee` | `CongeeIndex` | refused, congee has no multimap |
+//! | `using indexset` | `BTreeMap`, the plain ordered map | `BTreeMap<K, Vec<usize>>` |
+//!
+//! `worktable!` additionally demands an explicit `persist` before it accepts
+//! congee, because congee behaves differently persisted and the author has to
+//! say which they meant. This macro has no persistence at all, so the question
+//! is already answered and the rule does not carry over. Congee was refused
+//! here for a while on the strength of that rule's name rather than its
+//! reason.
 //!
 //! `using indexset` is the way to ask for `BTreeMap` deliberately, and there
 //! is one reason to: `delete` shifts every position above the hole, and a
@@ -83,6 +90,7 @@ use crate::generators::index_backend::primitive_name;
 enum Repr {
     Arctic,
     Wti,
+    Congee,
     Ordered,
 }
 
@@ -90,7 +98,22 @@ impl Repr {
     /// Does this store positions through the `UniqueIndex` trait rather than
     /// through inherent `BTreeMap` methods?
     fn is_trait_backed(self) -> bool {
-        matches!(self, Repr::Arctic | Repr::Wti)
+        matches!(self, Repr::Arctic | Repr::Wti | Repr::Congee)
+    }
+
+    /// Has this backend a multimap for a non-unique index?
+    fn has_multimap(self) -> bool {
+        matches!(self, Repr::Arctic | Repr::Ordered)
+    }
+
+    /// The `using` spelling, for error messages.
+    fn name(self) -> &'static str {
+        match self {
+            Repr::Arctic => "arctic",
+            Repr::Wti => "worktables_index",
+            Repr::Congee => "congee",
+            Repr::Ordered => "indexset",
+        }
     }
 }
 
@@ -99,35 +122,34 @@ impl Repr {
 /// `what` names the index in the error, because a table with four of them
 /// otherwise reports a refusal with nothing to attach it to.
 fn resolve(backend: IndexBackend, ty: &TokenStream, span: proc_macro2::Span, what: &str) -> syn::Result<Repr> {
-    match backend {
-        IndexBackend::Arctic => {
-            let supported = worktable_dsl::validate::supported_key_types(IndexBackend::Arctic)
-                .expect("arctic declares a key-type list");
-            let primitive = primitive_name(ty);
-            if primitive.as_deref().is_some_and(|name| supported.contains(&name)) {
-                Ok(Repr::Arctic)
-            } else {
-                Err(syn::Error::new(
-                    span,
-                    format!(
-                        "arctic indexes {what} on a fixed-width primitive, and `{ty}` is not one of {}. \
-                         Add `using worktables_index` to index it, or `using indexset` for a plain \
-                         ordered map. (Type aliases cannot be resolved by the macro.)",
-                        supported.join(", ")
-                    ),
-                ))
-            }
-        }
-        IndexBackend::WorktablesIndex => Ok(Repr::Wti),
-        IndexBackend::Indexset => Ok(Repr::Ordered),
-        IndexBackend::Congee => Err(syn::Error::new(
-            span,
-            format!(
-                "`using congee` requires the persistence declaration worktable_vec! refuses, so {what} \
-                 cannot use it. Use arctic, worktables_index or indexset."
-            ),
-        )),
+    let repr = match backend {
+        IndexBackend::Arctic => Repr::Arctic,
+        IndexBackend::WorktablesIndex => Repr::Wti,
+        IndexBackend::Congee => Repr::Congee,
+        IndexBackend::Indexset => Repr::Ordered,
+    };
+    // `worktable!` additionally requires `persist` to be stated before it will
+    // accept congee, because congee behaves differently persisted and the
+    // author has to say which they meant. This macro has no persistence at
+    // all, so that question is already answered and the rule does not carry
+    // over. It was refused here for a while on the strength of the rule's
+    // name rather than its reason.
+    let Some(supported) = worktable_dsl::validate::supported_key_types(backend) else {
+        return Ok(repr);
+    };
+    if primitive_name(ty).as_deref().is_some_and(|name| supported.contains(&name)) {
+        return Ok(repr);
     }
+    Err(syn::Error::new(
+        span,
+        format!(
+            "`using {}` indexes {what} on one of {}, and `{ty}` is not one of them. \
+             Use `using worktables_index` to index it, or `using indexset` for a plain \
+             ordered map. (Type aliases cannot be resolved by the macro.)",
+            repr.name(),
+            supported.join(", ")
+        ),
+    ))
 }
 
 /// The stored type for a unique key-to-position map.
@@ -135,17 +157,37 @@ fn unique_type(repr: Repr, ty: &TokenStream) -> TokenStream {
     match repr {
         Repr::Arctic => quote! { worktable::prelude::ArcticIndex<#ty, u64> },
         Repr::Wti => quote! { worktable::prelude::IndexMap<#ty, u64> },
+        Repr::Congee => quote! { worktable::prelude::CongeeIndex<#ty, u64> },
         Repr::Ordered => quote! { worktable::prelude::BTreeMap<#ty, usize> },
     }
 }
 
 /// The stored type for a non-unique key-to-positions map.
+///
+/// Only two backends reach here; `has_multimap` refuses the others first.
 fn multi_type(repr: Repr, ty: &TokenStream) -> TokenStream {
     match repr {
         Repr::Arctic => quote! { worktable::prelude::ArcticMultiIndex<#ty, u64> },
-        // Refused before reaching here.
-        Repr::Wti => quote! { compile_error!("unreachable: wti multimap refused during resolution") },
         Repr::Ordered => quote! { worktable::prelude::BTreeMap<#ty, worktable::prelude::Vec<usize>> },
+        Repr::Wti | Repr::Congee => {
+            quote! { compile_error!("unreachable: this backend has no multimap and was refused during resolution") }
+        }
+    }
+}
+
+/// Congee packs a key into one `usize`, so a `u64` key needs a 64-bit target.
+///
+/// `impl CongeeKey for u64` is itself behind that cfg, so without this the
+/// failure on a 32-bit target is an unsatisfied trait bound on a type the
+/// author never wrote. `worktable!` emits the same guard for the same reason.
+fn congee_width_guard(repr: Repr, ty: &TokenStream) -> TokenStream {
+    if repr == Repr::Congee && primitive_name(ty).as_deref() == Some("u64") {
+        quote! {
+            #[cfg(not(target_pointer_width = "64"))]
+            compile_error!("`using congee` with a `u64` key requires a 64-bit target");
+        }
+    } else {
+        quote! {}
     }
 }
 
@@ -173,6 +215,32 @@ fn unique_insert(repr: Repr, map: &TokenStream, key: &TokenStream, at: &TokenStr
         quote! { let _ = worktable::prelude::UniqueIndex::insert_value(&#map, #key, #at as u64); }
     } else {
         quote! { #map.insert(#key, #at); }
+    }
+}
+
+/// Insert unless the key is already there, in one traversal. True means it was.
+///
+/// `insert` used to ask `contains_key` and then `insert_value`, which is two
+/// full traversals of the index on every single insert, and it was the whole
+/// of the macro's overhead: a hand-written `Vec` plus `ArcticIndex` ran 5.9 ms
+/// over 200,000 rows, the same code with a `contains_key` guard added ran
+/// 7.7 ms, and the generated table ran 7.7 ms. Both backends can answer the
+/// question and do the work at once, so they do.
+fn unique_insert_checked(repr: Repr, map: &TokenStream, key: &TokenStream, at: &TokenStream) -> TokenStream {
+    if repr.is_trait_backed() {
+        quote! {
+            worktable::prelude::UniqueIndex::insert_value_checked(&#map, #key, #at as u64).is_none()
+        }
+    } else {
+        quote! {
+            match #map.entry(#key) {
+                worktable::prelude::BTreeMapEntry::Occupied(_) => true,
+                worktable::prelude::BTreeMapEntry::Vacant(slot) => {
+                    slot.insert(#at);
+                    false
+                }
+            }
+        }
     }
 }
 
@@ -244,6 +312,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         "the primary key",
     )?;
     let pk_map_type = unique_type(pk_repr, &pk_type);
+    let mut width_guards = vec![congee_width_guard(pk_repr, &pk_type)];
 
     let field_names: Vec<_> = columns.columns_map.keys().cloned().collect();
     let field_types: Vec<_> = columns.columns_map.values().cloned().collect();
@@ -265,17 +334,19 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         // the token they can go and edit.
         let declared = &index.name;
         let repr = resolve(index.backend, ty, index_name.span(), &format!("`{declared}`"))?;
-        if repr == Repr::Wti && !index.is_unique {
+        if !index.is_unique && !repr.has_multimap() {
             return Err(syn::Error::new(
                 index_name.span(),
                 format!(
-                    "worktable_vec! does not yet index the non-unique `{declared}` with \
-                     worktables_index: WTI's multimap and Arctic's do not share a trait, so this \
-                     would be a second code path with no measurement behind it. Use arctic (the \
-                     default), `using indexset`, or declare the index `unique`."
+                    "the non-unique index `{declared}` cannot use `{}`: congee has no multimap at \
+                     all, and WTI's does not share a trait with Arctic's, so this would be a second \
+                     code path with no measurement behind it. Use arctic (the default), \
+                     `using indexset`, or declare the index `unique`.",
+                    repr.name()
                 ),
             ));
         }
+        width_guards.push(congee_width_guard(repr, ty));
         index_fields.push(Ident::new(&format!("{index_name}_map"), index_name.span()));
         index_map_types.push(if index.is_unique {
             unique_type(repr, ty)
@@ -432,14 +503,15 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
 
     let pk_map = quote! { self.by_pk };
     let at_expr = quote! { at };
-    let pk_contains = unique_contains(pk_repr, &pk_map, &quote! { &row.#pk });
-    let pk_insert = unique_insert(pk_repr, &pk_map, &quote! { row.#pk.clone() }, &at_expr);
+    let pk_insert_checked = unique_insert_checked(pk_repr, &pk_map, &quote! { row.#pk.clone() }, &at_expr);
     let pk_get_for_select = unique_get(pk_repr, &pk_map, &quote! { key });
     let pk_get_for_upsert = unique_get(pk_repr, &pk_map, &quote! { &row.#pk });
     let pk_remove = unique_remove(pk_repr, &pk_map, &quote! { key });
     let pk_shift = unique_shift(pk_repr, &pk_map, &at_expr);
 
     Ok(quote! {
+        #(#width_guards)*
+
         #[derive(Clone, Debug, PartialEq)]
         pub struct #row_ident {
             #(pub #field_names: #field_types,)*
@@ -477,12 +549,15 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             /// `Err` carries the row back rather than dropping it, so a caller
             /// that wants `upsert` semantics on failure still has the value.
             pub fn insert(&mut self, row: #row_ident) -> Result<(), #row_ident> {
-                if #pk_contains {
-                    return Err(row);
-                }
+                // The unique secondaries are checked first and separately,
+                // because a rejection from one of them must not leave the
+                // primary key inserted. They are the only reads here that are
+                // not also writes.
                 #(#index_reject_duplicate)*
                 let at = self.rows.len();
-                #pk_insert
+                if #pk_insert_checked {
+                    return Err(row);
+                }
                 #(#index_insert)*
                 self.rows.push(row);
                 Ok(())

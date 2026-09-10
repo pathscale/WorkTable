@@ -200,3 +200,66 @@ fn a_string_keyed_table_works() {
     assert_eq!(table.select(&"alpha".to_string()).expect("present").value, 1);
     assert_eq!(table.len(), 1);
 }
+
+worktable_vec!(
+    name: Congeed,
+    columns: {
+        id: u64 primary_key using congee,
+        value: u64,
+    },
+);
+
+worktable_vec!(
+    name: Wtid,
+    columns: {
+        id: u64 primary_key using worktables_index,
+        value: u64,
+        code: u64,
+    },
+    indexes: {
+        code_idx: code unique,
+    },
+);
+
+/// The two backends without a multimap still index a table, and still delete.
+///
+/// Congee is here because it was refused outright for a while: `worktable!`
+/// demands an explicit `persist` before accepting it, and this macro inherited
+/// the rule without inheriting the reason. There is no persistence here for
+/// the author to declare, so there was never a question to answer.
+///
+/// The delete goes through the middle for the same reason as the arctic test:
+/// it is the reinsert-every-position path, which neither of these backends can
+/// do in place.
+#[test]
+fn the_backends_without_a_multimap_still_work() {
+    let mut congee = CongeedVecTable::new();
+    for id in 1..=5u64 {
+        congee.insert(CongeedRow { id, value: id * 10 }).expect("fresh");
+    }
+    assert!(congee.insert(CongeedRow { id: 3, value: 99 }).is_err(), "duplicate key");
+    assert_eq!(congee.delete(&3).expect("present").value, 30);
+    for id in [1u64, 2, 4, 5] {
+        assert_eq!(congee.select(&id).unwrap_or_else(|| panic!("{id} gone")).value, id * 10);
+    }
+    assert!(congee.select(&3).is_none());
+    assert_eq!(congee.select_all().iter().map(|row| row.id).collect::<Vec<_>>(), vec![1, 2, 4, 5]);
+
+    let mut wti = WtidVecTable::new();
+    for id in 1..=5u64 {
+        wti.insert(WtidRow { id, value: id * 10, code: id + 100 }).expect("fresh");
+    }
+    // The unique secondary refuses independently of the primary key.
+    assert!(
+        wti.insert(WtidRow { id: 6, value: 60, code: 103 }).is_err(),
+        "duplicate code should be refused even though the id is fresh"
+    );
+    // ...and refusing it must not have left the fresh id behind.
+    assert!(wti.select(&6).is_none(), "a rejected insert half-landed");
+    assert_eq!(wti.len(), 5);
+
+    assert_eq!(wti.select_by_code(&103).expect("present").id, 3);
+    assert_eq!(wti.delete(&3).expect("present").value, 30);
+    assert!(wti.select_by_code(&103).is_none(), "the secondary kept a deleted row");
+    assert_eq!(wti.select_by_code(&104).expect("present").value, 40);
+}
