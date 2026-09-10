@@ -30,13 +30,11 @@ impl Schema {
         let _ = writeln!(out, "name: {},", self.name);
         let _ = writeln!(out, "version: {},", self.version);
 
-        // Only when it is not the default. `storage: paged` is what every
-        // declaration written before this key existed meant, so writing it
-        // out would add a line to every emitted schema in the corpus to say
-        // nothing. `storage: vec` changes which table is generated, so it is
-        // never omitted.
+        // Only when true. `vec: false` is what every declaration written
+        // before this key existed meant, so writing it out would add a line to
+        // every emitted schema in the corpus to say nothing.
         if self.storage.is_vec() {
-            let _ = writeln!(out, "storage: vec,");
+            let _ = writeln!(out, "vec: true,");
         }
 
         match self.persist {
@@ -259,21 +257,21 @@ mod storage_round_trip {
     /// is the default and is deliberately not written; vec always is.
     #[test]
     fn storage_vec_survives_but_paged_is_never_written() {
-        let declared = "name: T,\nversion: 1,\nstorage: vec,\ncolumns: {\n    id: u64 primary_key,\n}\n";
+        let declared = "name: T,\nversion: 1,\nvec: true,\ncolumns: {\n    id: u64 primary_key,\n}\n";
         let schema = Schema::parse(declared).expect("valid");
         assert!(schema.storage.is_vec());
-        assert!(schema.to_dsl().contains("storage: vec,"), "got: {}", schema.to_dsl());
+        assert!(schema.to_dsl().contains("vec: true,"), "got: {}", schema.to_dsl());
 
         let paged = "name: T,\nversion: 1,\ncolumns: {\n    id: u64 primary_key,\n}\n";
         let schema = Schema::parse(paged).expect("valid");
         assert!(!schema.storage.is_vec());
-        assert!(!schema.to_dsl().contains("storage"), "got: {}", schema.to_dsl());
+        assert!(!schema.to_dsl().contains("vec:"), "got: {}", schema.to_dsl());
     }
 
     /// And the emitted text parses back to the same schema.
     #[test]
     fn the_emitted_text_round_trips() {
-        let declared = "name: T,\nversion: 1,\nstorage: vec,\npersist: true,\ncolumns: {\n    id: u64 primary_key,\n    value: u64,\n}\n";
+        let declared = "name: T,\nversion: 1,\nvec: true,\ncolumns: {\n    id: u64 primary_key,\n    value: u64,\n}\n";
         let once = Schema::parse(declared).expect("valid");
         let text = once.to_dsl();
         let twice = Schema::parse(&text).expect("the emitter writes valid text");

@@ -314,11 +314,11 @@ impl Schema {
                         "version must be specified before columns/indexes/queries/config",
                     ));
                 }
-                "storage" | "persist" | "partition_by" => {
+                "vec" | "persist" | "partition_by" => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "`storage`, `persist` and `partition_by` are positional; the required order is: \
-                         name, version, storage, persist, partition_by, then columns/indexes/queries/config",
+                        "`vec`, `persist` and `partition_by` are positional; the required order is: \
+                         name, version, vec, persist, partition_by, then columns/indexes/queries/config",
                     ));
                 }
                 other => {

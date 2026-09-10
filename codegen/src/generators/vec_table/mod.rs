@@ -90,7 +90,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
-use worktable_dsl::{Columns, IndexBackend, Persistence};
+use worktable_dsl::{Columns, IndexBackend};
 
 use crate::generators::index_backend::primitive_name;
 
@@ -299,7 +299,7 @@ fn unique_shift(repr: Repr, map: &TokenStream, at: &TokenStream) -> TokenStream 
     }
 }
 
-pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::Result<TokenStream> {
+pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     if columns.primary_keys.len() != 1 {
         return Err(syn::Error::new(
             name.span(),
@@ -594,7 +594,11 @@ pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::R
     // redirects the derive's own generated paths to it. Emitting a bare `rkyv`
     // would make the consumer's manifest part of this macro's contract, which
     // is the leak `worktable!` still has.
-    let row_derives = if persistence.is_persisted() {
+    // Always, not behind a flag. `persist` is refused on this table, so there
+    // is nothing left to gate them with, and the alternative is a third key.
+    // Measured at 20 tables of five columns: 305 ms without, 470 ms with, so
+    // about 8 ms a table. Real, and not worth a key.
+    let row_derives = {
         quote! {
             #[derive(
                 Clone,
@@ -606,11 +610,9 @@ pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::R
             )]
             #[rkyv(crate = worktable::prelude::rkyv)]
         }
-    } else {
-        quote! { #[derive(Clone, Debug, PartialEq)] }
     };
 
-    let hydrate = if persistence.is_persisted() {
+    let hydrate = {
         quote! {
             /// Every row as pages, ready to be written somewhere.
             ///
@@ -639,7 +641,7 @@ pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::R
             /// fingerprint rather than read as debris.
             pub fn load(bytes: &[u8]) -> Result<Self, worktable::prelude::LoadError> {
                 let rows: worktable::prelude::Vec<#row_ident> = worktable::prelude::from_pages(bytes)?;
-                let mut table = Self::new();
+                let mut table = Self::with_capacity(rows.len());
                 for row in rows {
                     // A duplicate key in a loaded file is a corrupt file, not a
                     // caller error, and `insert` is the only thing that builds
@@ -651,8 +653,6 @@ pub fn expand(name: Ident, columns: Columns, persistence: Persistence) -> syn::R
                 Ok(table)
             }
         }
-    } else {
-        quote! {}
     };
 
     Ok(quote! {

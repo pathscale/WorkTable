@@ -245,7 +245,7 @@ mod tests {
 }
 
 impl Parser {
-    /// Parse an optional `storage: vec,` or `storage: paged,` declaration.
+    /// Parse an optional `vec: true,` declaration.
     ///
     /// Positional, like `version` and `persist`, and for the strongest form of
     /// their reason: this does not describe part of the table, it decides
@@ -254,11 +254,20 @@ impl Parser {
     /// the blocks would mean reading three screens of columns before learning
     /// what they are columns of.
     ///
-    /// It replaces a second macro. `worktable_vec!` existed for one release
-    /// and generated its own `<Name>VecRow` and `<Name>VecTable`, which is a
-    /// parallel set of names to learn and, when both macros named one table,
-    /// a redefinition error. One macro and one key means one `<Name>Row` and
-    /// one `<Name>WorkTable` whatever the storage is.
+    /// # A boolean in the grammar, an enum in the model
+    ///
+    /// The author writes a flag, which is the shape `persist:` already has and
+    /// needs no new noun explained. What comes out is a [`Storage`], because
+    /// everything downstream of here crosses a boundary where two flags could
+    /// disagree: the canonical schema is serialized, round-tripped through
+    /// `to_dsl`, and handed to a TypeScript emitter, and serde will not
+    /// enforce a cross-field invariant for anybody. One enum cannot say two
+    /// things, so the illegal combination stops existing after this function
+    /// rather than being re-checked by each consumer.
+    ///
+    /// This briefly read `storage: vec`. The key was invented while drafting an
+    /// options menu rather than chosen, and a flag turned out to be the better
+    /// surface once the invariant could be kept without it.
     pub fn parse_storage(&mut self) -> syn::Result<Storage> {
         let Some(ident) = self.input_iter.peek().cloned() else {
             return Ok(Storage::Paged);
@@ -266,7 +275,7 @@ impl Parser {
         let TokenTree::Ident(ident) = ident else {
             return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
-        if ident.to_string().as_str() != "storage" {
+        if ident.to_string().as_str() != "vec" {
             return Ok(Storage::Paged);
         }
         let _ = self.input_iter.next();
@@ -274,17 +283,17 @@ impl Parser {
         let value = self
             .input_iter
             .next()
-            .ok_or_else(|| syn::Error::new(self.input.span(), "Expected `vec` or `paged`."))?;
+            .ok_or_else(|| syn::Error::new(self.input.span(), "Expected `true` or `false`."))?;
         let TokenTree::Ident(value) = value else {
-            return Err(syn::Error::new(value.span(), "Expected `vec` or `paged`."));
+            return Err(syn::Error::new(value.span(), "Expected `true` or `false`."));
         };
         let storage = match value.to_string().as_str() {
-            "vec" => Storage::Vec,
-            "paged" => Storage::Paged,
+            "true" => Storage::Vec,
+            "false" => Storage::Paged,
             other => {
                 return Err(syn::Error::new(
                     value.span(),
-                    format!("expected `vec` or `paged`, found `{other}`"),
+                    format!("expected `true` or `false`, found `{other}`"),
                 ));
             }
         };

@@ -13,7 +13,7 @@ use worktable::worktable;
 
 worktable!(
     name: Point,
-    storage: vec,
+    vec: true,
     columns: {
         id: u64 primary_key,
         value: u64,
@@ -128,7 +128,7 @@ fn it_costs_what_a_vec_costs() {
 
 worktable!(
     name: Ordered,
-    storage: vec,
+    vec: true,
     columns: {
         id: u64 primary_key using indexset,
         value: u64,
@@ -141,7 +141,7 @@ worktable!(
 
 worktable!(
     name: Named,
-    storage: vec,
+    vec: true,
     columns: {
         key: String primary_key,
         value: u64,
@@ -219,7 +219,7 @@ fn a_string_keyed_table_works() {
 
 worktable!(
     name: Congeed,
-    storage: vec,
+    vec: true,
     columns: {
         id: u64 primary_key using congee,
         value: u64,
@@ -228,7 +228,7 @@ worktable!(
 
 worktable!(
     name: Wtid,
-    storage: vec,
+    vec: true,
     columns: {
         id: u64 primary_key using worktables_index,
         value: u64,
@@ -284,8 +284,7 @@ fn the_backends_without_a_multimap_still_work() {
 
 worktable!(
     name: Saved,
-    storage: vec,
-    persist: true,
+    vec: true,
     columns: {
         id: u64 primary_key,
         label: String,
@@ -391,8 +390,7 @@ fn a_partial_page_is_refused() {
 
 worktable!(
     name: Other,
-    storage: vec,
-    persist: true,
+    vec: true,
     columns: {
         id: u64 primary_key,
         label: String,

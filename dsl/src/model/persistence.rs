@@ -33,6 +33,13 @@ impl Persistence {
 /// declared both ways. One macro means one `<Name>Row` and one
 /// `<Name>WorkTable` whatever the storage is.
 ///
+/// The grammar says `vec: true`, a flag, because that is the shape `persist:`
+/// already has and needs no new noun. This enum exists anyway because
+/// everything downstream crosses a boundary where two flags could disagree:
+/// the schema is serialized, round-tripped and handed to a TypeScript
+/// emitter, and serde enforces no cross-field invariant. One enum cannot say
+/// two things.
+///
 /// The choice is still loud rather than silent: the two tables have different
 /// method signatures, so moving a declaration between them fails to compile at
 /// every call site instead of quietly weakening its guarantees.

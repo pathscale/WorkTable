@@ -18,7 +18,7 @@ Change Log
   code and no rebuild.
 - `page_size` on a persisted table, at any size with a 512-byte floor. It was
   refused outright while the on-disk seeks used a hardcoded constant.
-- `storage: vec`, a `worktable!` whose rows live in one contiguous `Vec` with
+- `vec: true`, a `worktable!` whose rows live in one contiguous `Vec` with
   an index of positions into it, and which pays for none of the paging,
   archived rows, lock map, CDC or async surface a paged table carries.
 
@@ -26,8 +26,14 @@ Change Log
   emitted `<Name>VecRow` and `<Name>VecTable`, which is a parallel vocabulary
   to learn and a redefinition error when one table was declared both ways. One
   macro means one `<Name>Row` and one `<Name>WorkTable` whatever the storage
-  is. `storage` is positional: name, version, storage, persist, partition_by,
-  then the blocks.
+  is. `vec` is positional: name, version, vec, persist, partition_by, then the
+  blocks.
+
+  It is a flag rather than a `storage:` key, which is what it was called for
+  half a day. The grammar keeps the shape `persist:` already has and gains no
+  new noun; the model still resolves it to one enum, because the schema is
+  serialized, round-tripped and handed to a TypeScript emitter, and serde
+  enforces no cross-field invariant.
 
   The two are **not** interchangeable, deliberately. The signatures differ four
   ways, so moving a declaration between them fails to compile at every call
@@ -36,9 +42,11 @@ Change Log
   `fn(&mut self, Row) -> Result<(), Row>`. Select clones a row out of the first
   and lends one from the second.
 
-  `queries`, `columnar_indexes`, `runtime`, `partition_by` and `config` are
-  refused with an error naming what to use instead, rather than accepted as
-  no-ops.
+  `persist`, `queries`, `columnar_indexes`, `runtime`, `partition_by` and
+  `config` are refused with an error naming what to use instead, rather than
+  accepted as no-ops. `persist` in particular: this table has no engine, no
+  task and no flush, so it pays no synchronisation for durability it was not
+  asked for. Rows go to bytes and back when you call for it.
 
   It honours `using` as a paged table does and defaults to the same backend:
   arctic, with `worktables_index`, `congee` and `indexset` (a plain `BTreeMap`)
@@ -53,7 +61,7 @@ Change Log
   `using indexset` is the reason to pick `BTreeMap` deliberately: `delete`
   moves every position above the hole, which a `BTreeMap` does in place and an
   ART does by reinserting each affected entry.
-- `storage: vec` with `persist: true` generates `unload` and `load`: rows out
+- `vec: true` generates `unload` and `load`: rows out
   as 16 KiB pages and back, each page standing alone so damage is local and an
   append does not rewrite the file. Every page carries a CRC-32 of its body and
   a row directory, and a row-type fingerprint refuses another table's file
@@ -70,11 +78,9 @@ Change Log
   does not write the key twice. Different archives, different fingerprints, and
   the fingerprint is what turns that from silent misreading into a refusal.
 
-  rkyv's derives are emitted only when `persist: true`, because an `Archived`
-  type and a resolver per row are not free to a caller who never writes one
-  out. They are emitted through `worktable::prelude::rkyv` with
-  `#[rkyv(crate = ..)]`, so a consumer does not have to declare rkyv. The paged
-  path still emits a bare `rkyv::` and is the remaining half of that leak.
+  rkyv's derives are unconditional, since `persist` is refused and there is
+  nothing left to gate them with. Measured at 20 tables of five columns: 305 ms
+  without them, 470 ms with, so about 8 ms a table. Real, and not worth a key.
 - The default index backend is `arctic`, not `worktables_index`. A composite
   primary key keeps `worktables_index`, because arctic cannot represent a tuple
   key. **Arctic cannot key an optional or variable-width column**, so an index

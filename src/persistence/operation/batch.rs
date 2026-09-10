@@ -17,7 +17,7 @@ use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
 use crate::persistence::space::{BatchChangeEvent, BatchData};
 use crate::persistence::task::{LastEventIds, QueueInnerRow};
 use crate::prelude::*;
-use crate::prelude::{From, Order, SelectQueryExecutor};
+use crate::prelude::{Order, SelectQueryExecutor};
 
 /// Cycles of a persistently gapped event stream before the engine gives up and
 /// fails the table.
