@@ -985,51 +985,47 @@ mod lifecycle_tests {
         );
     }
 
-    /// A collection retry must not cost half a second of doing nothing.
+    /// Which states may wait, stated exactly.
     ///
-    /// Collection returns `None` when it could not assemble a gapless event
-    /// stream out of the operations it grouped. That is not a signal to wait.
-    /// The operations it needs are already queued, and the retry itself is what
-    /// makes progress possible: each attempt widens the page limit, and after
-    /// `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS` it stops grouping by page and takes
-    /// everything. Sleeping between those attempts delays the only thing that
-    /// can help.
+    /// This pins the predicate the drain loop asks before sleeping, and it
+    /// measures no time at all.
     ///
-    /// The drain loop slept 500 ms on every `None` regardless, so a shutdown
-    /// needing 580 retries took 290 seconds while the work itself took 0.03.
-    /// It was invisible because it is data-dependent: a run with no inverted
-    /// event closed in 0.89s, and the same table with the same row count closed
-    /// in 290s on the next run.
+    /// A wall-clock test stood here first, draining three operations with
+    /// inverted event ids and asserting under 400 ms against the 2.027s the
+    /// bug produced. It was deleted rather than kept, for a reason worth
+    /// recording: once selection became event-ordered that fixture drained on
+    /// the first attempt and never reached the sleep at all, so replacing the
+    /// guard with an unconditional sleep left it green. A test that cannot
+    /// fail is worse than none, because it reads like cover. Only mutation
+    /// made that visible.
     ///
-    /// Operation ids 1, 2, 3 carry event ids 1, 0, 2 across two pages, which is
-    /// the inversion documented on `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`.
-    /// Page-grouped collection from operation 1 visits page 5 and takes events
-    /// 1 and 2, so the batch has no valid prefix at all: event 0 sits on page
-    /// 9, which that walk never reaches. Collection returns `None` until the
-    /// whole-queue fallback, and before the fix those four retries were four
-    /// sleeps.
-    #[tokio::test]
-    async fn a_collection_retry_does_not_cost_half_a_second() {
-        let batches = Arc::new(AtomicUsize::new(0));
-        let task = PersistenceTask::run_engine(TestEngine {
-            batches: batches.clone(),
-            events: Arc::new(ParkingMutex::new(Vec::new())),
-            config: TestConfig,
-            failure: TestFailure::None,
-        });
+    /// Event-ordered selection also means a `None` from collection now only
+    /// ever means a genuine wait, so the guard below is defence in depth
+    /// rather than load-bearing. It stays because selection order is exactly
+    /// the kind of thing that gets changed again.
+    #[test]
+    fn only_an_exhausted_collection_waits_for_more_operations() {
+        let mut analyzer: QueueAnalyzer<(), u64, TestEvents, TestIndex> =
+            QueueAnalyzer::new(Arc::new(QueueInnerWorkTable::default()));
 
-        task.apply_operation(insert_operation_with_event(1, 5, 1)).unwrap();
-        task.apply_operation(insert_operation_with_event(2, 9, 0)).unwrap();
-        task.apply_operation(insert_operation_with_event(3, 5, 2)).unwrap();
+        // Still escalating. Each retry widens the page limit, and the last of
+        // these is the one that takes the whole queue, so everything needed is
+        // already here and waiting only delays reaching it.
+        for no_progress in 0..=COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS {
+            analyzer.no_progress = no_progress;
+            assert!(
+                !analyzer.needs_more_operations(),
+                "a collection with {no_progress} failed attempts has not exhausted its own \
+                 escalation, so sleeping delays the fallback rather than waiting for anything"
+            );
+        }
 
-        let closing = std::time::Instant::now();
-        task.close().await.unwrap();
-        let elapsed = closing.elapsed();
-
-        assert!(batches.load(Ordering::Relaxed) > 0, "the batch has to apply");
+        // The whole queue was taken and the stream still had a hole, so the
+        // missing event is genuinely not here yet.
+        analyzer.no_progress = COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS + 1;
         assert!(
-            elapsed < Duration::from_millis(400),
-            "draining three operations took {elapsed:?}, which is retry sleep and not work"
+            analyzer.needs_more_operations(),
+            "once the whole queue was not enough, the missing event has to arrive from elsewhere"
         );
     }
 
