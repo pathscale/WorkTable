@@ -22,7 +22,7 @@
   #text(size: 11pt, style: "italic")[Absolutely not a database.]
   #v(0.6em)
   #text(size: 9.5pt)[A user's guide to the `worktable!` macro, its queries, its indexes and its
-  persistence tier. Written against 1.0.0-beta.19.]
+  persistence tier. Written against 1.9.0-alpha1.]
 ]
 #v(1.2em)
 
@@ -118,15 +118,22 @@ differ in what they can express, not only in speed.
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 6pt,
   [*Backend*], [*When it fits*],
-  [`worktables_index`], [The general one, and the default for persisted indexes. Takes an ordered key of any type.],
+  [`worktables_index`], [The general one. Takes an ordered key of any type, and the only one that can key an optional or variable-width column.],
   [`indexset`], [Vanilla IndexSet, selectable explicitly while keeping the same disk representation.],
-  [`arctic`], [Fixed-width keys only, and the fast one. Packs a row link into a single `u64`.],
+  [`arctic`], [*The default.* Fixed-width keys only, and the fast one. Packs a row link into a single `u64`.],
   [`congee`], [Fixed-width integer keys. Refuses `String` and other variable-width types.],
 )
 
-Arctic and Congee must state `persist: true` or `persist: false` explicitly, because
-their persistence uses native checkpoint and WAL adapters rather than the shared page
-format.
+Congee must state `persist: true` or `persist: false` explicitly, because its
+persistence uses native checkpoint and WAL adapters rather than the shared page format.
+
+Omitting `using` gives `arctic`, with one exception: a composite primary key keeps
+`worktables_index`, because arctic's key contract cannot represent a tuple.
+
+#note("The default cannot key everything")[Arctic takes fixed-width keys only, so an
+index on an optional or variable-width column must name `worktables_index` explicitly.
+`by_name: name unique` over a `String optional` is rejected, and the message names the
+type rather than the omission.]
 
 #note("Arctic and page size")[Arctic packs a link into 64 bits with 16-bit offset and
 length fields, so it cannot address a page larger than 65535 bytes. The macro checks
@@ -157,6 +164,46 @@ It was refused outright until recently, because the seeks computed offsets from 
 hardcoded constant while the table threaded the configured one. Every location that
 decides a page size, and the three silent bugs found while making them agree, are in
 `docs/page-size.md`.]
+
+= Columnar fields and indexes
+
+A column marked `columnar` is stored column-wise as well as row-wise, so a scan over
+that one field reads only that field's bytes instead of walking whole rows.
+
+```rust
+worktable! (
+    name: Reading,
+    columns: {
+        id: u64 primary_key,
+        host_id: u64 columnar(chunk_rows(2), compression(none)),
+        timestamp: i64 columnar,
+        payload: String,
+    },
+    columnar_indexes: {
+        host_time: {
+            cluster_by: [host_id, timestamp],
+        },
+    },
+);
+```
+
+`columnar` takes optional settings. `chunk_rows(n)` sets how many rows go in a chunk
+and `compression(name)` selects the codec; `none` is the only one today. A bare
+`columnar` is not `columnar(...)` with the defaults filled in, and the two are written
+back differently, so what you wrote is what you get.
+
+`columnar_indexes` names an ordering over columnar fields. `cluster_by` lists the
+fields, in order, and every one of them must itself be `columnar`. A table with
+columnar fields and no `columnar_indexes` is fine; the reverse is not.
+
+Two settings live in `config` rather than on a column, because they apply to the table:
+`columnar_slot_id` picks the width of the slot identifier (`ColumnSlotId8` through
+`ColumnSlotId64`, default `ColumnSlotId32`) and `columnar_chunk_rows` sets the default
+chunk size for fields that do not name their own.
+
+#note("The primary key is already there")[A primary-key column must not declare
+`columnar`: it participates in columnar identity implicitly, and declaring it again
+generates duplicate scan methods. The macro refuses it.]
 
 = Persistence
 
@@ -230,6 +277,49 @@ many small IOs and `tokio::fs` pays a thread-pool round trip for each one.
 a thread rather than share a runtime's worker pool. The calls were never waiting on the
 disk through a runtime anyway: the persistence path measured 89 voluntary context
 switches across 25,000 inserts.]
+
+= Choosing a runtime
+
+A table names the async runtime its generated code awaits on.
+
+```rust
+worktable! (
+    name: Orders,
+    runtime: nagoya(shared_slot),
+    columns: { id: u64 primary_key, total: u64 },
+);
+```
+
+`nagoya` is the default and `tokio` is the alternative. Omitting `runtime:` and writing
+`runtime: nagoya(shared_slot)` describe the same table.
+
+The parenthesised name is a *flavor*: a set of scheduler tunings, not a different
+scheduler. All flavors share one pool implementation, so choosing between them costs no
+extra code and no rebuild of the engine.
+
+#table(
+  columns: (auto, 1fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 6pt,
+  [*Flavor*], [*What it changes*],
+  [`shared_slot`], [The default. Keeps a self-waking task on its worker, and shares the overflow when more than one piles up behind it.],
+  [`locality`], [Keeps a self-waking task on its worker and never shares the overflow.],
+  [`spread`], [Sends every wake through the shared injector instead of keeping it local.],
+  [`throughput`], [`spread`, taking a larger batch from the injector at a time.],
+  [`wide_injector`], [`spread`, taking a larger batch still.],
+  [`low_latency`], [`locality`, looking for work more often before parking.],
+)
+
+#note("Take the default")[Measured across a read/write mix, YCSB, and a persisted mix,
+every flavor lands inside the run-to-run noise of every other, on 9 to 16 repetitions
+per point. The one choice that changes anything is a *negative*: putting a flavor that
+sends wakes to the injector (`spread`, `throughput`, `wide_injector`) on a write-heavy
+table costs 55% to 57%, because the workload wakes on every await. The default does not
+do that.
+
+So this is not a knob to tune per table. It is a knob to leave alone unless you have a
+measurement that says otherwise, and the measurement should report a range rather than a
+median: a 3-run reading of this reversed twice under 16 runs.]
 
 = Concurrency
 
