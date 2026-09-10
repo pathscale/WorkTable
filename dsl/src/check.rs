@@ -230,10 +230,12 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     let mut queries = None;
     let mut config = None;
     let mut runtime = None;
+    let mut columnar_indexes = None;
     while let Some(ident) = parser.peek_next() {
         match ident.to_string().as_str() {
             "columns" => columns = Some(parser.parse_columns()?),
             "indexes" => indexes = Some(parser.parse_indexes()?),
+            "columnar_indexes" => columnar_indexes = Some(parser.parse_columnar_indexes()?),
             "queries" => queries = Some(parser.parse_queries()?),
             "config" => config = Some(parser.parse_configs()?),
             "runtime" => {
@@ -244,16 +246,23 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
                 runtime = Some(parser.parse_runtime()?);
             }
             other => {
-                return Err(syn::Error::new(ident.span(), format!("Unexpected token `{other}`")));
+                return Err(syn::Error::new(
+                    ident.span(),
+                    format!(
+                        "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, \
+                         `queries`, `config`, `runtime`"
+                    ),
+                ));
             }
         }
     }
 
-    // Parsed for its diagnostics and then dropped. No rule in `validate` reads
-    // the runtime yet, but the grammar has to accept it here or `check` would
-    // reject a declaration the macro compiles, which is the one thing this
-    // function exists not to do.
+    // Parsed for their diagnostics and then dropped. No rule in `validate`
+    // reads either yet, but the grammar has to accept both here or `check`
+    // would reject a declaration the macro compiles, which is the one thing
+    // this function exists not to do.
     let _ = runtime;
+    let _ = columnar_indexes;
 
     let mut columns = columns.ok_or_else(|| {
         syn::Error::new(
@@ -265,4 +274,76 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
         columns.indexes = indexes;
     }
     Ok((columns, queries, config, persistence))
+}
+
+#[cfg(test)]
+mod dispatch_agreement {
+    use super::check;
+
+    /// Every top-level section, in one declaration.
+    ///
+    /// The order is deliberately not the canonical one: the dispatch is a
+    /// free-order loop, so a section is only really wired if it is reachable
+    /// from wherever it appears.
+    const EVERY_SECTION: &str = "
+        name: EverySection,
+        persist: false,
+        runtime: nagoya(spread),
+        columns: {
+            id: u64 primary_key,
+            host_id: u64 columnar(chunk_rows(2)),
+            qty: u64,
+        },
+        indexes: { qty_idx: qty },
+        columnar_indexes: { host_order: { cluster_by: [host_id] } },
+        queries: { update: { Fill(qty) by id } },
+        config: { page_size: 4096 },
+        ";
+
+    /// There are three copies of the section dispatch: the macro's own in
+    /// `worktable_codegen`, the schema mirror in `schema::mod`, and `model_of`
+    /// here. A section wired into one and not another is not a compile error
+    /// anywhere; it surfaces as `check` rejecting a declaration the macro
+    /// happily expands, which is precisely backwards for a function whose job
+    /// is to explain why something will not compile.
+    ///
+    /// `columnar_indexes` was missing from this loop and did exactly that.
+    #[test]
+    fn check_accepts_every_section_the_macro_does() {
+        let checked = check(EVERY_SECTION);
+        assert!(
+            checked.schema.is_some(),
+            "check failed to parse a declaration the macro accepts: {:?}",
+            checked.diagnostics
+        );
+        assert!(
+            checked.is_acceptable(),
+            "check rejected a valid declaration: {:?}",
+            checked.diagnostics
+        );
+    }
+
+    /// The schema mirror has to agree with `model_of` on the same input, since
+    /// a caller reads the schema out of `Checked` and draws it.
+    #[test]
+    fn the_schema_mirror_accepts_every_section_too() {
+        let schema = crate::Schema::parse(EVERY_SECTION).expect("the schema mirror parses every section");
+        assert_eq!(schema.name, "EverySection");
+        assert_eq!(
+            schema.runtime,
+            crate::model::RuntimeBackend::Nagoya(crate::model::Flavor::Spread)
+        );
+    }
+
+    /// The rejection message names the sections that would have worked. A
+    /// bare "Unexpected token" is the same text a missing arm produces, so it
+    /// cannot tell a typo from a section somebody forgot to wire.
+    #[test]
+    fn an_unknown_section_is_told_what_was_expected() {
+        let checked = check("name: Bad, columns: { id: u64 primary_key }, bananas: { x: 1 }");
+        let message = &checked.diagnostics[0].message;
+        for section in ["columns", "indexes", "columnar_indexes", "queries", "config", "runtime"] {
+            assert!(message.contains(section), "{section} missing from: {message}");
+        }
+    }
 }
