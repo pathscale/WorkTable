@@ -160,6 +160,38 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
         Ok(())
     }
 
+    /// Creates every page from the current high-water mark through `target`.
+    ///
+    /// A link can name a page more than one past `last_page_id`: two writers
+    /// allocating pages at once hand the queue the higher page first. Creating
+    /// only the named page left the skipped ids as holes of zeros that the
+    /// file nonetheless spans, and a hole is not a page. The batch path then
+    /// classifies a skipped id as already existing, parses the zeroed header
+    /// back as page 0 and looks up a key the batch never held; reload reads
+    /// the same junk. So close the gap at the moment it opens.
+    ///
+    /// `already_written` names ids the caller persists itself, so the batch
+    /// path does not pay a second write for each page it is about to write
+    /// with its rows in it.
+    async fn create_pages_up_to(&mut self, target: u32, already_written: &HashSet<u32>) -> eyre::Result<()> {
+        while self.last_page_id < target {
+            let id = self.last_page_id + 1;
+            if !already_written.contains(&id) {
+                let mut page = GeneralPage {
+                    header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
+                    inner: DataPage {
+                        length: 0,
+                        data: [0; 1],
+                    },
+                };
+                persist_page::<_, PAGE_SIZE>(&mut page, &mut self.data_file).await?;
+            }
+            self.last_page_id = id;
+            self.current_data_length = 0;
+        }
+        Ok(())
+    }
+
     /// Keeps the serialized info page inside page 0's fixed slot.
     ///
     /// `empty_links_list` is the only unbounded part of [`SpaceInfoPage`], and
@@ -288,20 +320,9 @@ where
             self.save_info().await?;
         }
         if link.page_id > self.last_page_id.into() {
-            let mut page = GeneralPage {
-                header: GeneralHeader::new(link.page_id, PageType::Data, 0.into()),
-                inner: DataPage {
-                    length: 0,
-                    data: [0; 1],
-                },
-            };
-            persist_page::<_, PAGE_SIZE>(&mut page, &mut self.data_file).await?;
-            self.current_data_length = 0;
-            // High-water mark, as in the batch path below: the new page is the
-            // one the link names, which can be more than one past the current
-            // last page. A bare increment left `last_page_id` behind it, so a
-            // later write to that page would re-create it zero-filled.
-            self.last_page_id = self.last_page_id.max(link.page_id.into());
+            // Every page through the named one, not just the named one: see
+            // `create_pages_up_to`.
+            self.create_pages_up_to(link.page_id.into(), &HashSet::new()).await?;
         }
         // `current_data_length` mirrors the last page's persisted data_length:
         // the number of bytes occupied from the page start. Only a write that
@@ -352,11 +373,14 @@ where
         // creating several pages could leave `last_page_id` below a page that
         // now exists. The next batch touching that page would see it as "new"
         // and re-create it zero-filled, wiping the rows persisted before.
-        if let Some(max) = ids_to_create.iter().max() {
-            // High-water mark: every id in `ids_to_create` is > last_page_id by
-            // construction, but state the monotonic invariant directly so a
-            // future refactor of the filter above cannot regress it.
-            self.last_page_id = self.last_page_id.max(*max);
+        //
+        // Moving the mark to the maximum is necessary but not sufficient: the
+        // ids between it and the old mark that this batch does not touch have
+        // to become real pages too, or they stay holes. `create_pages_up_to`
+        // skips the ids this batch writes for itself below.
+        if let Some(max) = ids_to_create.iter().max().copied() {
+            let written_by_this_batch = ids_to_create.iter().copied().collect::<HashSet<_>>();
+            self.create_pages_up_to(max, &written_by_this_batch).await?;
         }
         let created_pages = ids_to_create
             .into_iter()
@@ -461,7 +485,9 @@ where
 mod tests {
     use data_bucket::page::PageId;
 
-    use super::subtract_used_ranges;
+    use super::{SpaceData, subtract_used_ranges};
+    use crate::persistence::SpaceDataOps;
+    use crate::persistence::space::BatchData;
     use crate::prelude::Link;
 
     fn link(page_id: u32, offset: u32, length: u32) -> Link {
@@ -533,5 +559,59 @@ mod tests {
 
             assert_eq!(actual, expected, "case {case}");
         }
+    }
+
+    /// A gap in the page sequence must not make the batch path parse a hole.
+    ///
+    /// Two writers allocating pages at once can hand the queue a link on the
+    /// higher page first. `save_data` then creates only that page and moves
+    /// `last_page_id` up to it, so the skipped page is a hole of zeros that
+    /// the file nonetheless spans. The next batch touching the skipped page
+    /// classifies it as already existing (`id <= last_page_id`), parses the
+    /// hole back, reads a `page_id` of 0 out of the zeroed header and looks up
+    /// a key the batch never contained.
+    ///
+    /// This is the mechanism behind
+    /// `tests/persistence/concurrent_upsert_batch.rs`, reduced to the two
+    /// calls that produce it so it takes milliseconds instead of forty
+    /// minutes.
+    #[tokio::test]
+    async fn a_batch_touching_a_skipped_page_does_not_parse_a_hole() {
+        const PAGE: u32 = data_bucket::PAGE_SIZE as u32;
+        const INNER: usize = data_bucket::PAGE_SIZE - data_bucket::GENERAL_HEADER_SIZE;
+
+        let dir = std::env::temp_dir().join(format!("wt-page-gap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let path = dir.to_str().expect("utf-8 path").to_owned();
+
+        let mut space = SpaceData::<u64, INNER, PAGE>::from_table_files_path(path, 1)
+            .await
+            .expect("a fresh space");
+
+        // Page 3, with 1 and 2 never written: the out-of-order case.
+        space
+            .save_data(link(3, 0, 8), &[1u8; 8])
+            .await
+            .expect("the high page saves");
+        assert_eq!(space.last_page_id, 3, "the high-water mark follows the link");
+
+        // Now hand the batch path the page that was skipped.
+        let mut batch = BatchData::new();
+        batch.insert(PageId::from(1u32), vec![(link(1, 0, 8), vec![2u8; 8])]);
+        space.save_batch_data(batch).await.expect("the skipped page saves");
+
+        // The point of the fix is on disk, not in the call returning: every id
+        // through the high-water mark has to carry its own header. Reading
+        // them back is what distinguishes a filled gap from a hole that this
+        // particular call happened to survive.
+        for id in 1..=3u32 {
+            let header = super::parse_general_header_by_index::<PAGE>(&mut space.data_file, id)
+                .await
+                .expect("a header at every page through the mark");
+            assert_eq!(u32::from(header.page_id), id, "page {id} is a page, not a hole");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
