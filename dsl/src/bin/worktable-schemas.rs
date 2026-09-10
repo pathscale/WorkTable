@@ -44,7 +44,12 @@ fn walk(dir: &Path, entries: &mut Vec<String>, templates: &mut usize, rejected: 
         let name = name.to_string_lossy();
         if path.is_dir() {
             // `target` is build output and would multiply the scan by every vendored crate.
-            if name == "target" || name == ".git" || name == "node_modules" {
+            //
+            // `ui` is the trybuild corpus of declarations the macro must **refuse**. Counting
+            // those as rejections makes the number meaningless: it reports nine failures on a
+            // healthy tree, and a consumer checking `rejected == 0` can never pass. The same
+            // skip, for the same reason, is in `dsl/tests/round_trip.rs`.
+            if name == "target" || name == ".git" || name == "node_modules" || name == "ui" {
                 continue;
             }
             walk(&path, entries, templates, rejected);
