@@ -237,7 +237,7 @@ impl Flavor {
             // Locality's routing exactly, with only the overflow policy
             // changed. Changing the wake routing too would make it a second
             // spelling of `spread` rather than a third point between them.
-            Flavor::SharedSlot => Tuning::locality().with_share_displaced(true),
+            Flavor::SharedSlot => Tuning::locality().with_share_displaced(true).with_lifo_run_limit(4),
         }
     }
 }
@@ -470,12 +470,19 @@ mod tests {
         assert_eq!(fast.injector_batch, base.injector_batch);
     }
 
+    /// Both of `shared_slot`'s changes are about the same thing: letting go of
+    /// work a worker cannot run soon. Neither touches the wake routing, which
+    /// is what would make it a second spelling of `spread`.
     #[test]
-    fn shared_slot_changes_only_the_overflow_policy() {
+    fn shared_slot_changes_only_how_a_worker_lets_go() {
         let base = Flavor::Locality.tuning();
         let shared = Flavor::SharedSlot.tuning();
         assert!(shared.share_displaced);
         assert!(!base.share_displaced, "locality keeps its overflow private");
+        assert!(
+            shared.lifo_run_limit < base.lifo_run_limit,
+            "it has to reach its own queue sooner, or the work it let go of is never promoted"
+        );
         assert_eq!(shared.local_wakes, base.local_wakes);
         assert_eq!(shared.backoff_spins, base.backoff_spins);
         assert_eq!(shared.injector_batch, base.injector_batch);
@@ -511,6 +518,7 @@ mod tests {
 /// | `WT_BACKOFF` | `backoff_spins` | 1024, or 128 under `low_latency` |
 /// | `WT_PROMOTE` | `promote_every` | 64 |
 /// | `WT_BATCH` | `injector_batch` | per flavor |
+/// | `WT_LIFO` | `lifo_run_limit` | 32 |
 ///
 /// The names match the `ROUNDS` / `BACKOFF` / `PROMOTE` / `BATCH` variables
 /// the `perf-benchmarks` examples already take, prefixed so they cannot
@@ -521,14 +529,15 @@ pub fn tuning_overrides(base: Tuning) -> Tuning {
     fn read<T: core::str::FromStr>(name: &str) -> Option<T> {
         std::env::var(name).ok()?.trim().parse().ok()
     }
-    static OVERRIDES: std::sync::OnceLock<(Option<u32>, Option<u32>, Option<u64>, Option<usize>)> =
+    static OVERRIDES: std::sync::OnceLock<(Option<u32>, Option<u32>, Option<u64>, Option<usize>, Option<u32>)> =
         std::sync::OnceLock::new();
-    let (rounds, backoff, promote, batch) = *OVERRIDES.get_or_init(|| {
+    let (rounds, backoff, promote, batch, lifo) = *OVERRIDES.get_or_init(|| {
         (
             read("WT_ROUNDS"),
             read("WT_BACKOFF"),
             read("WT_PROMOTE"),
             read("WT_BATCH"),
+            read("WT_LIFO"),
         )
     });
 
@@ -545,6 +554,9 @@ pub fn tuning_overrides(base: Tuning) -> Tuning {
     if let Some(batch) = batch {
         tuning = tuning.with_injector_batch(batch);
     }
+    if let Some(lifo) = lifo {
+        tuning = tuning.with_lifo_run_limit(lifo);
+    }
     tuning
 }
 
@@ -558,12 +570,13 @@ pub fn tuning_overrides(base: Tuning) -> Tuning {
 pub fn describe_tuning(flavor: Flavor) -> alloc::string::String {
     let tuning = flavor.tuned();
     alloc::format!(
-        "nagoya({}) rounds={} backoff={} promote={} batch={} local_wakes={} share_displaced={}",
+        "nagoya({}) rounds={} backoff={} promote={} batch={} lifo={} local_wakes={} share_displaced={}",
         flavor.name(),
         tuning.rounds_before_park,
         tuning.backoff_spins,
         tuning.promote_every,
         tuning.injector_batch,
+        tuning.lifo_run_limit,
         tuning.local_wakes,
         tuning.share_displaced,
     )
