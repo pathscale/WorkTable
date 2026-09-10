@@ -33,8 +33,14 @@ const NOT_IMPLEMENTED: &[&str] = &["forte", "blocking", "bwos"];
 /// What is built, in the order the message should list them.
 const IMPLEMENTED: &[&str] = &["nagoya", "tokio"];
 
-/// The three nagoya flavors, in the order the message should list them.
-const FLAVORS: &[&str] = &["locality", "spread", "throughput"];
+/// The nagoya flavors, in the order the message should list them.
+///
+/// Taken from the DSL's mirror of the runtime registry rather than written
+/// out, so a flavor cannot be added to the parser and left out of the
+/// message that claims to be exhaustive.
+fn flavors() -> Vec<&'static str> {
+    worktable_dsl::model::Flavor::ALL.iter().map(|f| f.name()).collect()
+}
 
 /// One `name: backend(flavor)` entry, resolved.
 struct ProfileEntry {
@@ -121,12 +127,12 @@ fn resolve(name: Ident, backend: Ident, flavor: Option<Ident>) -> syn::Result<Pr
                 None => Ident::new("locality", backend.span()),
                 Some(flavor) => {
                     let flavor_name = flavor.to_string();
-                    if !FLAVORS.contains(&flavor_name.as_str()) {
+                    if !flavors().contains(&flavor_name.as_str()) {
                         return Err(Error::new(
                             flavor.span(),
                             format!(
                                 "unknown nagoya flavor `{flavor_name}`; expected one of: {}",
-                                FLAVORS.join(", ")
+                                flavors().join(", ")
                             ),
                         ));
                     }
@@ -173,11 +179,9 @@ impl ProfileEntry {
         match &self.flavor {
             Some(flavor) => {
                 let marker = Ident::new(
-                    match flavor.to_string().as_str() {
-                        "spread" => "Spread",
-                        "throughput" => "Throughput",
-                        _ => "Locality",
-                    },
+                    worktable_dsl::model::Flavor::from_name(&flavor.to_string())
+                        .unwrap_or_default()
+                        .type_name(),
                     flavor.span(),
                 );
                 (
@@ -331,10 +335,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_flavor_lists_the_three() {
+    fn unknown_flavor_lists_every_flavor() {
         let err = rejected(quote! { p: nagoya(banana) });
         assert!(err.contains("unknown nagoya flavor `banana`"), "{err}");
-        assert!(err.contains("locality, spread, throughput"), "{err}");
+        for flavor in worktable_dsl::model::Flavor::ALL {
+            assert!(err.contains(flavor.name()), "{} missing from: {err}", flavor.name());
+        }
     }
 
     #[test]

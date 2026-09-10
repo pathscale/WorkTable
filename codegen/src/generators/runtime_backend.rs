@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::common::model::{Flavor, RuntimeBackend};
+use crate::common::model::RuntimeBackend;
 
 /// Generates the concrete runtime type selected by the DSL.
 ///
@@ -12,13 +12,19 @@ use crate::common::model::{Flavor, RuntimeBackend};
 /// separate token because `NagoyaRt` is generic over it, so a table that picks
 /// a tuning picks it at the type level and pays nothing at run time.
 ///
-/// All four names, plus `Locality` / `Spread` / `Throughput`, are re-exported
-/// from `worktable::prelude`, so the expansion needs no import of its own.
+/// Every marker type, plus `NagoyaRt` and `TokioRt`, is re-exported from
+/// `worktable::prelude`, so the expansion needs no import of its own.
+///
+/// The marker's spelling comes from [`Flavor::type_name`] rather than from a
+/// match written here: a flavor added to the registry and missed here would
+/// emit `NagoyaRt<Locality>` for a table that asked for something else, which
+/// compiles and then silently measures the wrong pool.
 pub(crate) fn runtime_type(backend: RuntimeBackend) -> TokenStream {
     match backend {
-        RuntimeBackend::Nagoya(Flavor::Locality) => quote! { NagoyaRt<Locality> },
-        RuntimeBackend::Nagoya(Flavor::Spread) => quote! { NagoyaRt<Spread> },
-        RuntimeBackend::Nagoya(Flavor::Throughput) => quote! { NagoyaRt<Throughput> },
+        RuntimeBackend::Nagoya(flavor) => {
+            let marker = proc_macro2::Ident::new(flavor.type_name(), proc_macro2::Span::call_site());
+            quote! { NagoyaRt<#marker> }
+        }
         RuntimeBackend::Tokio => quote! { TokioRt },
     }
 }
@@ -40,6 +46,8 @@ pub(crate) fn resolve_runtime(section: Option<RuntimeBackend>, table: Option<Run
 
 #[cfg(test)]
 mod tests {
+    use crate::common::model::Flavor;
+
     use super::*;
 
     fn rendered(backend: RuntimeBackend) -> String {
@@ -58,6 +66,29 @@ mod tests {
             "NagoyaRt < Throughput >"
         );
         assert_eq!(rendered(RuntimeBackend::Tokio), "TokioRt");
+        assert_eq!(
+            rendered(RuntimeBackend::Nagoya(Flavor::LowLatency)),
+            "NagoyaRt < LowLatency >"
+        );
+        assert_eq!(
+            rendered(RuntimeBackend::Nagoya(Flavor::WideInjector)),
+            "NagoyaRt < WideInjector >"
+        );
+    }
+
+    /// Every flavor has to emit a distinct type. A missing arm used to fall
+    /// through to `Locality`, which compiles and then measures the wrong pool
+    /// under the right name, so it is asserted rather than assumed.
+    #[test]
+    fn every_flavor_emits_its_own_marker() {
+        let mut rendered: Vec<String> = Flavor::ALL
+            .into_iter()
+            .map(|flavor| super::runtime_type(RuntimeBackend::Nagoya(flavor)).to_string())
+            .collect();
+        let before = rendered.len();
+        rendered.sort();
+        rendered.dedup();
+        assert_eq!(before, rendered.len(), "two flavors emit the same type: {rendered:?}");
     }
 
     #[test]

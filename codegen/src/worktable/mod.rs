@@ -1131,7 +1131,13 @@ mod schema_const {
 /// mapping from `codegen::generators::runtime_backend` reaches that alias
 /// unchanged. The mapping itself is unit-tested next to the function; what is
 /// checked here is that a declaration selects it.
-#[cfg(test)]
+///
+/// Gated on `std` because the alias is: a build with no runtime emits no
+/// runtime type. Without the gate these tests pass under `cargo test
+/// --workspace`, where feature unification turns `std` on for them, and fail
+/// under `cargo test -p worktable_codegen`, where nothing does. A test whose
+/// result depends on which crate you ran it from is a false green either way.
+#[cfg(all(test, feature = "std"))]
 mod runtime_tests {
     use quote::quote;
 
@@ -1271,13 +1277,18 @@ mod runtime_tests {
     }
 
     #[test]
-    fn an_unknown_flavor_is_refused_with_the_three_that_exist() {
+    fn an_unknown_flavor_is_refused_with_every_flavor_that_exists() {
         let error = expand(declaration(quote! { runtime: nagoya(banana), }))
             .unwrap_err()
             .to_string();
 
         assert!(error.contains("unknown nagoya flavor `banana`"), "{error}");
-        assert!(error.contains("`locality`, `spread` or `throughput`"), "{error}");
+        // Every flavor in the registry, rather than a sentence. Pinning the
+        // wording is how this test came to fail for adding a flavor, which is
+        // the one thing it should not object to.
+        for flavor in worktable_dsl::model::Flavor::ALL {
+            assert!(error.contains(flavor.name()), "{} missing from: {error}", flavor.name());
+        }
     }
 
     #[test]

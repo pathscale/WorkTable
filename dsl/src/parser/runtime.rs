@@ -23,7 +23,22 @@ pub const DUPLICATE_RUNTIME: &str = "duplicate `runtime` section; a declaration 
 const EXPECTED_BACKEND: &str = "expected a runtime backend after `runtime:`: `nagoya`, optionally flavored as \
      `nagoya(locality)`, `nagoya(spread)` or `nagoya(throughput)`, or `tokio`";
 
-const EXPECTED_FLAVOR: &str = "expected a flavor inside the parentheses: `locality`, `spread` or `throughput`";
+/// The flavors, listed from [`Flavor::ALL`] rather than written out.
+///
+/// There are four places a flavor name appears in this file's diagnostics.
+/// Spelling them by hand is how a flavor gets added to the parser and left
+/// out of a message that claims to be exhaustive.
+fn flavor_list() -> String {
+    Flavor::ALL
+        .iter()
+        .map(|flavor| format!("`{}`", flavor.name()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn expected_flavor() -> String {
+    format!("expected a flavor inside the parentheses: one of {}", flavor_list())
+}
 
 const TOKIO_HAS_NO_FLAVORS: &str =
     "`tokio` has no flavors; write `runtime: tokio`, or select a flavored runtime with `runtime: nagoya(spread)`";
@@ -116,26 +131,24 @@ impl Parser {
         let mut inner = group.stream().into_iter();
         let flavor = inner
             .next()
-            .ok_or_else(|| syn::Error::new_spanned(&group, EXPECTED_FLAVOR))?;
+            .ok_or_else(|| syn::Error::new_spanned(&group, expected_flavor()))?;
         let TokenTree::Ident(flavor) = flavor else {
-            return Err(syn::Error::new_spanned(flavor, EXPECTED_FLAVOR));
+            return Err(syn::Error::new_spanned(flavor, expected_flavor()));
         };
         if let Some(extra) = inner.next() {
             return Err(syn::Error::new_spanned(
                 extra,
-                "`nagoya` takes a single flavor; write one of `locality`, `spread` or `throughput`",
+                format!("`nagoya` takes a single flavor; write one of {}", flavor_list()),
             ));
         }
 
-        match flavor.to_string().as_str() {
-            "locality" => Ok(Some(Flavor::Locality)),
-            "spread" => Ok(Some(Flavor::Spread)),
-            "throughput" => Ok(Some(Flavor::Throughput)),
-            other => Err(syn::Error::new_spanned(
+        let name = flavor.to_string();
+        Flavor::from_name(&name).map(Some).ok_or_else(|| {
+            syn::Error::new_spanned(
                 &flavor,
-                format!("unknown nagoya flavor `{other}`; expected `locality`, `spread` or `throughput`"),
-            )),
-        }
+                format!("unknown nagoya flavor `{name}`; expected one of {}", flavor_list()),
+            )
+        })
     }
 
     /// The optional `runtime <profile>` between a query section's keyword and
@@ -267,10 +280,10 @@ mod tests {
             .parse_runtime()
             .unwrap_err()
             .to_string();
-        assert_eq!(
-            error,
-            "unknown nagoya flavor `banana`; expected `locality`, `spread` or `throughput`"
-        );
+        assert!(error.starts_with("unknown nagoya flavor `banana`;"), "{error}");
+        for flavor in Flavor::ALL {
+            assert!(error.contains(flavor.name()), "{} missing from: {error}", flavor.name());
+        }
     }
 
     #[test]
@@ -461,8 +474,11 @@ mod tests {
     fn backend_names_round_trip() {
         assert_eq!(RuntimeBackend::Nagoya(Flavor::Spread).name(), "nagoya");
         assert_eq!(RuntimeBackend::Tokio.name(), "tokio");
+        for flavor in Flavor::ALL {
+            assert_eq!(Flavor::from_name(flavor.name()), Some(flavor));
+        }
         assert_eq!(Flavor::Locality.name(), "locality");
-        assert_eq!(Flavor::Spread.name(), "spread");
-        assert_eq!(Flavor::Throughput.name(), "throughput");
+        assert_eq!(Flavor::LowLatency.name(), "low_latency");
+        assert_eq!(Flavor::WideInjector.name(), "wide_injector");
     }
 }

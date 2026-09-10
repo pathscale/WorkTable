@@ -147,6 +147,11 @@ worktable_dsl = { path = "dsl", version = "^1.0.0-beta.18.1" }
 
 [dev-dependencies]
 chrono = "0.4"
+# For one test, and only one: the flavor registry lives here and the DSL
+# carries a mirror of it so the parser does not have to depend on the runtime
+# crate. A dev-dependency is what lets a test compare the two lists without
+# putting the mirror's `syn` and `proc-macro2` into anybody's runtime graph.
+worktable_dsl = { path = "dsl" }
 criterion = { version = "0.5", features = ["async_tokio"] }
 rand = "0.9"
 # A dev-dependency, and that is the whole of the no_std claim. It was a normal

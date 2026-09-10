@@ -3,6 +3,12 @@
 /// The names describe what the table does with its work rather than how the
 /// scheduler is built: `Locality` keeps a task on the worker that woke it,
 /// `Spread` fans it out, and `Throughput` trades wake-up latency for batching.
+///
+/// **This list is a mirror.** The registry is `worktable::runtime::Flavor`,
+/// which carries the stable discriminants and the tuning each name selects.
+/// This enum exists so the DSL crate can parse a flavor without depending on
+/// the runtime crate, and [`Flavor::ALL`] is what a drift test compares
+/// against.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Flavor {
@@ -10,14 +16,45 @@ pub enum Flavor {
     Locality,
     Spread,
     Throughput,
+    LowLatency,
+    WideInjector,
 }
 
 impl Flavor {
+    /// Every flavor, in the registry's discriminant order.
+    pub const ALL: [Flavor; 5] = [
+        Self::Locality,
+        Self::Spread,
+        Self::Throughput,
+        Self::LowLatency,
+        Self::WideInjector,
+    ];
+
+    /// The spelling that selects this flavor, identical to the one
+    /// `WT_DEFAULT_RUNTIME` takes.
     pub fn name(self) -> &'static str {
         match self {
             Self::Locality => "locality",
             Self::Spread => "spread",
             Self::Throughput => "throughput",
+            Self::LowLatency => "low_latency",
+            Self::WideInjector => "wide_injector",
+        }
+    }
+
+    /// The flavor a spelling selects, or `None`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|flavor| flavor.name() == name)
+    }
+
+    /// The marker type `worktable::runtime` exports for this flavor.
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Self::Locality => "Locality",
+            Self::Spread => "Spread",
+            Self::Throughput => "Throughput",
+            Self::LowLatency => "LowLatency",
+            Self::WideInjector => "WideInjector",
         }
     }
 }
