@@ -5,6 +5,23 @@ primary and secondary indexes, generated CRUD/query methods, optional local or
 S3-backed persistence, and per-table concurrency. It is not a SQL database and
 does not provide multi-table transactions or multi-process access.
 
+Since 1.9 it also builds without `std`. A consumer with
+`default-features = false` can invoke the macro and use `insert`, `select` and
+`select_all`; persistence, vacuum and the disk index are the parts that need an
+operating system, and they are gated out.
+
+Three things a declaration can now choose that it could not before:
+
+- **The index backend**, with `using`. The default is `arctic`, which takes
+  fixed-width keys only, so an index over an optional or variable-width column
+  must say `using worktables_index`.
+- **Columnar storage**, with `columnar` on a column and a `columnar_indexes`
+  block. A columnar field is stored column-wise as well as row-wise, so a scan
+  over it reads only that field's bytes.
+- **The async runtime**, with `runtime: nagoya(<flavor>)` or `runtime: tokio`.
+  The flavors are scheduler tunings over one pool, not different schedulers.
+  Take the default unless a measurement says otherwise.
+
 ## In-memory quick start
 
 ```rust
