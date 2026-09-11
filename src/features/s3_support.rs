@@ -840,6 +840,28 @@ mod tests {
     }
 
     #[test]
+    fn manifest_requires_strictly_sorted_unique_paths() {
+        let file = |path: &str| ManifestFile {
+            path: path.to_string(),
+            length: 0,
+            chunks: Vec::new(),
+        };
+        let unsorted = TableManifest {
+            files: vec![file("primary.wt.idx"), file(".wt.data")],
+        }
+        .encode()
+        .unwrap();
+        assert!(TableManifest::decode(&unsorted).is_err());
+
+        let duplicate = TableManifest {
+            files: vec![file(".wt.data"), file(".wt.data")],
+        }
+        .encode()
+        .unwrap();
+        assert!(TableManifest::decode(&duplicate).is_err());
+    }
+
+    #[test]
     fn a_small_change_to_a_large_file_reuses_unchanged_chunks() {
         let original = vec![7_u8; 10 * 1024 * 1024];
         let mut changed = original.clone();
