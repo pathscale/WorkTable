@@ -18,6 +18,7 @@ worktable!(
     columns: {
         id: u64 primary_key autoincrement,
         value: u64,
+        payload: String,
     },
 );
 
@@ -155,16 +156,17 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
         {
             let engine = TestS3PersistenceEngine::new(config.disk.clone()).await.unwrap();
             let table = TestS3WorkTable::load(engine).await.unwrap();
-            for value in 0..512 {
+            for value in 0..2600 {
                 table
                     .insert(TestS3Row {
                         id: table.get_next_pk().into(),
                         value,
+                        payload: format!("{value:0>4096}"),
                     })
                     .await
                     .unwrap();
             }
-            assert_eq!(table.select_all().execute().unwrap().len(), 512);
+            assert_eq!(table.select_all().execute().unwrap().len(), 2600);
             table.wait_for_ops().await.unwrap();
         }
 
@@ -178,7 +180,37 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             let mut row = table.select(257).expect("persisted row");
             row.value = 10_000;
             table.update(row).await.unwrap();
-            table.insert(TestS3Row { id: 512, value: 512 }).await.unwrap();
+            table.wait_for_ops().await.unwrap();
+
+            let uploaded_before = s3.puts.lock().unwrap().iter().map(|(_, length)| length).sum::<usize>();
+            let table_bytes = std::fs::read_dir(config.disk.table_path())
+                .unwrap()
+                .map(|entry| entry.unwrap().metadata().unwrap().len() as usize)
+                .sum::<usize>();
+            let mut row = table.select(1300).expect("persisted row");
+            row.value = 20_000;
+            table.update(row).await.unwrap();
+            table.wait_for_ops().await.unwrap();
+            let uploaded_after = s3.puts.lock().unwrap().iter().map(|(_, length)| length).sum::<usize>();
+            let incremental_bytes = uploaded_after - uploaded_before;
+            println!(
+                "S3_TRANSFER table_bytes={table_bytes} incremental_bytes={incremental_bytes} ratio={:.3}",
+                incremental_bytes as f64 / table_bytes as f64
+            );
+            assert!(
+                incremental_bytes < table_bytes / 2,
+                "one row update uploaded {incremental_bytes} bytes for a {table_bytes}-byte table"
+            );
+
+            table
+                .insert(TestS3Row {
+                    id: 2600,
+                    value: 2600,
+                    payload: "x".repeat(4096),
+                })
+                .await
+                .unwrap();
+            table.wait_for_ops().await.unwrap();
             table.delete(100).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
@@ -186,7 +218,14 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             // manifest PUT fails, a fresh reader must still see the preceding
             // complete table generation.
             s3.reject_manifest_puts.store(true, Ordering::Release);
-            table.insert(TestS3Row { id: 513, value: 513 }).await.unwrap();
+            table
+                .insert(TestS3Row {
+                    id: 2601,
+                    value: 2601,
+                    payload: "y".repeat(4096),
+                })
+                .await
+                .unwrap();
             assert!(table.wait_for_ops().await.is_err());
         }
         s3.reject_manifest_puts.store(false, Ordering::Release);
@@ -208,12 +247,18 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             let engine = TestS3S3SyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestS3WorkTable::load(engine).await.unwrap();
             let rows = table.select_all().execute().unwrap();
-            assert_eq!(rows.len(), 512);
+            assert_eq!(rows.len(), 2600);
             assert!(table.select(100).is_none(), "deleted primary key returned");
-            assert!(table.select(513).is_none(), "uncommitted S3 generation became visible");
-            for id in (0..=512).filter(|id| *id != 100) {
+            assert!(table.select(2601).is_none(), "uncommitted S3 generation became visible");
+            for id in (0..=2600).filter(|id| *id != 100) {
                 let row = table.select(id).expect("every primary key survives");
-                let expected = if id == 257 { 10_000 } else { id };
+                let expected = if id == 257 {
+                    10_000
+                } else if id == 1300 {
+                    20_000
+                } else {
+                    id
+                };
                 assert_eq!(row.value, expected, "wrong value for primary key {id}");
             }
         }
@@ -234,7 +279,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
         {
             let engine = TestS3PersistenceEngine::new(config.disk.clone()).await.unwrap();
             let table = TestS3WorkTable::load(engine).await.unwrap();
-            assert_eq!(table.select_all().execute().unwrap().len(), 512);
+            assert_eq!(table.select_all().execute().unwrap().len(), 2600);
             assert_eq!(table.select(257).unwrap().value, 10_000);
         }
 
