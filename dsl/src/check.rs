@@ -222,6 +222,12 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     let mut parser = crate::Parser::new(tokens);
     parser.parse_name()?;
     parser.parse_version()?;
+    // `vec` sits between `version` and `persist`, and this walk skipped it, so
+    // every `vec: true` declaration fell through to the block loop below and
+    // was rejected as "Unexpected token `vec`". That made `wt-check` and
+    // `wt-dsl` refuse a whole storage the macro accepts, which the TypeScript
+    // emitter's cross-implementation test found the moment it emitted one.
+    parser.parse_storage()?;
     let persistence = parser.parse_persist()?;
     parser.parse_partition_by()?;
 
@@ -344,6 +350,30 @@ mod dispatch_agreement {
         let message = &checked.diagnostics[0].message;
         for section in ["columns", "indexes", "columnar_indexes", "queries", "config", "runtime"] {
             assert!(message.contains(section), "{section} missing from: {message}");
+        }
+    }
+
+    /// Every storage the macro accepts, the checker must also accept.
+    ///
+    /// `vec: true` was rejected here as "Unexpected token `vec`", because this
+    /// module's own walk of the positional prefix skipped `parse_storage`. The
+    /// macro accepted the declaration and `wt-check` and `wt-dsl` refused it,
+    /// so the two disagreed about what the language is. Found by the
+    /// TypeScript emitter's cross-implementation test, which round-trips
+    /// through `wt-dsl` and hit it the first time it emitted a `vec` table.
+    #[test]
+    fn the_checker_accepts_every_storage_the_macro_does() {
+        for declaration in [
+            "name: Paged, columns: { id: u64 primary_key, v: u64 }",
+            "name: Vecced, vec: true, columns: { id: u64 primary_key, v: u64 }",
+            "name: Versioned, version: 2, vec: true, columns: { id: u64 primary_key, v: u64 }",
+        ] {
+            let checked = crate::check(declaration);
+            assert!(
+                checked.is_acceptable(),
+                "the checker refused `{declaration}`: {:?}",
+                checked.diagnostics
+            );
         }
     }
 }

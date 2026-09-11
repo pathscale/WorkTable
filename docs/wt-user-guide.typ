@@ -357,6 +357,76 @@ Note that `memory_by_key` and `memory_total` cannot see any of this. They report
 `used_bytes`, which is rows plus indexes and excludes the fixed floor by definition, so
 both shapes measure the same through them.
 
+== 9b. `vec: true`, a table with no pages
+
+```rust
+worktable! (
+    name: Lookup,
+    vec: true,                      // positional: after `version`, before `persist`
+    columns: {
+        id: u64 primary_key,
+        value: u64,
+    },
+);
+```
+
+The rows live in one contiguous `Vec` with an index of positions into it. It pays for
+none of the paging, archived rows, lock map, change-data-capture or async surface a paged
+table carries.
+
+It is a key rather than a second macro. `worktable_vec!` existed for a day, emitted
+`<Name>VecRow` and `<Name>VecTable`, and is deleted: one macro means one `<Name>Row` and
+one `<Name>WorkTable` whatever the storage is.
+
+=== The two are deliberately not interchangeable
+
+Moving a declaration between them breaks every call site, which is the safety property
+rather than an omission. A swap that changed a table's concurrency and durability
+guarantees while everything still compiled is the hazard worth having:
+
+#table(
+  columns: (auto, 1fr, 1fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 6pt,
+  [], [*paged*], [*`vec: true`*],
+  [`insert`], [`async fn(&self, Row) -> Result<Pk, WorkTableError>`], [`fn(&mut self, Row) -> Result<(), Row>`],
+  [`upsert`], [`async fn(&self, Row) -> Result<(), WorkTableError>`], [`fn(&mut self, Row)`],
+  [`delete`], [`async fn(&self, Pk) -> Result<(), WorkTableError>`], [`fn(&mut self, &Pk) -> Option<Row>`],
+  [`select`], [`fn(&self, Pk) -> Option<Row>`, cloned], [`fn(&self, &Pk) -> Option<&Row>`, borrowed],
+)
+
+A missing `.await`, `&self` against `&mut self`, an owned row against a borrowed one: the
+compiler rejects the swap four different ways.
+
+=== What it refuses, and why
+
+`persist`, `queries`, `runtime`, `config` and columnar fields are each refused with an
+error naming what to use instead, rather than being accepted and ignored.
+`partition_by` is *not* refused: see section 9, where partitioning is what makes the
+`Vec` shape correct.
+
+=== Bytes and back: `unload` and `load`
+
+There is no persistence engine, no background task and no flush. When you want the rows
+as bytes you ask for them:
+
+```rust
+let pages: Vec<u8> = table.unload()?;        // 16 KiB self-describing pages
+let table = LookupWorkTable::load(&pages)?;  // and back
+```
+
+Each page carries its own header, a CRC, a row directory and a fingerprint of the row
+type, so a page written by a different declaration is refused rather than misread. The
+codec is `worktable::vec_hydrate` and it is reachable directly.
+
+=== Sizing it
+
+`with_capacity`, `capacity` and `reserve` size the row vector. Only the rows: the indexes
+are trees and have no equivalent knob, so an accurate capacity removes the row vector's
+growth entirely and leaves theirs alone. That is worth less than it sounds, and
+`docs/small-tables.md` has the measurement: reserving is worth 2.1x to 3.5x on a hash
+insert and nothing at all here, because the index is the cost and has nothing to reserve.
+
 == 10. Choosing a runtime
 
 ```rust
@@ -412,9 +482,10 @@ The prefix is ordered. Everything after `partition_max_size` is free-order.
 worktable! (
     name: Kitchen,                  // 1, required
     version: 3,                     // 2, optional
-    persist: false,                 // 3, optional
-    partition_by: shard: u16,       // 4, optional
-    partition_max_size: u64,        // 5, required with `partition_by`
+    // vec: true,                   // 3, optional, and excludes `persist`
+    persist: false,                 // 4, optional
+    partition_by: shard: u16,       // 5, optional
+    partition_max_size: u64,        // 6, required with `partition_by`
     runtime: nagoya(locality),      // free-order from here down
     columns: {
         id: u64 primary_key autoincrement,
@@ -648,4 +719,6 @@ documented precedence rather than refusing the graph.
   [`docs/queries.md`], [The generated query surface and the custom query grammar.],
   [`docs/migration.md`], [Moving a store between formats.],
   [`docs/known-issues.md`], [What is known to be wrong right now.],
+  [`docs/small-tables.md`], [Where an index stops paying for itself, what a partition costs, and what reserving capacity is and is not worth.],
+  [`docs/partition-models.md`], [How WorkTable's partitioning compares with Postgres, Kafka, ClickHouse and the rest, and what the cost buys.],
 )
