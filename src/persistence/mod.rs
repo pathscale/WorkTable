@@ -1,3 +1,4 @@
+#[cfg(feature = "std")]
 use core::future::Future;
 
 #[cfg(feature = "std")]
@@ -44,11 +45,13 @@ pub struct UnloadReport {
 /// Failures before shutdown return ownership of the generation so the caller
 /// can keep serving it or retry. A failure returned by `close` has no retained
 /// generation because shutdown was already attempted and consumed it.
+#[cfg(feature = "std")]
 pub struct UnloadFailure<T> {
     generation: Option<alloc::sync::Arc<T>>,
     error: eyre::Report,
 }
 
+#[cfg(feature = "std")]
 impl<T> UnloadFailure<T> {
     #[doc(hidden)]
     pub fn retained(generation: alloc::sync::Arc<T>, error: eyre::Report) -> Self {
@@ -77,6 +80,7 @@ impl<T> UnloadFailure<T> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<T> core::fmt::Debug for UnloadFailure<T> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
@@ -87,12 +91,14 @@ impl<T> core::fmt::Debug for UnloadFailure<T> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<T> core::fmt::Display for UnloadFailure<T> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.error.fmt(formatter)
     }
 }
 
+#[cfg(feature = "std")]
 impl<T: 'static> core::error::Error for UnloadFailure<T> {}
 
 #[cfg(feature = "std")]
@@ -138,6 +144,7 @@ pub enum LoadMode {
     Recovery,
 }
 
+#[cfg(feature = "std")]
 pub trait PersistedWorkTable<E>: Sized
 where
     E: Send,

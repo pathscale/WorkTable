@@ -95,8 +95,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p worktable --lib --no-default-features
-      - run: cargo check --manifest-path tests/nostd-consumer/Cargo.toml
+      - run: sh scripts/check-no-std.sh -p worktable --lib --no-default-features
+      - run: sh scripts/check-no-std.sh --manifest-path tests/nostd-consumer/Cargo.toml
+      - run: cargo test --manifest-path tests/nostd-consumer/Cargo.toml
+      - run: rustup target add x86_64-pc-windows-gnu
+      - run: sh scripts/check-no-std.sh -p worktable --lib --no-default-features
+        env:
+          NO_STD_TARGET: x86_64-pc-windows-gnu
+          CARGO_TARGET_DIR: target/no-std-cross
+      - name: Portable search feature combinations
+        run: |
+          for search in wti-predictable-search wti-hybrid-search wti-std-search; do
+            sh scripts/check-no-std.sh -p worktable --lib --no-default-features --features "$search,logical-index-persistence,versioned-row-publication,runtime-backends"
+          done
       - run: cargo clippy -p worktable --lib --no-default-features -- -D warnings
 
   duplicate_index_crates:
@@ -128,7 +139,7 @@ jobs:
             echo "$duplicates"
             echo
             echo "WorkTablesIndex, data_bucket and worktable move as one train."
-            echo "Publish them in lockstep, or pin them to agree."
+            echo "Publish compatible releases in dependency order."
             exit 1
           fi
           echo "one version of each: ok"
@@ -150,7 +161,7 @@ jobs:
 
           # Publish in dependency order. worktable_codegen depends on
           # worktable_dsl and worktable depends on worktable_codegen, both by
-          # path with an exact version, so each must be on the registry before
+          # path with a caret requirement, so each must be on the registry before
           # the next is packaged. Omitting worktable_dsl here is what made
           # `cargo publish -p worktable_codegen` fail with "no matching package
           # named `worktable_dsl` found" the moment the DSL extraction landed.

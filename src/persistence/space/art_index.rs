@@ -452,7 +452,7 @@ fn decode_wal_record<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<WalReco
 }
 
 fn validate_arctic_link(link: Link) -> eyre::Result<()> {
-    crate::validate_arctic_link(link)
+    Ok(crate::validate_arctic_link(link)?)
 }
 
 fn logical_record<K: ArtPersistenceKey>(event: ChangeEvent<Pair<K, Link>>) -> eyre::Result<WalRecord<K>> {

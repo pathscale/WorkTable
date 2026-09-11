@@ -184,15 +184,25 @@ impl ArcticValue for u64 {
     }
 }
 
-#[doc(hidden)]
-pub fn validate_arctic_link(link: data_bucket::Link) -> eyre::Result<()> {
-    if link.offset > u32::from(u16::MAX) || link.length > u32::from(u16::MAX) {
-        eyre::bail!(
+/// An offset or length exceeds Arctic's inline link representation.
+#[derive(Debug)]
+pub struct ArcticLinkError(pub data_bucket::Link);
+
+impl core::fmt::Display for ArcticLinkError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
             "link cannot be represented by Arctic: page {:?}, offset {}, length {}",
-            link.page_id,
-            link.offset,
-            link.length,
-        );
+            self.0.page_id, self.0.offset, self.0.length
+        )
+    }
+}
+impl core::error::Error for ArcticLinkError {}
+
+#[doc(hidden)]
+pub fn validate_arctic_link(link: data_bucket::Link) -> Result<(), ArcticLinkError> {
+    if link.offset > u32::from(u16::MAX) || link.length > u32::from(u16::MAX) {
+        return Err(ArcticLinkError(link));
     }
     Ok(())
 }

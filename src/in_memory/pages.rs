@@ -1,6 +1,7 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::{boxed::Box, vec::Vec};
+#[cfg(feature = "std")]
 use arc_swap::ArcSwap;
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -34,6 +35,28 @@ use crate::{
 
 fn page_id_mapper(page_id: usize) -> usize {
     page_id - 1usize
+}
+
+// Snapshot ownership without arc-swap's std thread-local bookkeeping.
+// Clone under the lock, then release it before running any reader callback.
+#[cfg(not(feature = "std"))]
+#[derive(Debug)]
+struct ArcSwap<T>(RwLock<Arc<T>>);
+
+#[cfg(not(feature = "std"))]
+impl<T> ArcSwap<T> {
+    fn from_pointee(value: T) -> Self {
+        Self(RwLock::new(Arc::new(value)))
+    }
+    fn load(&self) -> Arc<T> {
+        self.0.read().clone()
+    }
+    fn load_full(&self) -> Arc<T> {
+        self.load()
+    }
+    fn store(&self, value: Arc<T>) {
+        *self.0.write() = value;
+    }
 }
 
 const PAGE_DIRECTORY_CHUNK_SIZE: usize = 64;
@@ -95,7 +118,8 @@ const PAGE_LIST_CHUNK: usize = 256;
 /// row, three rows to a page, per-row insert cost grew tenfold over twenty
 /// thousand rows while a 256-byte row stayed flat.
 ///
-/// Readers still take an `ArcSwap` snapshot and never block.
+/// Hosted readers take an `ArcSwap` snapshot. Without std, snapshot acquisition
+/// briefly locks the owning Arc; visits run after releasing that lock.
 #[derive(Debug)]
 struct PageList<T> {
     chunks: ArcSwap<Vec<Arc<Vec<Arc<T>>>>>,

@@ -711,17 +711,34 @@ Rules:
 
 = Building without default features
 
-Set `default-features = false` on the WorkTable dependency to compile the
-in-memory API and generated calls from a `#![no_std]` crate using `alloc`.
-The isolated `tests/nostd-consumer` example exercises insertion, selection
-and scanning. Hosted persistence, background vacuum and runtime thread
-creation require the `std` feature. Tokio additionally requires
-`tokio-runtime`; selecting that feature enables `std`.
+Set `default-features = false` on the WorkTable dependency for the in-memory
+API and generated calls with `no_std` and `alloc`. An allocator and supported
+Unix or Windows OS services are required. Locks, entropy and the change-event
+clock may use libc or Windows APIs without linking Rust's standard library.
 
-This release preserves the no-default-features source API, but some transitive
-dependencies still link the standard library. It does not promise an entirely
-freestanding dependency closure. See `docs/no-std-validation.md` for the
-verified boundary and dependency audit.
+Hosted persistence, background vacuum, runtime thread creation and the
+`worktable_dsl` parser re-export require `std`. Embedded schema strings and
+compile-time macro parsing remain available without it: proc macros run on the
+build host. `tokio-runtime`, `vanilla-index`, `s3-support`, `perf_measurements` and `wti-superslice-search` enable `std`.
+
+Point reads retain the fixed page directory. The no-std fallback page-list
+snapshot clones an Arc under a short lock and releases the lock before visiting
+rows. Standard builds retain ArcSwap. Change-event identifiers retain UUID v7
+ordering, using OS time and a shared context when std is disabled.
+
+CI removes Rust std from the target sysroot and compiles both the library and
+an isolated consumer. A positive core/alloc control and a failing std control
+verify the test environment. Host proc macros retain their normal sysroot.
+
+```sh
+sh scripts/check-no-std.sh -p worktable --lib --no-default-features
+sh scripts/check-no-std.sh --manifest-path tests/nostd-consumer/Cargo.toml
+cargo test --manifest-path tests/nostd-consumer/Cargo.toml
+```
+
+The consumer runs generated insertion, selection, scanning and deletion,
+concurrent growth, and change-event identifier checks. Its tests supply a host
+allocator and executor while WorkTable remains built without std.
 
 = Page size
 

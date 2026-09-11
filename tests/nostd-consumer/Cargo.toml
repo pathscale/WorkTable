@@ -15,4 +15,7 @@ worktable = { path = "../..", default-features = false }
 rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "uuid-1"] }
 derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
 
+[dev-dependencies]
+nagoya = { version = "^0.1.2", default-features = false }
+
 [workspace]

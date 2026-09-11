@@ -1,5 +1,7 @@
 use alloc::{string::String, string::ToString, vec::Vec};
 use core::fmt::{self, Debug, Display, Formatter};
+#[cfg(not(feature = "std"))]
+use ordered_float::FloatCore;
 
 use crate::in_memory::{RowWrapper, StorableRow};
 use crate::mem_stat::MemStat;

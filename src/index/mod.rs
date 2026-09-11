@@ -11,7 +11,9 @@ mod table_secondary_index;
 mod unique;
 mod unsized_node;
 
-pub use arctic::{ArcticEntry, ArcticIndex, ArcticKey, ArcticStringKey, ArcticValue, validate_arctic_link};
+pub use arctic::{
+    ArcticEntry, ArcticIndex, ArcticKey, ArcticLinkError, ArcticStringKey, ArcticValue, validate_arctic_link,
+};
 pub use arctic_multi::ArcticMultiIndex;
 pub use available_index::AvailableIndex;
 pub use congee::{CongeeIndex, CongeeKey};

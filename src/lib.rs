@@ -59,6 +59,7 @@ pub use worktable_codegen::worktable;
 pub use worktable_codegen::worktable_version;
 /// The schema language, so the declaration each table embeds can be read
 /// without taking a second dependency and matching its version by hand.
+#[cfg(feature = "std")]
 pub use worktable_dsl;
 
 #[cfg(feature = "s3-support")]
@@ -218,6 +219,7 @@ pub mod prelude {
     /// there. Emitting a bare `eyre::` made that crate part of the macro's
     /// contract, and a consumer who never mentions eyre had to depend on it
     /// anyway to compile a table declaration.
+    #[cfg(feature = "std")]
     pub use ::eyre;
     pub use ::uuid;
     pub use data_bucket::{

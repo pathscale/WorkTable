@@ -20,7 +20,7 @@ default = ["std", "wti-predictable-search", "vanilla-index"]
 # line: written as `features = ["std"]` beside the version, a
 # `--no-default-features` build of this crate would still turn them on. The
 # s3 tests reach `futures::io`, whose traits live behind that feature.
-std = ["nagoya/std", "ps-reclaim/std", "congee/std", "indexset/std", "futures/std", "worktable_codegen/std"]
+std = ["nagoya/std", "ps-reclaim/std", "congee/std", "indexset/std", "futures/std", "worktable_codegen/std", "dep:arc-swap", "dep:convert_case", "dep:eyre", "dep:worktable_dsl", "uuid/std", "psc-nanoid/std"]
 # The tokio backend for `Runtime`, selectable with `runtime: tokio` in a
 # schema. **Off, and it stays off.** Getting tokio out of the normal dependency
 # graph is the work this builds on: it used to arrive through the `tokio::`
@@ -32,15 +32,15 @@ tokio-runtime = ["dep:tokio", "std"]
 # Optional because it reaches `crossbeam-utils`, `parking_lot` and `serde`,
 # none of which build without `std`, and because it is one backend of four
 # rather than something the table needs.
-vanilla-index = ["dep:vanilla_indexset"]
-perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
+vanilla-index = ["dep:vanilla_indexset", "std"]
+perf_measurements = ["std", "dep:performance_measurement", "dep:performance_measurement_codegen"]
 # Test-only, and empty on purpose: it compiles the four-backend arms of
 # `tests/worktable/runtime_backends.rs`, which declare `runtime:` on a table.
 # Off by default because the DSL keyword and the `Runtime` trait land
 # separately, and a default-on flag would make this branch red until they do.
 # The arm that runs today declares no runtime and is not behind this flag.
 runtime-backends = []
-s3-support = ["dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
+s3-support = ["std", "dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
 # path and into the background persistence worker. The persisted page format
 # is unchanged, so stores remain readable with or without this feature.
@@ -48,7 +48,7 @@ logical-index-persistence = ["worktable_codegen/logical-index-persistence"]
 wti-hybrid-search = ["indexset/wt-slice-binary-search"]
 wti-predictable-search = ["indexset/custom-binary-search"]
 wti-std-search = ["indexset/std-binary-search"]
-wti-superslice-search = ["indexset/superslice-binary-search"]
+wti-superslice-search = ["std", "indexset/superslice-binary-search"]
 # Compatibility no-op: immutable row publication is mandatory for the safe
 # generated API, including `default-features = false` builds.
 versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
@@ -58,21 +58,20 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 [dependencies]
 # Read-mostly snapshots own page Arcs while the fixed directory supplies a
 # pointer-only fast path. Publication is append-only and asserted at each swap.
-arc-swap = { version = "1", default-features = false }
+arc-swap = { version = "1", default-features = false, optional = true }
 async-trait = "0.1"
 arctic = { package = "arctic-wt", version = "^0.1, >=0.1.12", default-features = false, features = ["smr-ps-reclaim"] }
 # `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
 # crate links the standard library through a dependency. That matters for
 # EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
 # bare-metal target: we ship on Linux, macOS and Windows.
-congee = { package = "congee-wt", version = "^0.4, >=0.4.4", default-features = false }
-convert_case = { version = "0.6", default-features = false }
+congee = { package = "congee-wt", version = "^0.4.6", default-features = false }
+convert_case = { version = "0.6", default-features = false, optional = true }
 crc32fast = { version = "1", default-features = false }
 # 0.7 supplies the v3 row directory, integrity checks and configurable stride.
 data_bucket = { version = "^0.7" }
 derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
-eyre = "0.6"
-fastrand = "2"
+eyre = { version = "0.6", optional = true }
 hashbrown = "0.15"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # The file traits and the host implementation. `std` here; the crate takes it
@@ -109,7 +108,7 @@ ordered-float = { version = "5", default-features = false }
 parking_lot = { package = "parking_lot_lite_hack", version = "^0.12, >=0.12.8", default-features = false }
 performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
-psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
+psc-nanoid = { version = "^3.2.0", default-features = false, features = ["rkyv", "packed"] }
 rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "uuid-1"] }
 # A blocking HTTP client, not an async one, and that is the point.
 #
@@ -142,7 +141,7 @@ tokio = { version = "1", default-features = false, features = [
 ], optional = true }
 tracing = { version = "0.1", default-features = false }
 url = { version = "2", optional = true }
-uuid = { version = "1", features = ["v4", "v7"] }
+uuid = { version = "^1", default-features = false, features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
 # These pre-release workspace crates move as one train. The explicit caret
 # keeps the dependency policy consistent while the local path selects this
@@ -152,9 +151,16 @@ worktable_codegen = { path = "codegen", version = "^1.9.0-alpha1" }
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
 # crate.
-worktable_dsl = { path = "dsl", version = "^1.0.0-beta.19" }
+worktable_dsl = { path = "dsl", version = "^1.0.0-beta.19", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "^0.2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "^0.61", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation"] }
 
 [dev-dependencies]
+fastrand = "2"
 chrono = "0.4"
 # For one test, and only one: the flavor registry lives here and the DSL
 # carries a mirror of it so the parser does not have to depend on the runtime

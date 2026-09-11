@@ -1,7 +1,9 @@
 #[cfg(feature = "std")]
 mod batch;
+mod clock;
 #[allow(clippy::module_inception)]
 mod operation;
+pub(crate) use clock::new_operation_uuid;
 mod util;
 
 use core::cmp::Ordering;
@@ -72,7 +74,7 @@ impl SizeMeasurable for OperationId {
 
 impl Default for OperationId {
     fn default() -> Self {
-        OperationId::Single(Uuid::now_v7())
+        OperationId::Single(new_operation_uuid())
     }
 }
 

@@ -61,8 +61,14 @@ echo "=== cell-lock concurrency models ==="
 run env "RUSTFLAGS=--cfg wt_loom" CARGO_TARGET_DIR=target/cell-lock-loom cargo test --release --lib cell_lock_models
 
 echo "=== library without default features ==="
-run cargo check -p worktable --lib --no-default-features
-run cargo check --manifest-path tests/nostd-consumer/Cargo.toml
+run sh scripts/check-no-std.sh -p worktable --lib --no-default-features
+run sh scripts/check-no-std.sh --manifest-path tests/nostd-consumer/Cargo.toml
+run cargo test --manifest-path tests/nostd-consumer/Cargo.toml
+run rustup target add x86_64-pc-windows-gnu
+run env NO_STD_TARGET=x86_64-pc-windows-gnu CARGO_TARGET_DIR=target/no-std-cross sh scripts/check-no-std.sh -p worktable --lib --no-default-features
+for search in wti-predictable-search wti-hybrid-search wti-std-search; do
+    run sh scripts/check-no-std.sh -p worktable --lib --no-default-features --features "$search,logical-index-persistence,versioned-row-publication,runtime-backends"
+done
 run cargo clippy -p worktable --lib --no-default-features -- -D warnings
 
 echo "=== clippy (default) ==="

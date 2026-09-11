@@ -7,6 +7,7 @@ pub mod vacuum;
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 #[cfg(feature = "std")]
 use crate::persistence::PersistenceLoadError;
+use crate::persistence::operation::new_operation_uuid;
 use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation};
 use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
@@ -35,7 +36,6 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Portable, Serialize};
 #[cfg(feature = "std")]
 use std::path::Path;
-use uuid::Uuid;
 /// Keys per chunk when a bulk delete takes its mutation guards.
 ///
 /// Guards are striped 64 ways, so any batch wider than that holds every stripe
@@ -819,7 +819,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: merged_primary_events,
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -845,7 +845,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: merged_primary_events,
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -872,7 +872,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: merged_primary_events,
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -890,7 +890,7 @@ where
         unsafe {
             if let Err(e) = self.data.with_mut_ref(link, |r| r.unghost()) {
                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(Uuid::now_v7()),
+                    id: OperationId::Single(new_operation_uuid()),
                     primary_key_events: primary_key_events.clone(),
                     secondary_keys_events: secondary_events.clone(),
                 });
@@ -902,7 +902,7 @@ where
             Ok(bytes) => bytes,
             Err(e) => {
                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(Uuid::now_v7()),
+                    id: OperationId::Single(new_operation_uuid()),
                     primary_key_events: primary_key_events.clone(),
                     secondary_keys_events: secondary_events.clone(),
                 });
@@ -912,7 +912,7 @@ where
 
         let op = Operation::Insert(InsertOperation {
             retired_link: None,
-            id: OperationId::Single(Uuid::now_v7()),
+            id: OperationId::Single(new_operation_uuid()),
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
             secondary_keys_events: secondary_events,
@@ -1007,7 +1007,7 @@ where
             }
 
             let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                id: OperationId::Single(Uuid::now_v7()),
+                id: OperationId::Single(new_operation_uuid()),
                 primary_key_events: merged_primary,
                 secondary_keys_events: merged_secondary,
             });
@@ -1120,11 +1120,11 @@ where
         // creation-ordered, so cross-chunk event order survives the
         // analyzer's operation-id sort.
         const PERSIST_GROUP_ROWS: usize = 1024;
-        let mut batch_id = Uuid::now_v7();
+        let mut batch_id = new_operation_uuid();
         let mut ops = Vec::with_capacity(links.len());
         for (row_index, link) in links.iter().enumerate() {
             if row_index != 0 && row_index % PERSIST_GROUP_ROWS == 0 {
-                batch_id = Uuid::now_v7();
+                batch_id = new_operation_uuid();
             }
             let published = unsafe { self.data.with_mut_ref(*link, |r| r.unghost()) };
             let bytes = match published
@@ -1336,7 +1336,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: vec![],
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -1359,7 +1359,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: vec![],
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -1378,7 +1378,7 @@ where
                     // secondary entries cannot be unwound precisely; no
                     // current index implementation returns it.
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: vec![],
                         secondary_keys_events: secondary_events.clone(),
                     });
@@ -1399,7 +1399,7 @@ where
         // Delete old data
         if let Err(e) = self.data.delete(old_link) {
             let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                id: OperationId::Single(Uuid::now_v7()),
+                id: OperationId::Single(new_operation_uuid()),
                 primary_key_events: primary_key_events.clone(),
                 secondary_keys_events: secondary_events.clone(),
             });
@@ -1411,7 +1411,7 @@ where
             Ok(bytes) => bytes,
             Err(e) => {
                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(Uuid::now_v7()),
+                    id: OperationId::Single(new_operation_uuid()),
                     primary_key_events: primary_key_events.clone(),
                     secondary_keys_events: secondary_events.clone(),
                 });
@@ -1421,7 +1421,7 @@ where
 
         let op = Operation::Insert(InsertOperation {
             retired_link: Some(old_link),
-            id: OperationId::Single(Uuid::now_v7()),
+            id: OperationId::Single(new_operation_uuid()),
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
             secondary_keys_events: secondary_events,

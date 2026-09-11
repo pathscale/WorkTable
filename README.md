@@ -28,8 +28,9 @@ cargo add worktable@1.0.0-beta.5
 
 ## New in 1.9
 
-- **`no_std`.** `default-features = false` and the macro still works. Persistence,
-  vacuum and the disk index need an operating system and are gated out.
+- **`no_std`.** `default-features = false` builds the library and generated calls without
+  Rust std. Allocation and OS services remain available. Hosted persistence,
+  background vacuum and runtime thread creation require `std`.
 - **Columnar fields and indexes.** `columnar` on a column, `columnar_indexes` with
   `cluster_by`, so a scan over one field reads only that field's bytes.
 - **Explicit owned runtime execution.** `runtime: nagoya(<flavor>)` or `runtime: tokio` selects the default for `execute_async().await`. Named profiles schedule owned selects and annotated mutations on `Arc<Table>`; ordinary borrowed operations keep their callsite execution.
