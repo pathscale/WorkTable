@@ -896,13 +896,26 @@ structural mapping until its node is locked, so hits and misses are both definit
   [`std`], [On by default. Off, hosted persistence and runtime pools are excluded. The remaining library graph is checked without Rust std on native and cross targets, while OS services may still use libc.],
   [`s3-support`], [The S3 sync engine, and the HTTP stack under it.],
   [`logical-index-persistence`], [Moves unique structural CDC work off the mutation path into the background worker. The page format is unchanged either way.],
-  [`wti-std-search`], [On by default. The standard slice binary search had the lowest randomized lookup latency at every tested node width while remaining competitive on the other measured search shapes.],
+  [`wti-std-search`], [On by default. At the default node width, randomized lookup measured 45.4 ns here and 101.9 ns with predictable search. Four-client memory insertion also favored this policy.],
 )
 
 The three alternative search policies (`wti-predictable-search`, `wti-hybrid-search`,
 `wti-superslice-search`) are compile-time gates. Enable one, and only one, for an
 unambiguous build. If feature unification turns on several, WorkTablesIndex applies a
 documented precedence rather than refusing the graph.
+
+Predictable search favors ordered write work. In an alternating three-round table A/B,
+it reduced persisted insert-and-drain time by about 12-14%, while the standard default
+more than halved randomized leaf lookup and was faster for four-client in-memory
+insertion. Select that tradeoff at the Cargo callsite:
+
+```toml
+worktable = { version = "^1.9.0-alpha1", default-features = false,
+  features = ["std", "vanilla-index", "wti-predictable-search"] }
+```
+
+The `std` in `wti-std-search` names the slice-search algorithm. That search feature does
+not itself require Rust std and remains available in no-default-feature builds.
 
 = Reference coverage
 
