@@ -37,10 +37,10 @@ pub struct Spread;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Throughput;
 
-/// Locality's wake routing, with a worker looking again eight times sooner.
+/// Locality routing with a longer idle-spin budget before parking.
 ///
-/// `backoff_spins: 128`. Buys wake latency and spends CPU; see
-/// [`Flavor::LowLatency`] for what has to be reported alongside it.
+/// Runs 512 empty search rounds of 128 spin hints rather than the default four.
+/// Compare CPU use between arrivals alongside latency; see [`Flavor::LowLatency`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LowLatency;
 
@@ -174,19 +174,12 @@ pub fn engine_executor() -> &'static Executor {
     executor_for(engine_flavor())
 }
 
-/// The pool for one named flavor, started on first use.
+/// The shared executor for one named flavor, started on first use.
 ///
-/// **This is the primitive a per-query runtime selection would need**, and it
-/// exists so that the idea can be measured before it is designed into the
-/// grammar. A caller can hold two of these and put its reads on one and its
-/// writes on the other, which is the thing `update runtime fast_local:` would
-/// eventually compile to.
-///
-/// Note what it costs: work handed to a pool other than the one the calling
-/// thread belongs to takes the injector and a wake, which was around 2,250 ns
-/// on the machine this was developed on. That is the number any per-class
-/// routing has to earn back, and it is why routing individual short reads is
-/// unlikely to pay.
+/// This Rust callsite lets a caller submit owned work to a selected pool. A
+/// cross-pool submission uses the injector and may wake another worker; include
+/// dispatch cost when comparing it with inline work. Generated query profiles
+/// and runtime-annotated mutations expose their own owned execution contracts.
 #[must_use]
 pub fn executor_for_flavor(flavor: Flavor) -> &'static Executor {
     executor_for(flavor)
