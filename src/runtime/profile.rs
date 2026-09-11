@@ -28,7 +28,7 @@ pub trait Profile: 'static {
     label = "runtime selection needs a generated paged row with the std feature"
 )]
 pub trait TableRuntime {
-    /// The declared backend and flavor, defaulting to Nagoya shared_slot.
+    /// The declared backend and flavor, defaulting to Nagoya locality.
     type Backend: Runtime;
 }
 

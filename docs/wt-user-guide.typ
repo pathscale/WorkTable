@@ -588,7 +588,7 @@ let rows = table.select_all()
     .limit(100).runtime(wide).execute_async().await?;
 ```
 
-Omitting the declaration defaults to Nagoya shared_slot. A profile must match the declared backend family; Nagoya profiles may select a different flavor at the callsite. Tokio requires the `tokio-runtime` feature and an
+Omitting the declaration defaults to Nagoya locality. A profile must match the declared backend family; Nagoya profiles may select a different flavor at the callsite. Tokio requires the `tokio-runtime` feature and an
 entered Tokio runtime. `WT_DEFAULT_RUNTIME` overrides Nagoya flavors process-wide;
 `WT_RUNTIME_WORKERS` sets pool size on first use. Keep these fixed when comparing runs.
 
@@ -844,15 +844,16 @@ in separate processes and report CPU next to throughput and latency.
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 6pt,
   [*Flavor*], [*What it changes*],
-  [`shared_slot`], [The default. Keeps the local slot and first displaced inbox job private; shares further displaced work while that inbox is occupied.],
-  [`locality`], [Keeps wakes local. Displaced work enters a private inbox, then a local queue that can promote work to peers.],
+  [`shared_slot`], [Keeps the local slot and first displaced inbox job private; shares further displaced work while that inbox is occupied.],
+  [`locality`], [The default. Keeps wakes local with four short spin rounds before parking. Displaced work enters a private inbox, then a local queue that can promote work to peers.],
   [`spread`], [Sends every wake through the shared injector instead of keeping it local.],
   [`throughput`], [`spread`, taking a larger batch from the injector at a time.],
   [`wide_injector`], [`spread`, taking a larger batch still.],
-  [`low_latency`], [`locality`, looking for work more often before parking.],
+  [`low_latency`], [`locality` with a longer idle spin budget before parking.],
 )
 
-#note("Measure before changing policy")[`shared_slot` remains the shipped default.
+#note("Measure before changing policy")[`locality` is the release baseline, using four rounds of 128 spin hints before parking.
+Sparse-burst CPU measurements are part of this choice, not only peak throughput.
 The earlier YCSB figures and the WorkTable workloads in `perf-benchmarks/runtime-flavours`
 are different experiments. They do not establish a universally fastest flavor. Worker
 count, update mix, task wake behavior and CPU consumption all matter. Keep the workload

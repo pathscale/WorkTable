@@ -41,82 +41,39 @@ use crate::runtime::Tuning;
 /// | 0 | [`Locality`](Flavor::Locality) | `nagoya(locality)` | keeps a woken task on the worker that woke it |
 /// | 1 | [`Spread`](Flavor::Spread) | `nagoya(spread)` | forwards every wake to the injector |
 /// | 2 | [`Throughput`](Flavor::Throughput) | `nagoya(throughput)` | spread, plus a fatter injector trip |
-/// | 3 | [`LowLatency`](Flavor::LowLatency) | `nagoya(low_latency)` | looks again eight times sooner |
+/// | 3 | [`LowLatency`](Flavor::LowLatency) | `nagoya(low_latency)` | spins longer before parking |
 /// | 4 | [`WideInjector`](Flavor::WideInjector) | `nagoya(wide_injector)` | one long intake trip, for chunky submissions |
-/// | 5 | [`SharedSlot`](Flavor::SharedSlot) | `nagoya(shared_slot)` | locality, but at most one task stays private |
+/// | 5 | [`SharedSlot`](Flavor::SharedSlot) | `nagoya(shared_slot)` | locality with overflow sharing |
 ///
 /// Discriminants 6 to 9 are reserved for the flavors that need a scheduler
 /// mechanism ps-st3 does not expose yet, so that adding one later does not
-/// renumber the five above. See [`RESERVED`].
+/// renumber the six above. See [`RESERVED`].
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Flavor {
-    /// Keep a woken task on the worker that woke it.
+    /// The default: keep wake handoffs local with four empty search rounds
+    /// and 128 spin hints per round before host parking.
     ///
-    /// `local_wakes: true`, `injector_batch: 1`. For work whose wakes are a
-    /// chain: an update path handing a row lock to its successor wants the
-    /// lines the releasing worker just touched.
-    ///
-    /// **Not the default, and the reason is a tail.** It is the fastest flavor
-    /// on lock-bound work, by about 6% on a 50% update workload and 8% on
-    /// read-modify-write. It also lets a worker hoard self-waking tasks that
-    /// nothing else can reach, and at sixteen client threads on a read-only
-    /// workload its worst run in four was 3,174,506 against 13,601,775 for the
-    /// old engine: a 4x cliff. Pick it deliberately, for a table whose work
-    /// contends rather than fans out.
-    Locality = 0,
-    /// Send every wake to the injector, where any worker can take it.
-    ///
-    /// `local_wakes: false`. For work whose wakes are independent, which is
-    /// what read-mostly and insert-mostly tables look like.
-    Spread = 1,
-    /// Fewer, larger trips to the injector.
-    ///
-    /// `local_wakes: false`, `injector_batch: 8`. For a firehose of short
-    /// independent operations submitted from outside the pool, where the trip
-    /// to the shared queue is the cost.
-    Throughput = 2,
-    /// Locality, but a worker waits an eighth as long between empty looks.
-    ///
-    /// `backoff_spins: 128` rather than the 1024 default. Buys wake latency
-    /// and spends CPU: a worker that looks eight times as often takes the
-    /// cache lines the producer is trying to fill, so this is the flavor whose
-    /// `cpu_x` has to be reported next to its throughput or the number means
-    /// nothing.
-    LowLatency = 3,
-    /// One long trip to the injector, for work submitted in chunks.
-    ///
-    /// `injector_batch: 32`. The opposite trade to [`Throughput`](Flavor::Throughput)'s
-    /// eight: a batch is a job's exposure to whatever its worker takes private
-    /// and then sits on, so this wins only where submissions are already
-    /// chunky and uniform.
-    WideInjector = 4,
-    /// Locality's routing, but at most one task stays private to a worker.
-    ///
-    /// A job displaced from a worker's LIFO slot goes to the injector rather
-    /// than to a private inbox behind it, so it is reachable by any worker.
-    ///
-    /// This is the flavor for read-mostly work with independent tasks. Under
-    /// [`Locality`](Flavor::Locality) such work can pile several self-waking
-    /// tasks onto one worker and keep them there, because neither the slot nor
-    /// the inbox is stealable and the heartbeat that would share them is
-    /// starved by the slot itself. Measured on sixteen workers with eight
-    /// read-only client tasks: four runs in eight collapsed to a single active
-    /// worker at exactly the one-thread rate.
-    ///
-    /// **The default**, because it is the only flavor with no cliff. Judged on
-    /// median alone it ties [`Locality`](Flavor::Locality) at a worst case of
-    /// 0.77 of the old engine, on workload B. Judged on its worst *run*, which
-    /// is what a default has to be judged on, it holds 0.79 where locality
-    /// falls to 0.23.
-    ///
-    /// It is not free and it is not a strict improvement: it gives up about 1%
-    /// on a 50% update workload and 6% on read-modify-write, which is what
-    /// [`Locality`](Flavor::Locality) exists to take back.
+    /// This balances table throughput with CPU use between bursts. Independent
+    /// reads can still favor another scheduler; compare actual workloads.
     #[default]
+    Locality = 0,
+    /// Send every wake to the shared injector for independent work.
+    Spread = 1,
+    /// Spread routing with an injector batch of eight.
+    Throughput = 2,
+    /// Locality routing with 512 rounds of 128 spin hints before parking.
+    /// This spends more CPU to keep workers responsive between arrivals.
+    LowLatency = 3,
+    /// Spread routing with an injector batch of 32.
+    WideInjector = 4,
+    /// Keep the warm slot and the first displaced inbox job private.
+    ///
+    /// Further displacement while that inbox is occupied enters the shared
+    /// injector, serviced and announced at local fairness boundaries.
+    /// This is an overflow policy, not a guarantee that only one task is private.
     SharedSlot = 5,
 }
-
 /// How many flavors there are, and the length of the executor table.
 pub const FLAVOR_COUNT: usize = 6;
 
@@ -223,24 +180,7 @@ impl Flavor {
             Flavor::Locality => Tuning::locality(),
             Flavor::Spread => Tuning::spread(),
             Flavor::Throughput => Tuning::throughput(),
-            // Locality's wake routing, with the *shape* of the idle policy
-            // changed and its total length held constant.
-            //
-            // `backoff_spins` alone was wrong and the failure was not subtle.
-            // A worker parks after `rounds_before_park` empty rounds of
-            // `backoff_spins` each, so dropping the spins from 1024 to 128
-            // does not only make a worker look more often, it makes it park
-            // **eight times sooner in wall-clock time**. Workers were then
-            // asleep during the window when client tasks arrive, the tasks
-            // concentrated onto whichever worker was awake, and a private LIFO
-            // slot is not stealable, so they stayed there. Measured: YCSB C
-            // fell to 2,665,801 at exactly one core busy, against 13,049,077
-            // for locality.
-            //
-            // 512 rounds of 128 spins is the same 65,536 spins before parking
-            // as 64 rounds of 1024. The worker looks eight times as often,
-            // which is the whole point, and sleeps no sooner, which was never
-            // the point.
+            // Keep this explicit aggressive idle budget separate from the baseline.
             Flavor::LowLatency => Tuning::locality().with_backoff_spins(128).with_rounds_before_park(512),
             // Spread's wake routing, because a wide intake is pointless if a
             // wake never reaches the injector to be batched with anything.
@@ -432,18 +372,12 @@ mod tests {
         assert!(error.contains("closing parenthesis"), "{error}");
     }
 
-    /// The default is the flavor with no cliff, not the fastest one.
-    ///
-    /// `locality` is quicker on lock-bound work and its worst run on a
-    /// read-only workload at sixteen client threads was a quarter of the old
-    /// engine's median. A default is judged on that number, not on its median.
+    /// Keep the selected baseline and its idle budget aligned with the DSL.
     #[test]
-    fn the_default_is_the_one_that_cannot_collapse() {
-        assert_eq!(Flavor::default(), Flavor::SharedSlot);
-        assert!(
-            Flavor::default().tuning().share_displaced,
-            "the default must not let a worker hoard work nothing else can reach"
-        );
+    fn the_default_uses_locality_with_a_short_idle_budget() {
+        assert_eq!(Flavor::default(), Flavor::Locality);
+        assert_eq!(Flavor::default().tuning().rounds_before_park, 4);
+        assert_eq!(Flavor::default().tuning().backoff_spins, 128);
     }
 
     #[test]
@@ -467,25 +401,14 @@ mod tests {
         }
     }
 
-    /// The idle policy changes shape, not length.
-    ///
-    /// A worker parks after `rounds_before_park * backoff_spins` spins, so
-    /// cutting the spins without raising the rounds parks it that much sooner.
-    /// That is a different change from the one `low_latency` is asking for,
-    /// and it cost YCSB C 79% of its throughput by putting workers to sleep
-    /// during the window when client tasks arrive.
+    /// LowLatency deliberately spends a larger idle CPU budget than the baseline.
     #[test]
-    fn low_latency_looks_more_often_without_sleeping_sooner() {
+    fn low_latency_preserves_its_explicit_aggressive_idle_budget() {
         let base = Flavor::Locality.tuning();
         let fast = Flavor::LowLatency.tuning();
         assert_eq!(fast.backoff_spins, 128);
-        assert!(fast.backoff_spins < base.backoff_spins, "it has to look more often");
-        assert_eq!(
-            u64::from(fast.rounds_before_park) * u64::from(fast.backoff_spins),
-            u64::from(base.rounds_before_park) * u64::from(base.backoff_spins),
-            "the budget before parking has to be the same, or this is a park-sooner flavor wearing a \
-             look-sooner name"
-        );
+        assert_eq!(fast.rounds_before_park, 512);
+        assert!(fast.rounds_before_park > base.rounds_before_park);
         assert_eq!(fast.local_wakes, base.local_wakes);
         assert_eq!(fast.injector_batch, base.injector_batch);
     }

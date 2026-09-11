@@ -12,12 +12,12 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Flavor {
+    #[default]
     Locality,
     Spread,
     Throughput,
     LowLatency,
     WideInjector,
-    #[default]
     SharedSlot,
 }
 
