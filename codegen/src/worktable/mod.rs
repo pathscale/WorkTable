@@ -138,13 +138,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                  the columnar declarations, or drop `vec: true` for a paged table.",
             ));
         }
-        if queries.is_some() {
-            return Err(syn::Error::new(
-                name.span(),
-                "`vec: true` does not generate queries yet; use the select, update and delete \
-                 methods directly, or drop `vec: true` for a paged table.",
-            ));
-        }
         if runtime.is_some() {
             return Err(syn::Error::new(
                 name.span(),
@@ -176,7 +169,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         } else {
             quote! {}
         };
-        let mut generated = crate::generators::vec_table::expand(name.clone(), columns)?;
+        let mut generated = crate::generators::vec_table::expand(name.clone(), columns, queries.as_ref())?;
         generated.extend(narrow_key_lint);
         // The router is storage-agnostic: it needs `Default` and `used_bytes`
         // from its payload and nothing else, and a `vec: true` table has both.

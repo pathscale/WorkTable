@@ -1573,3 +1573,96 @@ fn a_hash_primary_key_leaves_an_arctic_secondary_ordered() {
     assert_eq!(ranged, vec![3, 4, 6, 7], "compaction broke the secondary range");
     assert_eq!(table.select(&7).expect("present").seq, 107);
 }
+
+worktable!(
+    name: Ticket,
+    vec: true,
+    columns: {
+        id: u64 primary_key using fxhash,
+        owner: u64,
+        state: u8,
+        amount: u64,
+    },
+    indexes: {
+        owner_idx: owner using fxhash,
+        amount_idx: amount unique using arctic,
+    },
+    queries: {
+        update: {
+            StateById(state) by id,
+            AmountByOwner(amount, state) by owner,
+        },
+        delete: {
+            ById() by id,
+            ByOwner() by owner,
+        },
+        in_place: {
+            Status(state) by id,
+        },
+    },
+);
+
+/// Declared queries work on a `vec: true` table, and a hash index serves them.
+///
+/// Every declared query is an *equality* lookup, which is the shape a hash
+/// index is best at. That is why these are emitted whatever the `using` clause
+/// says, while `range` and `range_by_` are not: the restriction is ordering,
+/// not the query machinery.
+///
+/// This table deliberately mixes backends — a `fxhash` primary key, a `fxhash`
+/// non-unique secondary, and an `arctic` unique secondary — so a query keyed by
+/// each kind runs against a different implementation.
+#[test]
+fn declared_queries_run_on_a_vec_table() {
+    let mut table = TicketWorkTable::new();
+    for id in 0..6u64 {
+        table
+            .insert(TicketRow {
+                id,
+                owner: id % 2,
+                state: 0,
+                amount: 100 + id,
+            })
+            .expect("fresh");
+    }
+
+    // Keyed by the hash primary key: one row.
+    assert_eq!(table.update_state_by_id(StateByIdQuery { state: 7 }, &3), 1);
+    assert_eq!(table.select(&3).expect("present").state, 7);
+    assert_eq!(table.select(&2).expect("present").state, 0, "only one row moved");
+
+    // Keyed by a non-unique hash secondary: every row it names.
+    assert_eq!(
+        table.update_amount_by_owner(AmountByOwnerQuery { amount: 999, state: 5 }, &1),
+        3,
+        "owner 1 holds ids 1, 3 and 5"
+    );
+    for id in [1u64, 3, 5] {
+        let row = table.select(&id).expect("present");
+        assert_eq!(row.state, 5);
+        assert_eq!(row.amount, 999);
+    }
+    assert_eq!(table.select(&0).expect("present").amount, 100, "owner 0 untouched");
+
+    // The unique arctic secondary was repaired by that update, not left stale.
+    assert!(
+        table.select_by_amount(&101).is_none(),
+        "the old amount kept its entry after an update moved the row"
+    );
+    assert_eq!(
+        table.select_by_amount(&999).expect("present").owner,
+        1,
+        "three rows now share amount 999 on a unique index"
+    );
+
+    // in_place edits one column through a closure.
+    assert_eq!(table.update_status_in_place(|s| *s = 42, &0), 1);
+    assert_eq!(table.select(&0).expect("present").state, 42);
+
+    // Deletes, by the key and by a non-unique secondary.
+    assert_eq!(table.delete_by_id(&0), 1);
+    assert!(table.select(&0).is_none());
+    assert_eq!(table.delete_by_owner(&1), 3, "owner 1 had three rows left");
+    assert_eq!(table.len(), 2, "ids 2 and 4 survive");
+    assert_eq!(table.ghost_count(), 4, "deletes ghost rather than close the hole");
+}

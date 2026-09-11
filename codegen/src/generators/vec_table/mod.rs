@@ -99,7 +99,7 @@
 //! fraction of the frequency.
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::Ident;
 use worktable_dsl::{Columns, IndexBackend};
 
@@ -370,7 +370,11 @@ fn unique_renumber(repr: Repr, map: &TokenStream, moved: &TokenStream) -> TokenS
     }
 }
 
-pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
+pub fn expand(
+    name: Ident,
+    columns: Columns,
+    queries: Option<&worktable_dsl::model::Queries>,
+) -> syn::Result<TokenStream> {
     if columns.primary_keys.len() != 1 {
         return Err(syn::Error::new(
             name.span(),
@@ -933,8 +937,12 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         }
     };
 
+    let (query_structs, query_methods) = gen_queries(queries, &pk, &pk_type, &columns, &index_columns, &index_unique)?;
+
     Ok(quote! {
         #(#width_guards)*
+
+        #(#query_structs)*
 
         #row_derives
         pub struct #row_ident {
@@ -1164,6 +1172,8 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
 
             #(#select_by)*
 
+            #(#query_methods)*
+
             /// Edit a row where it sits, then repair whatever indexes it moved
             /// under.
             ///
@@ -1289,4 +1299,207 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             }
         }
     })
+}
+
+/// Declared `queries:` against a `vec: true` table.
+///
+/// These are named wrappers, not a new execution path. A declared update is
+/// `update(&pk, |row| ..)` with the columns filled in from a generated struct,
+/// and `update` already repairs every index the edit moved a row under — so
+/// delegating to it is both the shortest implementation and the only one that
+/// cannot get index repair wrong in a second place.
+///
+/// `by` may name the primary key, a unique secondary, or a non-unique
+/// secondary. All three are *equality* lookups, which is the only shape a
+/// declared query has, and every backend answers those — including `fxhash`.
+/// Nothing here needs an ordered index, which is why these are emitted whatever
+/// the `using` clause says while `range` and `range_by_` are not.
+///
+/// A non-unique key names many rows, so those methods return how many they
+/// touched rather than whether they touched one.
+#[allow(clippy::too_many_arguments)]
+fn gen_queries(
+    queries: Option<&worktable_dsl::model::Queries>,
+    pk: &Ident,
+    pk_type: &TokenStream,
+    columns: &Columns,
+    index_columns: &[Ident],
+    index_unique: &[bool],
+) -> syn::Result<(Vec<TokenStream>, Vec<TokenStream>)> {
+    let Some(queries) = queries else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let mut structs = Vec::new();
+    let mut methods = Vec::new();
+
+    // How a `by` column is reached, and whether it names one row or many.
+    let resolve_by = |by: &Ident| -> syn::Result<(TokenStream, bool)> {
+        let ty = columns
+            .columns_map
+            .get(by)
+            .ok_or_else(|| syn::Error::new(by.span(), format!("no column `{by}` to key a query by")))?;
+        if by == pk {
+            return Ok((quote! { #ty }, true));
+        }
+        match index_columns.iter().position(|c| c == by) {
+            Some(at) => Ok((quote! { #ty }, index_unique[at])),
+            None => Err(syn::Error::new(
+                by.span(),
+                format!(
+                    "a query keyed `by {by}` needs an index on `{by}`, and this table has none. \
+                     Add `{by}_idx: {by}` to `indexes:`, or key the query by the primary key. \
+                     Scanning instead would turn a keyed operation into a linear one silently."
+                ),
+            )),
+        }
+    };
+
+    // The pks a key selects. One for the primary key or a unique index, many
+    // for a non-unique one. Collected before mutating, because every mutation
+    // below takes `&mut self` and the lookup borrows `&self`.
+    let selected = |by: &Ident, unique: bool| -> TokenStream {
+        if by == pk {
+            quote! { let keys = worktable::prelude::vec![key.clone()]; }
+        } else {
+            let select = format_ident!("select_by_{by}");
+            if unique {
+                quote! {
+                    let keys: worktable::prelude::Vec<#pk_type> =
+                        self.#select(key).map(|row| row.#pk.clone()).into_iter().collect();
+                }
+            } else {
+                quote! {
+                    let keys: worktable::prelude::Vec<#pk_type> =
+                        self.#select(key).into_iter().map(|row| row.#pk.clone()).collect();
+                }
+            }
+        }
+    };
+
+    for (name, op) in &queries.updates {
+        let (by_type, unique) = resolve_by(&op.by)?;
+        let query_ty = format_ident!("{}Query", name);
+        let fields = &op.columns;
+        let field_types: Vec<_> = fields
+            .iter()
+            .map(|f| {
+                columns
+                    .columns_map
+                    .get(f)
+                    .cloned()
+                    .ok_or_else(|| syn::Error::new(f.span(), format!("no column `{f}`")))
+            })
+            .collect::<syn::Result<_>>()?;
+        structs.push(quote! {
+            #[derive(Clone, Debug, PartialEq)]
+            pub struct #query_ty {
+                #(pub #fields: #field_types,)*
+            }
+        });
+
+        // The declared name already carries the key — `AmountById` becomes
+        // `update_amount_by_id` — which is the paged table's convention and the
+        // whole point of generating these.
+        let method = format_ident!("update_{}", snake_of(name));
+        let pick = selected(&op.by, unique);
+        let doc = format!(
+            "`update {name}` keyed by `{}`.\n\n\
+             Sets {} and repairs every index the change moved a row under.\n\n\
+             The paged table's method of this name is `async` and returns \
+             `Result<(), WorkTableError>`. This one is neither, so a call cannot \
+             move silently between the two shapes.",
+            op.by,
+            fields.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")
+        );
+        methods.push(quote! {
+            #[doc = #doc]
+            pub fn #method(&mut self, query: #query_ty, key: &#by_type) -> usize {
+                #pick
+                let mut touched = 0usize;
+                for found in keys {
+                    if self.update(&found, |row| {
+                        #(row.#fields = query.#fields.clone();)*
+                    }) {
+                        touched += 1;
+                    }
+                }
+                touched
+            }
+        });
+    }
+
+    for (name, op) in &queries.deletes {
+        let (by_type, unique) = resolve_by(&op.by)?;
+        let method = format_ident!("delete_{}", snake_of(name));
+        let pick = selected(&op.by, unique);
+        let doc = format!(
+            "`delete {name}` keyed by `{}`.\n\n\
+             Ghosts each row it names and returns how many. Nothing else moves: a \
+             delete leaves its slot and takes only its own index entries, so the \
+             expensive half is `compact`, when you ask for it.",
+            op.by
+        );
+        methods.push(quote! {
+            #[doc = #doc]
+            pub fn #method(&mut self, key: &#by_type) -> usize {
+                #pick
+                let mut removed = 0usize;
+                for found in keys {
+                    if self.delete(&found).is_some() {
+                        removed += 1;
+                    }
+                }
+                removed
+            }
+        });
+    }
+
+    for (name, op) in &queries.in_place {
+        let (by_type, unique) = resolve_by(&op.by)?;
+        if op.columns.len() != 1 {
+            return Err(syn::Error::new(
+                name.span(),
+                "an `in_place` query edits exactly one column through a closure. \
+                 For several columns at once use an `update` query, which takes a \
+                 struct of them.",
+            ));
+        }
+        let column = &op.columns[0];
+        let column_type = columns
+            .columns_map
+            .get(column)
+            .ok_or_else(|| syn::Error::new(column.span(), format!("no column `{column}`")))?;
+        let method = format_ident!("update_{}_in_place", snake_of(name));
+        let pick = selected(&op.by, unique);
+        let doc = format!(
+            "`in_place {name}` keyed by `{}`.\n\n\
+             Hands `{column}` to the closure where it sits, rather than reading the \
+             row out and writing it back. Returns how many rows it reached.",
+            op.by
+        );
+        methods.push(quote! {
+            #[doc = #doc]
+            pub fn #method(
+                &mut self,
+                mut edit: impl FnMut(&mut #column_type),
+                key: &#by_type,
+            ) -> usize {
+                #pick
+                let mut touched = 0usize;
+                for found in keys {
+                    if self.update(&found, |row| edit(&mut row.#column)) {
+                        touched += 1;
+                    }
+                }
+                touched
+            }
+        });
+    }
+
+    Ok((structs, methods))
+}
+
+fn snake_of(name: &Ident) -> String {
+    use convert_case::{Case, Casing as _};
+    name.to_string().from_case(Case::Pascal).to_case(Case::Snake)
 }

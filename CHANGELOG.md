@@ -37,6 +37,32 @@ Change Log
 
 ### Added
 
+
+- **`queries:` on a `vec: true` table.** It was refused wholesale; it now
+  generates `update_<name>`, `delete_<name>` and `update_<name>_in_place` under
+  the same names the paged table uses, so a declaration reads the same either
+  way.
+
+  These are named wrappers rather than a new execution path: a declared update
+  is `update(&pk, |row| ..)` with the columns filled in from a generated struct,
+  and `update` already repairs every index the edit moved a row under. That
+  makes delegating to it both the shortest implementation and the only one that
+  cannot get index repair wrong in a second place.
+
+  `by` may name the primary key, a unique secondary, or a non-unique secondary.
+  All three are **equality** lookups, which is the only shape a declared query
+  has, so every backend answers them — **including `fxhash`**. Nothing here
+  needs an ordered index, which is why these are emitted whatever the `using`
+  clause says while `range` and `range_by_` are not. The restriction on a hash
+  index is ordering, not queries.
+
+  A non-unique key names many rows, so those methods return how many they
+  touched rather than whether they touched one. A `by` column with no index is
+  refused, naming the index to add: scanning instead would turn a keyed
+  operation into a linear one silently.
+
+  The signatures differ from the paged table's on purpose — synchronous, and
+  `&mut self` — so a call cannot move silently between the two shapes.
 - `using fxhash`, a hash-shaped index backend. Accepted on `vec: true` and
   **refused on a paged table**, which is the whole story: `UniqueIndex` requires
   `range_values` and `range_links` and a hash map cannot answer either, a paged
