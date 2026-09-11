@@ -301,6 +301,7 @@ impl<T> PartitionSet<T> {
     /// worktable!(
     ///     name: Price,
     ///     partition_by: symbol_id: u16,
+    ///     partition_max_size: u64,
     ///     columns: {
     ///         exchange_id: u8 primary_key,
     ///         bid: f64

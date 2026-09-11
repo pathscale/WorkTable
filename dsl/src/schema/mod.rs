@@ -182,6 +182,13 @@ pub struct PartitionKeySpec {
     pub name: String,
     /// Unsigned integer type. See [`crate::model::PARTITION_KEY_TYPES`].
     pub ty: String,
+    /// The declared `partition_max_size` width, as it is written. See
+    /// [`crate::model::PartitionMaxSize`].
+    ///
+    /// Not optional, because the key it belongs to is not: a stored schema
+    /// without it predates the key and would compare unequal to every
+    /// declaration, which is the honest answer rather than a defect.
+    pub max_size: String,
 }
 
 /// The `queries` block.
@@ -282,6 +289,7 @@ impl Schema {
         let partition_by = parser.parse_partition_by()?.map(|key| PartitionKeySpec {
             name: key.name.to_string(),
             ty: key.ty.to_string(),
+            max_size: key.max_size.type_name().to_string(),
         });
 
         let mut columns: Option<Columns> = None;
@@ -314,11 +322,12 @@ impl Schema {
                         "version must be specified before columns/indexes/queries/config",
                     ));
                 }
-                "vec" | "persist" | "partition_by" => {
+                "vec" | "persist" | "partition_by" | "partition_max_size" => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "`vec`, `persist` and `partition_by` are positional; the required order is: \
-                         name, version, vec, persist, partition_by, then columns/indexes/queries/config",
+                        "`vec`, `persist`, `partition_by` and `partition_max_size` are positional; the required \
+                         order is: name, version, vec, persist, partition_by, partition_max_size, then \
+                         columns/indexes/queries/config",
                     ));
                 }
                 other => {

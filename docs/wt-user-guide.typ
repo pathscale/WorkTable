@@ -247,6 +247,7 @@ worktable! (
     name: Book,
     persist: false,
     partition_by: symbol_id: u16,   // <name>: <unsigned type>, stored per partition
+    partition_max_size: u8,         // required: rows per partition, as an index width
     columns: {
         exchange_id: u8 primary_key,
         bid: f64,
@@ -257,6 +258,33 @@ worktable! (
 
 The partition key is stored once per partition rather than once per row, and no query
 can name it.
+
+`partition_max_size` is required whenever `partition_by` is present, and it is a *type*
+rather than a count, because it is an index width. It is how the declaration says how
+many rows one partition holds:
+
+#table(
+  columns: (auto, auto, 1fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 6pt,
+  [*width*], [*rows per partition*], [*shape*],
+  [`bool`], [2], [dense],
+  [`u8`], [256], [dense],
+  [`u16`], [65,536], [dense],
+  [`u32`, `u64`], [unbounded in practice], [a full table per partition],
+)
+
+There is no `unbounded` keyword: the widths run out of smallness, so `u64` is the escape
+and generates exactly what a partitioned table generated before this key existed.
+
+It is required rather than defaulted because without it the declaration says nothing
+about the shape being generated. A reader seeing `exchange_id: u8 primary_key` in a
+partitioned table reads "big table with a suspiciously tiny key", when the truth is
+"twenty thousand little tables, each of which only needs a byte". Two declarations
+differing by 28 KB a partition would otherwise look identical.
+
+A count is not accepted in its place. A count is not an index width, it is not a power
+of two, and it duplicates a constant that lives in the caller's code and will drift.
 
 == 10. Choosing a runtime
 
@@ -307,7 +335,7 @@ table.close().await?;   // the only thing that proves the queue drained
 
 == 12. Everything at once
 
-The prefix is ordered. Everything after `partition_by` is free-order.
+The prefix is ordered. Everything after `partition_max_size` is free-order.
 
 ```rust
 worktable! (
@@ -315,6 +343,7 @@ worktable! (
     version: 3,                     // 2, optional
     persist: false,                 // 3, optional
     partition_by: shard: u16,       // 4, optional
+    partition_max_size: u64,        // 5, required with `partition_by`
     runtime: nagoya(locality),      // free-order from here down
     columns: {
         id: u64 primary_key autoincrement,

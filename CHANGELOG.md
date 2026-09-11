@@ -5,6 +5,27 @@ Change Log
 
 ### Added
 
+- `partition_max_size`, required beside `partition_by`. It says how many rows a
+  single partition holds, written as an index width rather than a count:
+  `bool` is 2 rows, `u8` is 256, `u16` is 65,536, and `u32` or `u64` mean
+  unbounded in practice. It is positional, directly after `partition_by`.
+
+  A **type** and not a literal, for the same reason `columnar_slot_id:
+  ColumnSlotId16` already is one: it is an index width, which is what the
+  generator needs, and a count is not a power of two and duplicates a constant
+  that lives in the caller's code and will drift.
+
+  Required rather than defaulted, because a default would pick one of the two
+  shapes for the author and generate the other one silently. Nothing in a
+  partitioned declaration said which shape it was getting: `exchange_id: u8
+  primary_key` reads as a big table with a suspiciously tiny key, when the
+  truth is many little tables that each need only a byte, and two declarations
+  differing by 28 KB a partition looked identical.
+
+  **Breaking for any existing partitioned declaration.** Adding
+  `partition_max_size: u64,` after `partition_by` restores exactly the previous
+  behaviour.
+
 - `no_std` support. A consumer with `default-features = false` can invoke
   `worktable!` and use `insert`, `select` and `select_all`. Verified by
   `tests/nostd-consumer`, a crate outside the workspace that invokes the macro:
@@ -26,8 +47,8 @@ Change Log
   emitted `<Name>VecRow` and `<Name>VecTable`, which is a parallel vocabulary
   to learn and a redefinition error when one table was declared both ways. One
   macro means one `<Name>Row` and one `<Name>WorkTable` whatever the storage
-  is. `vec` is positional: name, version, vec, persist, partition_by, then the
-  blocks.
+  is. `vec` is positional: name, version, vec, persist, partition_by,
+  partition_max_size, then the blocks.
 
   It is a flag rather than a `storage:` key, which is what it was called for
   half a day. The grammar keeps the shape `persist:` already has and gains no

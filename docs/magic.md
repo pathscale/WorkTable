@@ -112,6 +112,7 @@ A **fixed, ordered prefix**, then a free-order section list.
 | 2, optional | `version:` | schema version, for migration |
 | 3, optional | `persist:` | `true` writes to disk |
 | 4, optional | `partition_by:` | partition key name and unsigned type |
+| 5, required with 4 | `partition_max_size:` | rows per partition, as an index width |
 | any order | `columns:` | the row and its primary key |
 | any order | `indexes:` | secondary indexes |
 | any order | `queries:` | generated `update` / `delete` / `in_place` |
@@ -263,6 +264,7 @@ through `worktable::fsx`.
 worktable!(
     name: Price,
     partition_by: symbol_id: u16,
+    partition_max_size: u8,
     columns: {
         exchange_id: u8 primary_key,
         bid: f64,
@@ -271,8 +273,14 @@ worktable!(
 );
 ```
 
-`partition_by: <name>: <unsigned type>`. It composes with everything else —
-indexes, queries and config are untouched by it.
+`partition_by: <name>: <unsigned type>`, and `partition_max_size: <width>` beside
+it, which is required. It composes with everything else: indexes, queries and
+config are untouched by it.
+
+The size is a type rather than a count because it is an index width. `bool` is 2
+rows, `u8` is 256, `u16` is 65,536, and `u32` or `u64` mean unbounded in practice
+and generate a full table per partition. There is no `unbounded` keyword: the
+widths run out of smallness, so `u64` is the escape.
 
 ## Versions and migration
 

@@ -72,19 +72,29 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             "vec" => {
                 return Err(syn::Error::new(
                     ident.span(),
-                    "`vec` is positional and must come before `persist`; the required order is: name, version, vec, persist, partition_by, then columns/indexes/queries/config",
+                    "`vec` is positional and must come before `persist`; the required order is: name, version, vec, persist, partition_by, partition_max_size, then columns/indexes/queries/config",
                 ));
             }
             "persist" => {
                 return Err(syn::Error::new(
                     ident.span(),
-                    "`persist` is positional and must come after `vec` and before `partition_by` and the blocks; the required order is: name, version, vec, persist, partition_by, then columns/indexes/queries/config",
+                    "`persist` is positional and must come after `vec` and before `partition_by` and the blocks; the required order is: name, version, vec, persist, partition_by, partition_max_size, then columns/indexes/queries/config",
                 ));
             }
             "partition_by" => {
                 return Err(syn::Error::new(
                     ident.span(),
-                    "`partition_by` is positional and must come after `persist` and before the blocks; the required order is: name, version, vec, persist, partition_by, then columns/indexes/queries/config",
+                    "`partition_by` is positional and must come after `persist` and before the blocks; the required order is: name, version, vec, persist, partition_by, partition_max_size, then columns/indexes/queries/config",
+                ));
+            }
+            // Reached only when `partition_by` was absent: with it present this
+            // key is consumed there, and a stray second one would have to get
+            // past that. So the useful thing to say is that it needs a
+            // `partition_by` to belong to, not that it is out of order.
+            "partition_max_size" => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "`partition_max_size` describes how large one partition gets, so it means nothing without `partition_by:` before it. Add the routing key, or remove this",
                 ));
             }
             "attributes" => {
@@ -866,6 +876,7 @@ mod position_tests {
             name: SymbolPosting,
             persist: true,
             partition_by: generation: u32,
+            partition_max_size: u64,
             columns: { id: u64 primary_key autoincrement, posting_hash: u64, records_blob: String },
             indexes: { posting_idx: posting_hash unique }
         })
@@ -886,6 +897,7 @@ mod position_tests {
         let expanded = expand(quote! {
             name: Price,
             partition_by: symbol_id: u16,
+            partition_max_size: u64,
             columns: { exchange_id: u8 primary_key, bid: f64 }
         })
         .expect("in-memory partitioned table must expand")
@@ -898,6 +910,7 @@ mod position_tests {
         let error = expand(quote! {
             name: Wrong,
             partition_by: generation: u32,
+            partition_max_size: u64,
             persist: true,
             columns: { id: u64 primary_key, v: u64 }
         })
@@ -915,6 +928,7 @@ mod position_tests {
             name: Wrong,
             columns: { id: u64 primary_key, v: u64 },
             partition_by: generation: u32,
+            partition_max_size: u64,
         })
         .expect_err("late partition_by must be an error")
         .to_string();
@@ -1004,6 +1018,7 @@ mod emitted_declarations {
         survives_the_round_trip(quote! {
             name: Price,
             partition_by: symbol_id: u16,
+            partition_max_size: u64,
             columns: {
                 exchange_id: u8 primary_key,
                 bid: f64,
@@ -1159,6 +1174,7 @@ mod schema_const {
         let declaration = quote! {
             name: Price,
             partition_by: symbol_id: u16,
+            partition_max_size: u64,
             columns: { exchange_id: u8 primary_key, bid: f64 },
         };
 

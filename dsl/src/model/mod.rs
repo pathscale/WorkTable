@@ -17,7 +17,7 @@ pub use columnar::{
 pub use config::Config;
 pub use index::{Index, IndexBackend};
 pub use operation::Operation;
-pub use partition::{PARTITION_KEY_TYPES, PartitionKey};
+pub use partition::{PARTITION_KEY_TYPES, PARTITION_MAX_SIZE_TYPES, PartitionKey, PartitionMaxSize};
 pub use persistence::{Persistence, Storage};
 pub use primary_key::{GeneratorType, PrimaryKey};
 pub use queries::Queries;

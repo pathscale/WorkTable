@@ -6,6 +6,7 @@ use worktable::worktable;
 worktable!(
     name: Price,
     partition_by: symbol_id: u16,
+    partition_max_size: u64,
     columns: {
         exchange_id: u8 primary_key,
         bid: f64,
@@ -19,6 +20,7 @@ worktable!(
     name: Quote,
     persist: false,
     partition_by: venue: u32,
+    partition_max_size: u64,
     columns: {
         id: u64 primary_key autoincrement,
         tag: u32,

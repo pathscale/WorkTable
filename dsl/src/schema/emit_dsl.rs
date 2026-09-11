@@ -53,6 +53,9 @@ impl Schema {
 
         if let Some(key) = &self.partition_by {
             let _ = writeln!(out, "partition_by: {}: {},", key.name, key.ty);
+            // Required beside it, so emitting one without the other produces
+            // text this crate's own parser refuses.
+            let _ = writeln!(out, "partition_max_size: {},", key.max_size);
         }
 
         // Same rule as `using` on a column: writing the default back out would
