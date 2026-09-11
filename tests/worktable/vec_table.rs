@@ -1211,3 +1211,294 @@ fn a_hash_backed_table_has_no_range() {
     assert_eq!(table.select_all().count(), 1);
     assert_eq!(table.iter().count(), 1);
 }
+
+worktable!(
+    name: HashedSaved,
+    vec: true,
+    columns: {
+        id: u64 primary_key using fxhash,
+        label: String,
+        code: u64,
+    },
+    indexes: {
+        code_idx: code unique using fxhash,
+        tag_idx: label using fxhash,
+    },
+);
+
+/// A hash-backed table round-trips through pages, indexes and all.
+///
+/// This is the question `persist: true` makes people ask about `fxhash` and
+/// answers wrongly. A **paged** table cannot take a hash index because a
+/// persisted index's on-disk form *is* sorted pages, rebuilt with
+/// `attach_nodes`. A `vec: true` table stores **no index at all**: `unload`
+/// writes rows and `load` rebuilds every index by re-inserting them. So the
+/// thing that blocks the paged table does not exist here, and manual
+/// flush-and-hydrate works on a hash backend exactly as it does on a tree.
+///
+/// Asserted on the indexes rather than on the rows, because rows surviving is
+/// the easy half: a `load` that restored `select_all` and left `select` empty
+/// would pass any assertion that only walked the table.
+#[test]
+fn a_hash_backed_table_round_trips_through_pages() {
+    let mut table = HashedSavedWorkTable::with_capacity(500);
+    for id in 0..500u64 {
+        table
+            .insert(HashedSavedRow {
+                id,
+                label: format!("row-{}", id % 8),
+                code: id + 10_000,
+            })
+            .expect("fresh");
+    }
+    // Ghosts too, so the round trip is exercised on a table that has deleted.
+    for id in [3u64, 111, 499] {
+        table.delete(&id).expect("present");
+    }
+    assert_eq!(table.ghost_count(), 3);
+
+    let bytes = table.unload().expect("rows fit a page");
+    assert_eq!(bytes.len() % 16_384, 0, "whole pages only");
+
+    let loaded = HashedSavedWorkTable::load(&bytes).expect("its own bytes");
+    assert_eq!(loaded.len(), 497);
+    assert_eq!(loaded.slots(), 497, "a ghost was written as a row");
+
+    // The primary hash index was rebuilt.
+    for id in (0..500u64).filter(|id| ![3, 111, 499].contains(id)) {
+        let row = loaded.select(&id).unwrap_or_else(|| panic!("{id} missing after load"));
+        assert_eq!(row.code, id + 10_000, "{id} came back as another row");
+    }
+    for id in [3u64, 111, 499] {
+        assert!(loaded.select(&id).is_none(), "{id} came back from the dead");
+    }
+
+    // And both secondary hash indexes, unique and non-unique.
+    assert_eq!(
+        loaded.select_by_code(&10_042).expect("present").id,
+        42,
+        "the unique secondary was not rebuilt"
+    );
+    assert!(loaded.select_by_code(&10_003).is_none(), "a deleted row kept its code");
+    // The deleted ids are 3, 111 and 499, which are 3, 7 and 3 mod 8, so
+    // lost two and  lost one.  lost none, which is why it is not
+    // the tag asserted on: a posting list that never changed proves nothing
+    // about whether a delete reached the index.
+    let intact = loaded.select_by_label(&"row-0".to_string());
+    assert_eq!(intact.len(), 63, "row-0 lost a row it never had deleted");
+    let lost_two = loaded.select_by_label(&"row-3".to_string());
+    assert_eq!(lost_two.len(), 61, "row-3 held 63 and lost ids 3 and 499");
+    let lost_one = loaded.select_by_label(&"row-7".to_string());
+    assert_eq!(lost_one.len(), 61, "row-7 held 62 (ids 7..=495 step 8) and lost id 111");
+
+    // Insertion order survives, which is what makes `select_all` meaningful.
+    let ids: Vec<u64> = loaded.select_all().map(|row| row.id).collect();
+    let expected: Vec<u64> = (0..500u64).filter(|id| ![3, 111, 499].contains(id)).collect();
+    assert_eq!(ids, expected);
+
+    // The reloaded table still takes writes, which proves the rebuilt index is
+    // a working map and not just a populated one.
+    let mut loaded = loaded;
+    assert!(
+        loaded
+            .insert(HashedSavedRow {
+                id: 42,
+                label: "dup".into(),
+                code: 1
+            })
+            .is_err()
+    );
+    loaded
+        .insert(HashedSavedRow {
+            id: 3,
+            label: "back".into(),
+            code: 3,
+        })
+        .expect("the deleted key is free again");
+    assert_eq!(loaded.select(&3).expect("present").code, 3);
+}
+
+/// Two unloads concatenated load as one table, so a flush can append.
+///
+/// `unload` writes the whole table, so writing it to a file is a clobber and
+/// there is no incremental form of it. But a page is self-describing — its own
+/// header, CRC, row directory and row-type fingerprint — and `from_pages` walks
+/// `chunks_exact(PAGE_SIZE)` in order without any global header or trailer. So
+/// the bytes of two unloads concatenated are a valid file, and a caller that
+/// keeps new rows in a second table can append rather than rewrite.
+///
+/// What append cannot express is a delete. `load` applies rows in order and
+/// keeps the first of any duplicate key, so a later segment cannot remove or
+/// replace an earlier row. Both halves are asserted, because the second is the
+/// one that decides whether this is a usable strategy or a trap.
+#[test]
+fn two_unloads_concatenate_into_one_table() {
+    let mut first = HashedSavedWorkTable::with_capacity(64);
+    for id in 0..64u64 {
+        first
+            .insert(HashedSavedRow {
+                id,
+                label: "a".into(),
+                code: id,
+            })
+            .expect("fresh");
+    }
+    let mut second = HashedSavedWorkTable::with_capacity(64);
+    for id in 64..128u64 {
+        second
+            .insert(HashedSavedRow {
+                id,
+                label: "b".into(),
+                code: id,
+            })
+            .expect("fresh");
+    }
+
+    let mut appended = first.unload().expect("rows fit");
+    appended.extend_from_slice(&second.unload().expect("rows fit"));
+    assert_eq!(appended.len() % 16_384, 0, "still whole pages");
+
+    let loaded = HashedSavedWorkTable::load(&appended).expect("a concatenation of its own pages");
+    assert_eq!(loaded.len(), 128, "the append lost a segment");
+    for id in 0..128u64 {
+        assert_eq!(
+            loaded.select(&id).unwrap_or_else(|| panic!("{id} missing")).code,
+            id,
+            "{id} came back as another row"
+        );
+    }
+    // Order is segment order, which is what makes this an append rather than a
+    // merge: the second file's rows follow the first file's.
+    let ids: Vec<u64> = loaded.select_all().map(|row| row.id).collect();
+    assert_eq!(ids, (0..128u64).collect::<Vec<_>>());
+
+    // And the limit. A later segment cannot replace an earlier row: `load`
+    // keeps the first of a duplicate key, so an append-only log of these needs
+    // a full rewrite to express an update or a delete.
+    let mut shadow = HashedSavedWorkTable::with_capacity(1);
+    shadow
+        .insert(HashedSavedRow {
+            id: 7,
+            label: "newer".into(),
+            code: 9_999,
+        })
+        .expect("fresh");
+    let mut with_shadow = first.unload().expect("rows fit");
+    with_shadow.extend_from_slice(&shadow.unload().expect("rows fit"));
+    let reloaded = HashedSavedWorkTable::load(&with_shadow).expect("valid pages");
+    assert_eq!(
+        reloaded.select(&7).expect("present").code,
+        7,
+        "a later segment overwrote an earlier row; it must not, and if this ever \
+         changes then append becomes a way to silently lose the newer value \
+         instead of the older one"
+    );
+    assert_eq!(reloaded.len(), 64, "the duplicate was counted as a new row");
+}
+
+worktable!(
+    name: Level,
+    vec: true,
+    columns: {
+        exchange: u64 primary_key,
+        bid: f64,
+        ask: f64,
+        size: u64,
+    },
+);
+
+worktable!(
+    name: Labelled,
+    vec: true,
+    columns: {
+        id: u64 primary_key,
+        label: String,
+    },
+);
+
+/// A fixed-width row's page layout does not move when a value changes.
+///
+/// This is the property the whole in-place persistence question turns on. An
+/// orderbook updates a price: an `f64` becomes another `f64`, never an `f80`.
+/// If the archive of a page is the same length before and after, then row K
+/// lives at the same byte offset forever, a page can be written back in place,
+/// and none of the append, segment, last-wins or tombstone machinery is needed
+/// for that shape.
+///
+/// `rows_per_page` searches rather than computing, so stability is a property
+/// of the data and not an obvious one: it is asserted here rather than assumed
+/// anywhere that relies on it.
+///
+/// The `String` table is the control. Without it this test would pass on a
+/// format that simply never varies, and prove nothing about the format's
+/// ability to vary.
+#[test]
+fn a_fixed_width_rows_pages_are_byte_stable_under_update() {
+    let mut table = LevelWorkTable::with_capacity(5_000);
+    for exchange in 0..5_000u64 {
+        table
+            .insert(LevelRow {
+                exchange,
+                bid: 100.0,
+                ask: 101.0,
+                size: 10,
+            })
+            .expect("fresh key");
+    }
+    let before = table.unload().expect("rows fit");
+
+    // Every value changes, and every value stays the same width.
+    for exchange in 0..5_000u64 {
+        assert!(table.update(&exchange, |row| {
+            row.bid = (exchange % 997) as f64 + 0.5;
+            row.ask = f64::MAX;
+            row.size = u64::MAX;
+        }));
+    }
+    let after = table.unload().expect("rows fit");
+
+    assert_eq!(
+        before.len(),
+        after.len(),
+        "a fixed-width row changed its page count by changing its values"
+    );
+    // Stronger than equal length: every page boundary is where it was, so the
+    // row at a given offset is still the row that was there.
+    assert_eq!(before.len() % 16_384, 0);
+    let pages = before.len() / 16_384;
+    for page in 0..pages {
+        let at = page * 16_384;
+        // The header carries the page index and the body length. Both must be
+        // unchanged; only the body bytes may differ.
+        assert_eq!(
+            before[at..at + 32],
+            after[at..at + 32],
+            "page {page}'s header moved, so a row's home is not stable"
+        );
+    }
+    assert_ne!(before, after, "the values did not actually change");
+
+    // The control: a variable-width row is not stable, which is what makes the
+    // assertion above a real property rather than a description of the format.
+    let mut labelled = LabelledWorkTable::with_capacity(5_000);
+    for id in 0..5_000u64 {
+        labelled
+            .insert(LabelledRow {
+                id,
+                label: "x".to_string(),
+            })
+            .expect("fresh key");
+    }
+    let short = labelled.unload().expect("rows fit");
+    for id in 0..5_000u64 {
+        assert!(labelled.update(&id, |row| {
+            row.label = "x".repeat(64);
+        }));
+    }
+    let long = labelled.unload().expect("rows fit");
+    assert!(
+        long.len() > short.len(),
+        "a String column grew by 63 bytes a row and the file did not grow, so \
+         this test is not measuring what it claims to"
+    );
+}
