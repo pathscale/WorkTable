@@ -763,3 +763,300 @@ fn a_vec_table_can_be_partitioned() {
     assert_eq!(by_key.len(), 4);
     assert_eq!(by_key.iter().map(|(_, bytes)| bytes).sum::<u64>(), total);
 }
+
+// A narrow `partition_max_size` generates a table with no index at all.
+//
+// This is the shape the key exists to make declarable: `exchange_id: u8` is not
+// looked up, it *is* the row's position, so there is no tree to descend and
+// nothing to hash. The router is unchanged; only its payload is.
+worktable!(
+    name: Tick,
+    partition_by: symbol_id: u16,
+    partition_max_size: u8,
+    columns: {
+        exchange_id: u8 primary_key,
+        bid: f64,
+        ask: f64
+    }
+);
+
+#[test]
+fn a_narrow_width_generates_a_dense_payload() {
+    let ticks = TickPartitions::new();
+
+    // `&self`, straight through the `Arc` the router hands out. This is the
+    // difference from a `vec: true` payload, whose `insert` needs `&mut self`
+    // and so has to be populated before it is handed over.
+    let book = ticks.partition_or_create(7).expect("a fresh partition");
+    for exchange_id in 0u8..23 {
+        book.insert(TickRow {
+            exchange_id,
+            bid: f64::from(exchange_id),
+            ask: f64::from(exchange_id) + 1.0,
+        })
+        .expect("fresh key");
+    }
+
+    assert_eq!(book.row_count(), 23);
+    assert_eq!(book.select(&11).expect("present").bid, 11.0);
+    assert_eq!(book.slots(), 23, "grown to the keys used, not to the declared 256");
+    assert_eq!(TickDenseTable::MAX_ROWS, 256);
+}
+
+#[test]
+fn the_declared_width_is_a_bound_at_run_time_too() {
+    let ticks = TickPartitions::new();
+    let book = ticks.partition_or_create(1).expect("a fresh partition");
+
+    // `exchange_id: u8` counts to 255 and the cap is 256, so nothing a `u8` can
+    // hold is out of range. What the cap does reject is a duplicate.
+    book.insert(TickRow {
+        exchange_id: 3,
+        bid: 1.0,
+        ask: 2.0,
+    })
+    .expect("fresh key");
+    let again = book
+        .insert(TickRow {
+            exchange_id: 3,
+            bid: 9.0,
+            ask: 9.0,
+        })
+        .expect_err("3 is taken");
+    assert_eq!(again, DenseError::Duplicate { key: 3 });
+    assert_eq!(
+        book.select(&3).expect("present").bid,
+        1.0,
+        "the refusal changed nothing"
+    );
+}
+
+#[test]
+fn a_column_is_updated_without_cloning_the_row() {
+    // The method web3.trading's `update_top_price` wants: touch one field of a
+    // wide row rather than reading it out, editing it and writing it back.
+    let ticks = TickPartitions::new();
+    let book = ticks.partition_or_create(2).expect("a fresh partition");
+    book.insert(TickRow {
+        exchange_id: 4,
+        bid: 1.0,
+        ask: 2.0,
+    })
+    .expect("fresh key");
+
+    assert_eq!(book.update_bid(&4, 1.5), Some(1.0));
+    assert_eq!(book.select(&4).expect("present").bid, 1.5);
+    assert_eq!(
+        book.select(&4).expect("present").ask,
+        2.0,
+        "the other column is untouched"
+    );
+
+    assert_eq!(book.update_bid(&5, 1.0), None, "a key holding no row updates nothing");
+}
+
+#[test]
+fn a_dense_partition_costs_its_rows_and_nothing_else() {
+    // The measurement the whole shape exists for. A full partition of this
+    // declaration measured 28,395 bytes empty; this one must be its rows.
+    let ticks = TickPartitions::new();
+    for symbol in 0u16..4 {
+        let book = ticks.partition_or_create(symbol).expect("a fresh partition");
+        for exchange_id in 0u8..23 {
+            book.insert(TickRow {
+                exchange_id,
+                bid: 0.0,
+                ask: 0.0,
+            })
+            .expect("fresh key");
+        }
+    }
+
+    let rows = 4 * 23 * core::mem::size_of::<Option<TickRow>>() as u64;
+    assert_eq!(ticks.memory_total(), rows, "there is nothing else to count");
+    assert_eq!(ticks.rows_by_key(), (0u16..4).map(|k| (k, 23)).collect::<Vec<_>>());
+}
+
+#[test]
+fn deleting_does_not_renumber_the_rows_above_it() {
+    let ticks = TickPartitions::new();
+    let book = ticks.partition_or_create(3).expect("a fresh partition");
+    for exchange_id in 0u8..4 {
+        book.insert(TickRow {
+            exchange_id,
+            bid: f64::from(exchange_id),
+            ask: 0.0,
+        })
+        .expect("fresh key");
+    }
+
+    assert_eq!(book.delete(&1).expect("present").bid, 1.0);
+    assert_eq!(book.select(&1), None);
+    assert_eq!(book.select(&2).expect("present").bid, 2.0, "key 2 did not become key 1");
+    assert_eq!(book.row_count(), 3);
+    assert_eq!(book.select_all().len(), 3, "select_all skips the hole");
+}
+
+// The same columns as `Tick`, with the width that keeps the full table, so the
+// two shapes can be measured against each other rather than against a
+// recollection.
+worktable!(
+    name: FatTick,
+    partition_by: symbol_id: u16,
+    partition_max_size: u64,
+    columns: {
+        exchange_id: u8 primary_key,
+        bid: f64,
+        ask: f64
+    }
+);
+
+/// `memory_total` cannot see what the width is worth, and that is worth a test.
+///
+/// `used_bytes` is row bytes plus index bytes by definition: it excludes the
+/// table's fixed floor, its reserved-but-unused page capacity, the router spine
+/// and `Arc` overhead. The fixed floor is precisely what a dense partition
+/// deletes, so the router's own reporting shows the two shapes as equal while
+/// one of them holds 28 KB per partition that the other does not.
+///
+/// The real comparison is in `tests/dense_partition_memory.rs`, which counts
+/// what the allocator was actually asked for. This test exists so nobody
+/// reaches for `memory_total` to make the claim and concludes the feature does
+/// nothing.
+#[tokio::test]
+async fn memory_total_reports_rows_and_cannot_see_the_apparatus() {
+    const ROWS: u8 = 23;
+
+    let dense = TickPartitions::new();
+    let book = dense.partition_or_create(0).expect("a fresh partition");
+    for exchange_id in 0..ROWS {
+        book.insert(TickRow {
+            exchange_id,
+            bid: 0.0,
+            ask: 0.0,
+        })
+        .expect("fresh key");
+    }
+
+    let full = FatTickPartitions::new();
+    let fat = full.partition_or_create(0).expect("a fresh partition");
+    for exchange_id in 0..ROWS {
+        fat.insert(FatTickRow {
+            exchange_id,
+            bid: 0.0,
+            ask: 0.0,
+        })
+        .await
+        .expect("fresh key");
+    }
+
+    let payload = u64::from(ROWS) * core::mem::size_of::<Option<TickRow>>() as u64;
+    assert_eq!(
+        dense.memory_total(),
+        payload,
+        "a dense partition is its rows, and `used_bytes` sees all of it"
+    );
+    assert_eq!(
+        full.memory_total(),
+        dense.memory_total(),
+        "the two shapes report the same used bytes, because the difference between them is \
+         entirely in what `used_bytes` excludes. If this ever differs, the definition changed \
+         and the note above needs rewriting."
+    );
+
+    // Both hold the same rows. The saving is apparatus, not data.
+    assert_eq!(dense.rows_by_key(), full.rows_by_key());
+}
+
+/// An empty partition is where the cost lived, so it is where to look.
+#[test]
+fn an_empty_dense_partition_allocates_nothing() {
+    let dense = TickPartitions::new();
+    dense.partition_or_create(0).expect("a fresh partition");
+    assert_eq!(dense.memory_total(), 0, "nothing is allocated until a row arrives");
+    assert_eq!(
+        dense.partition(0).expect("created above").slots(),
+        0,
+        "and no slots either: the declared width is a bound, not a reservation"
+    );
+}
+
+// A dense partition carries `queries:`, keyed by position.
+//
+// This is what decides whether the shape is adoptable: web3.trading's
+// `update_top_price` and `update_full` go through declared update queries, and
+// a payload that could not carry them would be a payload they cannot use.
+worktable!(
+    name: Quoted,
+    partition_by: symbol_id: u16,
+    partition_max_size: u8,
+    columns: {
+        exchange_id: u8 primary_key,
+        bid: f64,
+        ask: f64,
+        seq: u64
+    },
+    queries: {
+        update: {
+            TopPrice(bid, ask) by exchange_id,
+        },
+        delete: {
+            Stale() by exchange_id,
+        }
+    }
+);
+
+#[test]
+fn a_dense_partition_carries_its_update_queries() {
+    let quotes = QuotedPartitions::new();
+    let book = quotes.partition_or_create(0).expect("a fresh partition");
+    book.insert(QuotedRow {
+        exchange_id: 2,
+        bid: 1.0,
+        ask: 2.0,
+        seq: 7,
+    })
+    .expect("fresh key");
+
+    // The same method name and the same query struct the paged table generates,
+    // so the call reads the same. What differs is that there is no `.await`.
+    assert_eq!(
+        book.update_top_price(TopPriceQuery { bid: 9.0, ask: 10.0 }, &2),
+        Some(())
+    );
+
+    let row = book.select(&2).expect("present");
+    assert_eq!((row.bid, row.ask), (9.0, 10.0));
+    assert_eq!(row.seq, 7, "a column the query does not name is untouched");
+
+    assert_eq!(
+        book.update_top_price(TopPriceQuery { bid: 0.0, ask: 0.0 }, &3),
+        None,
+        "a key holding no row updates nothing"
+    );
+}
+
+#[test]
+fn a_dense_partition_carries_its_delete_queries() {
+    let quotes = QuotedPartitions::new();
+    let book = quotes.partition_or_create(0).expect("a fresh partition");
+    book.insert(QuotedRow {
+        exchange_id: 1,
+        bid: 1.0,
+        ask: 2.0,
+        seq: 1,
+    })
+    .expect("fresh key");
+    book.insert(QuotedRow {
+        exchange_id: 2,
+        bid: 3.0,
+        ask: 4.0,
+        seq: 2,
+    })
+    .expect("fresh key");
+
+    assert_eq!(book.delete_stale(&1).expect("present").seq, 1);
+    assert_eq!(book.select(&1), None);
+    assert_eq!(book.select(&2).expect("present").seq, 2, "key 2 did not move");
+    assert_eq!(book.delete_stale(&1), None, "deleting twice is not an error");
+}

@@ -167,6 +167,9 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                  asked for. Remove `persist:`, or drop `vec: true` for a paged table.",
             ));
         }
+        // The router needs the columns to pick its payload, and `vec_table`
+        // consumes them. Cloned only when there is a router to build.
+        let vec_columns = partition_by.as_ref().map(|_| columns.clone());
         let mut generated = crate::generators::vec_table::expand(name.clone(), columns)?;
         // The router is storage-agnostic: it needs `Default` and `used_bytes`
         // from its payload and nothing else, and a `vec: true` table has both.
@@ -174,11 +177,15 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         // something it has nothing to do with, so this composes instead of
         // being refused.
         if let Some(key) = partition_by {
+            let columns = vec_columns.expect("cloned whenever `partition_by` is present");
             generated.extend(crate::generators::partitions::expand(
                 &name,
                 &key,
                 worktable_dsl::Persistence::MemoryOnly,
-            ));
+                &columns,
+                // `vec: true` refuses `queries:` above, so there are none.
+                &crate::generators::dense_table::DenseQueries::default(),
+            )?);
         }
         generated.extend(gen_schema_const(&worktable_dsl::Schema::from_tokens(declaration)?));
         return Ok(generated);
@@ -219,6 +226,16 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         worktable_dsl::validate::validate_in_place_queries(&columns, q)?;
     }
 
+    // The router needs the columns to decide its payload: a narrow
+    // `partition_max_size` selects a position-addressed table whose shape
+    // depends on the primary key. Cloned rather than borrowed because the table
+    // generators below consume `columns`, and only a partitioned declaration
+    // pays for the clone.
+    let partition_columns = partition_by.as_ref().map(|_| columns.clone());
+    // Lifted before the table generators consume `queries`. `Queries` is not
+    // `Clone`, and the dense payload is emitted after them.
+    let partition_queries = crate::generators::dense_table::DenseQueries::from_model(queries.as_ref());
+
     let mut generated = if persistence.is_persisted() {
         crate::generators::persist::expand(name.clone(), columns, queries, config, version)?
     } else {
@@ -228,7 +245,14 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     generated.extend(gen_runtime_type(&name, runtime));
 
     if let Some(key) = partition_by {
-        generated.extend(crate::generators::partitions::expand(&name, &key, persistence));
+        let columns = partition_columns.expect("cloned whenever `partition_by` is present");
+        generated.extend(crate::generators::partitions::expand(
+            &name,
+            &key,
+            persistence,
+            &columns,
+            &partition_queries,
+        )?);
     }
 
     generated.extend(gen_schema_const(&worktable_dsl::Schema::from_tokens(declaration)?));
@@ -910,6 +934,208 @@ mod position_tests {
         .expect("in-memory partitioned table must expand")
         .to_string();
         assert!(expanded.contains("partition_or_create"));
+    }
+
+    /// A wide width keeps the full table, which is what every partitioned
+    /// declaration had before the width was declarable.
+    #[test]
+    fn a_wide_partition_max_size_keeps_the_full_table() {
+        let expanded = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u64,
+            columns: { exchange_id: u8 primary_key, bid: f64 }
+        })
+        .expect("must expand")
+        .to_string();
+        assert!(
+            expanded.contains("PartitionSet < PriceWorkTable >"),
+            "the payload must be the full table: {expanded}"
+        );
+        assert!(
+            !expanded.contains("PriceDenseTable"),
+            "no dense payload should be emitted"
+        );
+    }
+
+    /// A narrow one swaps the payload, and only the payload.
+    #[test]
+    fn a_narrow_partition_max_size_swaps_the_payload() {
+        let expanded = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { exchange_id: u8 primary_key, bid: f64 }
+        })
+        .expect("must expand")
+        .to_string();
+        assert!(
+            expanded.contains("PartitionSet < PriceDenseTable >"),
+            "the payload must be the dense table: {expanded}"
+        );
+        // The full table is still generated. It is the type the declaration
+        // names, and a caller may want one outside the router.
+        assert!(
+            expanded.contains("struct PriceWorkTable"),
+            "the full table is still declared"
+        );
+    }
+
+    /// A key that is not a position is refused, naming the column.
+    #[test]
+    fn a_dense_partition_refuses_a_key_that_cannot_be_a_position() {
+        let error = expand(quote! {
+            name: Named,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { label: String primary_key, bid: f64 }
+        })
+        .expect_err("a String key has no position to be")
+        .to_string();
+        assert!(error.contains("label"), "must name the column: {error}");
+        assert!(error.contains("String"), "must name the type it refused: {error}");
+        assert!(
+            error.contains("partition_max_size: u64"),
+            "must name the way out: {error}"
+        );
+    }
+
+    /// A composite key is refused for the same reason, and points at the
+    /// width that takes one.
+    #[test]
+    fn a_dense_partition_refuses_a_composite_key() {
+        let error = expand(quote! {
+            name: Pair,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { left: u32 primary_key, right: u32 primary_key, bid: f64 }
+        })
+        .expect_err("a composite key has no single position")
+        .to_string();
+        assert!(error.contains("2 primary key columns"), "must say what it saw: {error}");
+        assert!(
+            error.contains("partition_max_size: u64"),
+            "must name the way out: {error}"
+        );
+    }
+
+    /// A width wider than the key declares rows the key cannot reach.
+    ///
+    /// Not a soundness problem, always a mistake: `u16` beside a `u8` key
+    /// declares 65,536 rows into a partition that can hold 256.
+    #[test]
+    fn a_width_the_key_cannot_reach_is_refused() {
+        let error = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u16,
+            columns: { exchange_id: u8 primary_key, bid: f64 }
+        })
+        .expect_err("a u8 key cannot reach 65,536 rows")
+        .to_string();
+        assert!(error.contains("exchange_id"), "must name the column: {error}");
+        assert!(error.contains("65536"), "must say how many rows were declared: {error}");
+        assert!(error.contains("partition_max_size: u8"), "must name the fix: {error}");
+    }
+
+    /// A dense partition takes update and delete queries keyed by position.
+    #[test]
+    fn a_dense_partition_generates_its_queries() {
+        let expanded = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { exchange_id: u8 primary_key, bid: f64, ask: f64 },
+            queries: {
+                update: { TopPrice(bid, ask) by exchange_id, },
+                delete: { Stale() by exchange_id, }
+            }
+        })
+        .expect("must expand")
+        .to_string();
+        assert!(
+            expanded.contains("impl PriceDenseTable"),
+            "the dense payload must be emitted: {expanded}"
+        );
+        assert!(expanded.contains("fn update_top_price"), "missing the update query");
+        assert!(expanded.contains("fn delete_stale"), "missing the delete query");
+    }
+
+    /// Keyed by anything else, it refuses rather than quietly scanning.
+    #[test]
+    fn a_dense_query_keyed_by_a_column_it_cannot_index_is_refused() {
+        let error = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { exchange_id: u8 primary_key, venue: u32, bid: f64 },
+            indexes: { venue_idx: venue },
+            queries: {
+                update: { ByVenue(bid) by venue, }
+            }
+        })
+        .expect_err("a dense partition has no secondary index")
+        .to_string();
+        assert!(error.contains("venue"), "must name the column: {error}");
+        assert!(error.contains("exchange_id"), "must name the key it can use: {error}");
+        assert!(
+            error.contains("partition_max_size: u64"),
+            "must name the way out: {error}"
+        );
+    }
+
+    /// `in_place` is a synonym here, so it says so rather than generating a
+    /// second name for one method.
+    #[test]
+    fn in_place_on_a_dense_partition_is_refused_as_a_synonym() {
+        let error = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { exchange_id: u8 primary_key, bid: f64 },
+            queries: {
+                in_place: { Bump(bid) by exchange_id, }
+            }
+        })
+        .expect_err("in_place has no meaning on a dense partition")
+        .to_string();
+        assert!(error.contains("already in place"), "must say why: {error}");
+        assert!(error.contains("update Bump"), "must name the replacement: {error}");
+    }
+
+    /// A dense partition cannot persist, and says so rather than pretending.
+    #[test]
+    fn a_dense_partition_refuses_persistence() {
+        let error = expand(quote! {
+            name: Price,
+            persist: true,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { exchange_id: u8 primary_key, bid: f64 }
+        })
+        .expect_err("a dense partition has no persistence engine")
+        .to_string();
+        assert!(error.contains("persist"), "must name the key it cannot honour: {error}");
+        assert!(
+            error.contains("partition_max_size: u64"),
+            "must name the width that does persist: {error}"
+        );
+    }
+
+    /// The dense payload is a partition payload and nothing else: an
+    /// unpartitioned declaration never sees one.
+    #[test]
+    fn an_unpartitioned_table_gets_no_dense_payload() {
+        let expanded = expand(quote! {
+            name: Price,
+            columns: { exchange_id: u8 primary_key, bid: f64 }
+        })
+        .expect("must expand")
+        .to_string();
+        assert!(
+            !expanded.contains("DenseTable"),
+            "nothing to be dense about: {expanded}"
+        );
     }
 
     #[test]

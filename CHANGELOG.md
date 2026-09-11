@@ -18,6 +18,58 @@ Change Log
   handed over with `partition_or_insert_with` rather than mutated through the
   `Arc` the router returns.
 
+- A **dense partition**, generated when `partition_max_size` is `bool`, `u8`
+  or `u16`. `<Name>DenseTable` addresses rows by position: the primary key *is*
+  the row's index, so there is no primary index, no pages, no links, no free
+  list, no epoch domain, no lock map and no CDC. A lookup is a bounds check and
+  a load.
+
+  Measured on one declaration at two widths, 200 partitions of 23 rows,
+  counting what the allocator was asked for:
+
+  | | bytes per partition |
+  |---|---:|
+  | full table, empty | 28,404 |
+  | **dense, empty** | **108** |
+  | full table, 23 rows of an 88-byte row | 32,900 |
+  | **dense, same** | **3,180** |
+
+  The empty figure is the one to read. The saving is fixed apparatus allocated
+  at partition creation, so it is about 28 KB per partition whatever the row
+  width is; the ratio falls as rows get wider only because the rows themselves
+  grow. At 2,000 symbols that is roughly 56 MB.
+
+  `insert`, `upsert`, `update`, `delete` and `select` all take `&self`, because
+  `partition_or_create` hands out an `Arc`. A generated `update_<column>` edits
+  one field in place without cloning the row. Writes serialise per partition
+  rather than per cell, which is stated in the module documentation rather than
+  implied: nothing here is async, so no write spans a suspension point, and a
+  partition is a much smaller thing to lock than a table.
+
+  The width is a **bound, not a reservation**: the row vector grows to the
+  highest key used, so a `u16` partition holding three rows holds three slots
+  and an empty one allocates nothing at all.
+
+  Refused, by name and with the way out: a primary key that is not a single
+  unsigned column, a width the key cannot count to (`u16` beside a `u8` key
+  declares 65,536 rows into a partition that holds 256), and `persist: true`,
+  which a dense partition has no engine to honour.
+
+  It carries `queries:`. An `update` or `delete` query keyed by the primary key
+  generates the same method name against the same `<Name>Query` struct the
+  paged table generates, so a call reads identically; the signature does not,
+  deliberately, because there is no `.await` and no `WorkTableError`, and a
+  call that moved between the shapes should fail to compile rather than
+  quietly change what it guarantees. A query keyed by any other column is
+  refused: a dense partition has no secondary index, and scanning it instead
+  would be a keyed operation silently becoming a linear one. `in_place` is
+  refused as a synonym, because every update here is already in place.
+
+  Note that `memory_by_key` and `memory_total` **cannot see this saving**. They
+  report `used_bytes`, which is rows plus indexes and excludes the fixed floor
+  by definition, so the two shapes measure the same through them. That is
+  pinned by a test so the conclusion is not drawn twice.
+
 - `partition_max_size`, required beside `partition_by`. It says how many rows a
   single partition holds, written as an index width rather than a count:
   `bool` is 2 rows, `u8` is 256, `u16` is 65,536, and `u32` or `u64` mean

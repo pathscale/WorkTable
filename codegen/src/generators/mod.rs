@@ -1,4 +1,5 @@
 pub(crate) mod columnar;
+pub(crate) mod dense_table;
 pub mod in_memory;
 pub(crate) mod index_backend;
 pub mod partitions;

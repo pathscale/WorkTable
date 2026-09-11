@@ -282,6 +282,14 @@ rows, `u8` is 256, `u16` is 65,536, and `u32` or `u64` mean unbounded in practic
 and generate a full table per partition. There is no `unbounded` keyword: the
 widths run out of smallness, so `u64` is the escape.
 
+A narrow width generates `<Name>DenseTable` as the partition payload: the primary
+key *is* the row's position, so there is no primary index, no pages and no lock
+map, and a lookup is a bounds check and a load. An empty dense partition costs
+108 bytes against a full one's 28,404, which is the whole point of the key.
+
+The width is a bound and not a reservation: the row vector grows to the highest
+key used, so a `u16` partition holding three rows holds three slots.
+
 ## Versions and migration
 
 ```rust

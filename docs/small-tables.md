@@ -215,6 +215,34 @@ wasteful at small sizes, which is what the rest of this document is about. It
 is the entire table apparatus replicated per partition, and it would cost the
 same if the partitions were empty.
 
+### This is now fixable in the declaration
+
+`partition_max_size: u8` beside `partition_by` generates `<Name>DenseTable`
+instead of the full table. The primary key is the row's position, so the index,
+the pages, the links, the free list, the lock map and the CDC all go, and a
+lookup becomes a bounds check and a load.
+
+Measured on one declaration at two widths, 200 partitions of 23 rows each,
+counting bytes the allocator was actually asked for
+(`tests/dense_partition_memory.rs`):
+
+| shape | bytes per partition |
+|---|---:|
+| full table, empty | 28,404 |
+| **dense, empty** | **108** |
+| full table, 23 rows of an 88-byte row | 32,900 |
+| **dense, same** | **3,180** |
+
+The empty row is the one that matters. The saving is the fixed apparatus, so it
+is about 28 KB per partition whatever the rows weigh: at 2,000 symbols, roughly
+56 MB. The ratio falls for wider rows only because the rows themselves grow.
+
+The 28,404 here and the 28,395 above were measured independently and by
+different means: the figure above came from process memory across a range of
+partition counts, this one from a counting `#[global_allocator]` around a single
+construction loop. They agree to nine bytes, which is the strongest thing that
+can be said for either of them.
+
 ### Time is not the problem
 
 | | |
