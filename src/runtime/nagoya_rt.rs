@@ -1,4 +1,4 @@
-//! The nagoya backend, and the three pool flavors a schema can name.
+//! The Nagoya backend and its six selectable pool flavors.
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -18,7 +18,6 @@ use super::{
 
 /// Keep a woken task on the worker that woke it.
 ///
-/// The default, and what `nagoya::runtime::background()` already runs with.
 /// For work whose wakes are a chain: an update path handing a row lock to its
 /// successor wants the lines the releasing worker just touched.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -71,7 +70,7 @@ impl FlavorMarker for WideInjector {
     const FLAVOR: Flavor = Flavor::WideInjector;
 }
 
-/// Locality's routing, with at most one task private to a worker.
+/// Locality's routing, sharing displaced work after the first private inbox job.
 ///
 /// See [`Flavor::SharedSlot`] for the two failure modes this sits between.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
