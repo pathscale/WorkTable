@@ -237,6 +237,11 @@ The empty row is the one that matters. The saving is the fixed apparatus, so it
 is about 28 KB per partition whatever the rows weigh: at 2,000 symbols, roughly
 56 MB. The ratio falls for wider rows only because the rows themselves grow.
 
+`docs/partition-models.md` sets that cost beside how six other systems partition,
+and says what it buys. Briefly: it buys independent physical objects, not
+freedom from contention, and an earlier version of that comparison overclaimed
+in exactly that direction.
+
 The 28,404 here and the 28,395 above were measured independently and by
 different means: the figure above came from process memory across a range of
 partition counts, this one from a counting `#[global_allocator]` around a single

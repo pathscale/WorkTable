@@ -357,6 +357,19 @@ Note that `memory_by_key` and `memory_total` cannot see any of this. They report
 `used_bytes`, which is rows plus indexes and excludes the fixed floor by definition, so
 both shapes measure the same through them.
 
+=== A partition here is a whole table, which is a choice
+
+WorkTable's partitioning is Postgres-shaped: a partition is a complete table with its own
+storage, index and locks. That is a real decision with a real cost rather than an
+implementation detail, and `docs/partition-models.md` compares it against PostgreSQL,
+Kafka, ClickHouse, Cassandra, HBase and Snowflake, with each claim checked against those
+systems' current documentation.
+
+One thing from it belongs here. The isolation is stronger than Postgres's, because there
+is no shared lock manager to contend on: a partition is an independent generated table
+behind its own handle. What it is *not* is free, which is what `partition_max_size`
+exists to let you decline.
+
 == 9b. `vec: true`, a table with no pages
 
 ```rust
