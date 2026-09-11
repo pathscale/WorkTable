@@ -591,7 +591,7 @@ pub fn from_pages<R>(bytes: &[u8]) -> Result<Vec<R>, LoadError>
 where
     Vec<R>: Codec,
 {
-    if bytes.is_empty() || bytes.len() % PAGE_SIZE != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(PAGE_SIZE) {
         return Err(LoadError::NotWholePages { found: bytes.len() });
     }
 
