@@ -10,7 +10,13 @@ use quote::quote;
 impl PersistGenerator {
     pub fn gen_query_update_impl(&mut self) -> syn::Result<TokenStream> {
         let custom_updates = if let Some(q) = &self.queries {
+            let profile = q.update_runtime.clone();
             let custom_updates = self.gen_custom_updates(q.updates.clone());
+            let custom_updates = crate::generators::profile_dispatch::wrap(
+                custom_updates,
+                profile.as_ref(),
+                &WorktableNameGenerator::from_table_name(self.name.to_string()).get_row_type_ident(),
+            )?;
 
             quote! {
                 #custom_updates

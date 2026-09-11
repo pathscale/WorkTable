@@ -8,3 +8,5 @@ pub(crate) mod primary_key;
 pub mod read_only;
 pub(crate) mod runtime_backend;
 pub mod vec_table;
+
+pub(crate) mod profile_dispatch;

@@ -4,7 +4,7 @@ use crate::runtime::Tuning;
 
 mod query;
 
-pub use query::{SelectQueryBuilder, SelectQueryExecutor};
+pub use query::{SelectQueryAsyncExecutor, SelectQueryBuilder, SelectQueryExecutor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Order {
@@ -23,4 +23,6 @@ pub struct QueryParams<ColumnRange, RowFields> {
     /// when no `.runtime()` was written. Carried here rather than acted on,
     /// because `execute` is generated and this is what it reads.
     pub tuning: Option<Tuning>,
+    /// Submission chosen by the explicit runtime callsite.
+    pub dispatch: Option<crate::runtime::Dispatch>,
 }

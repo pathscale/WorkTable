@@ -67,9 +67,9 @@ changed these per-row costs in the local full-suite run:
   columns: (1.5fr, 1fr, 1fr), inset: 8pt,
   stroke: rgb("#d1dcdf"),
   table.header([*Generated Vec table*], [*Build / row*], [*Point lookup*]),
-  [Arctic, grown on demand], [34.90 ns], [42.64 ns],
-  [FxHash, capacity reserved], [6.99 ns], [10.97 ns],
-  [Measured ratio], [*4.99× faster*], [*3.89× faster*],
+  [Arctic, grown on demand], [52.19 ns], [57.63 ns],
+  [FxHash, capacity reserved], [8.04 ns], [12.36 ns],
+  [Measured ratio], [*6.49× faster*], [*4.66× faster*],
 )
 
 This is a physical-design result: both arms use the real `worktable!` macro.
@@ -78,7 +78,7 @@ The hash table gives up ordered range methods and uses exclusive mutation.
 The result supports choosing the right shape for a read-oriented snapshot;
 it does not imply that a hash index replaces the concurrent paged table.
 
-The reserved hand-written hash-map control recorded 8.89 ns per lookup in
+The reserved hand-written hash-map control recorded 11.11 ns per lookup in
 the same run. Keeping that control visible helps separate the cost of the
 generated table from the cost of the underlying index.
 
@@ -114,6 +114,6 @@ examples. It describes 1.9.0-alpha1; use the reviewed checkout until publication
   mean of three rounds after one discarded round. Values are amortized
   per operation, not individual request latency. One machine and one local
   full-suite run; no external database comparison is implied.
-  #link("https://github.com/pathscale/perf-benchmarks/blob/fix/two-ps-st3-in-one-graph/data/apple-m4-max-darwin-arm64/2026-09-11-210249-full.md")[Report and provenance].
+  #link("https://github.com/pathscale/perf-benchmarks/blob/fix/two-ps-st3-in-one-graph/data/apple-m4-max-darwin-arm64/2026-09-11-release-full.md")[Report and provenance].
   #link("https://github.com/pathscale/perf-benchmarks/blob/fix/two-ps-st3-in-one-graph/benchmarks/fx-index.rs")[Benchmark and controls].
 ]

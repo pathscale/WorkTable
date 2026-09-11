@@ -1,11 +1,14 @@
-# Per-query runtime scheduling release gate
+# Owned query runtime execution
 
-The table-level runtime registry and its Nagoya/Tokio primitives execute real work. Per-query selection has a separate implementation gap: SelectQueryBuilder::runtime stores QueryParams::tuning, while all three generated select executors ignore that field. The update, delete and in-place section profile identifiers are parsed into the DSL model but are not used by the operation generators. Generated rows also lack the TableRuntime/RuntimeUnpinned implementations required by the builder method; the profile tests supply those implementations on a hand-written Trade row. Those tests check metadata and compile-time bounds, not generated-table execution or worker identity.
+The release review found that select profiles only recorded tuning and mutation section profiles were ignored. The implementation now uses an explicit ownership boundary without changing grammar.
 
-This blocks any release claim that per-query profiles schedule work. The canonical guide now states this limitation. It does not change the settled grammar.
+- Generated hosted paged rows carry their declared backend and flavor. A named profile must match that identity exactly.
+- Synchronous execute remains available. An explicitly selected runtime requires execute_async().await; execute returns RuntimeRequiresAsync rather than ignoring the selection.
+- execute_async materializes borrowed iteration and predicates on the caller before constructing the future. Owned range filtering, sorting, offset and limit execute on the selected pool. It defaults to the table's executor, materializes all input rows and does not fan out a query across workers.
+- Runtime-annotated update/delete/in-place methods require an Arc table receiver and owned Send/static arguments. Unannotated methods retain their borrowed signatures. Portable table locks and private persistence I/O workers are unchanged.
+- Pending owned tasks are cancelled when their waiting future is dropped. Synchronous work already running can complete; cancellation is not rollback. Panics propagate to the caller.
+- Vec tables reject query profiles. Without default features, owned select execution remains inline and hosted profile markers are unavailable.
 
-A safe implementation needs an ownership boundary. Synchronous execute accepts iterators and predicates borrowing caller state; moving them into a detached pool with a forged lifetime is not acceptable. Owned asynchronous execution can retain the current synchronous API and add an explicit async callsite. Annotated mutations would need an owned table handle and Send/static captures, or a separately proven scoped execution facility. Nagoya does not currently provide a supported borrowed scope. Its old scoped-fork experiment has independent panic and progress defects documented in that repository.
+The generated-table tests in tests/runtime_execution.rs verify worker identity, query results with borrowed non-Send predicates, same-pool nesting on one worker, cancellation, panic propagation, persistence/reopen and optional Tokio execution. The wt-owned-runtime benchmark measures full materialization, synchronous versus scheduled sorting, empty dispatch roundtrips and scheduled mutations; it checks equal results. The separate full CI run covers existing callsites, no-default consumers and Clippy.
 
-The alternative alpha scope is to reject unsupported per-query execution requests explicitly, retain their schema representation, and ship the working table-level runtime selection. The owner is deciding between these callsite/scope options. Neither option introduces grammar.
-
-Completion evidence must include execution on the selected worker pool, same-pool nested progress with a saturated small pool, cancellation and panic behavior, default/no-default compilation, and a benchmark separating data materialization from scheduling and execution. Metadata-only tests are insufficient.
+The old scoped-fork experiment is not used. See Nagoya's deferred-experiments note for its independent panic/progress defects. Canonical user-facing documentation is docs/wt-user-guide.typ.

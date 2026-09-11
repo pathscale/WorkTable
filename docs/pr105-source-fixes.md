@@ -1,4 +1,4 @@
-> Historical source review at the revision below. The September release audit has since compiled and tested its retained fixes; current release evidence is in perf-benchmarks/docs/release-readiness.md. Its query-profile scheduling warning remains material and must not be mistaken for completed execution support.
+> Historical source review at the revision below. The September release audit has since compiled and tested its retained fixes; current release evidence is in perf-benchmarks/docs/release-readiness.md. Its historical query-profile warning is resolved by the final owned-execution follow-up at the end of this document.
 
 # PR 105 source-only follow-up
 
@@ -53,3 +53,7 @@ and invalid clustered keys. Columnar integration tests cover the gate contract
 and representable index capacity. Existing concurrent-reinsert tests remain.
 The gate test checks exclusion, not every race interleaving; no test result or
 latency improvement is claimed.
+
+## Final runtime execution follow-up
+
+The per-query scheduling gap above is resolved by owned asynchronous select execution and Arc-based annotated mutations. See query-runtime-release-gate.md for the precise ownership, cancellation and validation contract. The schema grammar is unchanged.

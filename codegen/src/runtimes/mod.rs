@@ -124,7 +124,7 @@ fn resolve(name: Ident, backend: Ident, flavor: Option<Ident>) -> syn::Result<Pr
     match backend_name.as_str() {
         "nagoya" => {
             let flavor = match flavor {
-                None => Ident::new("locality", backend.span()),
+                None => Ident::new(worktable_dsl::model::Flavor::default().name(), backend.span()),
                 Some(flavor) => {
                     let flavor_name = flavor.to_string();
                     if !flavors().contains(&flavor_name.as_str()) {
@@ -295,9 +295,13 @@ mod tests {
     }
 
     #[test]
-    fn bare_nagoya_is_locality() {
+    fn bare_nagoya_is_the_registry_default() {
         let bare = expanded(quote! { p: nagoya });
-        let explicit = expanded(quote! { p: nagoya(locality) });
+        let flavor = proc_macro2::Ident::new(
+            worktable_dsl::model::Flavor::default().name(),
+            proc_macro2::Span::call_site(),
+        );
+        let explicit = expanded(quote! { p: nagoya(#flavor) });
         assert_eq!(bare, explicit);
     }
 

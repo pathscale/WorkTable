@@ -369,3 +369,56 @@ pub fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
     }
     Ok(())
 }
+
+/// Reject paged query shapes for which no operation is generated. Vec queries
+/// have a separate synchronous implementation and must not inherit these limits.
+pub fn validate_query_storage(
+    columns: &Columns,
+    queries: &crate::model::Queries,
+    storage: crate::model::Storage,
+) -> syn::Result<()> {
+    if storage.is_vec() {
+        if let Some(profile) = queries
+            .update_runtime
+            .as_ref()
+            .or(queries.delete_runtime.as_ref())
+            .or(queries.in_place_runtime.as_ref())
+        {
+            return Err(syn::Error::new(
+                profile.span(),
+                "vec tables are synchronous and cannot schedule a query runtime profile",
+            ));
+        }
+        return Ok(());
+    }
+    for (name, op) in &queries.updates {
+        let by_primary = columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(&op.by);
+        let by_index = columns.indexes.values().any(|index| index.field == op.by);
+        if !by_primary && !by_index {
+            return Err(syn::Error::new(
+                op.by.span(),
+                format!(
+                    "update query `{name}` requires a single-column primary key or a secondary index on `{}`",
+                    op.by
+                ),
+            ));
+        }
+    }
+    for (name, op) in &queries.in_place {
+        if columns.primary_keys.len() != 1 || columns.primary_keys.first() != Some(&op.by) {
+            return Err(syn::Error::new(
+                op.by.span(),
+                format!(
+                    "in_place query `{name}` requires selection by the single-column primary key; use an update query for an indexed predicate"
+                ),
+            ));
+        }
+        if op.columns.iter().any(|column| columns.primary_keys.contains(column)) {
+            return Err(syn::Error::new(
+                name.span(),
+                "in_place queries cannot mutate primary key columns; use an update query to maintain indexes",
+            ));
+        }
+    }
+    Ok(())
+}

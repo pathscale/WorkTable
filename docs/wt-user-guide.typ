@@ -563,24 +563,55 @@ capacity or leaf width.
 
 == 10. Choosing a runtime
 
+The table declaration selects the default executor for owned async selects and the
+backend identity required by named profiles. Ordinary borrowed mutations execute
+where their caller polls them. Table locks remain portable; persistence uses a private
+I/O pool, and engine background work follows the process runtime setting.
+
 ```rust
-worktable! (
+runtimes! { scheduled: nagoya(shared_slot), }
+worktable! {
     name: Orders,
-    runtime: nagoya(shared_slot),   // or `tokio`, which takes no flavor
+    runtime: nagoya(shared_slot),
     columns: { id: u64 primary_key, total: u64 },
-);
+    queries: {
+        update runtime scheduled: { TotalById(total) by id },
+        in_place runtime scheduled: { TotalById(total) by id },
+    }
+}
+let table = Arc::new(OrdersWorkTable::default());
+table.insert(OrdersRow { id: 1, total: 10 }).await?;
+table.update_total_by_id(TotalByIdQuery { total: 20 }, 1u64).await?;
+table.update_total_by_id_in_place(|total| *total = 21.into(), 1u64).await?;
+let rows = table.select_all()
+    .order_on(OrdersRowFields::Total, Order::Desc)
+    .limit(100).runtime(scheduled).execute_async().await?;
 ```
 
-Omitting `runtime:` and writing `runtime: nagoya(shared_slot)` describe the same table.
-A per-query-block form parses but codegen ignores it today:
+Omitting the declaration defaults to Nagoya shared_slot. A profile must match both
+the declared backend and flavor. Tokio requires the `tokio-runtime` feature and an
+entered Tokio runtime. `WT_DEFAULT_RUNTIME` overrides Nagoya flavors process-wide;
+`WT_RUNTIME_WORKERS` sets pool size on first use. Keep these fixed when comparing runs.
 
-```rust
-queries: {
-    update runtime fast_local: {    // parses, currently has no effect
-        TotalById(total) by id,
-    },
-},
-```
+`execute()` stays synchronous. With an explicit `.runtime(profile)`, it returns
+`RuntimeRequiresAsync` instead of silently ignoring the profile. `execute_async()`
+uses the table default when no profile was supplied. It materializes borrowed iterators
+and `where_by` predicates on the caller before returning its future; range filters,
+sorting, offset and limit execute on the worker over those owned rows. The full input
+is materialized even for a small limit. This boundary releases borrowed table guards
+and permits predicates that borrow local state, but adds allocation and dispatch cost.
+It does not parallelize a scan or split sorting across workers.
+
+Runtime-annotated update, delete and in-place sections generate methods on
+`Arc<Table>`. Pass owned keys and `Send + 'static` closures; the cloned table handle
+keeps storage alive. Unannotated methods retain their borrowed receivers and arguments.
+Dropping a pending dispatch cancels it at the next suspension. Synchronous work already
+running can finish; cancellation is not transaction rollback. Nested async dispatch
+progresses even on one worker. Avoid blocking joins from a pool worker.
+
+Vec tables remain synchronous and reject runtime annotations. Without default features,
+explicit hosted profiles are unavailable and `execute_async()` runs its owned plan inline.
+The existing dependency closure still needs std; this is not a freestanding-target claim.
 
 == 11. A persisted table, end to end
 
@@ -845,7 +876,7 @@ structural mapping until its node is locked, so hits and misses are both definit
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 6pt,
   [*Feature*], [*Effect*],
-  [`std`], [On by default. Off, the crate links no `std` and the whole persistence half is gone with it.],
+  [`std`], [On by default. Off, hosted persistence and runtime pools are excluded. The dependency closure still uses std; isolated consumer checks guard this supported configuration.],
   [`s3-support`], [The S3 sync engine, and the HTTP stack under it.],
   [`logical-index-persistence`], [Moves unique structural CDC work off the mutation path into the background worker. The page format is unchanged either way.],
   [`wti-predictable-search`], [On by default. The branch-based node search, which avoids a measured regression on sequential numeric keys.],
@@ -905,17 +936,19 @@ Chain `limit(n)`, `offset(n)`, `order_on(Fields::field, Order::Asc)` or `Order::
 table-specific. A limit alone does not establish an order. Filtering and ordering can
 require more work than the returned row count suggests.
 
-`runtime(profile)` is a Rust builder method for a profile declared by `runtimes!`.
-*Release limitation:* generated rows lack the marker implementations required by
-this method. Even with those supplied manually, it only records tuning; `execute()`
-does not dispatch onto that profile. Query-section profiles likewise do not schedule their operations.
-Use explicit executor submission for owned work; these profile callsites are not
-validated execution features of this alpha. Runtime defaults and the schema examples are covered in Example 10. `WT_DEFAULT_RUNTIME`
-and `WT_RUNTIME_WORKERS` affect runtime initialization; set them before the process first
-uses the registry. Changing an environment variable afterwards does not rebuild an
-already-created pool. `Runtime`, `NagoyaRt`, optional `TokioRt`, flavor marker types and
-`executor_for_flavor` form the lower-level runtime integration surface. They do not make
-a storage operation durable or turn synchronous file access into nonblocking I/O.
+`runtime(profile).execute_async().await` dispatches the owned plan to a matching
+profile declared by `runtimes!`. Example 10 covers materialization, Arc mutation
+receivers and cancellation. `execute_async()` without a profile selects the table's
+default executor. Runtime initialization reads `WT_DEFAULT_RUNTIME` and
+`WT_RUNTIME_WORKERS` once. Changing environment variables afterwards does not rebuild
+an already-created pool. `Runtime`, `NagoyaRt`, optional `TokioRt`, flavor marker types,
+`run_on`, `run_profile` and `executor_for_flavor` are the lower-level integration surface.
+They do not make storage durable or turn synchronous file access into nonblocking I/O.
+
+Paged custom updates require a single primary key or an indexed predicate. Paged
+in-place queries require the single primary key and cannot mutate primary or secondary
+indexed columns. Unsupported predicates are rejected during validation rather than
+panicking in code generation. Vec query methods have their own synchronous contract.
 
 == Vec table operations
 

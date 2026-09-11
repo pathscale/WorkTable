@@ -32,7 +32,7 @@ cargo add worktable@1.0.0-beta.5
   vacuum and the disk index need an operating system and are gated out.
 - **Columnar fields and indexes.** `columnar` on a column, `columnar_indexes` with
   `cluster_by`, so a scan over one field reads only that field's bytes.
-- **A schema-selected runtime.** `runtime: nagoya(<flavor>)` or `runtime: tokio`.
+- **Explicit owned runtime execution.** `runtime: nagoya(<flavor>)` or `runtime: tokio` selects the default for `execute_async().await`. Named profiles schedule owned selects and annotated mutations on `Arc<Table>`; ordinary borrowed operations keep their callsite execution.
 - **`page_size` on a persisted table**, at any size above a 512-byte floor.
 - **The default index backend is `arctic`**, not `worktables_index`. Arctic cannot
   key an optional or variable-width column, so an index over `String optional`

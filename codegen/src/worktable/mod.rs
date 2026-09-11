@@ -130,6 +130,9 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     // instead. A silent no-op would be worse: `runtime: nagoya(locality)` on a
     // synchronous table is a reasonable thing to write and a completely
     // meaningless thing to have accepted.
+    if let Some(q) = &queries {
+        worktable_dsl::validate::validate_query_storage(&columns, q, storage)?;
+    }
     if storage.is_vec() {
         if !columns.columnar_indexes.is_empty() || !columns.columnar_fields.is_empty() {
             return Err(syn::Error::new(
@@ -382,7 +385,7 @@ fn gen_narrow_primary_key_lint(columns: &worktable_dsl::model::Columns) -> Token
 /// `worktable!` inside a function body puts this alias in that body, where a
 /// user building with `-D warnings` would otherwise fail over a name they never
 /// wrote.
-fn gen_runtime_type(name: &proc_macro2::Ident, runtime: Option<RuntimeBackend>) -> TokenStream {
+pub(crate) fn gen_runtime_type(name: &proc_macro2::Ident, runtime: Option<RuntimeBackend>) -> TokenStream {
     // Emit nothing into a `no_std` build. Every backend needs threads, so the
     // prelude exports no runtime type there and naming one would not resolve.
     // A table that never spawns is still a table, which is why this is silent
@@ -402,10 +405,13 @@ fn gen_runtime_type(name: &proc_macro2::Ident, runtime: Option<RuntimeBackend>) 
     // section, so a declaration written before this key existed emits exactly
     // what `runtime: nagoya` emits.
     let ty = runtime_type(resolve_runtime(None, runtime));
+    let row = WorktableNameGenerator::from_table_name(name.to_string()).get_row_type_ident();
 
     quote::quote! {
         #[allow(dead_code)]
         pub type #ident = #ty;
+        impl worktable::runtime::TableRuntime for #row { type Backend = #ident; }
+        impl worktable::runtime::RuntimeUnpinned for #row {}
     }
 }
 

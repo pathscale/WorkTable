@@ -1476,6 +1476,10 @@ pub enum BatchDeleteError<PrimaryKey: core::fmt::Debug> {
 
 #[derive(Debug, Display, Error, From)]
 pub enum WorkTableError {
+    #[display("A runtime-selected query requires execute_async().await")]
+    RuntimeRequiresAsync,
+    #[display("The query runtime cancelled execution")]
+    RuntimeCancelled,
     NotFound,
     #[display("Value already exists for `{}` index", _0)]
     AlreadyExists(#[error(not(source))] String),

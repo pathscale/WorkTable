@@ -1,51 +1,14 @@
-//! The runtime a table's async work runs on.
+//! Runtime traits, backend adapters and owned query dispatch.
 //!
-//! # Why a trait, when there is only one runtime in the graph
+//! Hosted generated selects use the declared backend for owned execution.
+//! Runtime-annotated mutations dispatch owned Arc table handles. Ordinary
+//! borrowed operations retain caller execution and portable Nagoya locks.
+//! Persistence I/O has its own worker pool; schema selection does not replace it.
 //!
-//! Every async primitive this crate touches came from `nagoya::sync` and
-//! `nagoya::time` after the move off tokio, which is a hardcoded choice rather
-//! than a made one. [`Runtime`] turns it into a type parameter so a schema can
-//! name a backend, and so the tokio comparison arm is something a build can
-//! select rather than something a fork has to carry.
-//!
-//! # The surface is exactly what this crate uses
-//!
-//! The helper traits below are not a general async abstraction. They were
-//! derived by reading every `nagoya::` path in `src/`, and each method has at
-//! least one call site today:
-//!
-//! ```text
-//! RwLock::new                 src/lock/map.rs, src/lock/mod.rs
-//! RwLock::write().await       src/lock/map.rs, src/table/vacuum/vacuum.rs,
-//!                             src/in_memory/empty_link_registry.rs, codegen
-//! RwLock::try_read            src/lock/map.rs
-//! RwLock::try_read_owned      src/in_memory/empty_link_registry.rs
-//! Notify::new / Default       src/persistence/task.rs, empty_link_registry.rs
-//! Notify::notify_one          src/persistence/task.rs, empty_link_registry.rs
-//! Notify::notify_waiters      src/persistence/task.rs
-//! Notified::enable            src/persistence/task.rs
-//! Semaphore::new              src/persistence/task.rs
-//! Semaphore::add_permits      src/persistence/task.rs
-//! Semaphore::acquire          src/persistence/task.rs
-//! SemaphorePermit::forget     src/persistence/task.rs
-//! JoinHandle await            src/persistence/task.rs
-//! JoinHandle::cancel          src/persistence/task.rs, tests/worktable/
-//! JoinHandle::is_finished     src/persistence/task.rs, src/table/vacuum/
-//! spawn                       src/persistence/task.rs, src/table/vacuum/manager.rs
-//! sleep / timeout / yield_now src/persistence/task.rs, src/table/vacuum/
-//! ```
-//!
-//! `RwLock::read().await` is **deliberately absent**: every `.read()` in this
-//! crate is on a `parking_lot` lock, not an async one, and the async row lock
-//! is only ever taken exclusively. Adding it is a three-line change in each of
-//! the two impls if a call site ever appears.
-//!
-//! # Why the module needs `std`
-//!
-//! [`Runtime::spawn`] is the reason the trait exists, and spawning needs
-//! threads. `nagoya`'s own `runtime` module is `std`-gated for the same
-//! reason. A `no_std` build of this crate has neither persistence nor vacuum,
-//! which are the only two things here that spawn.
+//! The primitive traits expose backend integration to callers. Their existence
+//! does not make every table primitive generic over a backend. Hosted backends
+//! require std; trait definitions and the inline owned select path remain
+//! available without default features.
 
 use alloc::sync::Arc;
 use core::future::Future;
@@ -74,8 +37,10 @@ pub use nagoya::Tuning;
 #[cfg(feature = "std")]
 mod nagoya_rt;
 
+mod dispatch;
 mod flavor;
 mod profile;
+pub use dispatch::{Dispatch, dispatcher, run_on, run_owned, run_profile};
 #[cfg(all(feature = "std", feature = "tokio-runtime"))]
 mod tokio_rt;
 

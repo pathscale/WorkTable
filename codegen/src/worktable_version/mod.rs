@@ -43,7 +43,9 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         columns.indexes = i
     }
 
-    read_only::expand(name, columns, version)
+    let runtime = crate::worktable::gen_runtime_type(&name, None);
+    let table = read_only::expand(name, columns, version)?;
+    Ok(quote::quote! { #table #runtime })
 }
 
 #[cfg(test)]

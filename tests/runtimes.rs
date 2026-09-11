@@ -42,8 +42,8 @@ fn each_profile_resolves_to_its_backend() {
 
 #[test]
 fn a_bare_backend_is_its_default_flavor() {
-    assert_backend::<bare, NagoyaRt<Locality>>();
-    assert_eq!(<bare as Profile>::tuning(), <fast_local as Profile>::tuning());
+    assert_backend::<bare, NagoyaRt<SharedSlot>>();
+    assert_eq!(<bare as Profile>::tuning(), <SharedSlot as FlavorMarker>::tuning());
 }
 
 #[test]

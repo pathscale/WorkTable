@@ -1,3 +1,7 @@
+# Historical design discussion
+
+This document retains the original runtime proposal and measurements. It is not the released API contract. In particular, runtime selection does not change table lock types, profiles must match the declared backend/flavor, and scheduled selects finish with execute_async().await. See [the canonical guide](wt-user-guide.typ) and [the implementation contract](query-runtime-release-gate.md).
+
 # `worktable!`: the whole DSL
 
 What the macro accepts today, why the runtime work exists at all, and the syntax

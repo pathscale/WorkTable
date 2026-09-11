@@ -188,7 +188,9 @@ pub mod prelude {
     pub use crate::primary_key::{
         PrimaryKeyGenerator, PrimaryKeyGeneratorRange, PrimaryKeyGeneratorState, TablePrimaryKey,
     };
-    pub use crate::table::select::{Order, QueryParams, SelectQueryBuilder, SelectQueryExecutor};
+    pub use crate::table::select::{
+        Order, QueryParams, SelectQueryAsyncExecutor, SelectQueryBuilder, SelectQueryExecutor,
+    };
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     /// The page codec a `storage: vec` table unloads and loads through.

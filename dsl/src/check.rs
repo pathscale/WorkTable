@@ -184,8 +184,14 @@ pub fn check(source: &str) -> Checked {
     // answering "would the macro accept this?" rather than "would a
     // reimplementation of the macro accept this?".
     let diagnostics = match model_of(tokens) {
-        Ok((columns, queries, config, persistence)) => {
-            crate::validate::all(&columns, queries.as_ref(), config.as_ref(), persistence)
+        Ok((columns, queries, config, persistence, storage)) => {
+            let mut errors = crate::validate::all(&columns, queries.as_ref(), config.as_ref(), persistence);
+            if let Some(queries) = &queries
+                && let Err(error) = crate::validate::validate_query_storage(&columns, queries, storage)
+            {
+                errors.push(error);
+            }
+            errors
                 .iter()
                 .map(|error| Diagnostic {
                     message: error.to_string(),
@@ -215,6 +221,7 @@ type Model = (
     Option<crate::model::Queries>,
     Option<crate::model::Config>,
     crate::model::Persistence,
+    crate::model::Storage,
 );
 
 /// The macro's own top-level dispatch, kept to the parts the rules read.
@@ -227,7 +234,7 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     // was rejected as "Unexpected token `vec`". That made `wt-check` and
     // `wt-dsl` refuse a whole storage the macro accepts, which the TypeScript
     // emitter's cross-implementation test found the moment it emitted one.
-    parser.parse_storage()?;
+    let storage = parser.parse_storage()?;
     let persistence = parser.parse_persist()?;
     parser.parse_partition_by()?;
 
@@ -278,7 +285,7 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     if let Some(indexes) = columnar_indexes {
         columns.columnar_indexes = indexes.indexes;
     }
-    Ok((columns, queries, config, persistence))
+    Ok((columns, queries, config, persistence, storage))
 }
 
 #[cfg(test)]

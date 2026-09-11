@@ -13,7 +13,13 @@ impl PersistGenerator {
         let table_ident = name_generator.get_work_table_ident();
 
         let custom_in_place = if let Some(q) = &self.queries {
+            let profile = q.in_place_runtime.clone();
             let custom_in_place = self.gen_in_place_queries(q.in_place.clone());
+            let custom_in_place = crate::generators::profile_dispatch::wrap(
+                custom_in_place,
+                profile.as_ref(),
+                &name_generator.get_row_type_ident(),
+            )?;
             quote! {
                 #custom_in_place
             }

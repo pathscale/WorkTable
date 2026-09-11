@@ -14,7 +14,13 @@ impl PersistGenerator {
         let table_ident = name_generator.get_work_table_ident();
 
         let custom_deletes = if let Some(q) = &self.queries {
+            let profile = q.delete_runtime.clone();
             let custom_deletes = self.gen_custom_deletes(q.deletes.clone());
+            let custom_deletes = crate::generators::profile_dispatch::wrap(
+                custom_deletes,
+                profile.as_ref(),
+                &name_generator.get_row_type_ident(),
+            )?;
             quote! {
                 #custom_deletes
             }

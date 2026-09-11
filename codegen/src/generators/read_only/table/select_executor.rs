@@ -92,6 +92,11 @@ impl ReadOnlyGenerator {
     pub fn gen_table_select_query_executor_impl(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let row_type = name_generator.get_row_type_ident();
+        let default_dispatch = if cfg!(feature = "std") {
+            quote! { Some(worktable::runtime::dispatcher::<<#row_type as worktable::runtime::TableRuntime>::Backend> as worktable::runtime::Dispatch) }
+        } else {
+            quote! { None }
+        };
         let column_range_type = name_generator.get_column_range_type_ident();
         let row_fields_ident = name_generator.get_row_fields_enum_ident();
 
@@ -171,6 +176,24 @@ impl ReadOnlyGenerator {
         };
 
         quote! {
+            impl<I> worktable::prelude::SelectQueryAsyncExecutor<#row_type>
+            for SelectQueryBuilder<#row_type, I, #column_range_type, #row_fields_ident>
+            where I: DoubleEndedIterator<Item = #row_type> + Sized,
+            {
+                fn execute_async(self) -> impl core::future::Future<Output = Result<Vec<#row_type>, WorkTableError>> + Send {
+                    let mut params = self.params;
+                    let dispatch = params.dispatch.take().or(#default_dispatch);
+                    // Release all borrowed iterators and caller predicates before
+                    // creating a task. No lifetime is extended across the pool.
+                    let rows: Vec<#row_type> = self.iter.collect();
+                    async move {
+                        let plan = SelectQueryBuilder { params, iter: rows.into_iter() };
+                        if let Some(dispatch) = dispatch {
+                            worktable::runtime::run_owned(dispatch, move || plan.execute()).await?
+                        } else { plan.execute() }
+                    }
+                }
+            }
             impl<I> SelectQueryExecutor<#row_type, I, #column_range_type, #row_fields_ident>
             for SelectQueryBuilder<#row_type, I, #column_range_type, #row_fields_ident>
             where
@@ -191,6 +214,7 @@ impl ReadOnlyGenerator {
                 }
 
                 fn execute(self) -> Result<Vec<#row_type>, WorkTableError> {
+                    if self.params.dispatch.is_some() { return Err(WorkTableError::RuntimeRequiresAsync); }
                     let mut iter: Box<dyn DoubleEndedIterator<Item = #row_type>> = Box::new(self.iter);
 
                     #range
