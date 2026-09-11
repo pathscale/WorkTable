@@ -418,10 +418,26 @@ compiler rejects the swap four different ways.
 
 === What it refuses, and why
 
-`persist`, `queries`, `runtime`, `config` and columnar fields are each refused with an
+`persist`, `runtime`, `config` and columnar fields are each refused with an
 error naming what to use instead, rather than being accepted and ignored.
 `partition_by` is *not* refused: see section 9, where partitioning is what makes the
 `Vec` shape correct.
+
+Declared `queries` are supported. They use equality on a primary or secondary index,
+including `fxhash`, and run synchronously through `&mut self`. An update declaration
+such as `StateById(state) by id` emits
+`update_state_by_id(StateByIdQuery { state: 7 }, &id) -> usize`; a delete declaration
+`ByOwner() by owner` emits `delete_by_owner(&owner) -> usize`. The return value counts
+affected rows. `in_place: { Status(state) by id }` emits
+`update_status_in_place(|state| *state = 42, &id) -> usize` and accepts one column.
+These methods belong to the table, not mutable wrappers on the shared partition set.
+
+Vec edits validate a cloned candidate before replacing a row. A primary or unique
+secondary-key collision panics with that row and its indexes unchanged; a panicking
+edit closure also leaves the stored row unchanged. Replacing an existing row through
+`upsert` checks unique secondary keys first. Multi-row queries apply one row at a time
+and are not transactions: earlier successful edits remain if a later edit fails.
+Cloning owned fields is part of this mutation cost, including Vec `in_place` queries.
 
 === Bytes and back: `unload` and `load`
 
@@ -433,9 +449,32 @@ let pages: Vec<u8> = table.unload()?;        // 16 KiB self-describing pages
 let table = LookupWorkTable::load(&pages)?;  // and back
 ```
 
-Each page carries its own header, a CRC, a row directory and a fingerprint of the row
-type, so a page written by a different declaration is refused rather than misread. The
-codec is `worktable::vec_hydrate` and it is reachable directly.
+Each 16 KiB page has a 28-byte header, an archived row batch and a 12-byte trailer:
+row count at byte 16,372, row-type fingerprint at 16,376 and CRC-32 at 16,380.
+The CRC covers the header, archive, padding, count and fingerprint. Page type 4
+identifies archived rows; the space id is zero. Ordinary persisted tables use a
+different page type and directory, so these containers cannot be interchanged.
+The reader checks page links, detects incomplete chains and rebuilds indexes from rows.
+The fingerprint hashes Rust's type name; it catches obvious foreign row types, but is
+neither a complete schema hash nor stable across compiler versions. Renaming a type
+can invalidate a snapshot; changing fields under the same name still requires an
+explicit data cutover. The codec is `worktable::vec_hydrate`.
+
+For an append-only table, save the number of live rows already written and append only
+new rows. `first` counts live rows in insertion order, skipping ghosts:
+
+```rust
+let first = table.len();
+let mut bytes = table.unload()?;
+// Insert new rows, without updating or deleting earlier rows.
+let pages_before = u32::try_from(bytes.len() / worktable::vec_hydrate::PAGE_SIZE)?;
+bytes.extend_from_slice(&table.unload_appending(first, pages_before)?);
+```
+
+`unload_appending` reports oversized rows and page-number overflow. The previous
+terminal page stays unchanged. Independent `unload()` segments can also be concatenated.
+At load, the first accepted primary or unique key wins; an appended duplicate cannot
+replace a row. Updates, deletes or invalidated cursors require a full snapshot.
 
 
 === Picking an index backend
@@ -893,9 +932,11 @@ bit flip for rows owning heap allocations. `compact()` moves
 survivors and repairs index positions. Measure deletion separately from compaction and
 whole-table drop. Hash-indexed access paths do not provide ordered ranges.
 
-`unload()` and `load(bytes)` use the page codec described in Example 9b. This is a caller-
+`unload()`, `unload_appending(first, pages_before)` and `load(bytes)` use the page codec
+described above. This is a caller-
 managed snapshot, with validation errors such as `RowTooLarge`, `NotAnArchive` and
-`LoadError`; it is not the paged persistence worker. `vec_hydrate::{to_pages, from_pages}`
+`LoadError` and append `UnloadError`; it is not the paged persistence worker.
+`vec_hydrate::{to_pages, to_pages_at, from_pages}`
 and `Codec` are the lower-level codec surface. The proposed persisted dirty-bit/sidecar
 design in `vec-persistence-design.md` is *not* a shipped Vec durability API.
 

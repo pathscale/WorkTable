@@ -183,7 +183,8 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                 &key,
                 worktable_dsl::Persistence::MemoryOnly,
                 &columns,
-                // `vec: true` refuses `queries:` above, so there are none.
+                // Vec queries are methods on the mutable table. The shared
+                // partition directory does not generate mutable query wrappers.
                 &crate::generators::dense_table::DenseQueries::default(),
             )?);
         }

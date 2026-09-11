@@ -1396,6 +1396,43 @@ fn two_unloads_concatenate_into_one_table() {
     assert_eq!(reloaded.len(), 64, "the duplicate was counted as a new row");
 }
 
+#[test]
+fn append_callsite_writes_only_new_live_rows_and_rebuilds_indexes() {
+    let mut table = HashedSavedWorkTable::new();
+    for id in 0..100u64 {
+        table
+            .insert(HashedSavedRow {
+                id,
+                label: "first".into(),
+                code: id,
+            })
+            .unwrap();
+    }
+    table.delete(&3).unwrap();
+    let first = table.len();
+    let mut bytes = table.unload().unwrap();
+    let before = bytes.clone();
+    for id in 100..200u64 {
+        table
+            .insert(HashedSavedRow {
+                id,
+                label: "second".into(),
+                code: id,
+            })
+            .unwrap();
+    }
+    let pages_before = u32::try_from(bytes.len() / worktable::vec_hydrate::PAGE_SIZE).unwrap();
+    let appended = table.unload_appending(first, pages_before).unwrap();
+    assert_eq!(HashedSavedWorkTable::load(&appended).unwrap().len(), 100);
+    bytes.extend_from_slice(&appended);
+    assert_eq!(&bytes[..before.len()], &before);
+    let loaded = HashedSavedWorkTable::load(&bytes).unwrap();
+    assert_eq!(loaded.len(), 199);
+    assert!(loaded.select(&3).is_none());
+    assert_eq!(loaded.select_by_label(&"second".into()).len(), 100);
+    assert_eq!(loaded.select_by_code(&199).unwrap().id, 199);
+}
+
 worktable!(
     name: Level,
     vec: true,
@@ -1590,7 +1627,8 @@ worktable!(
     queries: {
         update: {
             StateById(state) by id,
-            AmountByOwner(amount, state) by owner,
+            StateByOwner(state) by owner,
+            AmountById(amount) by id,
         },
         delete: {
             ById() by id,
@@ -1633,18 +1671,19 @@ fn declared_queries_run_on_a_vec_table() {
 
     // Keyed by a non-unique hash secondary: every row it names.
     assert_eq!(
-        table.update_amount_by_owner(AmountByOwnerQuery { amount: 999, state: 5 }, &1),
+        table.update_state_by_owner(StateByOwnerQuery { state: 5 }, &1),
         3,
         "owner 1 holds ids 1, 3 and 5"
     );
     for id in [1u64, 3, 5] {
         let row = table.select(&id).expect("present");
         assert_eq!(row.state, 5);
-        assert_eq!(row.amount, 999);
+        assert_eq!(row.amount, 100 + id);
     }
     assert_eq!(table.select(&0).expect("present").amount, 100, "owner 0 untouched");
 
-    // The unique arctic secondary was repaired by that update, not left stale.
+    assert_eq!(table.update_amount_by_id(AmountByIdQuery { amount: 999 }, &1), 1);
+    // The unique arctic secondary was repaired without stealing another row's key.
     assert!(
         table.select_by_amount(&101).is_none(),
         "the old amount kept its entry after an update moved the row"
@@ -1652,7 +1691,7 @@ fn declared_queries_run_on_a_vec_table() {
     assert_eq!(
         table.select_by_amount(&999).expect("present").owner,
         1,
-        "three rows now share amount 999 on a unique index"
+        "the updated row owns amount 999"
     );
 
     // in_place edits one column through a closure.
@@ -1665,4 +1704,130 @@ fn declared_queries_run_on_a_vec_table() {
     assert_eq!(table.delete_by_owner(&1), 3, "owner 1 had three rows left");
     assert_eq!(table.len(), 2, "ids 2 and 4 survive");
     assert_eq!(table.ghost_count(), 4, "deletes ghost rather than close the hole");
+}
+
+#[test]
+fn vec_unique_collisions_and_panicking_edits_leave_rows_and_indexes_unchanged() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let mut table = HashedSavedWorkTable::new();
+    for id in 1..=3u64 {
+        table
+            .insert(HashedSavedRow {
+                id,
+                code: id * 10,
+                label: format!("row-{id}"),
+            })
+            .unwrap();
+    }
+    let before = table.unload().unwrap();
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            table.update(&1, |row| {
+                row.id = 2;
+                row.code = 99;
+                row.label = "changed".into();
+            });
+        }))
+        .is_err()
+    );
+    assert_eq!(table.unload().unwrap(), before);
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            table.update(&1, |row| {
+                row.code = 20;
+                row.label = "changed".into();
+            });
+        }))
+        .is_err()
+    );
+    assert_eq!(table.unload().unwrap(), before);
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            table.upsert(HashedSavedRow {
+                id: 1,
+                code: 20,
+                label: "changed".into(),
+            });
+        }))
+        .is_err()
+    );
+    assert_eq!(table.unload().unwrap(), before);
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            table.update(&1, |row| {
+                row.id = 4;
+                row.code = 40;
+                panic!("caller failed");
+            });
+        }))
+        .is_err()
+    );
+    assert_eq!(table.unload().unwrap(), before);
+    for id in 1..=3u64 {
+        assert_eq!(table.select_by_code(&(id * 10)).unwrap().id, id);
+        assert_eq!(table.select_by_label(&format!("row-{id}")).len(), 1);
+    }
+    table.delete(&1).unwrap();
+    table.compact();
+    assert_eq!(table.select_by_code(&20).unwrap().id, 2);
+    assert_eq!(table.select_by_code(&30).unwrap().id, 3);
+}
+
+#[test]
+fn vec_declared_query_cannot_steal_another_rows_unique_key() {
+    let mut table = TicketWorkTable::new();
+    for id in 0..2u64 {
+        table
+            .insert(TicketRow {
+                id,
+                owner: id,
+                state: 0,
+                amount: 100 + id,
+            })
+            .unwrap();
+    }
+    let before = table.unload().unwrap();
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            table.update_amount_by_id(AmountByIdQuery { amount: 101 }, &0);
+        }))
+        .is_err()
+    );
+    assert_eq!(table.unload().unwrap(), before);
+    assert_eq!(table.select_by_amount(&100).unwrap().id, 0);
+    assert_eq!(table.select_by_amount(&101).unwrap().id, 1);
+}
+
+#[test]
+fn vec_secondary_key_churn_does_not_retain_empty_posting_lists() {
+    let mut table = HashedSavedWorkTable::new();
+    table
+        .insert(HashedSavedRow {
+            id: 1,
+            code: 1,
+            label: "initial".into(),
+        })
+        .unwrap();
+    table
+        .insert(HashedSavedRow {
+            id: 2,
+            code: 2,
+            label: "stable".into(),
+        })
+        .unwrap();
+    for revision in 0..100 {
+        assert!(table.update(&1, |row| row.label = format!("edited-{revision}")));
+        table.upsert(HashedSavedRow {
+            id: 1,
+            code: 1,
+            label: format!("replaced-{revision}"),
+        });
+        assert_eq!(table.label_map.len(), 2, "secondary index must contain only live keys");
+    }
+    table.delete(&1).unwrap();
+    assert_eq!(table.label_map.len(), 1);
+    assert_eq!(table.select_by_label(&"stable".into())[0].id, 2);
+    table.delete(&2).unwrap();
+    assert!(table.label_map.is_empty());
 }

@@ -51,8 +51,10 @@ page persists an empty directory before advertising it as reusable. Reload
 restores free-range ownership so append allocation cannot overlap it.
 
 The separate Vec snapshot codec also uses version 3, but has a different
-payload: an archived Vec<Row>, a count at P-8 and a checksum at P-4. It
-starts with a data page and a row-type fingerprint; an ordinary WorkTable
+payload: an archived Vec<Row>, a count at P-12, a row-type fingerprint at P-8
+and a checksum at P-4. It
+starts with an archived-rows page (type 4), a zero space id and a row-type
+fingerprint in its 12-byte trailer; an ordinary WorkTable
 space starts with a SpaceInfo page and schema metadata. These files are not
 interchangeable. Page version alone does not identify the container.
 

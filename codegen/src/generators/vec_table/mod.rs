@@ -464,6 +464,7 @@ pub fn expand(
 
     // Per-index statement fragments, so the method bodies below stay readable.
     let mut index_reject_duplicate = Vec::new();
+    let mut index_validate_replacement = Vec::new();
     let mut index_insert = Vec::new();
     let mut index_upsert_move = Vec::new();
     let mut index_delete_remove = Vec::new();
@@ -488,6 +489,15 @@ pub fn expand(
         } else {
             quote! {}
         });
+        if unique {
+            let owner = unique_get(repr, &map, &key);
+            index_validate_replacement.push(quote! {
+                assert!(
+                    #owner.is_none_or(|owner| owner == at),
+                    "mutation gave a row a unique secondary key another row already holds"
+                );
+            });
+        }
 
         index_insert.push(if unique {
             unique_insert(repr, &map, &owned, &at)
@@ -525,6 +535,9 @@ pub fn expand(
                     let #was = self.row_at(at).#column.clone();
                     if let Some(positions) = #map.get_mut(&#was) {
                         positions.retain(|p| *p != at);
+                        if positions.is_empty() {
+                            #map.remove(&#was);
+                        }
                     }
                     #map.entry(#owned).or_default().push(at);
                 },
@@ -539,10 +552,12 @@ pub fn expand(
             match repr {
                 Repr::Arctic => quote! { let _ = #map.remove_pair(&row.#column, &(at as u64)); },
                 _ => quote! {
-                    #map.retain(|_, positions| {
+                    if let Some(positions) = #map.get_mut(&row.#column) {
                         positions.retain(|p| *p != at);
-                        !positions.is_empty()
-                    });
+                        if positions.is_empty() {
+                            #map.remove(&row.#column);
+                        }
+                    }
                 },
             }
         });
@@ -680,6 +695,9 @@ pub fn expand(
                 _ => quote! {
                     if let Some(positions) = #map.get_mut(&#before) {
                         positions.retain(|p| *p != at);
+                        if positions.is_empty() {
+                            #map.remove(&#before);
+                        }
                     }
                     #map.entry(#now).or_default().push(at);
                 },
@@ -910,6 +928,25 @@ pub fn expand(
                 worktable::prelude::to_pages(&live)
             }
 
+            /// Live rows from `first` onward, numbered from `pages_before`.
+            ///
+            /// `first` counts live rows in insertion order, skipping ghosts.
+            /// Pass the existing byte length divided by the codec PAGE_SIZE
+            /// as `pages_before`. The existing terminal page is not rewritten.
+            /// Use this only for newly inserted rows: updates, deletes or
+            /// changes before the saved cursor require a full snapshot.
+            ///
+            /// # Errors
+            ///
+            /// Refuses oversized rows or page-number overflow.
+            pub fn unload_appending(&self, first: usize, pages_before: u32)
+                -> Result<worktable::prelude::Vec<u8>, worktable::vec_hydrate::UnloadError>
+            {
+                let live: worktable::prelude::Vec<#row_ident> =
+                    self.rows.iter().flatten().skip(first).cloned().collect();
+                worktable::vec_hydrate::to_pages_at(&live, pages_before)
+            }
+
             /// A table back from pages, with every index rebuilt.
             ///
             /// The indexes are not stored. They are positions into the row
@@ -1046,13 +1083,6 @@ pub fn expand(
                     .expect("an index position always names a live row")
             }
 
-            #[inline]
-            fn row_at_mut(&mut self, at: usize) -> &mut #row_ident {
-                self.rows[at]
-                    .as_mut()
-                    .expect("an index position always names a live row")
-            }
-
             /// Row bytes plus index bytes.
             ///
             /// The same name and the same intent as the paged table's
@@ -1141,8 +1171,14 @@ pub fn expand(
             }
 
             /// Insert, or replace the row this key already names.
+            ///
+            /// # Panics
+            ///
+            /// Refuses a replacement whose unique secondary key belongs to
+            /// another row, before changing either the row or its indexes.
             pub fn upsert(&mut self, row: #row_ident) {
                 if let Some(at) = #pk_get_for_upsert {
+                    #(#index_validate_replacement)*
                     #(#index_upsert_move)*
                     self.rows[at] = Some(row);
                     return;
@@ -1174,8 +1210,8 @@ pub fn expand(
 
             #(#query_methods)*
 
-            /// Edit a row where it sits, then repair whatever indexes it moved
-            /// under.
+            /// Edit a cloned candidate, validate unique keys, then replace
+            /// the row and repair its indexes.
             ///
             /// `worktable-vec` hands out `&mut (K, V)` for this, but only from
             /// `LinearTable`, which has no indexes to invalidate. Doing that
@@ -1188,30 +1224,30 @@ pub fn expand(
             ///
             /// # Panics
             ///
-            /// If the edit gives the row a primary key that another row
-            /// already holds. The row is restored first, so the table is
-            /// unchanged; this is a panic rather than an error because the
-            /// alternative is a table with two rows under one key, and there
-            /// is no return value a caller could sensibly ignore.
+            /// If the edit gives the row a primary or unique secondary key
+            /// that another row holds. The closure edits a cloned candidate;
+            /// a collision or a panic inside the closure leaves the stored
+            /// row and every index unchanged.
             pub fn update(&mut self, key: &#pk_type, edit: impl FnOnce(&mut #row_ident)) -> bool {
                 let Some(at) = #pk_get_for_select else {
                     return false;
                 };
-                // Only the key columns are copied, not the row. They are what
-                // the indexes are keyed on, so they are the only things whose
-                // "before" the repair below needs.
+                // Validate a candidate before committing any row or index
+                // mutation. In particular, a panicking user closure must not
+                // leave a changed row behind stale indexes.
+                let mut row = self.row_at(at).clone();
+                edit(&mut row);
+                let now_pk = row.#pk.clone();
+                let taken = #pk_get_for_moved_row;
+                assert!(
+                    taken.is_none_or(|other| other == at),
+                    "update gave a row a primary key another row already holds"
+                );
+                #(#index_validate_replacement)*
                 let was_pk = self.row_at(at).#pk.clone();
                 #(let #index_before = self.row_at(at).#index_columns.clone();)*
-
-                edit(self.row_at_mut(at));
-
-                if self.row_at(at).#pk != was_pk {
-                    let now_pk = self.row_at(at).#pk.clone();
-                    let taken = #pk_get_for_moved_row;
-                    if taken.is_some_and(|other| other != at) {
-                        self.row_at_mut(at).#pk = was_pk;
-                        panic!("update gave a row a primary key another row already holds");
-                    }
+                self.rows[at] = Some(row);
+                if now_pk != was_pk {
                     #pk_remove_old
                     #pk_reinsert_moved
                 }
@@ -1473,8 +1509,8 @@ fn gen_queries(
         let pick = selected(&op.by, unique);
         let doc = format!(
             "`in_place {name}` keyed by `{}`.\n\n\
-             Hands `{column}` to the closure where it sits, rather than reading the \
-             row out and writing it back. Returns how many rows it reached.",
+             Hands a cloned candidate's `{column}` to the closure, then validates \
+             unique keys before replacing the row. Returns how many rows it reached.",
             op.by
         );
         methods.push(quote! {

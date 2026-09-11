@@ -1015,13 +1015,35 @@ impl InMemoryGenerator {
                         .unseal_unchecked()
                 };
 
-                let mut link: Link = self.0.indexes
-                    .#index
-                    .get_value(#by)
-                    .map(Into::into)
-                    .ok_or(WorkTableError::NotFound)?;
-
-                let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
+                let pk = {
+                    let mut retries = 0u32;
+                    loop {
+                        // Pin before reading the index so a relocated slot
+                        // cannot be reclaimed and reused while resolving its PK.
+                        // Drop the pin before yielding or awaiting the row lock.
+                        let resolved = {
+                            let _read_guard = self.0.data.read_guard();
+                            let link: Link = self.0.indexes.#index.get_value(#by)
+                                .map(Into::into)
+                                .ok_or(WorkTableError::NotFound)?;
+                            self.0.data.select_non_ghosted(link)
+                        };
+                        match resolved {
+                            core::result::Result::Ok(found) => break found.get_primary_key(),
+                            core::result::Result::Err(error) if error.is_row_absent() => {
+                                // Reinsert publishes a replacement before retiring
+                                // the old slot. Resolve the index again, rather than
+                                // reporting a deleted row from that stale slot.
+                                if retries >= 64 {
+                                    return Err(WorkTableError::NotFound);
+                                }
+                                retries += 1;
+                                worktable::prelude::yield_now().await;
+                            }
+                            core::result::Result::Err(error) => return Err(error.into()),
+                        }
+                    }
+                };
 
                 let pending_lock = { #custom_lock };
                 let _guard = pending_lock.into_guard_with_mutation();
