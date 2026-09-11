@@ -3,7 +3,7 @@
 //! # Why this is a separate binary
 //!
 //! The claim behind the key is about the *fixed apparatus* a partition
-//! allocates at creation: an empty partition of the 832-byte-row shape
+//! allocates at creation: an empty partition of the 88-byte-row shape
 //! web3.trading runs measures about 28 KB before it holds a single row.
 //!
 //! `memory_by_key` and `memory_total` cannot see that. They report `used_bytes`
@@ -25,32 +25,63 @@
 //! difference between the arms is `partition_max_size`, so the difference in
 //! the result is what the key buys.
 //!
-//! Allocation is counted, not resident memory: freed-and-reallocated bytes are
-//! counted once each, and the allocator's own bookkeeping is invisible. That
-//! makes the figure a lower bound on the saving and an honest one, because both
-//! arms are undercounted the same way.
+//! This counts requested allocation bytes plus positive reallocation growth.
+//! Freed bytes are not subtracted, and allocator bookkeeping is invisible.
+//! It measures allocation demand, not resident or retained memory; it does not
+//! establish a lower bound on either shape's resident-memory saving.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use worktable::prelude::*;
 use worktable::worktable;
 
 /// Counts bytes handed out while it is switched on.
 ///
-/// Off by default and switched on around the region being measured, so the test
-/// harness's own allocations, which happen on other threads and at other times,
-/// are not charged to either arm.
+/// Each thread has its own region, so concurrent tests and harness allocations
+/// on other threads cannot reset or add to the current test's count.
 struct Counting;
 
-static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-static COUNTING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    // Constant initialization does not allocate inside the global allocator.
+    static ALLOCATED: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+fn charge(bytes: usize) {
+    // Allocation during TLS teardown is outside a measurement region.
+    let _ = ALLOCATED.try_with(|count| {
+        if let Some(total) = count.get() {
+            count.set(Some(total + bytes));
+        }
+    });
+}
+
+struct AllocationRegion;
+
+impl AllocationRegion {
+    fn start() -> Self {
+        ALLOCATED.with(|count| {
+            assert!(count.get().is_none(), "allocation regions must not overlap");
+            count.set(Some(0));
+        });
+        Self
+    }
+
+    fn finish(self) -> usize {
+        ALLOCATED.with(|count| count.take().expect("active allocation region"))
+    }
+}
+
+impl Drop for AllocationRegion {
+    fn drop(&mut self) {
+        // Restore disabled accounting on both normal return and panic.
+        ALLOCATED.with(|count| count.set(None));
+    }
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
-            ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
-        }
+        charge(layout.size());
         unsafe { System.alloc(layout) }
     }
 
@@ -59,8 +90,8 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) && new_size > layout.size() {
-            ALLOCATED.fetch_add(new_size - layout.size(), Ordering::Relaxed);
+        if new_size > layout.size() {
+            charge(new_size - layout.size());
         }
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -75,11 +106,9 @@ static ALLOCATOR: Counting = Counting;
 /// this thread, so the counter is not picking up a background task's
 /// allocations. A `worktable!` with `persist: false` starts no tasks.
 fn allocated_by<T>(work: impl FnOnce() -> T) -> (T, usize) {
-    ALLOCATED.store(0, Ordering::Relaxed);
-    COUNTING.store(true, Ordering::Relaxed);
+    let region = AllocationRegion::start();
     let out = work();
-    COUNTING.store(false, Ordering::Relaxed);
-    (out, ALLOCATED.load(Ordering::Relaxed))
+    (out, region.finish())
 }
 
 // The shape web3.trading runs: an exchange id inside a symbol.
@@ -200,10 +229,9 @@ async fn a_dense_partition_costs_a_fraction_of_a_full_one() {
     // therefore carries whatever the futures cost, which is a real cost of the
     // shape and not a measurement artefact: a caller of the full table pays it.
     //
-    // The runtime is `current_thread`, so nothing else is running while these
-    // awaits are in flight and no other thread's allocations land in the count.
-    ALLOCATED.store(0, Ordering::Relaxed);
-    COUNTING.store(true, Ordering::Relaxed);
+    // The runtime is `current_thread`, so this future stays on the thread whose
+    // region is active. Other test threads have independent counters.
+    let region = AllocationRegion::start();
     let books = FullPartitions::new();
     for symbol in 0..PARTITIONS {
         let book = books.partition_or_create(symbol).expect("fresh");
@@ -211,8 +239,7 @@ async fn a_dense_partition_costs_a_fraction_of_a_full_one() {
             book.insert(full_row(exchange_id)).await.expect("fresh");
         }
     }
-    COUNTING.store(false, Ordering::Relaxed);
-    let full_bytes = ALLOCATED.load(Ordering::Relaxed);
+    let full_bytes = region.finish();
 
     let rows = usize::from(PARTITIONS) * usize::from(ROWS);
     let payload = rows * core::mem::size_of::<DenseRow>();
@@ -291,4 +318,44 @@ fn an_empty_dense_partition_allocates_almost_nothing() {
         "an empty full partition carries apparatus an empty dense one does not: \
          {dense_bytes} against {full_bytes}"
     );
+}
+
+#[test]
+fn concurrent_allocation_regions_are_independent() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let ready = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let measure = |bytes| {
+            let (allocation, counted) = allocated_by(|| {
+                ready.fetch_add(1, Ordering::SeqCst);
+                while ready.load(Ordering::SeqCst) != 2 {
+                    std::hint::spin_loop();
+                }
+                let allocation = vec![0u8; bytes];
+                std::hint::black_box(&allocation);
+                done.fetch_add(1, Ordering::SeqCst);
+                while done.load(Ordering::SeqCst) != 2 {
+                    std::hint::spin_loop();
+                }
+                allocation
+            });
+            assert_eq!(counted, bytes);
+            assert_eq!(allocation.len(), bytes);
+        };
+        let first = scope.spawn(move || measure(1024));
+        let second = scope.spawn(move || measure(4096));
+        first.join().unwrap();
+        second.join().unwrap();
+    });
+}
+
+#[test]
+fn unwinding_disables_allocation_accounting() {
+    let _ = std::panic::catch_unwind(|| allocated_by(|| panic!("end region")));
+    ALLOCATED.with(|count| assert_eq!(count.get(), None));
+    let (allocation, counted) = allocated_by(|| vec![0u8; 1024]);
+    std::hint::black_box(&allocation);
+    assert_eq!(counted, 1024);
 }
