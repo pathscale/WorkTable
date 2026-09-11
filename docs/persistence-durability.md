@@ -17,7 +17,7 @@ This is an explicit product boundary, not an implied durability guarantee.
 | Graceful process exit after `close()` | The WorkTable worker completed all writes it reported. | Survival of a subsequent power loss before the operating system commits buffered writes. |
 | Process crash or `SIGKILL` | No row-fidelity guarantee for an interrupted batch. The next load either returns a state whose primary links and rows validate, or returns `PersistenceLoadError`. | Preservation of the latest acknowledged changes. |
 | Power loss | The next load applies the same validation/refusal boundary. | Any acknowledged-change retention window; current batches do not call `fsync`. |
-| S3 synchronization | Successful calls report completion of the configured upload path. | A transactionally consistent multi-file snapshot. Treat independently uploaded objects as best-effort unless an application-managed snapshot generation protects them. |
+| S3 synchronization | A successful persistence operation has uploaded every new immutable chunk and then committed one checksummed manifest covering the data, primary index, and secondary indexes. Restore validates all referenced chunks before atomically installing the local directory. | S3 makes the local disk engine's completed state remotely recoverable; it does not make the local multi-file update power-loss atomic, call `fsync`, or provide multi-writer coordination between processes. |
 
 Call `close()` during orderly shutdown. If `wait_for_ops()` is used before a
 non-consuming shutdown path, stop application writers first; otherwise a writer can
@@ -56,6 +56,34 @@ match MyWorkTable::load(engine).await {
 The strict audit is proportional to the number of primary-index entries. It runs only
 during `load()` and adds no branch, lock, or scan to steady-state insert, select,
 update, or delete paths.
+
+## S3 generation protocol
+
+The S3 engine divides each table file into fixed 4 MiB chunks and names each chunk by
+its BLAKE3 content hash. A mutation still scans and hashes the local table files after
+the disk engine completes, but it uploads only content absent from the preceding
+committed generation. For example, a change confined to one chunk of a 10 MiB file
+uploads 4 MiB of file data, plus the small manifest, instead of re-uploading 10 MiB.
+Dirty-range reporting from the disk spaces can remove the remaining local scan in a
+future compatible optimization.
+
+The mutable `manifest.v1` object is the only remote commit point. It is written after
+all referenced immutable chunks. A failed manifest PUT leaves the preceding generation
+visible; a failed response is resolved by reading the manifest back and comparing its
+exact bytes. Startup refuses a corrupt manifest, a missing chunk, a length mismatch, or
+a hash mismatch. It restores into a sibling staging directory and renames that directory
+into place only after every table file validates, so a failed remote restore leaves the
+existing local table untouched.
+
+Chunks no longer referenced by the current manifest are retained. This prevents a
+concurrent restore that already read the prior manifest from losing a chunk underneath
+it. Object reclamation therefore belongs in an explicit offline or lease-aware garbage
+collector; the alpha engine does not delete remote chunks automatically.
+
+When `manifest.v1` is absent, startup lists and restores the former whole-file layout.
+The next successful mutation uploads chunks and establishes the first manifest. Once a
+manifest exists, its failure is fatal; WorkTable will not silently continue from stale
+local files and overwrite a newer remote generation.
 
 ## Offline index recovery
 

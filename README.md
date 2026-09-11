@@ -82,7 +82,12 @@ exported from the crate root; the prelude carries `DiskPersistenceEngine`,
 types (`InsertOperation`, `UpdateOperation`, `DeleteOperation`, `AcknowledgeOperation`).
 
 S3 support layers *on top of* the disk engine rather than replacing it.
-`S3SyncDiskPersistenceEngine` wraps a `DiskPersistenceEngine` and syncs it.
+`S3SyncDiskPersistenceEngine` wraps a `DiskPersistenceEngine`. It stores table files
+as immutable 4 MiB content-addressed chunks, uploads only chunks that changed since
+the last committed generation, and publishes one table manifest after every chunk is
+available. Restore validates the manifest and every chunk before atomically replacing
+the local working copy. Existing whole-file S3 layouts remain readable and migrate to
+the manifest layout on their next successful write.
 
 ```toml
 [dependencies]

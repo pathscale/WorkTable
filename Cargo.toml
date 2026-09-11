@@ -40,7 +40,7 @@ perf_measurements = ["std", "dep:performance_measurement", "dep:performance_meas
 # separately, and a default-on flag would make this branch red until they do.
 # The arm that runs today declares no runtime and is not behind this flag.
 runtime-backends = []
-s3-support = ["std", "dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
+s3-support = ["std", "dep:blake3", "dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
 # path and into the background persistence worker. The persisted page format
 # is unchanged, so stores remain readable with or without this feature.
@@ -61,6 +61,7 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 arc-swap = { version = "1", default-features = false, optional = true }
 async-trait = "0.1"
 arctic = { package = "arctic-wt", version = "^0.1, >=0.1.12", default-features = false, features = ["smr-ps-reclaim"] }
+blake3 = { version = "1", optional = true }
 # `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
 # crate links the standard library through a dependency. That matters for
 # EKOPathRS bootstrapping, which is what `no_std` here is for, not for any

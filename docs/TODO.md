@@ -82,9 +82,10 @@ The complete evidence and beta.13/beta.15/beta.17 performance grids are in
 benchmark workspace also passes its all-target test-mode gate against the
 local WorkTable/WTI/DataBucket/ps-reclaim stack.
 
-The placeholder ignored S3 probe still rejects its literal `test` endpoint
-before I/O, but configured runtime coverage is now complete through the local-
-source support.cafe consumer. Beta.17 downloaded the live Tigris dataset,
+The S3 engine now has a stateful offline object-service test covering immutable
+chunk upload, table-manifest restore, and an interrupted manifest commit. Configured
+runtime coverage is also complete through the local-source support.cafe consumer.
+Beta.17 downloaded the live Tigris dataset,
 recovered three legacy tables with missing secondary entries, rebuilt them into
 a rollback-safe prefix, strict-loaded all six tables, performed an S3-backed
 mutation and reloaded it after restart. ACME, HTTPS and WebSocket startup also

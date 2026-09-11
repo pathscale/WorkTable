@@ -1093,10 +1093,25 @@ For an `Arc<Table>`, release all other owners and use `Arc::try_unwrap` first.
 Under `s3-support`, `s3_sync_persistence!(TableName)` generates an S3-backed engine alias.
 `S3DiskConfig` combines `DiskConfig` with `S3Config` fields `bucket_name`, `endpoint`,
 `access_key`, `secret_key`, optional `region` and optional `prefix`. Supply credentials
-from application configuration. Local disk remains the working copy; this is not an
-S3-native transactional engine. The HTTP implementation is blocking `ureq`, so it does
-not require a Tokio socket reactor. Networked performance and failure behavior require
-a configured S3 service and are not covered by the offline performance gate.
+from application configuration. Local disk remains the working copy. After each completed
+disk operation, the engine hashes fixed 4 MiB regions, uploads only content-addressed
+chunks absent from the preceding generation, then replaces one checksummed table manifest.
+That manifest is the remote commit point for the data file and all index files together.
+A failed manifest write leaves the preceding complete generation visible.
+
+Startup validates the manifest, chunk lengths, BLAKE3 hashes and complete file lengths in
+a sibling staging directory. Only a complete table is renamed over the local working copy.
+A committed manifest that is corrupt or incomplete is a startup error; the engine does not
+continue from possibly stale local data. An old whole-file S3 layout is restored when no
+manifest exists and migrates on its next successful mutation. Immutable chunks that fall
+out of the current manifest are retained because deleting them could race a restore that
+already read the prior generation; reclaim them only with an offline or lease-aware tool.
+
+The optimization removes repeated network payload, including the historical whole-table
+upload after a small mutation. It still reads and hashes the local table files; dirty-range
+reporting is a future compatible optimization for that local work. The HTTP implementation
+is blocking `ureq`, so it does not require a Tokio socket reactor. S3 does not add local
+`fsync`, multi-process writer coordination, or power-loss atomicity to the disk engine.
 
 *The v3 format cutover is a storage migration.* Ordinary persisted tables now
 write format 3, with a page-local directory that records every live row and a

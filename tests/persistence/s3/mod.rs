@@ -1,6 +1,10 @@
 use crate::remove_dir_if_exists;
 // A tokio `TcpStream`, so tokio's extension traits: this is the mock S3
 // server the test talks to, not the storage path the crate took off tokio.
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -19,14 +23,25 @@ worktable!(
 
 s3_sync_persistence!(TestS3WorkTable);
 
-async fn fake_s3() -> (String, JoinHandle<()>) {
+#[derive(Clone, Default)]
+struct FakeS3State {
+    objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    puts: Arc<Mutex<Vec<(String, usize)>>>,
+    gets: Arc<Mutex<Vec<String>>>,
+    reject_manifest_puts: Arc<AtomicBool>,
+}
+
+async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let state = FakeS3State::default();
+    let server_state = state.clone();
     let task = tokio::spawn(async move {
         loop {
             let Ok((mut socket, _)) = listener.accept().await else {
                 break;
             };
+            let state = server_state.clone();
             tokio::spawn(async move {
                 let mut request = Vec::new();
                 let mut chunk = [0_u8; 8192];
@@ -59,22 +74,48 @@ async fn fake_s3() -> (String, JoinHandle<()>) {
                     request.extend_from_slice(&chunk[..read]);
                 }
 
-                let is_list = request.starts_with(b"GET ");
-                let body = if is_list {
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>test</Name><Prefix></Prefix><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>"
+                let request_line = std::str::from_utf8(&request[..header_end])
+                    .unwrap()
+                    .lines()
+                    .next()
+                    .unwrap();
+                let mut request_parts = request_line.split_whitespace();
+                let method = request_parts.next().unwrap();
+                let target = request_parts.next().unwrap();
+                let path = target.split('?').next().unwrap();
+                let key = path.strip_prefix("/test/").unwrap_or(path.trim_start_matches('/'));
+
+                let (status, content_type, body) = if method == "PUT" {
+                    let body = request[header_end..header_end + content_length].to_vec();
+                    if key.ends_with("/manifest.v1") && state.reject_manifest_puts.load(Ordering::Acquire) {
+                        ("500 Internal Server Error", "text/plain", b"injected failure".to_vec())
+                    } else {
+                        state.objects.lock().unwrap().insert(key.to_string(), body);
+                        state.puts.lock().unwrap().push((key.to_string(), content_length));
+                        ("200 OK", "application/octet-stream", Vec::new())
+                    }
+                } else if target.contains("list-type=2") {
+                    (
+                        "200 OK",
+                        "application/xml",
+                        b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>test</Name><Prefix></Prefix><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>".to_vec(),
+                    )
+                } else if let Some(body) = state.objects.lock().unwrap().get(key).cloned() {
+                    state.gets.lock().unwrap().push(key.to_string());
+                    ("200 OK", "application/octet-stream", body)
                 } else {
-                    ""
+                    ("404 Not Found", "text/plain", b"not found".to_vec())
                 };
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
+                    "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
                 );
                 socket.write_all(response.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
             });
         }
     });
-    (format!("http://{address}"), task)
+    (format!("http://{address}"), state, task)
 }
 
 #[test]
@@ -89,7 +130,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
     runtime.block_on(async {
         remove_dir_if_exists("tests/data/s3/compile_test".to_string()).await;
 
-        let (endpoint, server) = fake_s3().await;
+        let (endpoint, s3, server) = fake_s3().await;
 
         let config = S3DiskConfig {
             disk: DiskConfig::new_with_table_name(
@@ -140,19 +181,61 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             table.insert(TestS3Row { id: 512, value: 512 }).await.unwrap();
             table.delete(100).await.unwrap();
             table.wait_for_ops().await.unwrap();
-        }
 
+            // New immutable chunks may arrive before the commit point. If the
+            // manifest PUT fails, a fresh reader must still see the preceding
+            // complete table generation.
+            s3.reject_manifest_puts.store(true, Ordering::Release);
+            table.insert(TestS3Row { id: 513, value: 513 }).await.unwrap();
+            assert!(table.wait_for_ops().await.is_err());
+        }
+        s3.reject_manifest_puts.store(false, Ordering::Release);
+
+        let puts = s3.puts.lock().unwrap().clone();
+        assert!(puts.iter().any(|(key, _)| key.ends_with("/manifest.v1")));
+        assert!(puts.iter().any(|(key, _)| key.contains("/chunks/")));
+        assert!(
+            puts.iter()
+                .all(|(key, _)| key.ends_with("/manifest.v1") || key.contains("/chunks/")),
+            "new S3 writes must use immutable chunks and the table manifest: {puts:?}"
+        );
+
+        // Removing the complete local table forces a strict remote restore.
+        // The one manifest must reconstruct data and every index before the
+        // directory is atomically installed for DiskPersistenceEngine.
+        remove_dir_if_exists(config.disk.table_path().to_string()).await;
         {
-            let engine = TestS3PersistenceEngine::new(config.disk.clone()).await.unwrap();
+            let engine = TestS3S3SyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestS3WorkTable::load(engine).await.unwrap();
             let rows = table.select_all().execute().unwrap();
             assert_eq!(rows.len(), 512);
             assert!(table.select(100).is_none(), "deleted primary key returned");
+            assert!(table.select(513).is_none(), "uncommitted S3 generation became visible");
             for id in (0..=512).filter(|id| *id != 100) {
                 let row = table.select(id).expect("every primary key survives");
                 let expected = if id == 257 { 10_000 } else { id };
                 assert_eq!(row.value, expected, "wrong value for primary key {id}");
             }
+        }
+
+        // A committed manifest is authoritative, but a failed restore must
+        // leave a usable local table untouched until the remote damage is
+        // repaired.
+        let missing_chunk = s3
+            .gets
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|key| key.contains("/chunks/"))
+            .cloned()
+            .unwrap();
+        s3.objects.lock().unwrap().remove(&missing_chunk);
+        assert!(TestS3S3SyncPersistenceEngine::new(config.clone()).await.is_err());
+        {
+            let engine = TestS3PersistenceEngine::new(config.disk.clone()).await.unwrap();
+            let table = TestS3WorkTable::load(engine).await.unwrap();
+            assert_eq!(table.select_all().execute().unwrap().len(), 512);
+            assert_eq!(table.select(257).unwrap().value, 10_000);
         }
 
         server.abort();
