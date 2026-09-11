@@ -263,12 +263,8 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
         }
     }
 
-    // Parsed for their diagnostics and then dropped. No rule in `validate`
-    // reads either yet, but the grammar has to accept both here or `check`
-    // would reject a declaration the macro compiles, which is the one thing
-    // this function exists not to do.
+    // Runtime selection does not affect the shared validation rules.
     let _ = runtime;
-    let _ = columnar_indexes;
 
     let mut columns = columns.ok_or_else(|| {
         syn::Error::new(
@@ -278,6 +274,9 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     })?;
     if let Some(indexes) = indexes {
         columns.indexes = indexes;
+    }
+    if let Some(indexes) = columnar_indexes {
+        columns.columnar_indexes = indexes.indexes;
     }
     Ok((columns, queries, config, persistence))
 }

@@ -303,6 +303,9 @@ pub fn all(
 ) -> Vec<syn::Error> {
     let mut errors = Vec::new();
     index_backends_into(columns, persistence, &mut errors);
+    if let Err(error) = validate_columnar_indexes(columns) {
+        errors.push(error);
+    }
     if let Err(error) = validate_page_size(config, persistence) {
         errors.push(error);
     }

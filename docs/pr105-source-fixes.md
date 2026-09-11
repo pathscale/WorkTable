@@ -1,3 +1,5 @@
+> Historical source review at the revision below. The September release audit has since compiled and tested its retained fixes; current release evidence is in perf-benchmarks/docs/release-readiness.md. Its query-profile scheduling warning remains material and must not be mistaken for completed execution support.
+
 # PR 105 source-only follow-up
 
 These changes are best-effort source fixes against revision

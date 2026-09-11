@@ -24,11 +24,9 @@ proc-macro = true
 [dependencies]
 # The schema language, extracted so consumers other than this macro can read
 # a declaration. See its crate docs for why that needed a separate crate.
-# This generator uses the columnar/runtime model and validators in beta.19,
-# which is the floor rather than the only acceptable version. A caret, not
-# `=`: an exact pin makes every dependent that names any other beta.19.x
-# unresolvable, and nothing here needs that.
-worktable_dsl = { path = "../dsl", version = "^1.0.0-beta.19" }
+# Pin the reviewed pre-release schema model and validators exactly.
+# Downstream releases advance this together with their generated API.
+worktable_dsl = { path = "../dsl", version = "=1.0.0-beta.19" }
 # Test-only. As a normal dependency this proc-macro crate put `rkyv` with its
 # default features into the graph, which turned on `rkyv/std` for the target
 # build too and dragged `ptr_meta` with it. The generated code names `rkyv`
