@@ -697,3 +697,69 @@ async fn pinned_scopes_work_from_several_threads_at_once() {
         r.join().unwrap();
     }
 }
+
+// A `Vec`-backed table is a legal partition payload.
+//
+// This was refused, on the grounds that "`vec: true` is one contiguous `Vec`
+// and has nothing to partition". That reads the relationship backwards.
+// Partitioning is what makes the `Vec` shape correct: a `Vec` table is
+// single-writer and grows linearly, and cutting the data into many small
+// independent ones is exactly how you keep both of those from mattering.
+worktable!(
+    name: Book,
+    vec: true,
+    partition_by: symbol_id: u16,
+    partition_max_size: u64,
+    columns: {
+        exchange_id: u8 primary_key,
+        bid: f64,
+        ask: f64
+    }
+);
+
+#[test]
+fn a_vec_table_can_be_partitioned() {
+    let books = BookPartitions::new();
+
+    // `insert` on a `vec: true` table takes `&mut self`, and the router hands
+    // out `Arc`, so a partition is populated before it is handed over rather
+    // than after. That is the shape the callers wanting this already have:
+    // every row of a book is known when the book is created.
+    for symbol in 0u16..4 {
+        let mut book = BookWorkTable::with_capacity(3);
+        for exchange_id in 0u8..3 {
+            book.insert(BookRow {
+                exchange_id,
+                bid: f64::from(symbol) + f64::from(exchange_id) / 10.0,
+                ask: 0.0,
+            })
+            .expect("fresh key");
+        }
+        books
+            .partition_or_insert_with(symbol, move || book)
+            .expect("a fresh partition");
+    }
+
+    assert_eq!(books.len(), 4);
+
+    let book = books.partition(2).expect("declared above");
+    assert_eq!(book.len(), 3);
+    assert_eq!(book.select(&1).expect("present").bid, 2.1);
+
+    // The keys are per partition, not global: every book has an exchange 0.
+    for symbol in 0u16..4 {
+        let book = books.partition(symbol).expect("declared above");
+        assert!(book.select(&0).is_some(), "symbol {symbol} has no exchange 0");
+    }
+
+    // `used_bytes` is what the router totals, so a Vec payload has to answer
+    // it. Rows alone are 3 * size_of::<BookRow>() per partition, and the index
+    // is on top, so the total must exceed the rows and be finite.
+    let rows_only = 4 * 3 * core::mem::size_of::<BookRow>() as u64;
+    let total = books.memory_total();
+    assert!(total > rows_only, "{total} should exceed the {rows_only} bytes of rows");
+
+    let by_key = books.memory_by_key();
+    assert_eq!(by_key.len(), 4);
+    assert_eq!(by_key.iter().map(|(_, bytes)| bytes).sum::<u64>(), total);
+}

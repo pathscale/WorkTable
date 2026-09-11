@@ -158,7 +158,10 @@ fn resolve(backend: IndexBackend, ty: &TokenStream, span: proc_macro2::Span, wha
     let Some(supported) = worktable_dsl::validate::supported_key_types(backend) else {
         return Ok(repr);
     };
-    if primitive_name(ty).as_deref().is_some_and(|name| supported.contains(&name)) {
+    if primitive_name(ty)
+        .as_deref()
+        .is_some_and(|name| supported.contains(&name))
+    {
         return Ok(repr);
     }
     Err(syn::Error::new(
@@ -333,12 +336,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         .expect("the primary key is a column")
         .clone();
 
-    let pk_repr = resolve(
-        columns.primary_index_backend,
-        &pk_type,
-        pk.span(),
-        "the primary key",
-    )?;
+    let pk_repr = resolve(columns.primary_index_backend, &pk_type, pk.span(), "the primary key")?;
     let pk_map_type = unique_type(pk_repr, &pk_type);
     let mut width_guards = vec![congee_width_guard(pk_repr, &pk_type)];
 
@@ -394,7 +392,11 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     let mut index_delete_shift = Vec::new();
     for ((field, (column, (repr, unique))), _) in index_fields
         .iter()
-        .zip(index_columns.iter().zip(index_reprs.iter().copied().zip(index_unique.iter().copied())))
+        .zip(
+            index_columns
+                .iter()
+                .zip(index_reprs.iter().copied().zip(index_unique.iter().copied())),
+        )
         .zip(0..)
     {
         let map = quote! { self.#field };
@@ -582,8 +584,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         let remove = unique_remove(pk_repr, &pk_map, &quote! { &was_pk });
         quote! { let _ = #remove; }
     };
-    let pk_reinsert_moved =
-        unique_insert(pk_repr, &pk_map, &quote! { self.rows[at].#pk.clone() }, &quote! { at });
+    let pk_reinsert_moved = unique_insert(pk_repr, &pk_map, &quote! { self.rows[at].#pk.clone() }, &quote! { at });
     let pk_shift = unique_shift(pk_repr, &pk_map, &at_expr);
 
     // rkyv's derives only when the table can be written out. They are not free
@@ -724,8 +725,41 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
                 self.rows
             }
 
+            /// Row bytes plus index bytes.
+            ///
+            /// The same name and the same intent as the paged table's
+            /// `used_bytes`, so a partitioned router can total either payload
+            /// without knowing which it holds.
+            ///
+            /// Rows are counted as `len * size_of::<Row>()`: the inline row
+            /// only. A column that owns a heap allocation, a `String` most
+            /// obviously, has its buffer counted by neither this nor the paged
+            /// table's equivalent. The indexes are counted through `MemStat`,
+            /// which is where most of the cost is at small row counts: arctic
+            /// holds about 600 bytes per 24-byte row at 64 rows and does not
+            /// settle until a thousand.
+            #[must_use]
+            pub fn used_bytes(&self) -> u64 {
+                let rows = self.rows.len() * core::mem::size_of::<#row_ident>();
+                let indexes = worktable::prelude::MemStat::heap_size(&self.by_pk)
+                    #(+ worktable::prelude::MemStat::heap_size(&self.#index_fields))*;
+                (rows + indexes) as u64
+            }
+
             #[must_use]
             pub fn len(&self) -> usize {
+                self.rows.len()
+            }
+
+            /// Rows currently in the table.
+            ///
+            /// The same figure as [`Self::len`], under the name the paged
+            /// table uses, so a partitioned router reads either payload
+            /// through one call. There it is genuinely a different number
+            /// (`len` walks pages, `row_count` reads the index), and here the
+            /// rows *are* the vector, so the two coincide.
+            #[must_use]
+            pub fn row_count(&self) -> usize {
                 self.rows.len()
             }
 

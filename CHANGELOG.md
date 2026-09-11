@@ -5,6 +5,19 @@ Change Log
 
 ### Added
 
+- `vec: true` composes with `partition_by`. It was refused, on the grounds
+  that a `Vec` table "is one contiguous `Vec` and has nothing to partition",
+  which reads the relationship backwards: partitioning is what makes the `Vec`
+  shape correct, because a `Vec` table is single-writer and grows linearly and
+  cutting the data into many small independent ones is how you stop both from
+  mattering.
+
+  The router needs `Default`, `used_bytes` and `row_count` from whatever it
+  holds. A `vec: true` table already had the first, and now has the other two.
+  Its `insert` still takes `&mut self`, so a partition is populated and then
+  handed over with `partition_or_insert_with` rather than mutated through the
+  `Arc` the router returns.
+
 - `partition_max_size`, required beside `partition_by`. It says how many rows a
   single partition holds, written as an index width rather than a count:
   `bool` is 2 rows, `u8` is 256, `u16` is 65,536, and `u32` or `u64` mean

@@ -151,13 +151,6 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                  drop `vec: true` for a paged table.",
             ));
         }
-        if partition_by.is_some() {
-            return Err(syn::Error::new(
-                name.span(),
-                "`vec: true` is one contiguous `Vec` and has nothing to partition. Remove \
-                 `partition_by:`, or drop `vec: true` for a paged table.",
-            ));
-        }
         if config.is_some() {
             return Err(syn::Error::new(
                 name.span(),
@@ -174,7 +167,21 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                  asked for. Remove `persist:`, or drop `vec: true` for a paged table.",
             ));
         }
-        return crate::generators::vec_table::expand(name, columns);
+        let mut generated = crate::generators::vec_table::expand(name.clone(), columns)?;
+        // The router is storage-agnostic: it needs `Default` and `used_bytes`
+        // from its payload and nothing else, and a `vec: true` table has both.
+        // Partitioning is what makes the `Vec` shape correct rather than
+        // something it has nothing to do with, so this composes instead of
+        // being refused.
+        if let Some(key) = partition_by {
+            generated.extend(crate::generators::partitions::expand(
+                &name,
+                &key,
+                worktable_dsl::Persistence::MemoryOnly,
+            ));
+        }
+        generated.extend(gen_schema_const(&worktable_dsl::Schema::from_tokens(declaration)?));
+        return Ok(generated);
     }
 
     let columnar_chunk_rows = config
