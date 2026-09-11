@@ -10,9 +10,9 @@ use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
 use data_bucket::{
     DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage,
-    parse_data_pages_batch, parse_general_header_by_index, parse_page, persist_page, persist_pages_batch, update_at,
+    parse_data_pages_batch, parse_general_header_by_index, persist_page, persist_pages_batch, update_at,
 };
-use nagoya::io::{Seek as _, Write as _};
+use nagoya::io::{Read as _, Seek as _, Write as _};
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -274,7 +274,27 @@ where
         } else {
             open_or_create_file(path).await?
         };
-        let info = parse_page::<_, PAGE_SIZE, PAGE_SIZE>(&mut data_file, 0).await?;
+        // The metadata occupies the payload, not the page stride. Read its
+        // declared length after validating against that payload. DataBucket's
+        // generic metadata reader takes a u32 capacity while ours is usize;
+        // stable Rust cannot cast a generic const in another const argument.
+        let header = parse_general_header_by_index::<PAGE_SIZE>(&mut data_file, 0).await?;
+        let capacity = (PAGE_SIZE as usize)
+            .checked_sub(data_bucket::GENERAL_HEADER_SIZE)
+            .ok_or_else(|| eyre::eyre!("page stride is smaller than its header"))?;
+        eyre::ensure!(INNER_PAGE_SIZE <= capacity, "inner page exceeds page payload");
+        let length = if header.data_length == 0 {
+            INNER_PAGE_SIZE
+        } else {
+            header.data_length as usize
+        };
+        eyre::ensure!(length <= INNER_PAGE_SIZE, "metadata exceeds inner page capacity");
+        let mut bytes = vec![0; length];
+        data_file.read_exact(&mut bytes).await?;
+        let info = GeneralPage {
+            inner: SpaceInfoPage::from_bytes(&bytes, header.data_version),
+            header,
+        };
         let file_length = crate::fsx::file_metadata(&mut data_file).await?;
         // Mirror the index file's ceil logic: a file whose length is an exact
         // page multiple ends with a full last page, so the plain floor

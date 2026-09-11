@@ -353,11 +353,11 @@ impl Generator {
 
         let parse_pk_page = if self.attributes.pk_unsized {
             quote! {
-                let index = parse_page::<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
+                let index = parse_page::<UnsizedIndexPage<#pk_type, {#inner_const_name as u32}>, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
             }
         } else {
             quote! {
-                let index = parse_page::<IndexPage<#pk_type>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
+                let index = parse_page::<IndexPage<#pk_type>, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, (*page_id).into()).await?;
             }
         };
 
@@ -373,7 +373,7 @@ impl Generator {
                 {
                     let mut primary_index = vec![];
                     let mut primary_file = worktable::prelude::fsx::open_read_only(format!("{}/primary{}", path, #index_extension)).await?;
-                    let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, 0).await?;
+                    let info = parse_page::<SpaceInfoPage<()>, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut primary_file, 0).await?;
                     let file_length = worktable::prelude::fsx::file_metadata(&mut primary_file).await?;
                     // Pages sit at a fixed #page_const_name stride with the
                     // general header inside the slot, so the next free page id
@@ -400,7 +400,7 @@ impl Generator {
                 let (data, data_info) = {
                     let mut data = vec![];
                     let mut data_file = worktable::prelude::fsx::open_read_only(format!("{}/{}", path, #data_extension)).await?;
-                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut data_file, 0).await?;
+                    let info = parse_page::<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut data_file, 0).await?;
                     let file_length = worktable::prelude::fsx::file_metadata(&mut data_file).await?;
                     // ceil(len / stride) counts every occupied page slot,
                     // including the info page at id 0, whether or not the last

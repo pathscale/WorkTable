@@ -325,7 +325,7 @@ impl Generator {
                         let #i: #parsed_type = {
                             let mut #i = vec![];
                             let mut file = worktable::prelude::fsx::open_read_only(format!("{}/{}{}", path, #literal, #index_extension)).await?;
-                            let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut file, 0).await?;
+                            let info = parse_page::<SpaceInfoPage<()>, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut file, 0).await?;
                             let file_length = worktable::prelude::fsx::file_metadata(&mut file).await?;
                             // Pages sit at a fixed #page_const_name stride
                             // (header inside the slot): the next free page id
@@ -335,7 +335,7 @@ impl Generator {
                             let next_page_id = worktable::prelude::Arc::new(core::sync::atomic::AtomicU32::new(page_id as u32));
                             let toc = IndexTableOfContents::<_, { #inner_const_name as u32 }, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
                             for page_id in toc.iter().map(|(_, page_id)| page_id) {
-                                let index = parse_page::<_, { #page_const_name as u32 }, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
+                                let index = parse_page::<_, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
                                 #i.push(index);
                             }
                             (toc.pages, #i)
