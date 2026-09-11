@@ -144,6 +144,33 @@ pub struct DenseRows<T> {
 }
 
 impl<T> DenseRows<T> {
+    /// The rows, for reading.
+    ///
+    /// A shim, because the two `RwLock`s this compiles against do not agree on
+    /// the signature: `parking_lot`'s `read` hands back the guard, and loom's
+    /// hands back a `Result` because it models poisoning. Normalising here
+    /// keeps the eight call sites below free of `cfg`.
+    #[cfg(not(wt_loom))]
+    fn read(&self) -> impl core::ops::Deref<Target = Vec<Option<T>>> + '_ {
+        self.rows.read()
+    }
+
+    #[cfg(wt_loom)]
+    fn read(&self) -> impl core::ops::Deref<Target = Vec<Option<T>>> + '_ {
+        self.rows.read().expect("nothing panics while holding this lock")
+    }
+
+    /// The rows, for writing. See [`Self::read`].
+    #[cfg(not(wt_loom))]
+    fn write(&self) -> impl core::ops::DerefMut<Target = Vec<Option<T>>> + '_ {
+        self.rows.write()
+    }
+
+    #[cfg(wt_loom)]
+    fn write(&self) -> impl core::ops::DerefMut<Target = Vec<Option<T>>> + '_ {
+        self.rows.write().expect("nothing panics while holding this lock")
+    }
+
     /// A partition holding at most `cap` rows, allocating nothing yet.
     #[must_use]
     pub fn new(cap: usize) -> Self {
@@ -204,21 +231,20 @@ impl<T: Clone> DenseRows<T> {
     /// is a key nobody has written, which is what `None` means.
     #[must_use]
     pub fn get(&self, key: usize) -> Option<T> {
-        self.rows.read().get(key)?.clone()
+        self.read().get(key)?.clone()
     }
 
     /// Whether `key` holds a row.
     #[must_use]
     pub fn contains(&self, key: usize) -> bool {
-        self.rows.read().get(key).is_some_and(Option::is_some)
+        self.read().get(key).is_some_and(Option::is_some)
     }
 
     /// Every row present, ascending by key, with its key.
     #[must_use]
     pub fn iter(&self) -> Vec<(usize, T)> {
-        self.rows
-            .read()
-            .iter()
+        let rows = self.read();
+        rows.iter()
             .enumerate()
             .filter_map(|(key, slot)| slot.clone().map(|row| (key, row)))
             .collect()
@@ -233,7 +259,7 @@ impl<T> DenseRows<T> {
     /// type is known.
     pub fn insert(&self, key: usize, row: T) -> Result<(), DenseError> {
         self.in_range(key)?;
-        let mut rows = self.rows.write();
+        let mut rows = self.write();
         Self::make_room(&mut rows, key);
         if rows[key].is_some() {
             return Err(DenseError::Duplicate { key });
@@ -246,7 +272,7 @@ impl<T> DenseRows<T> {
     /// Place `row` at `key`, returning whatever it replaced.
     pub fn upsert(&self, key: usize, row: T) -> Result<Option<T>, DenseError> {
         self.in_range(key)?;
-        let mut rows = self.rows.write();
+        let mut rows = self.write();
         Self::make_room(&mut rows, key);
         let previous = rows[key].replace(row);
         if previous.is_none() {
@@ -260,7 +286,7 @@ impl<T> DenseRows<T> {
     /// The slot stays, holding nothing. Nothing shifts, because a position is
     /// a key: compacting would renumber every row above it.
     pub fn remove(&self, key: usize) -> Option<T> {
-        let mut rows = self.rows.write();
+        let mut rows = self.write();
         let taken = rows.get_mut(key)?.take();
         if taken.is_some() {
             self.live.fetch_sub(1, Ordering::Release);
@@ -275,7 +301,7 @@ impl<T> DenseRows<T> {
     /// cloning it out and back, which at an 832-byte row is the difference
     /// between touching one field and copying the row twice.
     pub fn update<R>(&self, key: usize, edit: impl FnOnce(&mut T) -> R) -> Option<R> {
-        let mut rows = self.rows.write();
+        let mut rows = self.write();
         rows.get_mut(key)?.as_mut().map(edit)
     }
 
@@ -286,7 +312,7 @@ impl<T> DenseRows<T> {
     /// that asserts the cap is not allocated needs to be able to see it.
     #[must_use]
     pub fn slots(&self) -> usize {
-        self.rows.read().len()
+        self.read().len()
     }
 }
 
@@ -304,12 +330,12 @@ impl<T> Default for DenseRows<T> {
 
 impl<T: MemStat> MemStat for DenseRows<T> {
     fn heap_size(&self) -> usize {
-        let rows = self.rows.read();
+        let rows = self.read();
         rows.capacity() * core::mem::size_of::<Option<T>>() + rows.iter().map(|slot| slot.heap_size()).sum::<usize>()
     }
 
     fn used_size(&self) -> usize {
-        let rows = self.rows.read();
+        let rows = self.read();
         rows.len() * core::mem::size_of::<Option<T>>() + rows.iter().map(|slot| slot.used_size()).sum::<usize>()
     }
 }
@@ -363,6 +389,25 @@ mod tests {
         assert_eq!(rows.upsert(1, 99), Ok(Some(10)));
         assert_eq!(rows.get(1), Some(99));
         assert_eq!(rows.row_count(), 1, "replacing is not a second row");
+    }
+
+    #[test]
+    fn upsert_into_an_empty_key_counts_a_new_row() {
+        // The other half of `upsert`. The test above covers replacing, which
+        // must *not* count; this covers arriving, which must. Dropping the
+        // increment here survived every other test in this module, which is how
+        // it was found.
+        let rows = DenseRows::new(8);
+        assert_eq!(rows.upsert(4, 40), Ok(None), "nothing was there");
+        assert_eq!(rows.row_count(), 1);
+
+        // And again into a key that was emptied rather than never used, which
+        // is a different path through the slot vector.
+        rows.remove(4).expect("just upserted");
+        assert_eq!(rows.row_count(), 0);
+        assert_eq!(rows.upsert(4, 41), Ok(None));
+        assert_eq!(rows.row_count(), 1);
+        assert_eq!(rows.get(4), Some(41));
     }
 
     #[test]
@@ -473,5 +518,216 @@ mod tests {
 
         assert_eq!(won.load(Ordering::Relaxed), 1, "exactly one insert may succeed");
         assert_eq!(rows.row_count(), 1);
+    }
+}
+
+#[cfg(all(test, wt_loom))]
+mod loom_tests {
+    //! Loom models of the dense partition's counter and lock protocol.
+    //!
+    //! Run with:
+    //!
+    //! ```text
+    //! RUSTFLAGS="--cfg wt_loom" cargo test --release --lib partition::dense::loom_tests
+    //! ```
+    //!
+    //! **Manual only. Never wired into CI**, by instruction, the same as the
+    //! models in [`super::super::loom_tests`] and the Miri runs.
+    //!
+    //! # What is under test, and what is not
+    //!
+    //! The rows sit behind one `RwLock`, and loom models that lock, so mutual
+    //! exclusion over the vector is not the interesting question: loom would be
+    //! checking its own primitive.
+    //!
+    //! What is interesting is `live`, the row counter, because it is written
+    //! under the lock and read **without** it. Three things could go wrong and
+    //! each has a model here: it could underflow when a remove races an insert,
+    //! it could settle on the wrong value when several writers finish at once,
+    //! and it could be read as a number that no interleaving ever produced.
+    //!
+    //! # These models are narrow, and that is on purpose
+    //!
+    //! The rows sit behind one lock, so loom serialises nearly everything and
+    //! the state space is tiny: all five run in about ten milliseconds. That is
+    //! a fair reflection of how little unsynchronised state this type has, not
+    //! a sign the models are cheap to the point of being useless. Each was
+    //! checked by breaking the thing it claims to check and confirming it
+    //! fails: an unguarded `fetch_sub` in `remove` fails two of them, and an
+    //! increment moved above the duplicate check in `insert` fails a third.
+    //!
+    //! That check found a real defect in the first version of these models,
+    //! which is recorded on
+    //! [`racing_removes_on_an_empty_slot_never_underflow_the_count`].
+    //!
+    //! The rows themselves are `u64` here rather than a `loom::cell::UnsafeCell`
+    //! payload. That is deliberate and it is a limitation: loom cannot see
+    //! inside a plain value, so these models say nothing about publication of
+    //! the row's contents. They do not need to. Every read of a row goes through
+    //! the same `RwLock` as every write, so publication is the lock's guarantee
+    //! and not an `Ordering` this module chose. The partition set's models need
+    //! `Guarded` because its readers deliberately run outside its mutex; this
+    //! one has no such path.
+
+    use super::*;
+    use loom::sync::Arc;
+    use loom::thread;
+
+    /// Two threads inserting the same key: one wins, and the count agrees.
+    ///
+    /// The count is the point. `insert` increments only on the branch that
+    /// actually stored a row, so a version that incremented before checking for
+    /// an occupant would leave `row_count` at 2 with one row present.
+    #[test]
+    fn one_of_two_racing_inserts_wins_and_the_count_agrees() {
+        loom::model(|| {
+            let rows: Arc<DenseRows<u64>> = Arc::new(DenseRows::new(4));
+
+            let a = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.insert(1, 10).is_ok())
+            };
+            let b = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.insert(1, 20).is_ok())
+            };
+
+            let won = usize::from(a.join().unwrap()) + usize::from(b.join().unwrap());
+            assert_eq!(won, 1, "exactly one insert may store a row");
+            assert_eq!(rows.row_count(), 1);
+            assert!(matches!(rows.get(1), Some(10) | Some(20)));
+        });
+    }
+
+    /// Two removes racing over one empty-but-allocated slot must not take the
+    /// counter below zero.
+    ///
+    /// `fetch_sub` on a `usize` wraps, so an unguarded decrement does not panic
+    /// in release: it reports a partition holding eighteen quintillion rows.
+    /// The guard is that `remove` decrements only when it actually took
+    /// something out.
+    ///
+    /// The setup matters and the first version of this model got it wrong. It
+    /// raced a remove against an insert on a *fresh* partition, where the
+    /// remove finds the row vector still empty, `get_mut` returns `None`, and
+    /// the method returns before reaching the decrement at all. That model
+    /// passed against a deliberately unguarded `remove`, which is the only
+    /// thing a concurrency model must never do. The slot has to exist and hold
+    /// nothing for the guard to be the thing under test, so it is allocated and
+    /// emptied first.
+    #[test]
+    fn racing_removes_on_an_empty_slot_never_underflow_the_count() {
+        loom::model(|| {
+            let rows: Arc<DenseRows<u64>> = Arc::new(DenseRows::new(4));
+            // Allocate slot 2, then empty it: present in the vector, holding
+            // nothing, which is the state `remove` has to handle without
+            // counting a row it did not take.
+            rows.insert(2, 7).expect("fresh");
+            rows.remove(2).expect("just inserted");
+            assert_eq!(rows.row_count(), 0);
+
+            let a = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.remove(2))
+            };
+            let b = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.remove(2))
+            };
+            assert!(a.join().unwrap().is_none());
+            assert!(b.join().unwrap().is_none());
+
+            assert_eq!(
+                rows.row_count(),
+                0,
+                "removing nothing twice must leave the count at zero, not wrap"
+            );
+        });
+    }
+
+    /// And the same guard under a remove racing an insert on an existing slot.
+    #[test]
+    fn a_remove_racing_an_insert_counts_the_row_at_most_once() {
+        loom::model(|| {
+            let rows: Arc<DenseRows<u64>> = Arc::new(DenseRows::new(4));
+            // Slot 2 allocated and empty, so neither thread returns early.
+            rows.insert(2, 7).expect("fresh");
+            rows.remove(2).expect("just inserted");
+
+            let inserter = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.insert(2, 9).is_ok())
+            };
+            let remover = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.remove(2))
+            };
+            let inserted = inserter.join().unwrap();
+            let taken = remover.join().unwrap();
+
+            let count = rows.row_count();
+            assert!(count <= 1, "a one-key partition cannot hold {count} rows");
+            assert_eq!(
+                count,
+                usize::from(inserted && taken.is_none()),
+                "the row is present exactly when it was inserted and not taken"
+            );
+        });
+    }
+
+    /// Two writers on different keys both land, and the count sees both.
+    ///
+    /// This is where a `Relaxed` increment would show: the second writer's
+    /// `fetch_add` has to be ordered against the first's for the final load to
+    /// observe two.
+    #[test]
+    fn concurrent_writers_on_distinct_keys_both_count() {
+        loom::model(|| {
+            let rows: Arc<DenseRows<u64>> = Arc::new(DenseRows::new(4));
+
+            let a = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.insert(0, 1).expect("key 0 is written once"))
+            };
+            let b = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.insert(1, 2).expect("key 1 is written once"))
+            };
+            a.join().unwrap();
+            b.join().unwrap();
+
+            assert_eq!(rows.row_count(), 2);
+            assert_eq!(rows.get(0), Some(1));
+            assert_eq!(rows.get(1), Some(2));
+        });
+    }
+
+    /// A reader running beside a writer sees a count that some interleaving
+    /// produced, never a torn one.
+    ///
+    /// `row_count` deliberately does not take the lock, so it may be stale.
+    /// Stale is fine and is documented; a value that was never true is not.
+    #[test]
+    fn an_unlocked_count_is_always_a_value_some_interleaving_produced() {
+        loom::model(|| {
+            let rows: Arc<DenseRows<u64>> = Arc::new(DenseRows::new(4));
+            rows.insert(0, 1).expect("fresh");
+
+            let writer = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || {
+                    let _ = rows.insert(1, 2);
+                })
+            };
+            let reader = {
+                let rows = Arc::clone(&rows);
+                thread::spawn(move || rows.row_count())
+            };
+
+            writer.join().unwrap();
+            let seen = reader.join().unwrap();
+            assert!(seen == 1 || seen == 2, "count {seen} matches no interleaving");
+            assert_eq!(rows.row_count(), 2, "and it settles once the writer is done");
+        });
     }
 }

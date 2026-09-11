@@ -1,4 +1,5 @@
 use proc_macro2::TokenStream;
+use quote::quote;
 
 use crate::common::Parser;
 use crate::common::model::RuntimeBackend;
@@ -170,7 +171,13 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         // The router needs the columns to pick its payload, and `vec_table`
         // consumes them. Cloned only when there is a router to build.
         let vec_columns = partition_by.as_ref().map(|_| columns.clone());
+        let narrow_key_lint = if partition_by.is_none() {
+            gen_narrow_primary_key_lint(&columns)
+        } else {
+            quote! {}
+        };
         let mut generated = crate::generators::vec_table::expand(name.clone(), columns)?;
+        generated.extend(narrow_key_lint);
         // The router is storage-agnostic: it needs `Default` and `used_bytes`
         // from its payload and nothing else, and a `vec: true` table has both.
         // Partitioning is what makes the `Vec` shape correct rather than
@@ -236,12 +243,19 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     // `Clone`, and the dense payload is emitted after them.
     let partition_queries = crate::generators::dense_table::DenseQueries::from_model(queries.as_ref());
 
+    let narrow_key_lint = if partition_by.is_none() {
+        gen_narrow_primary_key_lint(&columns)
+    } else {
+        quote! {}
+    };
+
     let mut generated = if persistence.is_persisted() {
         crate::generators::persist::expand(name.clone(), columns, queries, config, version)?
     } else {
         crate::generators::in_memory::expand_from_parsed(name.clone(), columns, queries, config)?
     };
 
+    generated.extend(narrow_key_lint);
     generated.extend(gen_runtime_type(&name, runtime));
 
     if let Some(key) = partition_by {
@@ -258,6 +272,60 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     generated.extend(gen_schema_const(&worktable_dsl::Schema::from_tokens(declaration)?));
 
     Ok(generated)
+}
+
+/// Warn about a primary key too narrow to be a table's, when it is a table's.
+///
+/// A `u8` primary key counts to 256 and a `bool` one to two. On a *partitioned*
+/// table that is correct and is the whole point: the routing key does the
+/// spreading and the inner key only separates the handful of rows inside one
+/// partition, which is what `partition_max_size` exists to say. On an
+/// unpartitioned table it is a table that can never hold more than 256 rows,
+/// which is almost always a key that was meant to be wider.
+///
+/// A lint and not a ban, deliberately. Narrow keys are what make the dense
+/// partition possible, and a 256-row lookup table is a real thing to want.
+///
+/// # Why a deprecation
+///
+/// A proc macro cannot emit a warning on stable. A `#[deprecated]` item used
+/// once in the expansion produces one, carries a message naming the column, and
+/// can be silenced the ordinary way: `#[allow(deprecated)]` on the module
+/// holding the declaration. Everything is emitted inside an anonymous `const`
+/// so none of it is nameable and nothing leaks into the consumer's namespace.
+fn gen_narrow_primary_key_lint(columns: &worktable_dsl::model::Columns) -> TokenStream {
+    if columns.primary_keys.len() != 1 {
+        return quote! {};
+    }
+    let pk = columns.primary_keys.first().expect("checked above");
+    let Some(ty) = columns.columns_map.get(pk) else {
+        return quote! {};
+    };
+    let ty = ty.to_string().replace(' ', "");
+    let rows = match ty.as_str() {
+        "u8" => "256",
+        "bool" => "2",
+        _ => return quote! {},
+    };
+
+    let note = format!(
+        "`{pk}: {ty}` is the primary key of an unpartitioned table, so this table can never hold \
+         more than {rows} rows. That is correct beside `partition_by`, where the routing key does \
+         the spreading and this key only separates the rows inside one partition; on its own it is \
+         usually a key that was meant to be wider. Partition the table, widen the key, or put \
+         `#[allow(deprecated)]` on the module if {rows} rows is what you meant."
+    );
+
+    quote! {
+        const _: () = {
+            #[deprecated(note = #note)]
+            const NARROW_PRIMARY_KEY: () = ();
+            #[allow(unused)]
+            fn narrow_primary_key() {
+                let _ = NARROW_PRIMARY_KEY;
+            }
+        };
+    }
 }
 
 /// Name the runtime the table resolved to, once, as a type.
@@ -1036,6 +1104,70 @@ mod position_tests {
         assert!(error.contains("exchange_id"), "must name the column: {error}");
         assert!(error.contains("65536"), "must say how many rows were declared: {error}");
         assert!(error.contains("partition_max_size: u8"), "must name the fix: {error}");
+    }
+
+    /// A narrow key on an unpartitioned table warns.
+    #[test]
+    fn a_narrow_primary_key_on_an_unpartitioned_table_is_linted() {
+        // `using worktables_index` on the `bool` arm: arctic, the default,
+        // refuses a `bool` key outright, so that arm is only reachable through
+        // a backend that takes one. It is still worth linting, because WTI does.
+        for (ty, rows, backend) in [
+            ("u8", "256", quote! {}),
+            ("bool", "2", quote! { using worktables_index }),
+        ] {
+            let ty = syn::Ident::new(ty, proc_macro2::Span::call_site());
+            let expanded = expand(quote! {
+                name: Flag,
+                columns: { id: #ty primary_key #backend, v: u64 }
+            })
+            .expect("must expand")
+            .to_string();
+            assert!(
+                expanded.contains("NARROW_PRIMARY_KEY"),
+                "`{ty}` should be linted: {expanded}"
+            );
+            assert!(
+                expanded.contains(rows),
+                "the note should say how many rows `{ty}` reaches: {expanded}"
+            );
+        }
+    }
+
+    /// Beside `partition_by` the same key is correct, so it is silent.
+    ///
+    /// This is the half that matters: a narrow key is what makes a dense
+    /// partition possible, and a lint that fired on it would be telling people
+    /// to undo the optimisation.
+    #[test]
+    fn a_narrow_primary_key_on_a_partitioned_table_is_silent() {
+        let expanded = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { exchange_id: u8 primary_key, bid: f64 }
+        })
+        .expect("must expand")
+        .to_string();
+        assert!(
+            !expanded.contains("NARROW_PRIMARY_KEY"),
+            "a partitioned narrow key is correct and must not warn: {expanded}"
+        );
+    }
+
+    /// A key wide enough to be a table's is not linted.
+    #[test]
+    fn a_wide_primary_key_is_not_linted() {
+        for ty in ["u16", "u32", "u64", "String"] {
+            let ty = syn::Ident::new(ty, proc_macro2::Span::call_site());
+            let expanded = expand(quote! {
+                name: Wide,
+                columns: { id: #ty primary_key, v: u64 }
+            })
+            .expect("must expand")
+            .to_string();
+            assert!(!expanded.contains("NARROW_PRIMARY_KEY"), "`{ty}` must not be linted");
+        }
     }
 
     /// A dense partition takes update and delete queries keyed by position.

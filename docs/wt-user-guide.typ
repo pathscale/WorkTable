@@ -286,6 +286,25 @@ differing by 28 KB a partition would otherwise look identical.
 A count is not accepted in its place. A count is not an index width, it is not a power
 of two, and it duplicates a constant that lives in the caller's code and will drift.
 
+=== A narrow primary key off a partition is linted
+
+`u8` or `bool` as the primary key of a table with no `partition_by` means a table that
+can never hold more than 256 or 2 rows. That is occasionally what someone means and
+usually a key that was meant to be wider, so it warns rather than failing:
+
+```text
+warning: use of deprecated constant `_::NARROW_PRIMARY_KEY`: `id: u8` is the
+primary key of an unpartitioned table, so this table can never hold more than
+256 rows...
+```
+
+Beside `partition_by` it is silent, because there it is correct: the routing key does the
+spreading and the inner key only separates the rows inside one partition. A narrow key is
+what makes the dense shape below possible.
+
+To keep it, put `#[allow(deprecated)]` on the module holding the declaration. The warning
+is a deprecation because a procedural macro cannot emit a warning any other way.
+
 === What a dense width actually generates
 
 `bool`, `u8` and `u16` generate `<Name>DenseTable` as the partition payload instead of

@@ -18,6 +18,19 @@ Change Log
   handed over with `partition_or_insert_with` rather than mutated through the
   `Arc` the router returns.
 
+- A lint on a narrow primary key. `u8` or `bool` as the primary key of an
+  **unpartitioned** table means a table that can never hold more than 256 or 2
+  rows, which is usually a key that was meant to be wider. Beside
+  `partition_by` the same key is correct and the lint is silent: a narrow key
+  is what makes a dense partition possible, and warning about it there would be
+  telling people to undo the optimisation.
+
+  A lint and not a ban. It arrives as a deprecation warning, because a proc
+  macro cannot emit one directly; the note names the column and the row count,
+  and `#[allow(deprecated)]` on the module turns it off for a table where 256
+  rows is what was meant. Everything it emits lives inside an anonymous `const`
+  and is not nameable.
+
 - A **dense partition**, generated when `partition_max_size` is `bool`, `u8`
   or `u16`. `<Name>DenseTable` addresses rows by position: the primary key *is*
   the row's index, so there is no primary index, no pages, no links, no free
