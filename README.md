@@ -151,7 +151,7 @@ consistent with moved rows, but it does not truncate `.wt.data`. Use
 observe physical growth and decide when to snapshot/rebuild or run future
 offline compaction.
 
-WorkTablesIndex uses its predictable branch-based node search by default in WorkTable. This avoids a measured regression for sequential numeric-key workloads. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-hybrid-search`, `wti-std-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Prefer one search feature for an unambiguous build. If Cargo feature unification enables several, WorkTablesIndex applies the documented deterministic precedence rather than rejecting the graph.
+WorkTablesIndex uses the standard slice binary search by default in WorkTable. In the isolated 200,000-key matrix it had the lowest randomized lookup latency at every tested node width, while remaining competitive for sequential, above-maximum, range and build work. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-predictable-search`, `wti-hybrid-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Prefer one search feature for an unambiguous build. If Cargo feature unification enables several, WorkTablesIndex applies the documented deterministic precedence rather than rejecting the graph.
 
 ## Concurrent read/write publication
 

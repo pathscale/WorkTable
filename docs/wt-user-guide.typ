@@ -893,13 +893,13 @@ structural mapping until its node is locked, so hits and misses are both definit
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 6pt,
   [*Feature*], [*Effect*],
-  [`std`], [On by default. Off, hosted persistence and runtime pools are excluded. The dependency closure still uses std; isolated consumer checks guard this supported configuration.],
+  [`std`], [On by default. Off, hosted persistence and runtime pools are excluded. The remaining library graph is checked without Rust std on native and cross targets, while OS services may still use libc.],
   [`s3-support`], [The S3 sync engine, and the HTTP stack under it.],
   [`logical-index-persistence`], [Moves unique structural CDC work off the mutation path into the background worker. The page format is unchanged either way.],
-  [`wti-predictable-search`], [On by default. The branch-based node search, which avoids a measured regression on sequential numeric keys.],
+  [`wti-std-search`], [On by default. The standard slice binary search had the lowest randomized lookup latency at every tested node width while remaining competitive on the other measured search shapes.],
 )
 
-The three alternative search policies (`wti-hybrid-search`, `wti-std-search`,
+The three alternative search policies (`wti-predictable-search`, `wti-hybrid-search`,
 `wti-superslice-search`) are compile-time gates. Enable one, and only one, for an
 unambiguous build. If feature unification turns on several, WorkTablesIndex applies a
 documented precedence rather than refusing the graph.

@@ -15,7 +15,7 @@ keywords = ["database", "embedded", "in-memory", "index", "storage"]
 categories = ["database-implementations", "data-structures", "caching"]
 
 [features]
-default = ["std", "wti-predictable-search", "vanilla-index"]
+default = ["std", "wti-std-search", "vanilla-index"]
 # `futures/std` belongs here rather than on the dependency
 # line: written as `features = ["std"]` beside the version, a
 # `--no-default-features` build of this crate would still turn them on. The
