@@ -77,10 +77,9 @@ hashbrown = "0.15"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # The file traits and the host implementation. `std` here; the crate takes it
 # without default features wherever the filesystem is not involved.
-# Require the reviewed 0.1.2 runtime: cancellation/panic handling, worker wake
-# ownership and the ps-st3 0.6.2 scheduler baseline must not be bypassed by a
-# downstream lockfile retaining 0.1.1. Runtime::with_tuning marks pool workers
-# correctly.
+# Require the reviewed 0.1.2 runtime for cancellation/panic handling and worker
+# wake ownership. Runtime::with_tuning marks pool workers correctly. Compatible
+# updates remain open; update ps-st3 in existing lockfiles for scheduler fixes.
 #
 # It also re-exports `Tuning`, which is why `ps-st3` is no longer a direct
 # dependency here: it was named for that one type.
@@ -153,7 +152,7 @@ worktable_codegen = { path = "codegen", version = "^1.9.0-alpha1" }
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
 # crate.
-worktable_dsl = { path = "dsl", version = "=1.0.0-beta.19" }
+worktable_dsl = { path = "dsl", version = "^1.0.0-beta.19" }
 
 [dev-dependencies]
 chrono = "0.4"

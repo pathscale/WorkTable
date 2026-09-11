@@ -85,7 +85,7 @@ S3 support layers *on top of* the disk engine rather than replacing it.
 
 ```toml
 [dependencies]
-worktable = { version = "=1.0.0-beta.5", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "^1.9.0-alpha1", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
@@ -188,7 +188,7 @@ provides the page and link primitives its data layout uses: `PageId`, `Link`,
 backend, and those types appear throughout the in-memory paging, the indexes, the memory
 accounting and the on-disk format alike.
 
-WorkTable re-exports it (`pub use data_bucket;`) and pins an exact version. **Take it
+WorkTable re-exports it (`pub use data_bucket;`) and uses a compatible caret requirement. **Take it
 through that re-export rather than depending on it separately.** A second copy in your
 graph gives you two incompatible sets of the same types, and the resulting error names two
 different `data_bucket` paths while looking like something else entirely.
