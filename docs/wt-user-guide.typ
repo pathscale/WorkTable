@@ -906,7 +906,11 @@ table-specific. A limit alone does not establish an order. Filtering and orderin
 require more work than the returned row count suggests.
 
 `runtime(profile)` is a Rust builder method for a profile declared by `runtimes!`.
-Runtime defaults and the schema examples are covered in Example 10. `WT_DEFAULT_RUNTIME`
+*Release limitation:* generated rows lack the marker implementations required by
+this method. Even with those supplied manually, it only records tuning; `execute()`
+does not dispatch onto that profile. Query-section profiles likewise do not schedule their operations.
+Use explicit executor submission for owned work; these profile callsites are not
+validated execution features of this alpha. Runtime defaults and the schema examples are covered in Example 10. `WT_DEFAULT_RUNTIME`
 and `WT_RUNTIME_WORKERS` affect runtime initialization; set them before the process first
 uses the registry. Changing an environment variable afterwards does not rebuild an
 already-created pool. `Runtime`, `NagoyaRt`, optional `TokioRt`, flavor marker types and
