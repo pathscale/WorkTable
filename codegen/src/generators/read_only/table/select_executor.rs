@@ -180,18 +180,18 @@ impl ReadOnlyGenerator {
             for SelectQueryBuilder<#row_type, I, #column_range_type, #row_fields_ident>
             where I: DoubleEndedIterator<Item = #row_type> + Sized,
             {
-                fn execute_async(self) -> impl core::future::Future<Output = Result<Vec<#row_type>, WorkTableError>> + Send {
+                fn execute_async(self) -> worktable::prelude::SelectQueryFuture<#row_type> {
                     let mut params = self.params;
                     let dispatch = params.dispatch.take().or(#default_dispatch);
                     // Release all borrowed iterators and caller predicates before
                     // creating a task. No lifetime is extended across the pool.
                     let rows: Vec<#row_type> = self.iter.collect();
-                    async move {
+                    Box::pin(async move {
                         let plan = SelectQueryBuilder { params, iter: rows.into_iter() };
                         if let Some(dispatch) = dispatch {
                             worktable::runtime::run_owned(dispatch, move || plan.execute()).await?
                         } else { plan.execute() }
-                    }
+                    })
                 }
             }
             impl<I> SelectQueryExecutor<#row_type, I, #column_range_type, #row_fields_ident>

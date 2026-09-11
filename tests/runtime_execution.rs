@@ -78,6 +78,7 @@ fn generated_profiles_dispatch_mutations_and_owned_selects() {
             .limit(3)
             .runtime(Observed)
             .execute_async();
+        drop(minimum); // The returned future no longer borrows the predicate state.
         let selected = future.await.unwrap();
         assert_eq!(selected.iter().map(|r| r.id).collect::<Vec<_>>(), vec![7, 6, 5]);
         assert_ne!(DISPATCH_THREAD.lock().unwrap().unwrap(), caller);
@@ -246,4 +247,21 @@ fn an_omitted_table_runtime_matches_a_bare_nagoya_profile() {
             1
         );
     });
+}
+
+#[test]
+fn an_owned_select_future_outlives_the_table() {
+    let future = {
+        let table = ScheduledWorkTable::default();
+        nagoya::block_on(table.insert(ScheduledRow {
+            id: 1,
+            value: 2,
+            group: 3,
+        }))
+        .unwrap();
+        let future = table.select_all().runtime(scheduled).execute_async();
+        drop(table);
+        future
+    };
+    assert_eq!(nagoya::block_on(future).unwrap()[0].id, 1);
 }

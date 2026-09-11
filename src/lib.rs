@@ -189,7 +189,7 @@ pub mod prelude {
         PrimaryKeyGenerator, PrimaryKeyGeneratorRange, PrimaryKeyGeneratorState, TablePrimaryKey,
     };
     pub use crate::table::select::{
-        Order, QueryParams, SelectQueryAsyncExecutor, SelectQueryBuilder, SelectQueryExecutor,
+        Order, QueryParams, SelectQueryAsyncExecutor, SelectQueryBuilder, SelectQueryExecutor, SelectQueryFuture,
     };
     pub use crate::table::system_info::{IndexInfo, IndexKind, SystemInfo};
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};

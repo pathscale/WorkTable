@@ -116,6 +116,11 @@ where
 
 /// Owned asynchronous select execution. Borrowed iteration and predicates are
 /// materialized by the caller; the owned filtering/sorting plan can be dispatched.
+/// A future containing owned rows only, independent of the source iterator's lifetime.
+pub type SelectQueryFuture<Row> = core::pin::Pin<
+    alloc::boxed::Box<dyn core::future::Future<Output = Result<Vec<Row>, WorkTableError>> + Send + 'static>,
+>;
+
 pub trait SelectQueryAsyncExecutor<Row> {
-    fn execute_async(self) -> impl core::future::Future<Output = Result<Vec<Row>, WorkTableError>> + Send;
+    fn execute_async(self) -> SelectQueryFuture<Row>;
 }
