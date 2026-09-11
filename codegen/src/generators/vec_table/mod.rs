@@ -276,27 +276,52 @@ fn unique_remove(repr: Repr, map: &TokenStream, key: &TokenStream) -> TokenStrea
     }
 }
 
-/// Close the hole `delete` left: every position above it moves down one.
+/// Positions whose keys fall inside `bounds`, in key order.
 ///
-/// A `BTreeMap` rewrites its values in place. An ART cannot, so this reads the
-/// affected entries out and puts them back at the new position. That is the
-/// whole reason `using indexset` stays available.
-fn unique_shift(repr: Repr, map: &TokenStream, at: &TokenStream) -> TokenStream {
+/// Every backend this macro can resolve is an ordered tree — the two ARTs,
+/// WTI's B-tree and a plain `BTreeMap` — so this is not a capability some of
+/// them have and others emulate. `UniqueIndex` already requires
+/// `range_links`, which means the operation was always there and only the
+/// generated table declined to expose it.
+///
+/// What a range costs that a point lookup does not is the row fetch: the
+/// positions come out in key order and the rows they name are scattered
+/// through the vector, so a long range is a walk of random accesses rather
+/// than a sequential read.
+fn unique_range(repr: Repr, map: &TokenStream, bounds: &TokenStream) -> TokenStream {
     if repr.is_trait_backed() {
         quote! {
-            let shifted: worktable::prelude::Vec<_> = worktable::prelude::UniqueIndex::iter_values(&#map)
-                .filter(|(_, position)| (*position as usize) > #at)
-                .collect();
-            for (key, position) in shifted {
-                let _ = worktable::prelude::UniqueIndex::insert_value(&#map, key, position - 1);
+            worktable::prelude::UniqueIndex::range_links(&#map, #bounds).map(|at| at as usize)
+        }
+    } else {
+        quote! { #map.range(#bounds).map(|(_, at)| *at) }
+    }
+}
+
+/// Point every entry at where its row moved to, after a compaction.
+///
+/// Compaction is the only thing that moves a row, and it never removes an
+/// index entry: a ghosted row left its indexes at the moment it was deleted,
+/// so every entry still here names a row that survives. That is why this is a
+/// rewrite of values and not a rebuild, and why it can keep the maps
+/// themselves — replacing them with `Default::default()` would silently
+/// discard a `with_node_size` the caller asked for.
+fn unique_renumber(repr: Repr, map: &TokenStream, moved: &TokenStream) -> TokenStream {
+    if repr.is_trait_backed() {
+        quote! {
+            let entries: worktable::prelude::Vec<_> =
+                worktable::prelude::UniqueIndex::iter_values(&#map).collect();
+            for (key, position) in entries {
+                let to = #moved[position as usize];
+                if to != position {
+                    let _ = worktable::prelude::UniqueIndex::insert_value(&#map, key, to);
+                }
             }
         }
     } else {
         quote! {
             for position in #map.values_mut() {
-                if *position > #at {
-                    *position -= 1;
-                }
+                *position = #moved[*position] as usize;
             }
         }
     }
@@ -395,7 +420,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     let mut index_insert = Vec::new();
     let mut index_upsert_move = Vec::new();
     let mut index_delete_remove = Vec::new();
-    let mut index_delete_shift = Vec::new();
+    let mut index_renumber = Vec::new();
     for ((field, (column, (repr, unique))), _) in index_fields
         .iter()
         .zip(
@@ -428,19 +453,30 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
 
         // On upsert the row keeps its position and only its key changes, so
         // the old pair comes out and the new one goes in at the same `at`.
+        //
+        // The old key is bound to a local first. Reading it inline would
+        // borrow the whole table (`row_at` takes `&self`) while the map call
+        // it feeds wants `&mut` on a field, and the two-phase borrow that let
+        // `self.rows[at]` work here does not reach through a method.
+        let was = Ident::new(&format!("was_{field}_key"), field.span());
         index_upsert_move.push(if unique {
-            let old_key = quote! { &self.rows[at].#column };
-            let remove = unique_remove(repr, &map, &old_key);
+            let remove = unique_remove(repr, &map, &quote! { &#was });
             let insert = unique_insert(repr, &map, &owned, &at);
-            quote! { let _ = #remove; #insert }
+            quote! {
+                let #was = self.row_at(at).#column.clone();
+                let _ = #remove;
+                #insert
+            }
         } else {
             match repr {
                 Repr::Arctic => quote! {
-                    let _ = #map.remove_pair(&self.rows[at].#column, &(at as u64));
+                    let #was = self.row_at(at).#column.clone();
+                    let _ = #map.remove_pair(&#was, &(at as u64));
                     #map.insert_pair(#owned, at as u64);
                 },
                 _ => quote! {
-                    if let Some(positions) = #map.get_mut(&self.rows[at].#column) {
+                    let #was = self.row_at(at).#column.clone();
+                    if let Some(positions) = #map.get_mut(&#was) {
                         positions.retain(|p| *p != at);
                     }
                     #map.entry(#owned).or_default().push(at);
@@ -464,28 +500,24 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             }
         });
 
-        index_delete_shift.push(if unique {
-            unique_shift(repr, &map, &at)
+        index_renumber.push(if unique {
+            unique_renumber(repr, &map, &quote! { moved })
         } else {
             match repr {
                 Repr::Arctic => quote! {
-                    let shifted: worktable::prelude::Vec<_> = #map
-                        .iter()
-                        .filter(|(_, position)| (*position as usize) > at)
-                        .collect();
-                    for (key, position) in &shifted {
-                        let _ = #map.remove_pair(key, position);
-                    }
-                    for (key, position) in shifted {
-                        #map.insert_pair(key, position - 1);
+                    let pairs: worktable::prelude::Vec<_> = #map.iter().collect();
+                    for (key, position) in pairs {
+                        let to = moved[position as usize];
+                        if to != position {
+                            let _ = #map.remove_pair(&key, &position);
+                            #map.insert_pair(key, to);
+                        }
                     }
                 },
                 _ => quote! {
                     for positions in #map.values_mut() {
                         for position in positions.iter_mut() {
-                            if *position > at {
-                                *position -= 1;
-                            }
+                            *position = moved[*position] as usize;
                         }
                     }
                 },
@@ -505,10 +537,29 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             let ty = columns.columns_map.get(column).expect("checked above");
             if index.is_unique {
                 let get = unique_get(repr, &map, &quote! { key });
+                let range_fn = Ident::new(&format!("range_by_{column}"), index_name.span());
+                let range = unique_range(repr, &map, &quote! { bounds });
                 quote! {
                     /// The row this key indexes, if any.
                     pub fn #fn_name(&self, key: &#ty) -> Option<&#row_ident> {
-                        #get.map(|at| &self.rows[at])
+                        #get.map(|at| self.row_at(at))
+                    }
+
+                    /// Every row whose indexed value falls inside `bounds`, in
+                    /// that value's order.
+                    ///
+                    /// Free for the same reason the primary-key range is: this
+                    /// index is an ordered tree and was already answering
+                    /// ranges, so the walk is the index's own and the only
+                    /// added work is the row fetch each position names.
+                    pub fn #range_fn<'a, R>(
+                        &'a self,
+                        bounds: R,
+                    ) -> impl DoubleEndedIterator<Item = &'a #row_ident> + 'a
+                    where
+                        R: core::ops::RangeBounds<#ty> + 'a,
+                    {
+                        #range.map(|at| self.row_at(at))
                     }
                 }
             } else {
@@ -530,7 +581,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
                     /// Every row this key indexes, in insertion order.
                     pub fn #fn_name(&self, key: &#ty) -> Vec<&#row_ident> {
                         #positions
-                        positions.into_iter().map(|at| &self.rows[at]).collect()
+                        positions.into_iter().map(|at| self.row_at(at)).collect()
                     }
                 }
             }
@@ -553,7 +604,10 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     {
         let map = quote! { self.#field };
         let before = Ident::new(&format!("was_{field}"), field.span());
-        let now = quote! { self.rows[at].#column.clone() };
+        // Bound to a local for the same borrow reason `index_upsert_move`
+        // binds its old key: the map calls below take `&mut` on a field, and
+        // `row_at` borrows the whole table.
+        let now = quote! { now };
         let repair = if unique {
             let remove = unique_remove(repr, &map, &quote! { &#before });
             let insert = unique_insert(repr, &map, &now, &quote! { at });
@@ -573,7 +627,8 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             }
         };
         index_repair.push(quote! {
-            if self.rows[at].#column != #before {
+            if self.row_at(at).#column != #before {
+                let now = self.row_at(at).#column.clone();
                 #repair
             }
         });
@@ -585,13 +640,14 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     let pk_get_for_select = unique_get(pk_repr, &pk_map, &quote! { key });
     let pk_get_for_upsert = unique_get(pk_repr, &pk_map, &quote! { &row.#pk });
     let pk_remove = unique_remove(pk_repr, &pk_map, &quote! { key });
-    let pk_get_for_moved_row = unique_get(pk_repr, &pk_map, &quote! { &self.rows[at].#pk });
+    let pk_get_for_moved_row = unique_get(pk_repr, &pk_map, &quote! { &now_pk });
     let pk_remove_old = {
         let remove = unique_remove(pk_repr, &pk_map, &quote! { &was_pk });
         quote! { let _ = #remove; }
     };
-    let pk_reinsert_moved = unique_insert(pk_repr, &pk_map, &quote! { self.rows[at].#pk.clone() }, &quote! { at });
-    let pk_shift = unique_shift(pk_repr, &pk_map, &at_expr);
+    let pk_reinsert_moved = unique_insert(pk_repr, &pk_map, &quote! { now_pk }, &quote! { at });
+    let pk_renumber = unique_renumber(pk_repr, &pk_map, &quote! { moved });
+    let pk_range = unique_range(pk_repr, &pk_map, &quote! { bounds });
 
     // rkyv's derives only when the table can be written out. They are not free
     // to a caller who never persists: an `Archived` type per row, a resolver
@@ -662,6 +718,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             pub fn with_node_size(node_size: usize) -> Self {
                 Self {
                     rows: worktable::prelude::Vec::new(),
+                    live: 0,
                     #pk_init
                     #(#index_inits)*
                 }
@@ -706,8 +763,15 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             /// [`worktable::prelude::RowTooLarge`] when one row's archive does
             /// not fit a page body. Nothing is produced in that case, rather
             /// than a file that will not load.
+            ///
+            /// Ghosted slots are not written, so a file never carries a row
+            /// that was deleted. Collecting the live rows to do that costs one
+            /// clone each, which is real and is dwarfed by the archive write
+            /// that follows it.
             pub fn unload(&self) -> Result<worktable::prelude::Vec<u8>, worktable::prelude::RowTooLarge> {
-                worktable::prelude::to_pages(&self.rows)
+                let live: worktable::prelude::Vec<#row_ident> =
+                    self.rows.iter().flatten().cloned().collect();
+                worktable::prelude::to_pages(&live)
             }
 
             /// A table back from pages, with every index rebuilt.
@@ -748,9 +812,26 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
         /// A `Vec`-backed table with the same surface as the generated `WorkTable`.
         ///
         /// Single-writer by construction: every mutation takes `&mut self`.
+        ///
+        /// # Ghosts
+        ///
+        /// A slot is `None` once its row is deleted. That is the paged table's
+        /// model applied to a vector, and it is what makes `delete` O(1)
+        /// instead of O(rows + index): closing the hole would mean a memmove
+        /// of every row above it *and* a rewrite of every index entry above
+        /// it, which measured 21 milliseconds per delete at a million rows.
+        ///
+        /// The cost is that ghosts accumulate and nothing reclaims them until
+        /// [`Self::compact`] is called, exactly as a paged table accumulates
+        /// them until vacuum runs. [`Self::ghost_count`] and [`Self::slots`]
+        /// are there so a caller can decide when that is worth doing.
         #[derive(Debug, Default)]
         pub struct #table_ident {
-            rows: worktable::prelude::Vec<#row_ident>,
+            /// Slots. `None` is a ghost: a row that was deleted and whose
+            /// position no index names any more.
+            rows: worktable::prelude::Vec<Option<#row_ident>>,
+            /// Live rows, so `len` does not walk the vector counting them.
+            live: usize,
             /// Primary key to position. The lookup a bare `Vec` does linearly.
             by_pk: #pk_map_type,
             #(#index_fields: #index_map_types,)*
@@ -789,23 +870,45 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
                 self.rows.reserve(additional);
             }
 
-            /// Every row, in insertion order.
+            /// Every live row, in insertion order.
             ///
-            /// The same order as `select_all`, as an iterator rather than a
-            /// slice, so a caller that only walks the table does not name the
-            /// slice type.
+            /// Ghosted slots are skipped, so this yields [`Self::len`] rows
+            /// and not [`Self::slots`] of them.
             pub fn iter(&self) -> impl Iterator<Item = &#row_ident> {
-                self.rows.iter()
+                self.rows.iter().flatten()
             }
 
-            /// The rows, leaving the indexes behind.
+            /// The live rows, leaving the indexes and the ghosts behind.
             ///
             /// For handing the data to something that does not want a table.
             /// The indexes are positions into this vector and mean nothing
             /// without it, so they are dropped rather than returned.
             #[must_use]
             pub fn into_rows(self) -> worktable::prelude::Vec<#row_ident> {
-                self.rows
+                self.rows.into_iter().flatten().collect()
+            }
+
+            /// The row at a position an index gave us.
+            ///
+            /// # Panics
+            ///
+            /// If the slot is a ghost. Every index entry is removed the moment
+            /// its row is deleted, so a position that came out of an index
+            /// always names a live row; reaching this panic means an index and
+            /// the vector disagree, which is a bug in this macro rather than
+            /// in a caller.
+            #[inline]
+            fn row_at(&self, at: usize) -> &#row_ident {
+                self.rows[at]
+                    .as_ref()
+                    .expect("an index position always names a live row")
+            }
+
+            #[inline]
+            fn row_at_mut(&mut self, at: usize) -> &mut #row_ident {
+                self.rows[at]
+                    .as_mut()
+                    .expect("an index position always names a live row")
             }
 
             /// Row bytes plus index bytes.
@@ -821,34 +924,58 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             /// which is where most of the cost is at small row counts: arctic
             /// holds about 600 bytes per 24-byte row at 64 rows and does not
             /// settle until a thousand.
+            ///
+            /// Slots are counted, not rows: a ghost still occupies its slot
+            /// until [`Self::compact`] runs, and an `Option<Row>` is what a
+            /// slot costs. For a row with a spare bit pattern that is the same
+            /// as the row; for one with none it is the row plus its alignment.
             #[must_use]
             pub fn used_bytes(&self) -> u64 {
-                let rows = self.rows.len() * core::mem::size_of::<#row_ident>();
+                let rows = self.rows.len() * core::mem::size_of::<Option<#row_ident>>();
                 let indexes = worktable::prelude::MemStat::heap_size(&self.by_pk)
                     #(+ worktable::prelude::MemStat::heap_size(&self.#index_fields))*;
                 (rows + indexes) as u64
             }
 
+            /// Live rows.
             #[must_use]
             pub fn len(&self) -> usize {
+                self.live
+            }
+
+            /// Slots, live and ghosted together.
+            ///
+            /// The length of the underlying vector, which is what memory is
+            /// proportional to and what a range or a scan walks.
+            #[must_use]
+            pub fn slots(&self) -> usize {
                 self.rows.len()
+            }
+
+            /// Deleted rows whose slots are still held.
+            ///
+            /// `slots() - len()`. A caller watching this decides when
+            /// [`Self::compact`] is worth its cost, the same judgement a
+            /// paged table makes about vacuum.
+            #[must_use]
+            pub fn ghost_count(&self) -> usize {
+                self.rows.len() - self.live
             }
 
             /// Rows currently in the table.
             ///
             /// The same figure as [`Self::len`], under the name the paged
             /// table uses, so a partitioned router reads either payload
-            /// through one call. There it is genuinely a different number
-            /// (`len` walks pages, `row_count` reads the index), and here the
-            /// rows *are* the vector, so the two coincide.
+            /// through one call. Neither counts ghosts; [`Self::slots`] is the
+            /// figure that does.
             #[must_use]
             pub fn row_count(&self) -> usize {
-                self.rows.len()
+                self.live
             }
 
             #[must_use]
             pub fn is_empty(&self) -> bool {
-                self.rows.is_empty()
+                self.live == 0
             }
 
             /// Insert, refusing a key that is already present.
@@ -866,7 +993,8 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
                     return Err(row);
                 }
                 #(#index_insert)*
-                self.rows.push(row);
+                self.rows.push(Some(row));
+                self.live += 1;
                 Ok(())
             }
 
@@ -874,7 +1002,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             pub fn upsert(&mut self, row: #row_ident) {
                 if let Some(at) = #pk_get_for_upsert {
                     #(#index_upsert_move)*
-                    self.rows[at] = row;
+                    self.rows[at] = Some(row);
                     return;
                 }
                 let _ = self.insert(row);
@@ -883,13 +1011,46 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             /// The row this key names, if any.
             #[must_use]
             pub fn select(&self, key: &#pk_type) -> Option<&#row_ident> {
-                #pk_get_for_select.map(|at| &self.rows[at])
+                #pk_get_for_select.map(|at| self.row_at(at))
             }
 
-            /// Every row, in insertion order.
-            #[must_use]
-            pub fn select_all(&self) -> &[#row_ident] {
-                &self.rows
+            /// Every live row, in insertion order.
+            ///
+            /// An iterator rather than the `&[Row]` this returned before
+            /// ghosting: a deleted row leaves a hole, so the live rows are no
+            /// longer a contiguous slice and no slice could be handed back
+            /// without first paying the compaction this design exists to
+            /// defer. Call [`Self::compact`] and then [`Self::iter`] if a
+            /// caller genuinely needs one.
+            pub fn select_all(&self) -> impl Iterator<Item = &#row_ident> {
+                self.rows.iter().flatten()
+            }
+
+            /// Every live row whose primary key falls inside `bounds`, in key
+            /// order.
+            ///
+            /// This costs nothing to provide and was simply never exposed.
+            /// Every backend the `using` clause can name is an ordered tree,
+            /// `UniqueIndex` already requires `range_links`, and the index was
+            /// answering ranges the whole time.
+            ///
+            /// What it is not is a sorted vector. The keys come out in order
+            /// and the rows they name are wherever insertion put them, so a
+            /// long range is a sequence of random accesses into the row
+            /// vector. Ordered, correct, and not sequential.
+            ///
+            /// ```ignore
+            /// for row in table.range(10..20) { .. }
+            /// for row in table.range(..).rev() { .. }
+            /// ```
+            pub fn range<'a, R>(
+                &'a self,
+                bounds: R,
+            ) -> impl DoubleEndedIterator<Item = &'a #row_ident> + 'a
+            where
+                R: core::ops::RangeBounds<#pk_type> + 'a,
+            {
+                #pk_range.map(|at| self.row_at(at))
             }
 
             #(#select_by)*
@@ -920,15 +1081,16 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
                 // Only the key columns are copied, not the row. They are what
                 // the indexes are keyed on, so they are the only things whose
                 // "before" the repair below needs.
-                let was_pk = self.rows[at].#pk.clone();
-                #(let #index_before = self.rows[at].#index_columns.clone();)*
+                let was_pk = self.row_at(at).#pk.clone();
+                #(let #index_before = self.row_at(at).#index_columns.clone();)*
 
-                edit(&mut self.rows[at]);
+                edit(self.row_at_mut(at));
 
-                if self.rows[at].#pk != was_pk {
+                if self.row_at(at).#pk != was_pk {
+                    let now_pk = self.row_at(at).#pk.clone();
                     let taken = #pk_get_for_moved_row;
                     if taken.is_some_and(|other| other != at) {
-                        self.rows[at].#pk = was_pk;
+                        self.row_at_mut(at).#pk = was_pk;
                         panic!("update gave a row a primary key another row already holds");
                     }
                     #pk_remove_old
@@ -940,23 +1102,81 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
 
             #hydrate
 
-            /// Remove the row this key names, returning it.
+            /// Remove the row this key names, returning it and leaving a ghost
+            /// where it was.
             ///
-            /// A swap-remove would be cheaper and is not used: it reorders the
-            /// table, and `select_all` promising insertion order is the point
-            /// of comparing against a `Vec` at all.
+            /// Constant time. The row comes out of its slot, its index entries
+            /// come out of the indexes, and nothing else moves: no position
+            /// changes, so no other index entry needs touching.
             ///
-            /// The cost is that every position above the hole moves down one,
-            /// in every index. On a `BTreeMap` that is an in-place walk; on an
-            /// ART it is a read-and-reinsert of each affected entry, which is
-            /// why `using indexset` exists.
+            /// This used to close the hole with `Vec::remove`, which meant a
+            /// memmove of every row above it plus a rewrite of every index
+            /// entry above it. On a `BTreeMap` that rewrite is an in-place
+            /// walk; on an ART it is a read-and-reinsert of each affected
+            /// entry. Measured on a million-row table it cost **21
+            /// milliseconds a delete**, so two hundred deletes took four
+            /// seconds.
+            ///
+            /// What it costs instead is a slot that stays allocated until
+            /// [`Self::compact`] runs, and the row order that `select_all`
+            /// walks getting sparser as ghosts accumulate.
             pub fn delete(&mut self, key: &#pk_type) -> Option<#row_ident> {
                 let at = #pk_remove?;
-                let row = self.rows.remove(at);
+                let row = self.rows[at].take()?;
+                self.live -= 1;
                 #(#index_delete_remove)*
-                #pk_shift
-                #(#index_delete_shift)*
                 Some(row)
+            }
+
+            /// Reclaim every ghosted slot, moving the live rows down to close
+            /// the holes and pointing the indexes at where they went.
+            ///
+            /// This is the vacuum a paged table runs, and it is the other half
+            /// of what makes `delete` constant time: the expensive work exists,
+            /// it is O(slots + index), and it happens once when a caller asks
+            /// for it rather than on every delete.
+            ///
+            /// Insertion order is preserved. Returns the number of slots
+            /// reclaimed, which is what [`Self::ghost_count`] read beforehand.
+            ///
+            /// The row vector keeps its capacity, so a table that churns does
+            /// not give memory back to the allocator and then ask for it
+            /// again. [`Self::shrink_to_fit`] is there for a caller that wants
+            /// the memory back rather than the reuse.
+            pub fn compact(&mut self) -> usize {
+                let reclaimed = self.rows.len() - self.live;
+                if reclaimed == 0 {
+                    return 0;
+                }
+
+                // Where each old position ends up. Ghosted slots get a value
+                // no index entry can name, because no index entry names them:
+                // a delete takes its entries out at the time it ghosts the row.
+                let mut moved = worktable::prelude::Vec::with_capacity(self.rows.len());
+                let mut next = 0u64;
+                for slot in &self.rows {
+                    moved.push(next);
+                    if slot.is_some() {
+                        next += 1;
+                    }
+                }
+
+                #pk_renumber
+                #(#index_renumber)*
+
+                self.rows.retain(Option::is_some);
+                debug_assert_eq!(self.rows.len(), self.live);
+                reclaimed
+            }
+
+            /// Give the row vector's spare capacity back to the allocator.
+            ///
+            /// Separate from [`Self::compact`] because they answer different
+            /// questions: compaction is about ghosts, this is about capacity,
+            /// and a table that compacts in order to keep inserting wants the
+            /// capacity it already has.
+            pub fn shrink_to_fit(&mut self) {
+                self.rows.shrink_to_fit();
             }
         }
     })

@@ -55,7 +55,7 @@ fn it_behaves_like_a_table() {
 
     assert_eq!(table.select(&1).expect("present").value, 10);
     assert_eq!(table.len(), 2);
-    assert_eq!(table.select_all().len(), 2);
+    assert_eq!(table.select_all().count(), 2);
 
     // A non-unique index returns every row, in insertion order.
     let tagged = table.select_by_tag(&7);
@@ -74,7 +74,7 @@ fn it_behaves_like_a_table() {
     assert_eq!(removed.value, 11);
     assert_eq!(table.len(), 1);
     assert!(table.select(&1).is_none());
-    // The surviving row's position shifted, so its index entry had to shift too.
+    // The survivor keeps its position; only the dead row left the indexes.
     assert_eq!(table.select(&2).expect("present").value, 20);
     assert_eq!(table.select_by_tag(&7).len(), 1);
 }
@@ -179,16 +179,16 @@ worktable!(
     },
 );
 
-/// Deleting from the middle has to move every position above the hole, in
-/// every index, on whichever backend is holding them.
+/// Deleting from the middle leaves every other row where it was, on whichever
+/// backend is holding the indexes.
 ///
-/// The `BTreeMap` arm rewrites its values in place. The Arctic arm cannot, so
-/// it reads the affected entries out and reinserts them, and that path is new
-/// enough to be the one worth testing. Doing it three rows in, with a
-/// non-unique index whose posting list straddles the hole, is what makes an
-/// off-by-one visible: a shift that skips the boundary leaves a row reachable
-/// by the wrong key rather than by none, which `select_all` alone would not
-/// catch.
+/// A delete now ghosts the slot, so nothing above the hole moves and no index
+/// entry but the dead row's is touched. That is the cheap half; the expensive
+/// half is `compact`, which is tested next to this. What this covers is the
+/// state in between, where the vector is sparse and every lookup still has to
+/// be right: a non-unique index whose posting list straddles the hole is what
+/// makes an off-by-one visible, because a row reachable by the wrong key
+/// rather than by none is something `select_all` alone would not catch.
 #[test]
 fn deleting_from_the_middle_reindexes_both_backends() {
     macro_rules! check {
@@ -215,7 +215,7 @@ fn deleting_from_the_middle_reindexes_both_backends() {
             assert_eq!(table.len(), 5);
 
             // Insertion order survives the hole.
-            let ids: Vec<u64> = table.select_all().iter().map(|row| row.id).collect();
+            let ids: Vec<u64> = table.select_all().map(|row| row.id).collect();
             assert_eq!(ids, vec![0, 1, 3, 4, 5]);
 
             // The non-unique index straddled the hole: tag 0 held 0, 2 and 4.
@@ -322,7 +322,7 @@ fn the_backends_without_a_multimap_still_work() {
     }
     assert!(congee.select(&3).is_none());
     assert_eq!(
-        congee.select_all().iter().map(|row| row.id).collect::<Vec<_>>(),
+        congee.select_all().map(|row| row.id).collect::<Vec<_>>(),
         vec![1, 2, 4, 5]
     );
 
@@ -394,7 +394,7 @@ fn a_table_survives_a_round_trip_through_pages() {
 
     let loaded = SavedWorkTable::load(&bytes).expect("its own bytes");
     assert_eq!(loaded.len(), 199);
-    assert_eq!(loaded.select_all().len(), 199);
+    assert_eq!(loaded.select_all().count(), 199);
     assert!(loaded.select(&7).is_none(), "the deleted row came back");
 
     // Every key still finds its own row through the rebuilt primary index.
@@ -411,7 +411,7 @@ fn a_table_survives_a_round_trip_through_pages() {
     assert_eq!(loaded.select_by_tag(&0).len(), 25);
 
     // Insertion order survives, which is what makes `select_all` meaningful.
-    let ids: Vec<u64> = loaded.select_all().iter().map(|row| row.id).collect();
+    let ids: Vec<u64> = loaded.select_all().map(|row| row.id).collect();
     let expected: Vec<u64> = (0..200u64).filter(|id| *id != 7).collect();
     assert_eq!(ids, expected);
 }
@@ -539,7 +539,7 @@ fn rows_across_many_pages_come_back_in_order() {
 
     let loaded = SavedWorkTable::load(&bytes).expect("its own bytes");
     assert_eq!(loaded.len(), 5_000);
-    let ids: Vec<u64> = loaded.select_all().iter().map(|row| row.id).collect();
+    let ids: Vec<u64> = loaded.select_all().map(|row| row.id).collect();
     assert_eq!(ids, (0..5_000u64).collect::<Vec<_>>());
     assert_eq!(
         loaded.select(&4_999).expect("last row").label,
@@ -705,4 +705,382 @@ fn a_table_with_no_wti_index_gets_no_node_size_knob() {
     let mut table = UntunedWorkTable::with_capacity(16);
     table.insert(UntunedRow { id: 1, value: 2 }).expect("fresh key");
     assert_eq!(table.select(&1).expect("present").value, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Ghosts, and the compaction that reclaims them.
+
+/// A delete costs a bit and a slot, and moves nothing.
+///
+/// This is the whole claim, so it is asserted on structure rather than on
+/// behaviour: `slots` does not fall, `len` does, and the surviving rows keep
+/// the positions they had. A `delete` that quietly went back to closing the
+/// hole would still pass every lookup assertion in this file, because closing
+/// the hole correctly is what the old implementation did.
+#[test]
+fn a_delete_leaves_a_ghost_and_nothing_moves() {
+    let mut table = PointWorkTable::new();
+    for id in 0..6u64 {
+        table
+            .insert(PointRow {
+                id,
+                value: id * 10,
+                tag: id % 2,
+            })
+            .expect("fresh");
+    }
+    assert_eq!(table.slots(), 6);
+    assert_eq!(table.ghost_count(), 0);
+
+    table.delete(&2).expect("present");
+
+    assert_eq!(table.len(), 5, "one fewer live row");
+    assert_eq!(table.slots(), 6, "the slot was kept, not closed");
+    assert_eq!(table.ghost_count(), 1);
+    assert!(!table.is_empty());
+
+    // Deleting every row leaves six ghosts and an empty table.
+    for id in [0u64, 1, 3, 4, 5] {
+        table.delete(&id).expect("present");
+    }
+    assert!(table.is_empty());
+    assert_eq!(table.len(), 0);
+    assert_eq!(table.slots(), 6);
+    assert_eq!(table.ghost_count(), 6);
+    assert_eq!(table.select_all().count(), 0);
+
+    // And an insert after that appends rather than reusing a ghost, which is
+    // what keeps `select_all` in insertion order.
+    table
+        .insert(PointRow {
+            id: 42,
+            value: 420,
+            tag: 0,
+        })
+        .expect("fresh");
+    assert_eq!(table.slots(), 7);
+    assert_eq!(table.select(&42).expect("present").value, 420);
+}
+
+/// Compaction closes every hole and leaves every index pointing at the row it
+/// named before.
+///
+/// Run on each backend, because renumbering is the one operation whose
+/// implementation genuinely differs between them: a `BTreeMap` rewrites values
+/// in place, an ART cannot and has to reinsert, and the non-unique arm moves
+/// pairs. Deleting from the middle of a straddling posting list is what makes
+/// an off-by-one visible, for the same reason the delete test does it.
+#[test]
+fn compaction_reclaims_the_ghosts_and_repairs_every_index() {
+    macro_rules! check {
+        ($table:ty, $row:ident) => {{
+            let mut table = <$table>::new();
+            for id in 0..8u64 {
+                table
+                    .insert($row {
+                        id,
+                        value: id * 10,
+                        tag: id % 2,
+                    })
+                    .expect("fresh");
+            }
+            for id in [1u64, 2, 5] {
+                table.delete(&id).expect("present");
+            }
+            assert_eq!(table.ghost_count(), 3);
+
+            assert_eq!(table.compact(), 3, "three slots were reclaimed");
+            assert_eq!(table.ghost_count(), 0);
+            assert_eq!(table.slots(), 5);
+            assert_eq!(table.len(), 5);
+            assert_eq!(table.compact(), 0, "a second pass has nothing to do");
+
+            // Every survivor answers to its own key, with its own value. A
+            // renumbering that was off by one would hand back a neighbour.
+            for id in [0u64, 3, 4, 6, 7] {
+                let row = table.select(&id).unwrap_or_else(|| panic!("{id} lost by compaction"));
+                assert_eq!(row.value, id * 10, "{id} came back as another row");
+            }
+            assert!(table.select(&2).is_none());
+
+            // Insertion order survived.
+            let ids: Vec<u64> = table.select_all().map(|row| row.id).collect();
+            assert_eq!(ids, vec![0, 3, 4, 6, 7]);
+
+            // The non-unique index straddled all three holes.
+            let even: Vec<u64> = table.select_by_tag(&0).iter().map(|row| row.id).collect();
+            assert_eq!(even, vec![0, 4, 6], "tag 0 lost a row or kept a dead one");
+            let odd: Vec<u64> = table.select_by_tag(&1).iter().map(|row| row.id).collect();
+            assert_eq!(odd, vec![3, 7]);
+
+            // And the table still takes writes at the new positions.
+            table
+                .insert($row {
+                    id: 9,
+                    value: 90,
+                    tag: 1,
+                })
+                .expect("fresh");
+            assert_eq!(table.select(&9).expect("present").value, 90);
+            assert_eq!(table.select(&0).expect("present").value, 0);
+            let odd: Vec<u64> = table.select_by_tag(&1).iter().map(|row| row.id).collect();
+            assert_eq!(odd, vec![3, 7, 9]);
+        }};
+    }
+
+    check!(PointWorkTable, PointRow);
+    check!(OrderedWorkTable, OrderedRow);
+}
+
+/// The backends with no multimap compact too, including a unique secondary.
+#[test]
+fn compaction_repairs_the_multimapless_backends() {
+    let mut congee = CongeedWorkTable::new();
+    for id in 1..=6u64 {
+        congee.insert(CongeedRow { id, value: id * 10 }).expect("fresh");
+    }
+    congee.delete(&2).expect("present");
+    congee.delete(&3).expect("present");
+    assert_eq!(congee.compact(), 2);
+    for id in [1u64, 4, 5, 6] {
+        assert_eq!(congee.select(&id).unwrap_or_else(|| panic!("{id} gone")).value, id * 10);
+    }
+    assert_eq!(congee.slots(), 4);
+
+    let mut wti = WtidWorkTable::new();
+    for id in 1..=6u64 {
+        wti.insert(WtidRow {
+            id,
+            value: id * 10,
+            code: id + 100,
+        })
+        .expect("fresh");
+    }
+    wti.delete(&2).expect("present");
+    wti.delete(&5).expect("present");
+    assert_eq!(wti.compact(), 2);
+    for id in [1u64, 3, 4, 6] {
+        assert_eq!(wti.select(&id).unwrap_or_else(|| panic!("{id} gone")).value, id * 10);
+        // The unique secondary was renumbered alongside the primary.
+        assert_eq!(
+            wti.select_by_code(&(id + 100))
+                .unwrap_or_else(|| panic!("{id} code gone"))
+                .id,
+            id,
+            "the code index points at the wrong row after compaction"
+        );
+    }
+    assert!(wti.select_by_code(&102).is_none(), "a deleted row kept its code entry");
+}
+
+/// Compaction keeps the leaf width the call site asked for.
+///
+/// Rebuilding the indexes from `Default::default()` would be the obvious way
+/// to renumber and would silently throw away `with_node_size`, which is the
+/// kind of failure nothing else here would catch: the table would still be
+/// correct and only slower. Asserted by continuing to work at a width of 2,
+/// where a reset to the 1,024 default changes the tree's shape entirely.
+#[test]
+fn compaction_keeps_the_node_size_the_caller_asked_for() {
+    let mut table = TunedWorkTable::with_node_size(2);
+    for id in 0..64u64 {
+        table.insert(TunedRow { id, value: id }).expect("fresh");
+    }
+    for id in (0..64u64).step_by(2) {
+        table.delete(&id).expect("present");
+    }
+    assert_eq!(table.compact(), 32);
+    assert_eq!(table.slots(), 32);
+    for id in (1..64u64).step_by(2) {
+        assert_eq!(table.select(&id).unwrap_or_else(|| panic!("{id} gone")).value, id);
+    }
+}
+
+/// Ghosts are slots, and `shrink_to_fit` is the only thing that hands them
+/// back to the allocator.
+#[test]
+fn compaction_keeps_capacity_and_shrinking_gives_it_back() {
+    let mut table = PointWorkTable::with_capacity(256);
+    for id in 0..128u64 {
+        table.insert(PointRow { id, value: id, tag: 0 }).expect("fresh");
+    }
+    for id in 0..120u64 {
+        table.delete(&id).expect("present");
+    }
+    table.compact();
+    assert!(table.capacity() >= 256, "compaction kept the capacity for reuse");
+    table.shrink_to_fit();
+    assert!(table.capacity() < 256, "shrinking did not give it back");
+    assert_eq!(table.len(), 8);
+}
+
+/// A ghost is not written out, so a reload does not resurrect it.
+#[test]
+fn unload_does_not_write_a_ghost() {
+    let mut table = SavedWorkTable::new();
+    for id in 0..40u64 {
+        table
+            .insert(SavedRow {
+                id,
+                label: format!("row-{id}"),
+                tag: id % 4,
+            })
+            .expect("fresh");
+    }
+    for id in [3u64, 11, 29] {
+        table.delete(&id).expect("present");
+    }
+    assert_eq!(table.ghost_count(), 3, "unload is being asked to skip real ghosts");
+
+    let loaded = SavedWorkTable::load(&table.unload().expect("rows fit")).expect("its own bytes");
+    assert_eq!(loaded.len(), 37);
+    assert_eq!(loaded.slots(), 37, "the ghosts were written as rows");
+    for id in [3u64, 11, 29] {
+        assert!(loaded.select(&id).is_none(), "{id} came back from the dead");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ranges, which the index was always able to answer.
+
+/// The primary-key range walks in key order, in both directions, on every
+/// bound shape.
+///
+/// Keys are inserted out of order on purpose: an implementation that walked
+/// the row vector instead of the index would return insertion order and pass
+/// any test whose rows went in sorted.
+#[test]
+fn a_range_walks_the_keys_in_order() {
+    let mut table = PointWorkTable::new();
+    for id in [5u64, 1, 9, 3, 7, 2, 8, 4, 6] {
+        table
+            .insert(PointRow {
+                id,
+                value: id * 10,
+                tag: id % 2,
+            })
+            .expect("fresh");
+    }
+
+    let ids = |rows: Vec<&PointRow>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+
+    assert_eq!(ids(table.range(3..7).collect()), vec![3, 4, 5, 6]);
+    assert_eq!(ids(table.range(3..=7).collect()), vec![3, 4, 5, 6, 7]);
+    assert_eq!(ids(table.range(..3).collect()), vec![1, 2]);
+    assert_eq!(ids(table.range(7..).collect()), vec![7, 8, 9]);
+    assert_eq!(ids(table.range(..).collect()), vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(ids(table.range(100..200).collect()), Vec::<u64>::new());
+
+    // The rows are the right rows, not just the right keys.
+    for row in table.range(..) {
+        assert_eq!(row.value, row.id * 10);
+    }
+
+    // Backwards, which is what makes this a `DoubleEndedIterator` rather than
+    // an iterator that happens to arrive sorted.
+    assert_eq!(ids(table.range(..).rev().collect()), vec![9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    assert_eq!(ids(table.range(3..7).rev().collect()), vec![6, 5, 4, 3]);
+}
+
+/// A deleted row leaves no index entry, so a range never has to look at a
+/// ghost.
+///
+/// This is what lets `range` call `row_at` and expect a row: if a delete left
+/// its entry behind, the range would walk into an empty slot and panic, which
+/// is a far better failure than silently returning a stale row and is still a
+/// failure. Asserted so the invariant is checked rather than assumed.
+#[test]
+fn a_range_skips_a_deleted_row() {
+    let mut table = PointWorkTable::new();
+    for id in 0..10u64 {
+        table
+            .insert(PointRow {
+                id,
+                value: id * 10,
+                tag: id % 2,
+            })
+            .expect("fresh");
+    }
+    for id in [4u64, 5, 6] {
+        table.delete(&id).expect("present");
+    }
+
+    let ids: Vec<u64> = table.range(2..9).map(|row| row.id).collect();
+    assert_eq!(ids, vec![2, 3, 7, 8], "a range walked into a ghost");
+    assert_eq!(table.range(..).count(), 7);
+
+    // And compaction does not change the answer, only where the rows live.
+    table.compact();
+    let ids: Vec<u64> = table.range(2..9).map(|row| row.id).collect();
+    assert_eq!(ids, vec![2, 3, 7, 8]);
+}
+
+/// Every backend answers a range, because every backend the `using` clause can
+/// name is an ordered tree.
+///
+/// Congee is the one worth naming: it is an adaptive radix tree with a native
+/// range scan, and it was the backend most likely to have been given a range
+/// that silently returned everything.
+#[test]
+fn every_backend_answers_a_range() {
+    let mut ordered = OrderedWorkTable::new();
+    let mut congee = CongeedWorkTable::new();
+    let mut wti = WtidWorkTable::new();
+    for id in [7u64, 2, 9, 4, 1, 6, 3, 8, 5] {
+        ordered
+            .insert(OrderedRow {
+                id,
+                value: id * 10,
+                tag: id % 2,
+            })
+            .expect("fresh");
+        congee.insert(CongeedRow { id, value: id * 10 }).expect("fresh");
+        wti.insert(WtidRow {
+            id,
+            value: id * 10,
+            code: id + 100,
+        })
+        .expect("fresh");
+    }
+
+    assert_eq!(
+        ordered.range(3..7).map(|row| row.id).collect::<Vec<_>>(),
+        vec![3, 4, 5, 6]
+    );
+    assert_eq!(
+        congee.range(3..7).map(|row| row.id).collect::<Vec<_>>(),
+        vec![3, 4, 5, 6]
+    );
+    assert_eq!(wti.range(3..7).map(|row| row.id).collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+
+    // A unique secondary index is an ordered tree too, and ranges on its own
+    // column rather than on the primary key.
+    assert_eq!(
+        wti.range_by_code(&103..&106).map(|row| row.id).collect::<Vec<_>>(),
+        vec![3, 4, 5],
+        "the secondary range answered on the wrong column"
+    );
+}
+
+/// A `String` key ranges lexicographically, which is the index's order and not
+/// the vector's.
+#[test]
+fn a_string_key_ranges_lexicographically() {
+    let mut table = NamedWorkTable::new();
+    for key in ["delta", "alpha", "charlie", "bravo", "echo"] {
+        table
+            .insert(NamedRow {
+                key: key.to_string(),
+                value: key.len() as u64,
+            })
+            .expect("fresh");
+    }
+    let keys: Vec<&str> = table.range(..).map(|row| row.key.as_str()).collect();
+    assert_eq!(keys, vec!["alpha", "bravo", "charlie", "delta", "echo"]);
+
+    let keys: Vec<&str> = table
+        .range("bravo".to_string().."delta".to_string())
+        .map(|row| row.key.as_str())
+        .collect();
+    assert_eq!(keys, vec!["bravo", "charlie"]);
 }

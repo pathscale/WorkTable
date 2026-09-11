@@ -432,6 +432,48 @@ Each page carries its own header, a CRC, a row directory and a fingerprint of th
 type, so a page written by a different declaration is refused rather than misread. The
 codec is `worktable::vec_hydrate` and it is reachable directly.
 
+=== Ranges
+
+The index is an ordered tree on every backend `using` can name, so a range costs nothing
+to provide and is simply there:
+
+```rust
+for row in table.range(100..200) { .. }          // by primary key, in key order
+for row in table.range(..).rev() { .. }          // backwards
+for row in table.range_by_code(&10..&20) { .. }  // by a unique secondary index
+```
+
+This is not a sorted vector. The keys come out in order and the rows they name are
+wherever insertion put them, so a long range is a walk of random accesses into the row
+vector rather than a sequential read. `range_by_` is emitted for unique secondary indexes
+only; a non-unique one holds a posting list per key and has no single row to yield.
+
+=== Deleting, and the ghosts it leaves
+
+`delete` is constant time. The row leaves its slot and its index entries, and nothing else
+moves:
+
+```rust
+table.delete(&7);                 // O(1): a slot emptied, entries removed
+table.ghost_count();              // 1
+table.slots();                    // unchanged
+table.compact();                  // reclaims the slot, renumbers the indexes
+```
+
+It used to close the hole with `Vec::remove`, which meant moving every row above it *and*
+rewriting every index entry above it. At a million rows that cost 21 milliseconds per
+delete, so two hundred deletes took four seconds.
+
+What you pay instead is a slot that stays allocated until you ask for it back. That is the
+paged table's ghost-and-vacuum model applied to a vector, and the same judgement applies:
+`ghost_count` and `slots` are there so a caller decides when compaction is worth its cost.
+`compact` keeps the row vector's capacity for reuse; `shrink_to_fit` is separate, because a
+table that compacts in order to keep inserting wants the capacity it already has.
+
+`select_all` returns an iterator rather than a `&[Row]` for this reason: with a hole in it
+the live rows are not a contiguous slice, and handing one back would mean paying the
+compaction the design exists to defer.
+
 === Sizing it
 
 `with_capacity`, `capacity` and `reserve` size the row vector. Only the rows: the indexes

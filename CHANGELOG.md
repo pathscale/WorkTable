@@ -5,6 +5,38 @@ Change Log
 
 ### Added
 
+- Ranges on a `vec: true` table: `range(bounds)` by primary key and
+  `range_by_<column>(bounds)` for each unique secondary index, both
+  `DoubleEndedIterator` so `.rev()` works. This cost nothing to add and was
+  simply never exposed. Every backend the `using` clause can name is an ordered
+  tree, `UniqueIndex` has always required `range_links`, and the index was
+  answering ranges the whole time.
+
+  It is not a sorted vector: the keys arrive in order and the rows they name are
+  wherever insertion put them, so a long range is a walk of random accesses.
+  `range_by_` is emitted for unique indexes only, because a non-unique one holds
+  a posting list per key and has no single row to yield.
+
+- Ghosted deletes on a `vec: true` table, with `compact` to reclaim. `delete` is
+  now O(1): the row leaves its slot and its index entries, and no other position
+  changes. It used to close the hole with `Vec::remove`, which meant a memmove of
+  every row above it plus a rewrite of every index entry above it — **21
+  milliseconds per delete at a million rows**, so two hundred deletes took four
+  seconds.
+
+  The cost is that slots accumulate until `compact()` is called, which is the
+  paged table's ghost-and-vacuum model applied to a vector. `ghost_count()` and
+  `slots()` report the state so a caller can decide when compaction is worth its
+  cost; `compact()` keeps the row vector's capacity for reuse and
+  `shrink_to_fit()` gives it back.
+
+  Two consequences worth reading before upgrading. `select_all()` returns
+  `impl Iterator<Item = &Row>` instead of `&[Row]`, because with a hole in it the
+  live rows are no longer a contiguous slice — call `.iter()` on the result no
+  longer, and `.count()` where you had `.len()`. And a slot now costs
+  `size_of::<Option<Row>>()`, which for a row with no spare bit pattern is the
+  row plus its alignment; `used_bytes()` counts slots for that reason.
+
 - `vec: true` composes with `partition_by`. It was refused, on the grounds
   that a `Vec` table "is one contiguous `Vec` and has nothing to partition",
   which reads the relationship backwards: partitioning is what makes the `Vec`
