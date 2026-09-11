@@ -18,6 +18,21 @@ Change Log
   handed over with `partition_or_insert_with` rather than mutated through the
   `Arc` the router returns.
 
+- `AtomicKeyTable`, ported from `worktable-vec`, which is now deprecated: this
+  was the last thing in that crate living nowhere else. A fixed-capacity,
+  open-addressed table whose rows are claimed with one `compare_exchange` and
+  then updated through `&V`, so many writers share a key without a lock and
+  without a reallocation. The case it exists for is a counter table: sixteen
+  workers recording timings against a handful of named sites.
+
+  **There is no row snapshot, and there will not be one.** A reader of two
+  fields reads two atomics, so a count of 10 beside a total of 900 is
+  observable even though no writer left the row that way. A sequence lock or a
+  lock per row would put back the contended cache line the type exists to
+  avoid. A caller who needs two values to agree packs them into one atomic: two
+  `u32` counters in an `AtomicU64`, one `fetch_add`, one load. That is the
+  supported answer and there is a worked example in the tests.
+
 - A lint on a narrow primary key. `u8` or `bool` as the primary key of an
   **unpartitioned** table means a table that can never hold more than 256 or 2
   rows, which is usually a key that was meant to be wider. Beside

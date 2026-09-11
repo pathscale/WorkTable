@@ -8,6 +8,8 @@ extern crate alloc;
 /// this crate, where `worktable!` is invoked for the persistence queue.
 extern crate self as worktable;
 
+/// A fixed-capacity table whose rows are claimed without blocking.
+pub mod atomic_key_table;
 mod columnar;
 #[cfg(feature = "std")]
 pub mod fsx;
@@ -139,6 +141,7 @@ pub mod prelude {
     pub use futures::future::join_all;
     pub use hashbrown::{HashMap, HashSet};
 
+    pub use crate::atomic_key_table::AtomicKeyTable;
     pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};
     pub use crate::lock::FullRowLock;
     pub use crate::lock::{Lock, RowLock};

@@ -28,14 +28,32 @@
 //! so writers contending for a key they all already own would serialise on it.
 //! A relaxed load is a shared read.
 //!
+//! # There is no row snapshot, deliberately
+//!
+//! A row is `&V` and `V` supplies its own interior mutability, so a reader that
+//! wants two fields reads two atomics and there is no instant at which it held
+//! both. A count of 10 beside a total of 900 can be observed even though no
+//! writer ever left the row in that state.
+//!
+//! That is accepted rather than fixed. The alternatives are a sequence lock or
+//! a lock per row, and both put back the contended cache line this type exists
+//! to avoid: the whole point of claiming a slot once and then never touching
+//! the key again is that a hot row is a shared read.
+//!
+//! **If you need two values to agree, pack them into one atomic.** Two `u32`
+//! counters in an `AtomicU64` are updated with one `fetch_add` of
+//! `1 << 32 | delta` and read with one load, and they are then exactly as
+//! consistent as each other. That is the supported answer, and it is enough for
+//! the case this exists for: a count and a total.
+//!
 //! # What it does not do
 //!
 //! No removal, no resize, and no iteration order beyond slot order. A full table
 //! refuses rather than growing, and [`AtomicKeyTable::len`] says how many slots
 //! are taken so a caller can see it coming.
 //!
-//! Ported from `worktable-vec`, where it was written and where its own tests
-//! still live.
+//! Ported from `worktable-vec`, which this supersedes. That crate is deprecated
+//! and this was the last thing in it that lived nowhere else.
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -46,7 +64,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 // is built or tested for a narrower target, so the honest answer is to say so
 // at compile time instead of carrying a second constant nobody exercises.
 #[cfg(not(target_pointer_width = "64"))]
-compile_error!("`storage: atomic` requires a 64-bit target");
+compile_error!("`AtomicKeyTable` requires a 64-bit target");
 
 /// Scatter a key across the table.
 ///
@@ -182,5 +200,181 @@ impl<V> AtomicKeyTable<V> {
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.keys.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct Counter(AtomicU64);
+
+    #[test]
+    fn a_claimed_row_is_found_by_a_plain_load_and_never_reclaimed() {
+        let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(64);
+        let first = table.upsert(7).expect("capacity");
+        first.0.fetch_add(1, Ordering::Relaxed);
+        let again = table.upsert(7).expect("already claimed");
+        again.0.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(again.0.load(Ordering::Relaxed), 2, "the second call found the same row");
+        assert_eq!(table.len(), 1, "one key claimed one slot");
+    }
+
+    #[test]
+    fn zero_is_the_empty_sentinel_and_is_refused_rather_than_colliding() {
+        let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(8);
+        assert!(table.upsert(0).is_none(), "zero would be indistinguishable from empty");
+        assert!(table.select(0).is_none());
+        assert_eq!(table.len(), 0);
+    }
+
+    #[test]
+    fn a_full_table_refuses_rather_than_growing() {
+        let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(4);
+        for key in 1..=4 {
+            assert!(table.upsert(key).is_some(), "slot {key} fits");
+        }
+        assert_eq!(table.len(), 4);
+        assert!(table.upsert(5).is_none(), "the fifth has nowhere to go");
+        assert!(table.upsert(3).is_some(), "a claimed key is still reachable when full");
+    }
+
+    #[test]
+    fn select_never_creates_a_row() {
+        let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(8);
+        assert!(table.select(9).is_none());
+        assert_eq!(table.len(), 0, "select must not take a slot");
+        table.upsert(9).expect("capacity");
+        assert!(table.select(9).is_some());
+    }
+
+    #[test]
+    fn every_claimed_row_is_iterated_and_no_empty_one_is() {
+        let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(32);
+        for key in [11usize, 22, 33] {
+            table
+                .upsert(key)
+                .expect("capacity")
+                .0
+                .store(key as u64, Ordering::Relaxed);
+        }
+        let mut seen: Vec<(usize, u64)> = table.iter().map(|(k, v)| (k, v.0.load(Ordering::Relaxed))).collect();
+        seen.sort_unstable();
+        assert_eq!(seen, alloc::vec![(11usize, 11u64), (22, 22), (33, 33)]);
+    }
+
+    /// Small sequential keys must not all land in one slot.
+    ///
+    /// The regression `scatter` exists for. The first version of this, in
+    /// `worktable-vec`, shifted the key right by four and took it modulo the
+    /// capacity. The shift assumes a pointer key whose low bits are alignment
+    /// zeros; handed small integers it maps **every key under sixteen onto slot
+    /// zero**, and a measured lookup over sixty-four sequential keys ran 9.3x
+    /// slower than a linear scan of the same rows.
+    ///
+    /// Asserted on the slot distribution rather than through the public API,
+    /// because the public API cannot tell the difference: every key is findable
+    /// either way, and what breaks is only how far each lookup walks. This
+    /// module's own test can see the private index, so it checks the thing that
+    /// actually went wrong.
+    #[test]
+    fn small_sequential_keys_land_on_distinct_slots() {
+        let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(256);
+
+        let mut slots: Vec<usize> = (1..=64usize).map(|key| scatter(key, table.shift, table.mask)).collect();
+        slots.sort_unstable();
+        slots.dedup();
+
+        // 64 keys into 256 slots: by the birthday bound a good scatter leaves
+        // roughly 57 distinct, and the broken one leaves exactly 1. Anything
+        // above half is unambiguously the former.
+        assert!(
+            slots.len() > 32,
+            "64 sequential keys landed on only {} distinct slots of 256; this is the \
+             low-bits regression",
+            slots.len()
+        );
+
+        // And the keys the caller would actually use still all resolve.
+        for key in 1..=64usize {
+            table.upsert(key).expect("capacity");
+        }
+        assert_eq!(table.len(), 64);
+        for key in 1..=64usize {
+            assert!(table.select(key).is_some(), "key {key} went missing");
+        }
+        for key in 65..=128usize {
+            assert!(table.select(key).is_none(), "key {key} was never claimed");
+        }
+    }
+
+    #[test]
+    fn concurrent_writers_agree_on_one_row_per_key() {
+        extern crate std;
+        let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(512);
+        let shared = &table;
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(move || {
+                    for round in 0..1_000usize {
+                        let key = (round % 16) + 1;
+                        shared.upsert(key).expect("capacity").0.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+        assert_eq!(
+            table.len(),
+            16,
+            "sixteen keys, sixteen slots, whatever the interleaving"
+        );
+        let total: u64 = table.iter().map(|(_, v)| v.0.load(Ordering::Relaxed)).sum();
+        assert_eq!(total, 8 * 1_000, "no update was lost and none was double counted");
+    }
+
+    /// The documented way to make two values agree: pack them into one atomic.
+    ///
+    /// There is no row snapshot and there will not be one, so this is the
+    /// supported answer and it is worth having a worked example of it in the
+    /// tests rather than only in prose.
+    #[test]
+    fn two_values_packed_into_one_atomic_stay_consistent() {
+        extern crate std;
+
+        /// Count in the high 32 bits, total in the low 32.
+        #[derive(Default)]
+        struct CountAndTotal(AtomicU64);
+
+        impl CountAndTotal {
+            fn record(&self, value: u32) {
+                self.0.fetch_add((1u64 << 32) | u64::from(value), Ordering::Relaxed);
+            }
+
+            /// One load, so the pair is exactly as consistent as each other.
+            fn read(&self) -> (u32, u32) {
+                let packed = self.0.load(Ordering::Relaxed);
+                ((packed >> 32) as u32, packed as u32)
+            }
+        }
+
+        let table: AtomicKeyTable<CountAndTotal> = AtomicKeyTable::with_capacity(64);
+        let shared = &table;
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(move || {
+                    for _ in 0..500 {
+                        shared.upsert(1).expect("capacity").record(3);
+                    }
+                });
+            }
+        });
+
+        let (count, total) = table.select(1).expect("claimed").read();
+        assert_eq!(count, 4_000);
+        assert_eq!(total, 12_000);
+        assert_eq!(total, count * 3, "the pair was never observed disagreeing");
     }
 }
