@@ -42,7 +42,7 @@
 //!
 //! Every call site breaks instead:
 //!
-//! | | `worktable!` | `worktable_vec!` |
+//! | | `worktable!` | `worktable!` with `vec: true` |
 //! |---|---|---|
 //! | `insert` | `async fn(&self, Row) -> Result<Pk, WorkTableError>` | `fn(&mut self, Row) -> Result<(), Row>` |
 //! | `upsert` | `async fn(&self, Row) -> Result<(), WorkTableError>` | `fn(&mut self, Row)` |
@@ -303,14 +303,14 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     if columns.primary_keys.len() != 1 {
         return Err(syn::Error::new(
             name.span(),
-            "worktable_vec! takes a single-column primary key. A composite key needs a tuple key \
-             type, which is the machinery this macro exists to avoid.",
+            "`vec: true` takes a single-column primary key. A composite key needs a tuple key \
+             type, which is the machinery this storage exists to avoid.",
         ));
     }
     if !columns.columnar_fields.is_empty() || !columns.columnar_indexes.is_empty() {
         return Err(syn::Error::new(
             name.span(),
-            "worktable_vec! does not support columnar fields. Columnar storage is a paging \
+            "`vec: true` does not support columnar fields. Columnar storage is a paging \
              feature and this table has no pages.",
         ));
     }

@@ -78,10 +78,6 @@ pub fn mem_stat(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// The same declaration, backed by a `Vec` instead of pages.
-///
-/// See `generators::vec_table` for what it drops and why.
-
 #[proc_macro]
 pub fn worktable_version(input: TokenStream) -> TokenStream {
     worktable_version::expand(input.into())
