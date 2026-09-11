@@ -66,7 +66,6 @@ impl PersistGenerator {
             primary_key_backend_impl(self.columns.primary_index_backend, &ident, types)?;
         let borrowed_impl = gen_borrowed_primary_key_impl(&ident, types);
 
-
         // `From` written out rather than derived. `derive_more::From` puts
         // `::derive_more::` paths in its expansion, which made that crate part
         // of this macro's contract: a consumer who never wrote `derive_more`

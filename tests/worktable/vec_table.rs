@@ -28,9 +28,30 @@ worktable!(
 fn it_behaves_like_a_table() {
     let mut table = PointWorkTable::new();
 
-    table.insert(PointRow { id: 1, value: 10, tag: 7 }).expect("fresh");
-    table.insert(PointRow { id: 2, value: 20, tag: 7 }).expect("fresh");
-    assert!(table.insert(PointRow { id: 1, value: 99, tag: 9 }).is_err(), "duplicate key");
+    table
+        .insert(PointRow {
+            id: 1,
+            value: 10,
+            tag: 7,
+        })
+        .expect("fresh");
+    table
+        .insert(PointRow {
+            id: 2,
+            value: 20,
+            tag: 7,
+        })
+        .expect("fresh");
+    assert!(
+        table
+            .insert(PointRow {
+                id: 1,
+                value: 99,
+                tag: 9
+            })
+            .is_err(),
+        "duplicate key"
+    );
 
     assert_eq!(table.select(&1).expect("present").value, 10);
     assert_eq!(table.len(), 2);
@@ -41,7 +62,11 @@ fn it_behaves_like_a_table() {
     assert_eq!(tagged.len(), 2);
     assert_eq!(tagged[0].id, 1);
 
-    table.upsert(PointRow { id: 1, value: 11, tag: 7 });
+    table.upsert(PointRow {
+        id: 1,
+        value: 11,
+        tag: 7,
+    });
     assert_eq!(table.select(&1).expect("present").value, 11, "upsert replaces");
     assert_eq!(table.len(), 2, "upsert does not grow the table");
 
@@ -83,7 +108,10 @@ fn it_costs_what_a_vec_costs() {
     }
 
     let started = Instant::now();
-    let mut baseline = Baseline { rows: Vec::new(), by_pk: BTreeMap::new() };
+    let mut baseline = Baseline {
+        rows: Vec::new(),
+        by_pk: BTreeMap::new(),
+    };
     for id in 0..ROWS {
         baseline.by_pk.insert(id, baseline.rows.len());
         baseline.rows.push((id, id * 2, id % 64));
@@ -99,7 +127,13 @@ fn it_costs_what_a_vec_costs() {
     let started = Instant::now();
     let mut table = PointWorkTable::new();
     for id in 0..ROWS {
-        table.insert(PointRow { id, value: id * 2, tag: id % 64 }).expect("fresh");
+        table
+            .insert(PointRow {
+                id,
+                value: id * 2,
+                tag: id % 64,
+            })
+            .expect("fresh");
     }
     let mut table_sum = 0u64;
     for id in 0..ROWS {
@@ -112,10 +146,7 @@ fn it_costs_what_a_vec_costs() {
     assert_eq!(sum, table_sum, "the two must do the same work");
 
     let ratio = table_time.as_secs_f64() / vec_time.as_secs_f64();
-    eprintln!(
-        "VEC-COST vec={:?} table={:?} ratio={ratio:.2}x",
-        vec_time, table_time
-    );
+    eprintln!("VEC-COST vec={:?} table={:?} ratio={ratio:.2}x", vec_time, table_time);
     assert!(
         ratio < 4.0,
         "the generated table took {ratio:.2}x the hand-written Vec plus BTreeMap. \
@@ -164,7 +195,13 @@ fn deleting_from_the_middle_reindexes_both_backends() {
         ($table:ty, $row:ident) => {{
             let mut table = <$table>::new();
             for id in 0..6u64 {
-                table.insert($row { id, value: id * 10, tag: id % 2 }).expect("fresh");
+                table
+                    .insert($row {
+                        id,
+                        value: id * 10,
+                        tag: id % 2,
+                    })
+                    .expect("fresh");
             }
 
             assert_eq!(table.delete(&2).expect("present").value, 20);
@@ -188,7 +225,13 @@ fn deleting_from_the_middle_reindexes_both_backends() {
             assert_eq!(odd, vec![1, 3, 5]);
 
             // And the table still takes writes afterwards.
-            table.insert($row { id: 9, value: 90, tag: 1 }).expect("fresh");
+            table
+                .insert($row {
+                    id: 9,
+                    value: 90,
+                    tag: 1,
+                })
+                .expect("fresh");
             assert_eq!(table.select(&9).expect("present").value, 90);
             let odd: Vec<u64> = table.select_by_tag(&1).iter().map(|row| row.id).collect();
             assert_eq!(odd, vec![1, 3, 5, 9]);
@@ -207,9 +250,26 @@ fn deleting_from_the_middle_reindexes_both_backends() {
 #[test]
 fn a_string_keyed_table_works() {
     let mut table = NamedWorkTable::new();
-    table.insert(NamedRow { key: "beta".to_string(), value: 2 }).expect("fresh");
-    table.insert(NamedRow { key: "alpha".to_string(), value: 1 }).expect("fresh");
-    assert!(table.insert(NamedRow { key: "alpha".to_string(), value: 9 }).is_err());
+    table
+        .insert(NamedRow {
+            key: "beta".to_string(),
+            value: 2,
+        })
+        .expect("fresh");
+    table
+        .insert(NamedRow {
+            key: "alpha".to_string(),
+            value: 1,
+        })
+        .expect("fresh");
+    assert!(
+        table
+            .insert(NamedRow {
+                key: "alpha".to_string(),
+                value: 9
+            })
+            .is_err()
+    );
 
     assert_eq!(table.select(&"alpha".to_string()).expect("present").value, 1);
     assert_eq!(table.delete(&"beta".to_string()).expect("present").value, 2);
@@ -261,15 +321,28 @@ fn the_backends_without_a_multimap_still_work() {
         assert_eq!(congee.select(&id).unwrap_or_else(|| panic!("{id} gone")).value, id * 10);
     }
     assert!(congee.select(&3).is_none());
-    assert_eq!(congee.select_all().iter().map(|row| row.id).collect::<Vec<_>>(), vec![1, 2, 4, 5]);
+    assert_eq!(
+        congee.select_all().iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![1, 2, 4, 5]
+    );
 
     let mut wti = WtidWorkTable::new();
     for id in 1..=5u64 {
-        wti.insert(WtidRow { id, value: id * 10, code: id + 100 }).expect("fresh");
+        wti.insert(WtidRow {
+            id,
+            value: id * 10,
+            code: id + 100,
+        })
+        .expect("fresh");
     }
     // The unique secondary refuses independently of the primary key.
     assert!(
-        wti.insert(WtidRow { id: 6, value: 60, code: 103 }).is_err(),
+        wti.insert(WtidRow {
+            id: 6,
+            value: 60,
+            code: 103
+        })
+        .is_err(),
         "duplicate code should be refused even though the id is fresh"
     );
     // ...and refusing it must not have left the fresh id behind.
@@ -307,7 +380,11 @@ fn a_table_survives_a_round_trip_through_pages() {
     let mut table = SavedWorkTable::new();
     for id in 0..200u64 {
         table
-            .insert(SavedRow { id, label: format!("row-{id}"), tag: id % 8 })
+            .insert(SavedRow {
+                id,
+                label: format!("row-{id}"),
+                tag: id % 8,
+            })
             .expect("fresh");
     }
     table.delete(&7).expect("present");
@@ -326,7 +403,11 @@ fn a_table_survives_a_round_trip_through_pages() {
         assert_eq!(row.label, format!("row-{id}"));
     }
     // And the secondary index was rebuilt too, minus the deleted row.
-    assert_eq!(loaded.select_by_tag(&7).len(), 24, "tag 7 held 25 rows before the delete");
+    assert_eq!(
+        loaded.select_by_tag(&7).len(),
+        24,
+        "tag 7 held 25 rows before the delete"
+    );
     assert_eq!(loaded.select_by_tag(&0).len(), 25);
 
     // Insertion order survives, which is what makes `select_all` meaningful.
@@ -354,7 +435,13 @@ fn an_empty_table_round_trips_as_one_page() {
 #[test]
 fn a_flipped_bit_is_refused_rather_than_read() {
     let mut table = SavedWorkTable::new();
-    table.insert(SavedRow { id: 1, label: "one".into(), tag: 0 }).expect("fresh");
+    table
+        .insert(SavedRow {
+            id: 1,
+            label: "one".into(),
+            tag: 0,
+        })
+        .expect("fresh");
     let mut bytes = table.unload().expect("fits");
 
     // Into the body, which the header's last `u32` gives the length of. A
@@ -375,7 +462,13 @@ fn a_flipped_bit_is_refused_rather_than_read() {
 #[test]
 fn a_partial_page_is_refused() {
     let mut table = SavedWorkTable::new();
-    table.insert(SavedRow { id: 1, label: "one".into(), tag: 0 }).expect("fresh");
+    table
+        .insert(SavedRow {
+            id: 1,
+            label: "one".into(),
+            tag: 0,
+        })
+        .expect("fresh");
     let bytes = table.unload().expect("fits");
 
     match SavedWorkTable::load(&bytes[..bytes.len() - 1]) {
@@ -406,7 +499,13 @@ worktable!(
 #[test]
 fn another_row_types_pages_are_refused() {
     let mut other = OtherWorkTable::new();
-    other.insert(OtherRow { id: 1, label: "one".into(), tag: 0 }).expect("fresh");
+    other
+        .insert(OtherRow {
+            id: 1,
+            label: "one".into(),
+            tag: 0,
+        })
+        .expect("fresh");
     let bytes = other.unload().expect("fits");
 
     match SavedWorkTable::load(&bytes) {
@@ -425,17 +524,27 @@ fn rows_across_many_pages_come_back_in_order() {
     let mut table = SavedWorkTable::new();
     for id in 0..5_000u64 {
         table
-            .insert(SavedRow { id, label: format!("a fairly long label for row {id}"), tag: id % 8 })
+            .insert(SavedRow {
+                id,
+                label: format!("a fairly long label for row {id}"),
+                tag: id % 8,
+            })
             .expect("fresh");
     }
     let bytes = table.unload().expect("no single row is oversized");
-    assert!(bytes.len() / 16384 > 1, "this needs to span pages to be testing anything");
+    assert!(
+        bytes.len() / 16384 > 1,
+        "this needs to span pages to be testing anything"
+    );
 
     let loaded = SavedWorkTable::load(&bytes).expect("its own bytes");
     assert_eq!(loaded.len(), 5_000);
     let ids: Vec<u64> = loaded.select_all().iter().map(|row| row.id).collect();
     assert_eq!(ids, (0..5_000u64).collect::<Vec<_>>());
-    assert_eq!(loaded.select(&4_999).expect("last row").label, "a fairly long label for row 4999");
+    assert_eq!(
+        loaded.select(&4_999).expect("last row").label,
+        "a fairly long label for row 4999"
+    );
 }
 
 /// `update` edits in place and repairs every index the edit moved the row
@@ -449,7 +558,13 @@ fn rows_across_many_pages_come_back_in_order() {
 fn update_edits_in_place_and_repairs_the_indexes() {
     let mut table = PointWorkTable::new();
     for id in 0..4u64 {
-        table.insert(PointRow { id, value: id * 10, tag: id % 2 }).expect("fresh");
+        table
+            .insert(PointRow {
+                id,
+                value: id * 10,
+                tag: id % 2,
+            })
+            .expect("fresh");
     }
 
     // An unindexed column: nothing to repair, and nothing should move.
@@ -479,8 +594,20 @@ fn update_edits_in_place_and_repairs_the_indexes() {
 #[should_panic(expected = "primary key another row already holds")]
 fn update_refuses_to_collide_two_rows_onto_one_key() {
     let mut table = PointWorkTable::new();
-    table.insert(PointRow { id: 1, value: 10, tag: 0 }).expect("fresh");
-    table.insert(PointRow { id: 2, value: 20, tag: 0 }).expect("fresh");
+    table
+        .insert(PointRow {
+            id: 1,
+            value: 10,
+            tag: 0,
+        })
+        .expect("fresh");
+    table
+        .insert(PointRow {
+            id: 2,
+            value: 20,
+            tag: 0,
+        })
+        .expect("fresh");
     table.update(&1, |row| row.id = 2);
 }
 

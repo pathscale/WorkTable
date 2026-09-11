@@ -28,11 +28,11 @@ pub mod persistence;
 pub mod runtime;
 
 mod primary_key;
-/// The page codec behind `storage: vec` plus `persist: true`.
-pub mod vec_hydrate;
 mod row;
 mod table;
 mod util;
+/// The page codec behind `storage: vec` plus `persist: true`.
+pub mod vec_hydrate;
 
 #[cfg(feature = "s3-support")]
 pub mod features;
@@ -119,7 +119,6 @@ pub mod prelude {
     pub use nagoya::{sleep, timeout, yield_now};
 
     pub use alloc::boxed::Box;
-    pub use alloc::collections::{BTreeMap, BTreeSet};
     /// The `BTreeMap` entry, under a name a macro expansion can write.
     ///
     /// A `storage: vec` table needs it to refuse a duplicate key in one traversal
@@ -128,6 +127,7 @@ pub mod prelude {
     /// here is: `alloc::` does not resolve in a consumer that never declared
     /// `extern crate alloc`.
     pub use alloc::collections::btree_map::Entry as BTreeMapEntry;
+    pub use alloc::collections::{BTreeMap, BTreeSet};
     pub use alloc::sync::Arc;
     /// `Vec` and `vec!` for the same reason as `Arc` above: a `no_std`
     /// consumer has neither in scope, and the expansion uses both.
@@ -166,17 +166,6 @@ pub mod prelude {
     pub use crate::util::{OffsetEqLink, OrderedF32Def, OrderedF64Def};
     /// The page codec a `storage: vec` table unloads and loads through.
     pub use crate::vec_hydrate::{Codec, LoadError, NotAnArchive, RowTooLarge, from_pages, to_pages};
-    /// rkyv itself, so a generated row can derive its traits without the
-    /// consumer declaring rkyv. `worktable!`'s paged path still emits a bare
-    /// `rkyv::` and is the remaining half of that leak.
-    pub use rkyv;
-    /// `eyre` and `uuid`, for the same reason as `rkyv` above: `worktable!`
-    /// expands in the consumer's crate, so every path it emits has to resolve
-    /// there. Emitting a bare `eyre::` made that crate part of the macro's
-    /// contract, and a consumer who never mentions eyre had to depend on it
-    /// anyway to compile a table declaration.
-    pub use ::eyre;
-    pub use ::uuid;
     #[allow(unused_imports)]
     pub use crate::{};
     pub use crate::{
@@ -193,6 +182,13 @@ pub mod prelude {
     pub use crate::{UpstreamIndexMap, UpstreamIndexPair};
     #[cfg(feature = "std")]
     pub use crate::{vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum};
+    /// `eyre` and `uuid`, for the same reason as `rkyv` above: `worktable!`
+    /// expands in the consumer's crate, so every path it emits has to resolve
+    /// there. Emitting a bare `eyre::` made that crate part of the macro's
+    /// contract, and a consumer who never mentions eyre had to depend on it
+    /// anyway to compile a table declaration.
+    pub use ::eyre;
+    pub use ::uuid;
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,
         Link, PAGE_SIZE, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoPage,
@@ -207,6 +203,10 @@ pub mod prelude {
     pub use ordered_float::OrderedFloat;
     pub use parking_lot::RwLock as ParkingRwLock;
     pub use parking_lot::RwLockReadGuard as ParkingRwLockReadGuard;
+    /// rkyv itself, so a generated row can derive its traits without the
+    /// consumer declaring rkyv. `worktable!`'s paged path still emits a bare
+    /// `rkyv::` and is the remaining half of that leak.
+    pub use rkyv;
 
     /// Node capacity representable by the persisted index's u16 slot format.
     pub fn get_index_page_size_from_data_length<T: Default + SizeMeasurable>(length: usize) -> usize {

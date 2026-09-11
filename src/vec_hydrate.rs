@@ -163,22 +163,40 @@ impl core::fmt::Display for LoadError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::NotWholePages { found } => {
-                write!(formatter, "{found} bytes is not a whole number of {PAGE_SIZE} byte pages")
+                write!(
+                    formatter,
+                    "{found} bytes is not a whole number of {PAGE_SIZE} byte pages"
+                )
             }
             Self::ForeignPages { page, version } => {
-                write!(formatter, "page {page} claims format version {version}, not {PAGE_VERSION}")
+                write!(
+                    formatter,
+                    "page {page} claims format version {version}, not {PAGE_VERSION}"
+                )
             }
             Self::Overlong { page, claimed } => {
-                write!(formatter, "page {page} claims a {claimed} byte body, over the {BODY_SIZE} byte limit")
+                write!(
+                    formatter,
+                    "page {page} claims a {claimed} byte body, over the {BODY_SIZE} byte limit"
+                )
             }
             Self::Corrupt { page, expected, found } => {
-                write!(formatter, "page {page} checksums to {found:#010x}, not the {expected:#010x} written with it")
+                write!(
+                    formatter,
+                    "page {page} checksums to {found:#010x}, not the {expected:#010x} written with it"
+                )
             }
             Self::Inconsistent { page } => {
-                write!(formatter, "page {page} names a different row type than the pages before it")
+                write!(
+                    formatter,
+                    "page {page} names a different row type than the pages before it"
+                )
             }
             Self::ForeignRows { found, expected } => {
-                write!(formatter, "these pages hold row type {found:#010x}, not {expected:#010x}")
+                write!(
+                    formatter,
+                    "these pages hold row type {found:#010x}, not {expected:#010x}"
+                )
             }
             Self::Rows { page } => write!(formatter, "page {page} did not deserialize into rows"),
             Self::RowCount { page, expected, found } => {
