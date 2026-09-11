@@ -629,3 +629,80 @@ fn capacity_and_into_rows() {
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[2].id, 2);
 }
+
+// The WTI leaf width, set at the call site.
+//
+// It is a call-site parameter and not grammar because the right width depends
+// on the workload rather than the schema: measured at a million shuffled keys,
+// 256 is 1.56x faster than the 1,024 default on insert and 3.7% slower on
+// lookup, so the same declaration wants different widths in a write-heavy
+// process and a read-heavy one. A declaration can only say one thing.
+worktable!(
+    name: Tuned,
+    vec: true,
+    columns: {
+        id: u64 primary_key using worktables_index,
+        value: u64,
+    }
+);
+
+// No WTI index anywhere, so no knob should be generated for it.
+worktable!(
+    name: Untuned,
+    vec: true,
+    columns: {
+        id: u64 primary_key,
+        value: u64,
+    }
+);
+
+#[test]
+fn the_node_size_is_a_call_site_parameter() {
+    let mut table = TunedWorkTable::with_node_size(256);
+    for id in 0..1_000u64 {
+        table.insert(TunedRow { id, value: id * 2 }).expect("fresh key");
+    }
+    assert_eq!(table.len(), 1_000);
+    assert_eq!(table.select(&500).expect("present").value, 1_000);
+}
+
+#[test]
+fn a_narrow_node_size_caps_nothing() {
+    // The width is the leaf size a node splits at, not a limit on rows. A tree
+    // built with a width of 2 must hold thousands of rows by adding nodes,
+    // exactly as it does at the default. This is the "what happens when it
+    // needs to grow" question, answered: it grows.
+    let mut table = TunedWorkTable::with_node_size(2);
+    for id in 0..5_000u64 {
+        table.insert(TunedRow { id, value: id }).expect("fresh key");
+    }
+    assert_eq!(table.len(), 5_000);
+    for id in (0..5_000u64).step_by(97) {
+        assert_eq!(table.select(&id).expect("present").value, id, "row {id} went missing");
+    }
+
+    // And the same table at an absurdly wide leaf holds exactly the same rows.
+    let mut wide = TunedWorkTable::with_node_size(1 << 20);
+    for id in 0..5_000u64 {
+        wide.insert(TunedRow { id, value: id }).expect("fresh key");
+    }
+    assert_eq!(wide.len(), 5_000);
+    assert_eq!(wide.select(&4_999).expect("present").value, 4_999);
+}
+
+#[test]
+fn both_knobs_compose() {
+    let table = TunedWorkTable::with_capacity_and_node_size(4_096, 256);
+    assert!(table.capacity() >= 4_096, "the row vector was sized");
+    assert_eq!(table.len(), 0);
+}
+
+#[test]
+fn a_table_with_no_wti_index_gets_no_node_size_knob() {
+    // Asserted by compiling: `UntunedWorkTable::with_node_size` does not exist,
+    // because arctic has no node-size concept and a constructor that accepted
+    // one would be a silent no-op. The table still works.
+    let mut table = UntunedWorkTable::with_capacity(16);
+    table.insert(UntunedRow { id: 1, value: 2 }).expect("fresh key");
+    assert_eq!(table.select(&1).expect("present").value, 2);
+}

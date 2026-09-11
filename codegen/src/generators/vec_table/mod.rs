@@ -340,6 +340,12 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     let pk_map_type = unique_type(pk_repr, &pk_type);
     let mut width_guards = vec![congee_width_guard(pk_repr, &pk_type)];
 
+    // WTI is the only backend with a node-size knob; arctic and congee have no
+    // node-size concept at all. A constructor that took one on a table with no
+    // WTI index would be a silent no-op, which this crate refuses everywhere
+    // else, so it is emitted only when there is something for it to set.
+    let pk_is_wti = matches!(pk_repr, Repr::Wti);
+
     let field_names: Vec<_> = columns.columns_map.keys().cloned().collect();
     let field_types: Vec<_> = columns.columns_map.values().cloned().collect();
 
@@ -599,6 +605,81 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     // is nothing left to gate them with, and the alternative is a third key.
     // Measured at 20 tables of five columns: 305 ms without, 470 ms with, so
     // about 8 ms a table. Real, and not worth a key.
+    // The node-size constructor. Emitted only when there is a WTI index to set
+    // it on, so it can never be a knob that does nothing.
+    let with_node_size = if pk_is_wti || index_reprs.iter().any(|r| matches!(r, Repr::Wti)) {
+        let pk_init = if pk_is_wti {
+            quote! { by_pk: <#pk_map_type>::with_maximum_node_size(node_size), }
+        } else {
+            quote! { by_pk: Default::default(), }
+        };
+        let index_inits: Vec<_> = index_fields
+            .iter()
+            .zip(index_map_types.iter())
+            .zip(index_reprs.iter())
+            .map(|((field, ty), repr)| {
+                if matches!(repr, Repr::Wti) {
+                    quote! { #field: <#ty>::with_maximum_node_size(node_size), }
+                } else {
+                    quote! { #field: Default::default(), }
+                }
+            })
+            .collect();
+        quote! {
+            /// A table whose `worktables_index` indexes use `node_size` as
+            /// their leaf width, instead of the default 1,024.
+            ///
+            /// The width is a call-site decision rather than a declaration one,
+            /// because the right value depends on the workload and not on the
+            /// schema: the same table read-mostly in one process and written
+            /// hard in another wants different numbers, and a declaration can
+            /// only say one thing.
+            ///
+            /// Measured at a million shuffled keys
+            /// (`perf-benchmarks/benchmarks/wti-node-size.rs`):
+            ///
+            /// | width | insert | lookup | drop |
+            /// |---:|---:|---:|---:|
+            /// | 128 | 127.36 ns | 134.58 ns | 555.3 us |
+            /// | 256 | 128.80 ns | 129.17 ns | 290.5 us |
+            /// | 1,024 (default) | 200.34 ns | 124.58 ns | 85.7 us |
+            /// | 16,384 | 1,445.89 ns | 116.67 ns | 9.9 us |
+            ///
+            /// Narrow is much better for writing, slightly worse for reading,
+            /// and worse for teardown. 256 is the write-heavy pick; the default
+            /// stays 1,024 because a wrong guess is worse than no guess, and
+            /// only the call site knows which way this table leans.
+            ///
+            /// **Nothing is capped.** The width is the leaf size a node splits
+            /// at, not a limit on rows: the tree grows by adding nodes exactly
+            /// as it does at the default, so an undersized guess costs
+            /// performance and never correctness.
+            ///
+            /// Emitted only for tables that have at least one
+            /// `using worktables_index`, so it is never a knob with nothing to
+            /// turn.
+            #[must_use]
+            pub fn with_node_size(node_size: usize) -> Self {
+                Self {
+                    rows: worktable::prelude::Vec::new(),
+                    #pk_init
+                    #(#index_inits)*
+                }
+            }
+
+            /// Both knobs at once: rows sized for `capacity`, WTI leaves at
+            /// `node_size`.
+            #[must_use]
+            pub fn with_capacity_and_node_size(capacity: usize, node_size: usize) -> Self {
+                let mut table = Self::with_node_size(node_size);
+                table.rows = worktable::prelude::Vec::with_capacity(capacity);
+                table
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let row_derives = {
         quote! {
             #[derive(
@@ -694,6 +775,8 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
                     ..Self::default()
                 }
             }
+
+            #with_node_size
 
             /// How many rows fit before the row vector grows again.
             #[must_use]
