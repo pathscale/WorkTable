@@ -3,7 +3,18 @@ use core::cell::UnsafeCell;
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+#[cfg(not(wt_loom))]
+use core::sync::atomic::AtomicU32 as OverflowCount;
+#[cfg(not(wt_loom))]
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(wt_loom)]
+use loom::sync::{
+    Mutex as CellRegistry,
+    atomic::{AtomicU32 as OverflowCount, AtomicU64},
+};
+#[cfg(not(wt_loom))]
+use parking_lot::Mutex as CellRegistry;
 
 use data_bucket::page::INNER_PAGE_SIZE;
 use data_bucket::page::PageId;
@@ -32,12 +43,16 @@ const CELL_WRITER: u64 = 1 << 63;
 
 #[derive(Debug)]
 struct CellLocks {
+    registration: CellRegistry<()>,
+    displaced: OverflowCount,
     slots: [AtomicU64; CELL_LOCK_SLOTS],
 }
 
 impl Default for CellLocks {
     fn default() -> Self {
         Self {
+            registration: CellRegistry::new(()),
+            displaced: OverflowCount::new(0),
             slots: core::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
@@ -59,6 +74,12 @@ impl CellLocks {
 
     #[inline]
     fn wait(spins: &mut u32) {
+        #[cfg(wt_loom)]
+        {
+            let _ = spins;
+            loom::thread::yield_now();
+        }
+        #[cfg(not(wt_loom))]
         if *spins < 64 {
             core::hint::spin_loop();
             *spins += 1;
@@ -67,82 +88,108 @@ impl CellLocks {
         }
     }
 
-    fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
+    fn try_acquire(state: &AtomicU64, key: u64, write: bool) -> bool {
+        let current = state.load(Ordering::Acquire);
+        if current & CELL_KEY_MASK != key || current & CELL_WRITER != 0 {
+            return false;
+        }
+        let next = if write {
+            current | CELL_WRITER
+        } else if current & CELL_READER_MASK != CELL_READER_MASK {
+            current + CELL_READER_ONE
+        } else {
+            return false;
+        };
+        state
+            .compare_exchange(current, next, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    fn acquire(&self, link: Link, write: bool) -> Result<(&AtomicU64, Option<&OverflowCount>), ExecutionError> {
         let key = Self::key(link)?;
         let start = Self::start(key);
         let mut spins = 0;
-        'retry: loop {
-            for distance in 0..CELL_LOCK_SLOTS {
-                let state = &self.slots[(start + distance) & (CELL_LOCK_SLOTS - 1)];
-                let current = state.load(Ordering::Acquire);
-                let current_key = current & CELL_KEY_MASK;
-                if current_key == key {
-                    if current & CELL_WRITER != 0 || current & CELL_READER_MASK == CELL_READER_MASK {
-                        Self::wait(&mut spins);
-                        continue 'retry;
-                    }
-                    if state
-                        .compare_exchange_weak(current, current + CELL_READER_ONE, Ordering::Acquire, Ordering::Relaxed)
+        loop {
+            let home = &self.slots[start];
+            // Existing home entries need no registry lock. A successful CAS
+            // pins that key in this slot until its guard drops.
+            if Self::try_acquire(home, key, write) {
+                return Ok((home, None));
+            }
+            {
+                #[cfg(not(wt_loom))]
+                let _registration = self.registration.lock();
+                #[cfg(wt_loom)]
+                let _registration = self.registration.lock().unwrap();
+                // A displaced entry increments this counter before publication
+                // and decrements only after its slot is vacant. Zero therefore
+                // proves the key cannot be hidden beyond a released collision.
+                if self.displaced.load(Ordering::Acquire) == 0 {
+                    let access = if write { CELL_WRITER } else { CELL_READER_ONE };
+                    if home
+                        .compare_exchange(0, key | access, Ordering::AcqRel, Ordering::Relaxed)
                         .is_ok()
                     {
-                        return Ok(CellReadGuard { state });
+                        return Ok((home, None));
                     }
-                    continue 'retry;
                 }
-                if current == 0 {
+                let mut vacant = None;
+                let mut matching = None;
+                for distance in 0..CELL_LOCK_SLOTS {
+                    let state = &self.slots[(start + distance) & (CELL_LOCK_SLOTS - 1)];
+                    let current = state.load(Ordering::Acquire);
+                    if current & CELL_KEY_MASK == key {
+                        matching = Some(state);
+                        break;
+                    }
+                    if current == 0 && vacant.is_none() {
+                        vacant = Some(state);
+                    }
+                }
+                // A released earlier collision is not the end of the search.
+                // Only this critical section may assign a vacant slot a key.
+                if let Some(state) = matching {
+                    if Self::try_acquire(state, key, write) {
+                        return Ok((state, (!core::ptr::eq(state, home)).then_some(&self.displaced)));
+                    }
+                } else if let Some(state) = vacant {
+                    let access = if write { CELL_WRITER } else { CELL_READER_ONE };
+                    let displaced = !core::ptr::eq(state, home);
+                    if displaced {
+                        self.displaced.fetch_add(1, Ordering::Relaxed);
+                    }
                     if state
-                        .compare_exchange_weak(0, key | CELL_READER_ONE, Ordering::Acquire, Ordering::Relaxed)
+                        .compare_exchange(0, key | access, Ordering::AcqRel, Ordering::Relaxed)
                         .is_ok()
                     {
-                        return Ok(CellReadGuard { state });
+                        return Ok((state, displaced.then_some(&self.displaced)));
                     }
-                    continue 'retry;
+                    if displaced {
+                        self.displaced.fetch_sub(1, Ordering::Release);
+                    }
                 }
             }
+            // Never hold registration while waiting for a row's current owner.
             Self::wait(&mut spins);
         }
+    }
+
+    fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
+        self.acquire(link, false)
+            .map(|(state, displaced)| CellReadGuard { state, displaced })
     }
 
     fn write(&self, link: Link) -> Result<CellWriteGuard<'_>, ExecutionError> {
-        let key = Self::key(link)?;
-        let start = Self::start(key);
+        let (state, displaced) = self.acquire(link, true)?;
         let mut spins = 0;
-        'retry: loop {
-            for distance in 0..CELL_LOCK_SLOTS {
-                let state = &self.slots[(start + distance) & (CELL_LOCK_SLOTS - 1)];
-                let current = state.load(Ordering::Acquire);
-                let current_key = current & CELL_KEY_MASK;
-                if current_key == key {
-                    if current & CELL_WRITER != 0 {
-                        Self::wait(&mut spins);
-                        continue 'retry;
-                    }
-                    if state
-                        .compare_exchange_weak(current, current | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
-                        .is_err()
-                    {
-                        continue 'retry;
-                    }
-                    while state.load(Ordering::Acquire) & CELL_READER_MASK != 0 {
-                        Self::wait(&mut spins);
-                    }
-                    return Ok(CellWriteGuard { state });
-                }
-                if current == 0 {
-                    if state
-                        .compare_exchange_weak(0, key | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
-                        .is_ok()
-                    {
-                        return Ok(CellWriteGuard { state });
-                    }
-                    continue 'retry;
-                }
-            }
+        while state.load(Ordering::Acquire) & CELL_READER_MASK != 0 {
             Self::wait(&mut spins);
         }
+        Ok(CellWriteGuard { state, displaced })
     }
 
     fn reset(&self) {
+        self.displaced.store(0, Ordering::Release);
         for slot in &self.slots {
             slot.store(0, Ordering::Release);
         }
@@ -152,6 +199,7 @@ impl CellLocks {
 /// Shared access to one exact archived cell.
 pub(crate) struct CellReadGuard<'a> {
     state: &'a AtomicU64,
+    displaced: Option<&'a OverflowCount>,
 }
 
 impl Drop for CellReadGuard<'_> {
@@ -161,9 +209,15 @@ impl Drop for CellReadGuard<'_> {
         debug_assert_ne!(previous & CELL_READER_MASK, 0, "cell reader count underflow");
         let remaining = previous - CELL_READER_ONE;
         if remaining & (CELL_READER_MASK | CELL_WRITER) == 0 {
-            let _ = self
+            if self
                 .state
-                .compare_exchange(remaining, 0, Ordering::Release, Ordering::Relaxed);
+                .compare_exchange(remaining, 0, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
+                if let Some(displaced) = self.displaced {
+                    displaced.fetch_sub(1, Ordering::Release);
+                }
+            }
         }
     }
 }
@@ -171,12 +225,16 @@ impl Drop for CellReadGuard<'_> {
 /// Exclusive access to one exact archived cell.
 pub(crate) struct CellWriteGuard<'a> {
     state: &'a AtomicU64,
+    displaced: Option<&'a OverflowCount>,
 }
 
 impl Drop for CellWriteGuard<'_> {
     #[inline]
     fn drop(&mut self) {
         self.state.store(0, Ordering::Release);
+        if let Some(displaced) = self.displaced {
+            displaced.fetch_sub(1, Ordering::Release);
+        }
     }
 }
 
@@ -618,7 +676,7 @@ pub enum ExecutionError {
     LiveCellCountUnderflow,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(wt_loom)))]
 mod tests {
     use alloc::sync::Arc;
     use core::sync::atomic::Ordering;
@@ -636,6 +694,41 @@ mod tests {
     struct TestRow {
         a: u64,
         b: u64,
+    }
+
+    #[test]
+    fn a_released_collision_keeps_existing_readers_on_one_lock() {
+        let locks = super::CellLocks::default();
+        let first = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 16,
+        };
+        let second = Link { offset: 64, ..first };
+        // Offsets 0 and 64 collided in the former open-addressed registry.
+        let preceding = locks.read(first).unwrap();
+        let existing = locks.read(second).unwrap();
+        drop(preceding);
+        let joining = locks.read(second).unwrap();
+        assert!(
+            core::ptr::eq(existing.state, joining.state),
+            "readers of one row must share the state that excludes its writer"
+        );
+    }
+
+    #[test]
+    fn distinct_colliding_rows_keep_independent_write_guards() {
+        let locks = super::CellLocks::default();
+        let first = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 16,
+        };
+        let second = Link { offset: 64, ..first };
+        assert_eq!(super::CellLocks::start(1), super::CellLocks::start(65));
+        let first = locks.write(first).unwrap();
+        let second = locks.write(second).unwrap();
+        assert!(!core::ptr::eq(first.state, second.state));
     }
 
     #[test]
@@ -1016,5 +1109,109 @@ mod tests {
 
         let retrieved = page.get_row(link3).unwrap();
         assert_eq!(retrieved, row3);
+    }
+}
+
+#[cfg(all(test, wt_loom))]
+mod cell_lock_models {
+    use super::{CellLocks, Link};
+    use loom::{cell::UnsafeCell, sync::Arc, thread};
+
+    struct Protected {
+        locks: CellLocks,
+        value: UnsafeCell<(u64, u64)>,
+    }
+
+    // Every access to value below holds the same row's read or write guard.
+    unsafe impl Sync for Protected {}
+
+    #[test]
+    fn released_collision_cannot_split_readers_from_a_writer() {
+        let mut model = loom::model::Builder::new();
+        model.preemption_bound = Some(2);
+        model.max_branches = 10_000;
+        model.check(|| {
+            let protected = Arc::new(Protected {
+                locks: CellLocks::default(),
+                value: UnsafeCell::new((0, 0)),
+            });
+            let first = Link {
+                page_id: 1.into(),
+                offset: 0,
+                length: 16,
+            };
+            let second = Link { offset: 64, ..first };
+            let preceding = protected.locks.read(first).unwrap();
+            let existing = protected.locks.read(second).unwrap();
+            drop(preceding);
+            let reader = {
+                let protected = protected.clone();
+                thread::spawn(move || {
+                    let _guard = protected.locks.read(second).unwrap();
+                    protected.value.with(|value| unsafe {
+                        let a = (*value).0;
+                        thread::yield_now();
+                        assert_eq!(a, (*value).1);
+                    });
+                })
+            };
+            drop(existing);
+            {
+                let _guard = protected.locks.write(second).unwrap();
+                protected.value.with_mut(|value| unsafe {
+                    (*value).0 = 1;
+                    thread::yield_now();
+                    (*value).1 = 1;
+                });
+            }
+            reader.join().unwrap();
+            assert_eq!(protected.locks.displaced.load(core::sync::atomic::Ordering::Relaxed), 0);
+        });
+    }
+
+    #[test]
+    fn readers_and_writers_never_overlap_and_publish_complete_rows() {
+        let mut model = loom::model::Builder::new();
+        model.preemption_bound = Some(2);
+        model.max_branches = 10_000;
+        model.check(|| {
+            let protected = Arc::new(Protected {
+                locks: CellLocks::default(),
+                value: UnsafeCell::new((0, 0)),
+            });
+            let link = Link {
+                page_id: 1.into(),
+                offset: 64,
+                length: 16,
+            };
+            let mut handles = Vec::new();
+            for writer in [false, true] {
+                let protected = protected.clone();
+                handles.push(thread::spawn(move || {
+                    if writer {
+                        let _guard = protected.locks.write(link).unwrap();
+                        protected.value.with_mut(|value| unsafe {
+                            (*value).0 += 1;
+                            thread::yield_now();
+                            (*value).1 += 1;
+                        });
+                    } else {
+                        let _guard = protected.locks.read(link).unwrap();
+                        protected.value.with(|value| unsafe {
+                            let first = (*value).0;
+                            thread::yield_now();
+                            assert_eq!(first, (*value).1);
+                        });
+                    }
+                }));
+            }
+            for handle in handles {
+                handle.join().unwrap();
+            }
+            let _guard = protected.locks.read(link).unwrap();
+            protected.value.with(|value| unsafe {
+                assert_eq!(*value, (1, 1));
+            });
+        });
     }
 }

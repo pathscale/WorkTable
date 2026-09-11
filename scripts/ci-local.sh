@@ -57,6 +57,9 @@ echo "=== build and test (all-features) ==="
 run cargo build --workspace --all-targets --all-features
 run cargo test --workspace --all-targets --all-features
 
+echo "=== cell-lock concurrency models ==="
+run env "RUSTFLAGS=--cfg wt_loom" CARGO_TARGET_DIR=target/cell-lock-loom cargo test --release --lib cell_lock_models
+
 echo "=== library without default features ==="
 run cargo check -p worktable --lib --no-default-features
 run cargo check --manifest-path tests/nostd-consumer/Cargo.toml
