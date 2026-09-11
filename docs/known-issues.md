@@ -145,6 +145,29 @@ Beta.12 fixed the metrics scans and added the `partition_ref` borrow API. Still 
 - **`gc(&mut self)` is uncallable through the shared-`Arc` deployment shape**, so removed
   partitions accumulate in the retire list for the process lifetime under key churn.
   Epoch-based retirement is the fix; until then treat shared routers as append-only.
+- **`collect` runs inline and its batch is bounded by count, not by cost: a routing
+  call can pay 3.3 milliseconds.** (perf. Measured 2026-09-11,
+  `perf-benchmarks/benchmarks/partition-collect-inline.rs`.) `get_or_create`
+  (`src/partition/mod.rs:456`) and `remove` (`:519`) both call `collect`, which frees up to
+  `COLLECT_BATCH_LIMIT = 64` retired partitions on the calling thread. The code moves that
+  work off the growth *lock*, and its comment says so, but not off the *thread*.
+
+  A quiet router never sees it: `remove` queues a clone, defers the grace marker, then
+  calls `collect`, and with no reader pinned the grace has already expired, so `collect`
+  drops the queue's reference while the caller still holds the one being returned. The
+  teardown lands where the caller drops their own handle.
+
+  With a reader pinned across a run of removals — which `partition_ref` and `pinned` both
+  document as delaying reclamation — every marker is held back, `collect` claims nothing,
+  the callers drop their handles, and the queue is left holding the last reference to all
+  of them. `retired_len` then goes 256, 192, 128, 64, 0 across four consecutive routing
+  calls costing 3,340 / 3,879 / 3,268 / 4,379 microseconds against a 1.8 us median.
+
+  Not a backend problem: a congee-indexed payload is worst at 3.3 ms but the cheapest
+  payload measured still reaches 2.9 ms, because sixty-four table teardowns is sixty-four
+  table teardowns. Two directions, neither chosen: bound the batch by elapsed time rather
+  than by count, or hand the drain to a background task and leave the routing path with
+  only the queue push.
 - **`make()` runs under the global growth mutex**: a slow initializer (or a stage-2
   persisted load) stalls all creations and removals. (Initializer panics no longer poison
   the set: beta.12 moved the lock to parking_lot, which unwinds cleanly.)
