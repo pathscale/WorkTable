@@ -40,7 +40,7 @@ impl PersistenceConfig for S3DiskConfig {
     }
 
     fn version(&self) -> u32 {
-        todo!()
+        self.disk.version()
     }
 }
 

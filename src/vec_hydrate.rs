@@ -615,7 +615,7 @@ where
 
     let mut schema = None;
     let mut rows = Vec::new();
-    for (index, raw) in bytes.chunks_exact(PAGE_SIZE).enumerate() {
+    for (index, raw) in bytes.as_chunks::<PAGE_SIZE>().0.iter().enumerate() {
         rows.append(&mut page_rows(raw, index, &mut schema)?);
     }
     let expected = fingerprint::<Vec<R>>();
