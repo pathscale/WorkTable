@@ -798,6 +798,12 @@ impl PersistGenerator {
 
         quote! {
             pub fn vacuum(&self) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
+                self.vacuum_with_pacing(worktable::prelude::VacuumPacing::default())
+            }
+
+            /// Creates a persisted sweep with the selected pacing policy.
+            /// Index moves retain the same persistence sink as the default sweep.
+            pub fn vacuum_with_pacing(&self, pacing: worktable::prelude::VacuumPacing) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
                 worktable::prelude::Arc::new(EmptyDataVacuum::<
                     _,
                     _,
@@ -814,7 +820,7 @@ impl PersistGenerator {
                     worktable::prelude::Arc::clone(&self.0.lock_manager),
                     worktable::prelude::Arc::clone(&self.0.primary_index),
                     worktable::prelude::Arc::clone(&self.0.indexes),
-                ).with_persistence(self.1.vacuum_sink()))
+                ).with_pacing(pacing).with_persistence(self.1.vacuum_sink()))
             }
         }
     }

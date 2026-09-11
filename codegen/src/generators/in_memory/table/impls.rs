@@ -443,6 +443,12 @@ impl InMemoryGenerator {
         quote! {
             worktable::__wt_if_std! {
             pub fn vacuum(&self) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
+                self.vacuum_with_pacing(worktable::prelude::VacuumPacing::default())
+            }
+
+            /// Creates a sweep with the selected pacing policy. Zero batch pages
+            /// disables pacing; positive values yield between source-page batches.
+            pub fn vacuum_with_pacing(&self, pacing: worktable::prelude::VacuumPacing) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
                 worktable::prelude::Arc::new(EmptyDataVacuum::<
                     _,
                     _,
@@ -458,7 +464,7 @@ impl InMemoryGenerator {
                     worktable::prelude::Arc::clone(&self.0.lock_manager),
                     worktable::prelude::Arc::clone(&self.0.primary_index),
                     worktable::prelude::Arc::clone(&self.0.indexes),
-                ))
+                ).with_pacing(pacing))
             }
             }
         }

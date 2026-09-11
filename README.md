@@ -1,5 +1,11 @@
 # WorkTable
 
+Generated mutable paged tables expose `table.vacuum_with_pacing(VacuumPacing {
+batch_pages: 64, ..Default::default() })` for a caller-selected vacuum policy.
+`table.vacuum()` retains the default policy. This is a Rust API, with no new DSL
+syntax. Zero batch pages disables automatic pacing; positive values wait for
+quiet foreground periods and release exclusion between source-page batches.
+
 *Absolutely not a database.*
 
 Embedded table storage for Rust. Declare a table with the `worktable!` macro and get a

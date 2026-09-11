@@ -208,7 +208,9 @@ pub mod prelude {
     #[cfg(feature = "vanilla-index")]
     pub use crate::{UpstreamIndexMap, UpstreamIndexPair};
     #[cfg(feature = "std")]
-    pub use crate::{vacuum::EmptyDataVacuum, vacuum::VacuumPersistence, vacuum::WorkTableVacuum};
+    pub use crate::{
+        vacuum::EmptyDataVacuum, vacuum::VacuumPacing, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
+    };
     /// `eyre` and `uuid`, for the same reason as `rkyv` above: `worktable!`
     /// expands in the consumer's crate, so every path it emits has to resolve
     /// there. Emitting a bare `eyre::` made that crate part of the macro's
