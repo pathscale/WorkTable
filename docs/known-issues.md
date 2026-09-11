@@ -11,6 +11,27 @@ Severity words: "corruption" means wrong or lost data, "outage" means a hang or 
 
 ## Persistence engine
 
+- **Reopening a persisted data file reads a full page where an inner page is written,
+  and every persisted table that reopens aborts.** `DataSpace`'s reopen path calls
+  `parse_page::<_, PAGE_SIZE, PAGE_SIZE>` at `src/persistence/space/data.rs:277`. The
+  first const parameter is `INNER_PAGE_SIZE`, so this asks for 16,384 bytes of a page
+  that holds `PAGE_SIZE - GENERAL_HEADER_SIZE` = 16,356, and the read fails with
+  "page PageId(0) needs 16384 bytes of a 16356 byte page". It is the only `parse_page`
+  call site in the crate passing `PAGE_SIZE` there; the equivalent line for the index
+  file, `src/persistence/space/index/mod.rs:120`, passes `INNER_PAGE_SIZE, STRIDE`.
+  Introduced by `ac66ae0`, the commit that made page size configurable.
+
+  Severity: outage, and it blocks measurement of the whole persisted path. Reproduce
+  with `perf-benchmarks`' `wt-reopen`, which is in the full tier and is the only
+  benchmark that reopens a `persist: true` table:
+
+  ```sh
+  cargo run --release --bin wt-reopen
+  ```
+
+  Not fixed here because this is a read-path change in the persistence format and the
+  suite that found it is not the place to land one.
+
 - **Reclaim-barrier ordering inversion escalates to a spurious terminal failure.** While a
   `ReclaimPages` message is pending, the worker stops popping the queue, and reclaim only
   runs once the analyzer drains. An operation whose CDC event id precedes events already
