@@ -40,7 +40,7 @@ perf_measurements = ["dep:performance_measurement", "dep:performance_measurement
 # separately, and a default-on flag would make this branch red until they do.
 # The arm that runs today declares no runtime and is not behind this flag.
 runtime-backends = []
-s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
+s3-support = ["dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
 # path and into the background persistence worker. The persisted page format
 # is unchanged, so stores remain readable with or without this feature.
@@ -117,7 +117,20 @@ performance_measurement = { path = "performance_measurement", version = "^0.1", 
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
 psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
 rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "uuid-1"] }
-reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
+# A blocking HTTP client, not an async one, and that is the point.
+#
+# `rusty-s3` only signs: `action.sign(..)` returns a presigned URL and the four
+# calls here are a PUT and three GETs against those URLs. No streaming, no
+# multipart, no auth headers. `reqwest` was doing that through hyper, h2, tower
+# and tokio, which cost 91 crates and — worse — dragged tokio into a build that
+# otherwise has none, so an S3 write from the nagoya persistence worker panicked
+# with "there is no reactor running".
+#
+# The persistence worker is already on its own thread and does one request at a
+# time. Async HTTP exists to multiplex many connections onto few threads, which
+# is not this. A blocking call is the correct shape here rather than a
+# concession, and it removes the reactor requirement instead of satisfying it.
+ureq = { version = "2", optional = true, default-features = false, features = ["tls"] }
 # `spin` rather than `std`: without it this crate reaches for `thread_local!`,
 # which needs a platform. See its `slot` module for what it falls back to.
 ps-reclaim = { version = "^0.1, >=0.1.4", default-features = false, features = ["spin"] }

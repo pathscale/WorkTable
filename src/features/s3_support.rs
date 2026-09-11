@@ -5,8 +5,8 @@ use core::marker::PhantomData;
 use core::time::Duration;
 use std::path::Path;
 
-use reqwest::Client;
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+use ureq::Agent;
 use url::Url;
 use walkdir::WalkDir;
 
@@ -69,7 +69,7 @@ pub struct S3SyncDiskPersistenceEngine<
     config: S3DiskConfig,
     bucket: Bucket,
     credentials: Credentials,
-    client: Client,
+    client: Agent,
     phantom: PhantomData<(PrimaryKey, SecondaryIndexEvents, PrimaryKeyGenState, AvailableIndexes)>,
 }
 
@@ -101,13 +101,17 @@ where
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
-    fn create_bucket(config: &S3Config) -> eyre::Result<(Bucket, Credentials, Client)> {
+    fn create_bucket(config: &S3Config) -> eyre::Result<(Bucket, Credentials, Agent)> {
         let credentials = Credentials::new(&config.access_key, &config.secret_key);
         let endpoint: Url = config.endpoint.parse()?;
         let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
         let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
 
-        let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
+        // Blocking, like every other I/O call in this crate. See `fsx`: neither
+        // `tokio::fs` nor `async-fs` does asynchronous file I/O either, and the
+        // measured cost of pretending otherwise was 6x. The persistence engine
+        // owns its thread, so a request that blocks it is the shape we want.
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
 
         Ok((bucket, credentials, client))
     }
@@ -141,7 +145,9 @@ where
             let action = self.bucket.put_object(Some(&self.credentials), &s3_key);
             let url = action.sign(Duration::from_secs(3600));
 
-            self.client.put(url).body(content).send().await?.error_for_status()?;
+            // ureq treats a non-2xx as an error, which is what `error_for_status`
+            // was doing explicitly.
+            self.client.put(url.as_str()).send_bytes(&content)?;
         }
 
         tracing::debug!("S3 sync complete");
@@ -161,7 +167,7 @@ where
     async fn sync_from_s3(
         bucket: &Bucket,
         credentials: &Credentials,
-        client: &Client,
+        client: &Agent,
         config: &S3DiskConfig,
     ) -> eyre::Result<()> {
         use rusty_s3::actions::ListObjectsV2;
@@ -182,9 +188,9 @@ where
         action.with_delimiter("/");
         let url = action.sign(Duration::from_secs(3600));
 
-        let response = client.get(url).send().await?.error_for_status()?;
+        let response = client.get(url.as_str()).call()?;
 
-        let text = response.text().await?;
+        let text = response.into_string()?;
         let parsed = ListObjectsV2::parse_response(&text)?;
 
         if parsed.contents.is_empty() {
@@ -211,9 +217,10 @@ where
             let action = bucket.get_object(Some(credentials), s3_key);
             let url = action.sign(Duration::from_secs(3600));
 
-            let response = client.get(url).send().await?.error_for_status()?;
+            let response = client.get(url.as_str()).call()?;
 
-            let content = response.bytes().await?;
+            let mut content = alloc::vec::Vec::new();
+            std::io::Read::read_to_end(&mut response.into_reader(), &mut content)?;
             crate::fsx::write(&local_path, content).await?;
         }
 

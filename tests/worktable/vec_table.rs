@@ -1502,3 +1502,74 @@ fn a_fixed_width_rows_pages_are_byte_stable_under_update() {
          this test is not measuring what it claims to"
     );
 }
+
+worktable!(
+    name: Mixed,
+    vec: true,
+    columns: {
+        id: u64 primary_key using fxhash,
+        venue: u64,
+        seq: u64,
+    },
+    indexes: {
+        venue_idx: venue using arctic,
+        seq_idx: seq unique using arctic,
+    },
+);
+
+/// A backend is chosen per index, so a hash primary key does not cost the
+/// secondaries their ordering.
+///
+/// The primary key here cannot answer a range and the secondaries can, which is
+/// the whole point: `range` is absent from this table and `range_by_seq` is
+/// present on it. If capability were decided per table rather than per index,
+/// one of those two facts would be wrong.
+#[test]
+fn a_hash_primary_key_leaves_an_arctic_secondary_ordered() {
+    let mut table = MixedWorkTable::with_capacity(64);
+    // Inserted out of key order so an implementation that walked the row vector
+    // instead of the index would return insertion order and be caught.
+    for id in [5u64, 1, 9, 3, 7, 2, 8, 4, 6] {
+        table
+            .insert(MixedRow {
+                id,
+                venue: id % 3,
+                seq: 100 + id,
+            })
+            .expect("fresh key");
+    }
+
+    // The hash primary key does point lookups, and refuses a duplicate.
+    assert_eq!(table.select(&7).expect("present").seq, 107);
+    assert!(
+        table
+            .insert(MixedRow {
+                id: 7,
+                venue: 0,
+                seq: 999
+            })
+            .is_err()
+    );
+
+    // The unique arctic secondary ranges, in its own column's order.
+    let ranged: Vec<u64> = table.range_by_seq(&103..&107).map(|row| row.id).collect();
+    assert_eq!(ranged, vec![3, 4, 5, 6], "the arctic secondary lost its order");
+    let backwards: Vec<u64> = table.range_by_seq(&103..&107).rev().map(|row| row.id).collect();
+    assert_eq!(backwards, vec![6, 5, 4, 3]);
+
+    // The non-unique arctic secondary still groups.
+    let venue0: Vec<u64> = table.select_by_venue(&0).iter().map(|row| row.id).collect();
+    assert_eq!(
+        venue0,
+        vec![9, 3, 6],
+        "insertion order within a venue: 9, 3 and 6 are the ids with venue 0"
+    );
+
+    // And all of it survives a delete and a compaction, which renumber the
+    // hash map and both ARTs by different code paths.
+    table.delete(&5).expect("present");
+    assert_eq!(table.compact(), 1);
+    let ranged: Vec<u64> = table.range_by_seq(&103..&108).map(|row| row.id).collect();
+    assert_eq!(ranged, vec![3, 4, 6, 7], "compaction broke the secondary range");
+    assert_eq!(table.select(&7).expect("present").seq, 107);
+}

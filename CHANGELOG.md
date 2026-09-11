@@ -3,6 +3,38 @@ Change Log
 
 ## [1.9.0-alpha1]
 
+
+### Changed
+
+- **`s3-support` no longer drags in an async HTTP stack, and no longer needs a
+  tokio reactor.** It used `reqwest`, which meant hyper, h2, tower and tokio —
+  91 crates — to make four calls: a PUT and three GETs against presigned URLs,
+  with no streaming, no multipart and no auth headers, because `rusty-s3` puts
+  the signature in the URL.
+
+  Worse than the size, it was silently incompatible with the default runtime. An
+  S3 write from the persistence worker panicked with `there is no reactor
+  running, must be called from the context of a Tokio 1.x runtime`, because the
+  worker runs on nagoya and `reqwest` looks for tokio's thread-local handle.
+  `cargo test --all-features` had been red on that for as long as the feature
+  existed.
+
+  It now uses a blocking client. The `async fn` signatures are unchanged, so no
+  call site moved; the blocking happens inside them, which is what this crate's
+  filesystem layer already does deliberately — neither `tokio::fs` nor
+  `async-fs` performs asynchronous file I/O either, and `fsx` measured 12,316
+  rows/sec through `tokio::fs` against 74,728 blocking.
+
+  | | before | after |
+  |---|---:|---:|
+  | crates in the s3 build | 198 | **170** |
+  | what the feature costs | 91 | **63** |
+  | tokio present | yes | **no** |
+
+  A persistence worker makes one request at a time from its own thread, which is
+  the shape a blocking call fits. Async HTTP exists to multiplex many
+  connections onto few threads, which this is not.
+
 ### Added
 
 - `using fxhash`, a hash-shaped index backend. Accepted on `vec: true` and
