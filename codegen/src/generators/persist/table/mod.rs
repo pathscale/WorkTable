@@ -56,17 +56,24 @@ impl PersistGenerator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let row_type = name_generator.get_row_type_ident();
 
         if let Some(page_size) = &self.config.as_ref().and_then(|c| c.page_size) {
             let page_size = Literal::usize_unsuffixed(*page_size as usize);
             quote! {
                 const #page_const_name: usize = #page_size;
-                const #inner_const_name: usize = #page_size - GENERAL_HEADER_SIZE;
+                const #inner_const_name: usize = worktable::prelude::data_page_row_capacity(
+                    #page_size,
+                    core::mem::size_of::<<<#row_type as worktable::prelude::StorableRow>::WrappedRow as worktable::prelude::rkyv::Archive>::Archived>(),
+                );
             }
         } else {
             quote! {
                 const #page_const_name: usize = PAGE_SIZE;
-                const #inner_const_name: usize = #page_const_name - GENERAL_HEADER_SIZE;
+                const #inner_const_name: usize = worktable::prelude::data_page_row_capacity(
+                    #page_const_name,
+                    core::mem::size_of::<<<#row_type as worktable::prelude::StorableRow>::WrappedRow as worktable::prelude::rkyv::Archive>::Archived>(),
+                );
             }
         }
     }
@@ -210,52 +217,27 @@ impl PersistGenerator {
             }
         });
 
-        Ok(if self.config.as_ref().and_then(|c| c.page_size).is_some() {
-            quote! {
-                #derive
-                #schema_attribute
-                #secondary_schema_attribute
-                pub struct #ident(
-                    // Public because the crate's own internals reach the inner
-                    // table directly: a synchronous internal path cannot call
-                    // the generated wrapper once that wrapper is async.
-                    pub WorkTable<
-                        #row_type,
-                        #primary_key_type,
-                        #avt_type_ident,
-                        #avt_index_ident,
-                        #index_type,
-                        #lock_ident,
-                        <#primary_key_type as TablePrimaryKey>::Generator,
-                        #inner_const_name,
-                        #node_type
-                    >
-                    , #persistence_task
-                );
-            }
-        } else {
-            quote! {
-                #derive
-                #schema_attribute
-                #secondary_schema_attribute
-                pub struct #ident(
-                    // Public because the crate's own internals reach the inner
-                    // table directly: a synchronous internal path cannot call
-                    // the generated wrapper once that wrapper is async.
-                    pub WorkTable<
-                        #row_type,
-                        #primary_key_type,
-                        #avt_type_ident,
-                        #avt_index_ident,
-                        #index_type,
-                        #lock_ident,
-                        <#primary_key_type as TablePrimaryKey>::Generator,
-                        { INNER_PAGE_SIZE },
-                        #node_type
-                    >
-                    , #persistence_task
-                );
-            }
+        Ok(quote! {
+            #derive
+            #schema_attribute
+            #secondary_schema_attribute
+            pub struct #ident(
+                // Public because the crate's own internals reach the inner
+                // table directly: a synchronous internal path cannot call
+                // the generated wrapper once that wrapper is async.
+                pub WorkTable<
+                    #row_type,
+                    #primary_key_type,
+                    #avt_type_ident,
+                    #avt_index_ident,
+                    #index_type,
+                    #lock_ident,
+                    <#primary_key_type as TablePrimaryKey>::Generator,
+                    #inner_const_name,
+                    #node_type
+                >
+                , #persistence_task
+            );
         })
     }
 }

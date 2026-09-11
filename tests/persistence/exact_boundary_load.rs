@@ -36,18 +36,12 @@ async fn table_whose_data_file_ends_on_an_exact_page_boundary_loads() {
         table.wait_for_ops().await.unwrap();
     }
 
-    // Pad the data file to the next exact page-size multiple.
+    // V3 persists the directory and checksum at the page tail, so every
+    // completed data page ends exactly on its stride boundary.
     let data_file_path = format!("{dir}/{}/.wt.data", TestPersistWorkTable::name_snake_case());
     let stride = TEST_PERSIST_PAGE_SIZE as u64;
     let len = std::fs::metadata(&data_file_path).unwrap().len();
-    assert!(
-        len % stride != 0,
-        "fixture must start off the boundary for the padding below to construct it"
-    );
-    let padded = len.div_ceil(stride) * stride;
-    let file = std::fs::OpenOptions::new().write(true).open(&data_file_path).unwrap();
-    file.set_len(padded).unwrap();
-    drop(file);
+    assert_eq!(len % stride, 0, "v3 data pages must fill their disk slots");
 
     let engine = TestPersistPersistenceEngine::new(config).await.unwrap();
     let table = TestPersistWorkTable::load(engine)

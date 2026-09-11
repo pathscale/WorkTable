@@ -64,7 +64,7 @@ Every clause the macro accepts appears below, labelled where it is used.
 worktable! (
     name: Order,              // required, and must come first. CamelCase.
     columns: {
-        id: u64 primary_key,  // exactly one primary key is required
+        id: u64 primary_key,  // this table has a single-column primary key
         total: u64,
     },
 );
@@ -147,8 +147,9 @@ let one = table.select_by_email("a@b.c".to_string());     // Option<Row>
 let many = table.select_by_country(44).execute()?;        // Vec<Row>
 ```
 
-`using` is optional and defaults to `arctic`. An index over an optional or
-variable-width column must say `using worktables_index`; arctic cannot key one.
+`using` is optional and defaults to `arctic`. An index over an
+optional column must say `using worktables_index`; Arctic supports `String` keys,
+but does not support optional keys.
 
 == 5. Declared queries
 
@@ -639,11 +640,28 @@ Rules:
 - Arctic caps page size at 65535: it packs a link into 64 bits with 16-bit offset and
   length fields. The macro refuses the combination.
 
+= Building without default features
+
+Set `default-features = false` on the WorkTable dependency to compile the
+in-memory API and generated calls from a `#![no_std]` crate using `alloc`.
+The isolated `tests/nostd-consumer` example exercises insertion, selection
+and scanning. Hosted persistence, background vacuum and runtime thread
+creation require the `std` feature. Tokio additionally requires
+`tokio-runtime`; selecting that feature enables `std`.
+
+This release preserves the no-default-features source API, but some transitive
+dependencies still link the standard library. It does not promise an entirely
+freestanding dependency closure. See `docs/no-std-validation.md` for the
+verified boundary and dependency audit.
+
 = Page size
 
 A page has two sizes and they are not interchangeable. The *stride* is what one page
 occupies on disk, header included, and every file offset is computed from it. The
-*inner size* is the stride less the 28-byte header: what a page can actually hold.
+*payload size* is the stride less the 28-byte header. Persisted row pages also
+reserve space for a live-row directory and checksum. Their row allocator budget
+is smaller and depends on the minimum archived row size. Index and metadata
+pages use the full payload budget.
 
 Set it in the `config` block:
 
@@ -837,9 +855,9 @@ also expose `version()` and `pk_gen_state()`.
 
 `row_count()` and `count()` report live rows. `used_bytes()` reports accounted row and
 index storage; it is not allocator RSS. `system_info()` provides per-index and table
-information. `iter_with(...)` and `iter_with_async(...)` apply a callback using the
-generated available-index/types surface; inspect their generated types when building a
-generic integration instead of relying on an erased string column name.
+information. `iter_with(callback)` passes each owned row to a callback returning
+`Result<(), WorkTableError>`. `iter_with_async(callback).await` accepts a callback
+returning a future with the same result type. Both stop on the first error.
 
 == Select builders and runtime overrides
 
@@ -984,6 +1002,16 @@ from application configuration. Local disk remains the working copy; this is not
 S3-native transactional engine. The HTTP implementation is blocking `ureq`, so it does
 not require a Tokio socket reactor. Networked performance and failure behavior require
 a configured S3 service and are not covered by the offline performance gate.
+
+*The v3 format cutover is a storage migration.* Ordinary persisted tables now
+write format 3, with a page-local directory that records every live row and a
+checksum covering the payload and directory. Version 2 stores are refused
+without being modified. For stores that can be regenerated, stop the application,
+explicitly remove the old store, deploy the new binary and rebuild its data.
+Retained data needs an explicit conversion using the old reader. Changing the
+table's `version:` declaration alone does not convert disk bytes. An old binary
+cannot reopen a new store. Vec snapshots use a separate codec and cannot be
+opened as ordinary WorkTable space files.
 
 `worktable_version!` and `migration_engine!` describe explicit versioned conversions;
 see `docs/migration.md` and the executable `tests/migration` fixtures for each required

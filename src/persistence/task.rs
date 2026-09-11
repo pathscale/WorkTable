@@ -780,6 +780,7 @@ mod lifecycle_tests {
 
     fn insert_operation(id: u128) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(uuid::Uuid::from_u128(id)),
             pk_gen_state: (),
             primary_key_events: vec![],
@@ -803,6 +804,7 @@ mod lifecycle_tests {
             length: 1,
         };
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(uuid::Uuid::from_u128(id)),
             pk_gen_state: (),
             primary_key_events: vec![indexset::cdc::change::ChangeEvent::InsertAt {
@@ -881,6 +883,7 @@ mod lifecycle_tests {
 
     fn multi_insert_operation_on(page: u32, id: u128, offset: u32, byte: u8) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Multi(uuid::Uuid::from_u128(id)),
             pk_gen_state: (),
             primary_key_events: vec![],
@@ -1680,6 +1683,7 @@ where
     fn apply_move(
         &self,
         bytes: Vec<u8>,
+        old_link: Link,
         new_link: Link,
         primary_key_events: Vec<IndexChangeEvent<IndexPair<PrimaryKey, Link>>>,
         secondary_keys_events: SecondaryKeys,
@@ -1691,6 +1695,7 @@ where
         // is only ever reached from a vacuum row move.
         self.push_at(
             Operation::Update(UpdateOperation {
+                retired_link: Some(old_link),
                 id: OperationId::Single(uuid::Uuid::now_v7()),
                 primary_key_events,
                 secondary_keys_events,

@@ -74,6 +74,18 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets ${{ matrix.args }} -- -D warnings
 
+  no_default_features:
+    name: Library without default features
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p worktable --lib --no-default-features
+      - run: cargo check --manifest-path tests/nostd-consumer/Cargo.toml
+      - run: cargo clippy -p worktable --lib --no-default-features -- -D warnings
+
   duplicate_index_crates:
     name: One version of each shared index crate
     runs-on: ubicloud-standard-2
@@ -110,7 +122,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [build, clippy_check, duplicate_index_crates]
+    needs: [fmt, build, clippy_check, no_default_features, duplicate_index_crates]
     runs-on: ubicloud-standard-2
     timeout-minutes: 45
     steps:

@@ -231,6 +231,7 @@ impl PersistGenerator {
         let space_ident = name_generator.get_space_file_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
+        let node_capacity = name_generator.get_disk_page_capacity();
         let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
         let avt_index_ident = name_generator.get_available_indexes_ident();
 
@@ -261,7 +262,7 @@ impl PersistGenerator {
         } else if pk_types_unsized {
             quote! {
                 inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
-                    #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name)
+                    #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#node_capacity)
                 ));
             }
         } else {
@@ -270,13 +271,13 @@ impl PersistGenerator {
                     "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
                 ),
                 crate::common::model::IndexBackend::WorktablesIndex => quote! {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
                     inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         #wti_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                     ));
                 },
                 crate::common::model::IndexBackend::Indexset => quote! {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
                     inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         UpstreamIndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                     ));

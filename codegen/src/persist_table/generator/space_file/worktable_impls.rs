@@ -184,14 +184,16 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
+        let node_capacity = name_generator.get_disk_page_capacity();
+        let disk_capacity = name_generator.get_disk_page_capacity();
         let page_const_name = name_generator.get_page_size_const_ident();
         if self.attributes.pk_congee {
             // Congee durability is maintained by its native checkpoint/WAL.
             quote! {}
         } else if self.attributes.pk_arctic_string {
             quote! {
-                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
-                    let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name);
+                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#disk_capacity as u32}>>>) {
+                    let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#node_capacity);
                     for (key, value) in self.0.primary_index.pk_map.iter_values() {
                         shadow.insert(key, value);
                     }
@@ -199,14 +201,14 @@ impl Generator {
                     for node in shadow.snapshot_nodes() {
                         pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                     }
-                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
+                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }
         } else if self.attributes.pk_arctic {
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
                     let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>>::with_maximum_node_size(size);
                     for (key, value) in self.0.primary_index.pk_map.iter_values() {
                         shadow.insert(key, value);
@@ -215,19 +217,19 @@ impl Generator {
                     for node in shadow.snapshot_nodes() {
                         pages.push(IndexPage::from_node(&node, size));
                     }
-                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
+                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }
         } else if self.attributes.pk_unsized {
             quote! {
-                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
+                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#disk_capacity as u32}>>>) {
                     let mut pages = vec![];
                     for node in self.0.primary_index.pk_map.snapshot_nodes() {
                         let page = UnsizedIndexPage::from_node(node.as_ref());
                         pages.push(page);
                     }
-                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
+                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }
@@ -255,10 +257,10 @@ impl Generator {
             };
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
                     let mut pages = vec![];
                     #collect_pages
-                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
+                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }

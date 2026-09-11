@@ -1,5 +1,9 @@
 # WorkTable
 
+Read the [user guide](docs/wt-user-guide.typ) for features and Rust callsites, or
+[Why WorkTables](docs/why-worktables.typ) for the design and measured examples.
+Typst is the maintained source. Run `sh scripts/build-guides.sh` to build both PDFs.
+
 Generated mutable paged tables expose `table.vacuum_with_pacing(VacuumPacing {
 batch_pages: 64, ..Default::default() })` for a caller-selected vacuum policy.
 `table.vacuum()` retains the default policy. This is a Rust API, with no new DSL

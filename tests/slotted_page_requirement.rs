@@ -1,79 +1,8 @@
-//! What a data page has to say about itself, for beta.20.
+//! V3 data pages locate their live rows independently of indexes.
 //!
-//! # Where this comes from
-//!
-//! beta.19 changed the on-disk format and every existing `.wt.data` had to be
-//! thrown away and rebuilt, because nothing could read the old shape. That is a
-//! regeneration event, and it happened on 6 September 2026 across every store on
-//! this machine.
-//!
-//! It does not have to happen again. The reason it did is that a data page
-//! cannot be read without the index that points into it:
-//!
-//! ```ignore
-//! pub struct DataPage<const DATA_LENGTH: usize> {
-//!     pub length: u32,
-//!     pub data: [u8; DATA_LENGTH],
-//! }
-//! ```
-//!
-//! Rows are bump allocated into `data` and `length` is a high water mark. There
-//! are no delimiters, so nothing can tell where one row ends and the next
-//! begins. `empty_links_list` in the `SpaceInfoPage` records freed ranges and is
-//! explicitly lossy: `bound_empty_links_list` truncates it when it outgrows the
-//! info page and logs "space leak, not corruption".
-//!
-//! **The schema is already there and this is not asking for it again.**
-//! `SpaceInfoPage` carries `row_schema`, `primary_key_fields` and
-//! `secondary_index_types`, and `ensure_schema` refuses a mismatch by name. A
-//! reader already knows how to decode a row. What it cannot do is find one.
-//!
-//! # The two things, in order of how much they matter
-//!
-//! 1. **A row directory in the data page**, the usual slotted layout: an
-//!    `(offset, length)` per row growing down from the end of the page, with a
-//!    count. Then a page describes itself, a reader needs no index, and the CRC
-//!    on that page validates the directory together with the rows it points at.
-//!
-//! 2. **A reader for the format beta.19 writes**, so beta.20 is an upgrade
-//!    rather than another regeneration. One already exists and is switched off:
-//!    `src/page/iterators.rs` in DataBucket, where `LinksIterator` walks index
-//!    pages for links and `DataIterator` follows them, decoding through
-//!    `row_schema`. It is 226 lines, commented out at `src/page/mod.rs:4`, and
-//!    enabling it produces nine errors that are bit rot rather than design:
-//!    `crate::IndexData` and `super::SpaceInfo` were renamed, and one call site
-//!    predates the API going async.
-//!
-//! # How the two fit together
-//!
-//! `DATA_VERSION` is 2 today and lives in every page's `GeneralHeader`, so it is
-//! per page rather than per file.
-//!
-//! - **beta.20 ships both.** It writes 3 and reads 2 and 3.
-//! - **beta.21 ships neither of the old ones.** The v2 path is deleted.
-//!
-//! So v2 is a one way ramp rather than dual support: a store is loaded through
-//! it once, written back as v3, and never read that way again. It does not need
-//! to be fast and it never needs append, which is most of why it is cheap.
-//!
-//! Two things to settle rather than discover:
-//!
-//! - Once a page has a directory and an index, both know where a row is and they
-//!   can disagree. One has to be authoritative. The directory is the better
-//!   candidate: it is local to the page and validated by the same CRC, where the
-//!   index is a separate structure with a different topology per backend. Under
-//!   `validate-reads` a load can compare the two and name a disagreement instead
-//!   of silently preferring one.
-//! - Whether one file may hold both v2 and v3 pages. Per page versioning allows
-//!   it, which makes migration an append rather than a rewrite, but then no
-//!   reader may assume uniformity.
-//!
-//! # What is missing here, and is the next piece of work
-//!
-//! A committed `.wt.data` written by beta.19, so the ramp can be tested against
-//! a real old file rather than against one this build just wrote. Until that
-//! fixture exists, `a_store_reopens_without_being_rebuilt` below only proves the
-//! current version reopens, which is the weaker half.
+//! The release deliberately cuts over from v2. Most deployments recreate their
+//! stores; this runtime refuses old bytes rather than carrying a v2 reader.
+//! See docs/on-disk-v3-cutover.md for the release contract.
 
 use worktable::prelude::*;
 use worktable::worktable;
@@ -124,18 +53,87 @@ fn data_file(dir: &str) -> std::path::PathBuf {
         .join(".wt.data")
 }
 
+fn scan_rows(dir: &str) -> std::collections::BTreeMap<u64, String> {
+    let bytes = std::fs::read(data_file(dir)).unwrap();
+    assert_eq!(bytes.len() % PAGE_SIZE, 0);
+    let mut rows = std::collections::BTreeMap::new();
+    for (id, page) in bytes.as_chunks::<PAGE_SIZE>().0.iter().enumerate().skip(1) {
+        assert_eq!(u32::from_le_bytes(page[..4].try_into().unwrap()), 3);
+        assert_eq!(u32::from_le_bytes(page[8..12].try_into().unwrap()), id as u32);
+        let length = u32::from_le_bytes(page[24..28].try_into().unwrap());
+        let decoded = data_bucket::DataPage::<INNER_PAGE_SIZE>::decode(&page[GENERAL_HEADER_SIZE..], length).unwrap();
+        for slot in &decoded.rows {
+            // An aligned copy lets rkyv validate each independently located
+            // archive without depending on its file offset's alignment.
+            let mut archive = rkyv::util::AlignedVec::<16>::new();
+            archive.extend_from_slice(&decoded.data[slot.offset as usize..][..slot.length as usize]);
+            let wrapped =
+                rkyv::from_bytes::<<SlottedRowRow as StorableRow>::WrappedRow, rkyv::rancor::Error>(&archive).unwrap();
+            let row = wrapped.get_inner();
+            assert!(rows.insert(row.id, row.blob).is_none(), "duplicate live primary key");
+        }
+    }
+    rows
+}
+
+#[tokio::test]
+async fn directory_survives_deletes_moves_reuse_and_reopen_without_index_access() {
+    let dir = "tests/data/slotted_page/churn";
+    let table = filled(dir).await;
+    let mut expected = std::collections::BTreeMap::new();
+    for id in 0..ROWS {
+        if id % 3 == 0 {
+            table.delete(id).await.unwrap();
+        } else {
+            let blob = "grown".repeat(10 + (id % 71) as usize);
+            table.upsert(SlottedRowRow { id, blob: blob.clone() }).await.unwrap();
+            expected.insert(id, blob);
+        }
+    }
+    table.close().await.unwrap();
+    assert_eq!(scan_rows(dir), expected);
+    let engine = SlottedRowPersistenceEngine::new(DiskConfig::new_with_table_name(
+        dir,
+        SlottedRowWorkTable::name_snake_case(),
+        SlottedRowWorkTable::version(),
+    ))
+    .await
+    .unwrap();
+    let table = SlottedRowWorkTable::load(engine).await.unwrap();
+    for (id, blob) in &expected {
+        assert_eq!(table.select(*id).unwrap().blob, *blob);
+    }
+    table.close().await.unwrap();
+    assert_eq!(scan_rows(dir), expected);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn actual_v2_store_is_refused_without_modifying_it() {
+    let dir = "tests/data/slotted_page/v2_refused";
+    let path = data_file(dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let original = include_bytes!("fixtures/page-format/v2.wt.data");
+    std::fs::write(&path, original).unwrap();
+    let result = SlottedRowPersistenceEngine::new(DiskConfig::new_with_table_name(
+        dir,
+        SlottedRowWorkTable::name_snake_case(),
+        SlottedRowWorkTable::version(),
+    ))
+    .await;
+    let error = match result {
+        Ok(_) => panic!("v2 unexpectedly opened"),
+        Err(error) => error,
+    };
+    assert!(format!("{error:#}").contains("page format v2"), "{error:#}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// A data page should say where its rows are, without an index.
 ///
-/// **This is the beta.20 requirement.** The check goes straight at the bytes on
-/// purpose. Reading the page through the engine would prove only that the index
-/// still works, and the index is exactly what a self describing page is supposed
-/// to make unnecessary.
-///
-/// Written against bytes rather than against an API that does not exist yet, so
-/// this file compiles today and fails on the missing behaviour rather than on a
-/// missing symbol.
+/// Read the bytes directly so an index cannot hide a missing directory.
 #[tokio::test]
-#[ignore = "beta.20: a data page carries no row directory"]
 async fn a_data_page_says_where_its_rows_are() {
     let dir = "tests/data/slotted_page/self_describing";
     let table = filled(dir).await;
@@ -148,10 +146,7 @@ async fn a_data_page_says_where_its_rows_are() {
         bytes.len()
     );
 
-    // A slotted page keeps its directory at the end: a row count in the last
-    // four bytes, then that many (offset, length) pairs growing back up. Any
-    // layout would do; what matters is that something in the page delimits the
-    // rows. Today the tail is write padding, so this reads zero.
+    // The count is the final u32; the preceding word is the CRC.
     let mut described = 0usize;
     let (pages, _) = bytes.as_chunks::<PAGE_SIZE>();
     for page in pages.iter().skip(1) {
@@ -167,16 +162,13 @@ async fn a_data_page_says_where_its_rows_are() {
          what makes a page readable on its own, and what makes the next format \
          change an upgrade instead of a regeneration."
     );
+    assert_eq!(scan_rows(dir).len(), ROWS as usize);
     let _ = std::fs::remove_dir_all(dir);
 }
 
 /// A store reopens without being deleted first.
 ///
-/// **Not ignored, and passing.** It guards the property at the current version,
-/// so a format change that breaks reopening trips here rather than in somebody's
-/// deploy. It is the weaker half of the requirement: proving beta.20 can read
-/// beta.19 needs a beta.19 file committed as a fixture, which does not exist
-/// yet.
+/// The new writer and reader must agree after a clean close.
 #[tokio::test]
 async fn a_store_reopens_without_being_rebuilt() {
     let dir = "tests/data/slotted_page/reopen";

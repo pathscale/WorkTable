@@ -222,7 +222,8 @@ pub mod prelude {
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,
         Link, PAGE_SIZE, PageType, Persistable, PersistableIndex, SizeMeasurable, SizeMeasure, SpaceInfoPage,
         TableOfContentsPage, UnsizedIndexPage, VariableSizeMeasurable, VariableSizeMeasure, align,
-        map_data_pages_to_general, parse_data_page, parse_page, persist_page, seek_to_page_start, update_at,
+        data_page_row_capacity, map_data_pages_to_general, parse_data_page, parse_page, persist_page,
+        seek_to_page_start, update_at,
     };
     pub use derive_more::{Display as MoreDisplay, From, Into};
     pub use indexset::{

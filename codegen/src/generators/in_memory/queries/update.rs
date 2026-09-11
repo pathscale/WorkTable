@@ -443,6 +443,7 @@ impl InMemoryGenerator {
                     #primary_key_ident,
                     #secondary_events_ident
                 > = Operation::Update(UpdateOperation {
+                    retired_link: None,
                     id: op_id,
                     primary_key_events: vec![],
                     secondary_keys_events,

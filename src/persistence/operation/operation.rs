@@ -70,6 +70,28 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
         }
     }
 
+    /// Row-directory changes in the same order as this operation's index
+    /// changes. Empty bytes are an exact-link tombstone, never a row archive.
+    #[cfg(feature = "std")]
+    pub(crate) fn row_mutations(&self) -> Vec<(Link, Vec<u8>)> {
+        let mut mutations = Vec::new();
+        let retired_link = match self {
+            Self::Insert(insert) => insert.retired_link,
+            Self::Update(update) => update.retired_link,
+            _ => None,
+        };
+        if let Some(link) = retired_link {
+            mutations.push((link, Vec::new()));
+        }
+        if let Self::Delete(delete) = self {
+            mutations.push((delete.link, Vec::new()));
+        }
+        if let Some(bytes) = self.bytes() {
+            mutations.push((self.link(), bytes.to_vec()));
+        }
+        mutations
+    }
+
     pub fn primary_key_events(&self) -> Option<&Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
         match &self {
             Operation::Insert(insert) => Some(&insert.primary_key_events),
@@ -112,6 +134,8 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
 
 #[derive(Clone, Debug)]
 pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    /// Previous physical row retired by a successful reinsert.
+    pub retired_link: Option<Link>,
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
@@ -122,6 +146,8 @@ pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 
 #[derive(Clone, Debug)]
 pub struct UpdateOperation<PrimaryKey, SecondaryKeys> {
+    /// Previous physical row retired by a successful move.
+    pub retired_link: Option<Link>,
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,

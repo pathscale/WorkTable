@@ -57,6 +57,11 @@ echo "=== build and test (all-features) ==="
 run cargo build --workspace --all-targets --all-features
 run cargo test --workspace --all-targets --all-features
 
+echo "=== library without default features ==="
+run cargo check -p worktable --lib --no-default-features
+run cargo check --manifest-path tests/nostd-consumer/Cargo.toml
+run cargo clippy -p worktable --lib --no-default-features -- -D warnings
+
 echo "=== clippy (default) ==="
 run cargo clippy --workspace --all-targets -- -D warnings
 

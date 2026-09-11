@@ -76,7 +76,7 @@ fn mermaid_puts_the_partition_key_in_a_note_not_a_column() {
         ",
     );
     let diagram = schema.to_mermaid();
-    assert!(diagram.contains("note for Price \"partitioned by symbol_id: u16\""));
+    assert!(diagram.contains("note for Price \"partitioned by symbol_id: u16, unbounded\""));
     assert!(!diagram.contains("symbol_id : u16"));
 }
 

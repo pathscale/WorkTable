@@ -1375,14 +1375,15 @@ where
         &self.empty_links
     }
 
-    pub fn with_empty_links(mut self, links: Vec<Link>) -> Self {
+    pub fn with_empty_links(mut self, links: Vec<Link>) -> Result<Self, ExecutionError> {
         let registry = EmptyLinkRegistry::default();
         for l in links {
+            self.page_ref(l.page_id)?.reserve_restored_range(l)?;
             registry.push(l)
         }
         self.empty_links = registry;
 
-        self
+        Ok(self)
     }
 
     pub fn current_page_id(&self) -> PageId {

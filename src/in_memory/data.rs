@@ -306,6 +306,18 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         }
     }
 
+    /// Keep append allocation out of ranges owned by the restored free list.
+    pub(crate) fn reserve_restored_range(&self, link: Link) -> Result<(), ExecutionError> {
+        let end = (link.offset as usize)
+            .checked_add(link.length as usize)
+            .ok_or(ExecutionError::InvalidLink)?;
+        if link.page_id != self.id || link.length == 0 || end > DATA_LENGTH {
+            return Err(ExecutionError::InvalidLink);
+        }
+        self.free_offset.fetch_max(end as u32, Ordering::Release);
+        Ok(())
+    }
+
     pub fn set_page_id(&mut self, id: PageId) {
         self.id = id;
     }

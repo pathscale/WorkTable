@@ -277,8 +277,8 @@ async fn test_truncated_table_of_contents_is_an_error_not_an_empty_index() {
     let path = std::env::temp_dir().join(format!("worktable-toc-truncated-{}.wt.idx", uuid::Uuid::new_v4()));
     let mut file = worktable::prelude::fsx::create(&path).await.unwrap();
 
-    // A DATA_LENGTH of 20 forces the table of contents to span several pages.
-    let mut toc = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(1)));
+    // A DATA_LENGTH of 32 forces the table of contents to span several pages.
+    let mut toc = IndexTableOfContents::<u8, 32, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(1)));
     for key in 0..10 {
         toc.insert(key, u32::from(key).into());
     }
@@ -287,7 +287,7 @@ async fn test_truncated_table_of_contents_is_an_error_not_an_empty_index() {
     worktable::prelude::fsx::sync_all(&mut file).await.unwrap();
 
     // The intact file must round-trip.
-    let reloaded = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::parse_from_file(
+    let reloaded = IndexTableOfContents::<u8, 32, DEFAULT_PAGE_STRIDE>::parse_from_file(
         &mut file,
         0.into(),
         Arc::new(AtomicU32::new(1)),
@@ -301,7 +301,7 @@ async fn test_truncated_table_of_contents_is_an_error_not_an_empty_index() {
     worktable::prelude::fsx::set_len(&mut file, data_bucket::PAGE_SIZE as u64 + 10)
         .await
         .unwrap();
-    let error = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::parse_from_file(
+    let error = IndexTableOfContents::<u8, 32, DEFAULT_PAGE_STRIDE>::parse_from_file(
         &mut file,
         0.into(),
         Arc::new(AtomicU32::new(1)),
@@ -316,7 +316,7 @@ async fn test_truncated_table_of_contents_is_an_error_not_an_empty_index() {
     // A file that never grew past page 0 is a real bootstrap and still loads
     // as a fresh empty table of contents.
     worktable::prelude::fsx::set_len(&mut file, 0).await.unwrap();
-    let bootstrapped = IndexTableOfContents::<u8, 20, DEFAULT_PAGE_STRIDE>::parse_from_file(
+    let bootstrapped = IndexTableOfContents::<u8, 32, DEFAULT_PAGE_STRIDE>::parse_from_file(
         &mut file,
         0.into(),
         Arc::new(AtomicU32::new(1)),

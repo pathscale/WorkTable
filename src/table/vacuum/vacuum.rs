@@ -651,7 +651,7 @@ where
                     .reinsert_row_cdc(row.clone(), old_link, row, new_link);
             res.expect("should be ok as index were no violated");
             let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
-            persistence.apply_move(raw_data, new_link, primary_key_events, secondary_keys_events)?;
+            persistence.apply_move(raw_data, old_link, new_link, primary_key_events, secondary_keys_events)?;
         } else {
             self.secondary_indexes
                 .reinsert_row(row.clone(), old_link, row, new_link)

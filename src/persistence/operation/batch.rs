@@ -107,29 +107,17 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
         ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
         order: impl Iterator<Item = usize> + Clone,
     ) -> BatchData {
-        let mut latest: HashMap<PhysicalSlot, usize> = HashMap::with_capacity(ops.len());
-        for sequence in order.clone() {
-            let op = &ops[sequence];
-            if op.bytes().is_some() {
-                let link = op.link();
-                latest.insert((link.page_id, link.offset), sequence);
-            }
+        let mutations: Vec<_> = order.flat_map(|sequence| ops[sequence].row_mutations()).collect();
+        let mut latest: HashMap<PhysicalSlot, usize> = HashMap::with_capacity(mutations.len());
+        for (sequence, (link, _)) in mutations.iter().enumerate() {
+            latest.insert((link.page_id, link.offset), sequence);
         }
-
         let mut ordered = HashMap::new();
-        for sequence in order {
-            let op = &ops[sequence];
-            let Some(bytes) = op.bytes() else {
-                continue;
-            };
-            let link = op.link();
+        for (sequence, (link, bytes)) in mutations.into_iter().enumerate() {
             if latest.get(&(link.page_id, link.offset)) != Some(&sequence) {
                 continue;
             }
-            ordered
-                .entry(link.page_id)
-                .or_insert_with(Vec::new)
-                .push((link, bytes.to_vec()));
+            ordered.entry(link.page_id).or_insert_with(Vec::new).push((link, bytes));
         }
         ordered
     }
@@ -589,6 +577,7 @@ mod tests {
 
     fn insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(Uuid::from_u128(id)),
             primary_key_events: vec![],
             secondary_keys_events: (),
@@ -600,6 +589,7 @@ mod tests {
 
     fn multi_insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Multi(Uuid::from_u128(id)),
             primary_key_events: vec![],
             secondary_keys_events: (),
@@ -760,6 +750,7 @@ mod tests {
 
     fn event_insert(id: u128, link: Link, bytes: Vec<u8>, event_ids: Vec<u64>) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(Uuid::from_u128(id)),
             primary_key_events: event_ids.into_iter().map(primary_event).collect(),
             secondary_keys_events: TestEvents,

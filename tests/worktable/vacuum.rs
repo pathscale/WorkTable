@@ -227,6 +227,11 @@ async fn vacuum_parallel_with_upserts() {
     // which is the damage; this reports which index entry points at storage
     // holding something else, which is the defect.
     {
+        // Pin before obtaining links, just as generated select/iterator
+        // callsites do. Vacuum is still running: without this guard it can
+        // reclaim a source page between yielding an index link and reading
+        // its bytes, making the oracle itself report an invalid link.
+        let _read_guard = table.0.data.read_guard();
         let stale: Vec<_> = table
             .0
             .indexes

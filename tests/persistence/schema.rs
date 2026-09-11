@@ -39,9 +39,10 @@ async fn generated_schema_is_persisted_and_mismatches_are_rejected() {
     let mut file = worktable::prelude::fsx::open(format!("{table_path}/{}", WT_DATA_EXTENSION))
         .await
         .unwrap();
-    let info = parse_page::<SpaceInfoPage<u64>, { PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 0)
-        .await
-        .unwrap();
+    let info =
+        parse_page::<SpaceInfoPage<u64>, { data_bucket::INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 0)
+            .await
+            .unwrap();
     assert_eq!(
         info.inner.row_schema,
         vec![
@@ -84,9 +85,10 @@ async fn loading_a_legacy_empty_schema_does_not_rewrite_the_file() {
     let mut file = worktable::prelude::fsx::open(format!("{table_path}/{}", WT_DATA_EXTENSION))
         .await
         .unwrap();
-    let info = parse_page::<SpaceInfoPage<u64>, { PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 0)
-        .await
-        .unwrap();
+    let info =
+        parse_page::<SpaceInfoPage<u64>, { data_bucket::INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 0)
+            .await
+            .unwrap();
     assert!(info.inner.row_schema.is_empty());
     assert!(info.inner.primary_key_fields.is_empty());
     assert!(info.inner.secondary_index_types.is_empty());

@@ -34,9 +34,8 @@ worktable!(
 ///
 /// Not run, because running needs an allocator and an executor that a
 /// `no_std` target brings itself. Compiling is the claim being made.
-pub fn smoke(table: &NoStdTableWorkTable) -> Option<u64> {
-    let inserted = table.insert(NoStdTableRow { id: 1, value: 42 });
-    core::mem::drop(inserted);
+pub async fn smoke(table: &NoStdTableWorkTable) -> Option<u64> {
+    table.insert(NoStdTableRow { id: 1, value: 42 }).await.ok()?;
     let selected = table.select(NoStdTablePrimaryKey::from(1u64))?;
     let all = table.select_all().execute().ok()?;
     core::mem::drop(all);

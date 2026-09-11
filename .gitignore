@@ -9,7 +9,7 @@ Cargo.lock
 *.DS_Store
 tests/data/*
 !tests/data/expected/
-!tests/data/persist_index_table_of_contents.wt.idx
+tests/non-existent/
 
 /.claude/settings.local.json
 

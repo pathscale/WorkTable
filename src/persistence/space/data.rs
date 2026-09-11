@@ -1,6 +1,5 @@
 use alloc::{string::String, string::ToString, vec::Vec};
 use hashbrown::HashSet;
-use nagoya::io::SeekFrom;
 use std::path::Path;
 
 use crate::fsx::File;
@@ -10,9 +9,9 @@ use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
 use data_bucket::{
     DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage,
-    parse_data_pages_batch, parse_general_header_by_index, persist_page, persist_pages_batch, update_at,
+    parse_data_pages_batch, parse_general_header_by_index, persist_page, persist_pages_batch,
 };
-use nagoya::io::{Read as _, Seek as _, Write as _};
+use nagoya::io::{Read as _, Write as _};
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -145,21 +144,6 @@ pub struct SpaceData<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: 
 }
 
 impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<PkGenState, INNER_PAGE_SIZE, PAGE_SIZE> {
-    async fn update_data_length(&mut self) -> eyre::Result<()> {
-        let offset = (u32::default().aligned_size() * 6) as u64;
-        // The multiplication must happen in u64: `last_page_id * PAGE_SIZE`
-        // in u32 wraps once the file passes 4 GiB, and the wrapped position
-        // lands inside a live early page, overwriting its header in place.
-        self.data_file
-            .seek(SeekFrom::Start(
-                u64::from(self.last_page_id) * u64::from(PAGE_SIZE) + offset,
-            ))
-            .await?;
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&self.current_data_length)?;
-        self.data_file.write_all(bytes.as_ref()).await?;
-        Ok(())
-    }
-
     /// Creates every page from the current high-water mark through `target`.
     ///
     /// A link can name a page more than one past `last_page_id`: two writers
@@ -179,10 +163,7 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
             if !already_written.contains(&id) {
                 let mut page = GeneralPage {
                     header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
-                    inner: DataPage {
-                        length: 0,
-                        data: [0; 1],
-                    },
+                    inner: DataPage::<INNER_PAGE_SIZE>::new(),
                 };
                 persist_page::<_, PAGE_SIZE>(&mut page, &mut self.data_file).await?;
             }
@@ -279,16 +260,20 @@ where
         // generic metadata reader takes a u32 capacity while ours is usize;
         // stable Rust cannot cast a generic const in another const argument.
         let header = parse_general_header_by_index::<PAGE_SIZE>(&mut data_file, 0).await?;
+        eyre::ensure!(
+            header.page_type == PageType::SpaceInfo,
+            "expected a WorkTable space-info page"
+        );
         let capacity = (PAGE_SIZE as usize)
             .checked_sub(data_bucket::GENERAL_HEADER_SIZE)
             .ok_or_else(|| eyre::eyre!("page stride is smaller than its header"))?;
         eyre::ensure!(INNER_PAGE_SIZE <= capacity, "inner page exceeds page payload");
         let length = if header.data_length == 0 {
-            INNER_PAGE_SIZE
+            capacity
         } else {
             header.data_length as usize
         };
-        eyre::ensure!(length <= INNER_PAGE_SIZE, "metadata exceeds inner page capacity");
+        eyre::ensure!(length <= capacity, "metadata exceeds page payload capacity");
         let mut bytes = vec![0; length];
         data_file.read_exact(&mut bytes).await?;
         let info = GeneralPage {
@@ -336,42 +321,15 @@ where
     }
 
     async fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
-        if self.consume_reusable_ranges([link]) {
-            self.save_info().await?;
-        }
-        if link.page_id > self.last_page_id.into() {
-            // Every page through the named one, not just the named one: see
-            // `create_pages_up_to`.
-            self.create_pages_up_to(link.page_id.into(), &HashSet::new()).await?;
-        }
-        // `current_data_length` mirrors the last page's persisted data_length:
-        // the number of bytes occupied from the page start. Only a write that
-        // lands on the last page AND ends past the currently occupied extent
-        // grows it. Rewrites of an existing link and writes into reused free
-        // ranges (which always sit inside previously occupied extents) must
-        // not touch it: unconditionally adding `link.length` inflated the
-        // persisted length on every hot-row update until it exceeded the page
-        // capacity and a later batch persist sliced out of range.
-        if u32::from(link.page_id) == self.last_page_id {
-            let link_end = link
-                .offset
-                .checked_add(link.length)
-                .ok_or_else(|| eyre::eyre!("link range {link:?} overflows u32"))?;
-            if link_end > self.current_data_length {
-                self.current_data_length = link_end;
-                self.update_data_length().await?;
-            }
-        }
-        update_at::<{ PAGE_SIZE }, PAGE_SIZE>(&mut self.data_file, link, bytes).await?;
-        // `update_at` ends with a `write_all` that the file behind `fsx`
-        // completes on a background blocking task. Flush before reporting the
-        // save done so the bytes are visible to any other handle.
-        self.data_file.flush().await?;
-        Ok(())
+        let mut batch = BatchData::new();
+        batch.insert(link.page_id, vec![(link, bytes.to_vec())]);
+        self.save_batch_data(batch).await
     }
 
     async fn save_batch_data(&mut self, batch_data: BatchData) -> eyre::Result<()> {
-        let used_links = batch_data.values().flat_map(|ops| ops.iter().map(|(link, _)| *link));
+        let used_links = batch_data
+            .values()
+            .flat_map(|ops| ops.iter().filter(|(_, bytes)| !bytes.is_empty()).map(|(link, _)| *link));
         if self.consume_reusable_ranges(used_links) {
             self.save_info().await?;
         }
@@ -407,6 +365,7 @@ where
             .map(|id| GeneralPage {
                 header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
                 inner: DataPage {
+                    rows: Vec::new(),
                     length: 0,
                     data: [0; INNER_PAGE_SIZE],
                 },
@@ -424,7 +383,11 @@ where
                     .get(&id)
                     .expect("should be available as pages parsed from these ids");
                 for (link, bytes) in ops {
-                    page.inner.update_at(*link, bytes)?;
+                    if bytes.is_empty() {
+                        page.inner.remove_at(*link);
+                    } else {
+                        page.inner.update_at(*link, bytes)?;
+                    }
                 }
                 Ok::<_, eyre::Report>(page)
             })
@@ -462,6 +425,18 @@ where
         if page_ids.is_empty() {
             return Ok(());
         }
+
+        // A reclaimed page must contain no live directory entries. Persist
+        // that state before advertising the whole page as reusable.
+        let cleared = page_ids
+            .iter()
+            .map(|page_id| GeneralPage {
+                header: GeneralHeader::new(*page_id, PageType::Data, 0.into()),
+                inner: DataPage::<INNER_PAGE_SIZE>::new(),
+            })
+            .collect();
+        persist_pages_batch::<_, PAGE_SIZE>(cleared, &mut self.data_file).await?;
+        self.data_file.flush().await?;
 
         self.info
             .inner

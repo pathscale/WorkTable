@@ -60,7 +60,7 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 # pointer-only fast path. Publication is append-only and asserted at each swap.
 arc-swap = { version = "1", default-features = false }
 async-trait = "0.1"
-arctic = { package = "arctic-wt", version = "^0.1, >=0.1.11", default-features = false, features = ["smr-ps-reclaim"] }
+arctic = { package = "arctic-wt", version = "^0.1, >=0.1.12", default-features = false, features = ["smr-ps-reclaim"] }
 # `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
 # crate links the standard library through a dependency. That matters for
 # EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
@@ -68,9 +68,8 @@ arctic = { package = "arctic-wt", version = "^0.1, >=0.1.11", default-features =
 congee = { package = "congee-wt", version = "^0.4, >=0.4.4", default-features = false }
 convert_case = { version = "0.6", default-features = false }
 crc32fast = { version = "1", default-features = false }
-# 0.6 because the page stride is a parameter now and the error type is
-# concrete: `^0.5` cannot resolve the crate this depends on.
-data_bucket = { version = "^0.6" }
+# 0.7 supplies the v3 row directory, integrity checks and configurable stride.
+data_bucket = { version = "^0.7" }
 derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
 eyre = "0.6"
 fastrand = "2"
@@ -87,7 +86,7 @@ futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # It also re-exports `Tuning`, which is why `ps-st3` is no longer a direct
 # dependency here: it was named for that one type.
 nagoya = { version = "^0.1.1", default-features = false }
-indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.12", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.14", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 # Pulls `serde` and `serde_core` into every build, and nothing here uses them.
 # They are not reachable from this line: `indexset` 0.15 declares `ftree` with
 # `features = ["serde"]` unconditionally, so no `default-features = false` here
@@ -107,12 +106,9 @@ ordered-float = { version = "5", default-features = false }
 # `--no-default-features` build and present in a normal one, until that backend
 # is deselected.
 #
-# Two copies of the fork are also in the lock, because `WorkTablesIndex` takes
-# the published 0.12.7 while this takes the branch. That is not a version skew
-# to wait out: 0.12.7's own module comment says `FairMutex` is among what it
-# removed, so the branch is the only copy that has what is used here. It
-# collapses when the branch publishes as 0.12.8.
-parking_lot = { package = "parking_lot_lite_hack", git = "https://github.com/pathscale/parking_lot_lite_hack", branch = "feat/fair-mutex", default-features = false }
+# FairMutex requires 0.12.8. Use a registry requirement so the published
+# package can resolve it and WorkTablesIndex can share the same crate.
+parking_lot = { package = "parking_lot_lite_hack", version = "^0.12, >=0.12.8", default-features = false }
 performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
 psc-nanoid = { version = "3", features = ["rkyv", "packed"] }

@@ -76,9 +76,9 @@ pub const BODY_SIZE: usize = PAGE_SIZE - HEADER_SIZE - DIRECTORY_SIZE;
 
 /// `DATA_VERSION` 3: DataBucket's page framing, plus a row directory.
 ///
-/// 2 is what a WorkTable space writes, and a 2 page has no directory, so a
-/// reader cannot find its rows without the index. 3 says the directory is
-/// there.
+/// This identifies the Vec snapshot framing. Ordinary WorkTable spaces also
+/// use version 3, but start with SpaceInfo metadata and use a different row
+/// directory layout. The two containers are not interchangeable.
 pub const PAGE_VERSION: u32 = 3;
 
 /// `PageType::Data` in DataBucket's enum.

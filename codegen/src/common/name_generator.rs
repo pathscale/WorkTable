@@ -114,6 +114,12 @@ impl WorktableNameGenerator {
         )
     }
 
+    /// Payload budget for index and metadata pages, independent of row slots.
+    pub fn get_disk_page_capacity(&self) -> proc_macro2::TokenStream {
+        let page_size = self.get_page_size_const_ident();
+        quote::quote! { (#page_size - worktable::prelude::GENERAL_HEADER_SIZE) }
+    }
+
     pub fn get_page_inner_size_const_ident(&self) -> Ident {
         let upper_snake_case_name = self.name.from_case(Case::Pascal).to_case(Case::UpperSnake);
         Ident::new(

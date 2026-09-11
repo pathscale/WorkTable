@@ -133,10 +133,11 @@ async fn assert_straddling_topology(dir: &str) {
 
     let mut pages_per_key: BTreeMap<u64, u64> = BTreeMap::new();
     for page_id in mappings {
-        let page = parse_page::<IndexPage<u64>, { DUPLICATE_KEY_RELOAD_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(
-            &mut file,
-            page_id.into(),
-        )
+        let page = parse_page::<
+            IndexPage<u64>,
+            { (DUPLICATE_KEY_RELOAD_PAGE_SIZE - data_bucket::GENERAL_HEADER_SIZE) as u32 },
+            DEFAULT_PAGE_STRIDE,
+        >(&mut file, page_id.into())
         .await
         .unwrap();
         let keys: BTreeSet<u64> = page.inner.index_values[..page.inner.current_length as usize]

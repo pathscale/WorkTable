@@ -8,7 +8,7 @@ impl Generator {
     pub fn gen_space_secondary_index_type(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_space_secondary_index_ident();
-        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let inner_const_name = name_generator.get_disk_page_capacity();
         let page_const_name = name_generator.get_page_size_const_ident();
 
         let fields: Vec<_> = self

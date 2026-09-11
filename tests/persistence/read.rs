@@ -22,7 +22,7 @@ async fn test_info_parse() {
     assert_eq!(info.header.previous_id, 0.into());
     assert_eq!(info.header.next_id, 0.into());
     assert_eq!(info.header.page_type, PageType::SpaceInfo);
-    assert_eq!(info.header.data_length, 72);
+    assert_eq!(info.header.data_length, 80);
 
     assert_eq!(info.inner.id, 0.into());
     assert_eq!(info.inner.page_count, 1);
@@ -36,9 +36,10 @@ async fn test_primary_index_parse() {
     let mut file = worktable::prelude::fsx::open("tests/data/expected/test_persist/primary.wt.idx")
         .await
         .unwrap();
-    let index = parse_page::<IndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 2)
-        .await
-        .unwrap();
+    let index =
+        parse_page::<IndexPage<u64>, { data_bucket::INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 2)
+            .await
+            .unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 2.into());
@@ -71,9 +72,10 @@ async fn test_another_idx_index_parse() {
     let mut file = worktable::prelude::fsx::open("tests/data/expected/test_persist/another_idx.wt.idx")
         .await
         .unwrap();
-    let index = parse_page::<IndexPage<u64>, { TEST_PERSIST_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 2)
-        .await
-        .unwrap();
+    let index =
+        parse_page::<IndexPage<u64>, { data_bucket::INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>(&mut file, 2)
+            .await
+            .unwrap();
 
     assert_eq!(index.header.space_id, 0.into());
     assert_eq!(index.header.page_id, 2.into());

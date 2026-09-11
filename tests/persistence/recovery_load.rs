@@ -127,7 +127,7 @@ async fn recovery_mode_rejects_corrupt_rows_reached_through_a_secondary_index() 
         .downcast_ref::<PersistenceLoadError>()
         .expect("recovery must return a typed corruption error");
     assert!(
-        typed.reason().contains("project_idx") && typed.reason().contains("key does not match"),
+        typed.reason().contains("v3 data page checksum"),
         "unexpected recovery-load reason: {}",
         typed.reason()
     );

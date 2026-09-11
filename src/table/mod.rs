@@ -911,6 +911,7 @@ where
         };
 
         let op = Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(Uuid::now_v7()),
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
@@ -1157,6 +1158,7 @@ where
                 }
             };
             ops.push(Operation::Insert(InsertOperation {
+                retired_link: None,
                 id: OperationId::Multi(batch_id),
                 pk_gen_state: self.pk_gen.get_state(),
                 primary_key_events: core::mem::take(&mut forward_primary[row_index]),
@@ -1418,6 +1420,7 @@ where
         };
 
         let op = Operation::Insert(InsertOperation {
+            retired_link: Some(old_link),
             id: OperationId::Single(Uuid::now_v7()),
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,

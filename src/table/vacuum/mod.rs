@@ -39,6 +39,7 @@ pub trait VacuumPersistence<PrimaryKey, SecondaryEvents>: Send + Sync {
     fn apply_move(
         &self,
         bytes: Vec<u8>,
+        old_link: Link,
         new_link: Link,
         primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
         secondary_keys_events: SecondaryEvents,

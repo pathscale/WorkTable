@@ -178,7 +178,7 @@ impl Generator {
                     let field_type = &field.ty;
                     Ok(quote! { #i: #field_type, })
                 } else if is_unsized(&t.to_string()) {
-                    let const_size = name_generator.get_page_inner_size_const_ident();
+                    let const_size = name_generator.get_disk_page_capacity();
                     Ok(quote! {
                         #i: (Vec<GeneralPage<TableOfContentsPage<(#t, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#t, {#const_size as u32}>>>),
                     })
@@ -222,7 +222,7 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_work_table_ident();
         let page_const_name = name_generator.get_page_size_const_ident();
-        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let inner_const_name = name_generator.get_disk_page_capacity();
         let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
 
@@ -276,7 +276,7 @@ impl Generator {
     fn gen_parse_from_file_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let page_const_name = name_generator.get_page_size_const_ident();
-        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let inner_const_name = name_generator.get_disk_page_capacity();
         let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
 
@@ -398,7 +398,7 @@ impl Generator {
     /// `TreeIndex` into `Vec` of `IndexPage`s using `IndexPage::from_nod` function.
     fn gen_get_persisted_index_fn(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let const_name = name_generator.get_page_inner_size_const_ident();
+        let const_name = name_generator.get_disk_page_capacity();
         let page_const_name = name_generator.get_page_size_const_ident();
 
         let idents = self
@@ -553,7 +553,7 @@ impl Generator {
     /// persisted page back to `TreeIndex`
     fn gen_from_persisted_fn(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let const_name = name_generator.get_page_inner_size_const_ident();
+        let const_name = name_generator.get_disk_page_capacity();
 
         let idents = self
             .struct_def

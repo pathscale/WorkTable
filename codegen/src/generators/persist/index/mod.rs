@@ -96,7 +96,7 @@ impl PersistGenerator {
     fn gen_index_default_impl(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let index_type_ident = name_generator.get_index_type_ident();
-        let const_name = name_generator.get_page_inner_size_const_ident();
+        let const_name = name_generator.get_disk_page_capacity();
 
         let index_rows = self
             .columns
