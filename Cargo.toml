@@ -77,15 +77,14 @@ hashbrown = "0.15"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # The file traits and the host implementation. `std` here; the crate takes it
 # without default features wherever the filesystem is not involved.
-# `^0.1.1` and not `^0.1`: 0.1.1 is the first release with
-# `Runtime::with_tuning`, which is the only way to get a pool at a chosen
-# tuning whose threads are marked as pool workers, and that marker is what
-# makes `local_wakes` do anything. Against 0.1.0 this crate does not build,
-# and naming the version says so rather than leaving a resolver to.
+# Require the reviewed 0.1.2 runtime: cancellation/panic handling, worker wake
+# ownership and the ps-st3 0.6.2 scheduler baseline must not be bypassed by a
+# downstream lockfile retaining 0.1.1. Runtime::with_tuning marks pool workers
+# correctly.
 #
 # It also re-exports `Tuning`, which is why `ps-st3` is no longer a direct
 # dependency here: it was named for that one type.
-nagoya = { version = "^0.1.1", default-features = false }
+nagoya = { version = "^0.1.2", default-features = false }
 indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.14", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 # Pulls `serde` and `serde_core` into every build, and nothing here uses them.
 # They are not reachable from this line: `indexset` 0.15 declares `ftree` with
