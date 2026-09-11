@@ -1,4 +1,4 @@
-error: unknown index backend; expected `worktables_index`, `indexset`, `congee`, or `arctic`
+error: unknown index backend; expected `worktables_index`, `indexset`, `congee`, `fxhash`, or `arctic`
   --> tests/ui/unknown_index_backend.rs:14:39
    |
 14 |         value_idx: value unique using treap,

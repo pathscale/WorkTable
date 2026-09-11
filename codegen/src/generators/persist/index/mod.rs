@@ -119,6 +119,7 @@ impl PersistGenerator {
                 #[allow(clippy::collapsible_else_if)]
                 let res = if idx.is_unique {
                     match idx.backend {
+                        crate::common::model::IndexBackend::FxHash => unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"),
                         crate::common::model::IndexBackend::WorktablesIndex => {
                             let map = if cfg!(feature = "logical-index-persistence") {
                                 quote! { PersistentWtiIndex }

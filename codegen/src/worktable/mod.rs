@@ -198,6 +198,50 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         return Ok(generated);
     }
 
+    // Past this point the table is paged, and `fxhash` cannot be.
+    //
+    // Two reasons, and neither is a matter of taste. A paged table answers
+    // ranges — `select_by_<column>_range` is generated for every secondary
+    // index, and the persistence worker reads its own queue by range — and a
+    // hash map cannot answer one at any price. And a persisted index's on-disk
+    // form *is* sorted pages: `from_persisted` rebuilds each index with
+    // `attach_nodes` from B-tree nodes read off the file, and a hash map has no
+    // node structure to attach.
+    //
+    // Refused here rather than left to fail somewhere inside the index
+    // generators, where the error would land on a type the author never wrote.
+    {
+        let mut offenders = Vec::new();
+        if columns.primary_index_backend == worktable_dsl::IndexBackend::FxHash {
+            offenders.push((
+                columns
+                    .primary_keys
+                    .first()
+                    .map(|key| key.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site),
+                "the primary key".to_string(),
+            ));
+        }
+        for index in columns.indexes.values() {
+            if index.backend == worktable_dsl::IndexBackend::FxHash {
+                offenders.push((index.name.span(), format!("`{}`", index.name)));
+            }
+        }
+        if let Some((span, what)) = offenders.into_iter().next() {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "`using fxhash` on {what}: a hash index has no ordered scan and no persisted \
+                     page form, so it cannot back a paged table. This table generates \
+                     `select_by_<column>_range` for its indexes and, if persisted, writes each \
+                     index as sorted pages. Use `vec: true`, which is single-writer and asks its \
+                     index only for point operations, or pick an ordered backend \
+                     (`arctic` is the default)."
+                ),
+            ));
+        }
+    }
+
     let columnar_chunk_rows = config
         .as_ref()
         .map(|config| config.columnar_chunk_rows)
@@ -1565,6 +1609,73 @@ mod schema_const {
         let baked = baked_schema(expand(declaration).expect("expands"), "REGENERATED_SCHEMA");
         let reparsed: TokenStream = syn::parse_str(&baked).expect("tokenises");
         expand(reparsed).expect("the baked declaration expands");
+    }
+
+    /// A paged table cannot take a hash index, and says why.
+    ///
+    /// Both halves matter. The refusal has to fire, because the alternative is
+    /// failing somewhere inside the index generators on a type the author never
+    /// wrote; and it has to name `vec: true`, because the backend does work
+    /// there and a refusal that does not say where to go sends people to the
+    /// issue tracker.
+    #[test]
+    fn fxhash_is_refused_on_a_paged_table() {
+        let on_the_primary_key = expand(quote! {
+            name: HashedPaged,
+            columns: {
+                id: u64 primary_key using fxhash,
+                value: u64,
+            },
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(
+            on_the_primary_key.contains("vec: true"),
+            "the refusal must say where the backend does work: {on_the_primary_key}"
+        );
+        assert!(
+            on_the_primary_key.contains("ordered scan"),
+            "the refusal must say why: {on_the_primary_key}"
+        );
+
+        // And on a secondary, which reaches the same check by the other branch.
+        let on_a_secondary = expand(quote! {
+            name: HashedSecondary,
+            columns: {
+                id: u64 primary_key,
+                value: u64,
+            },
+            indexes: {
+                value_idx: value unique using fxhash,
+            },
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(
+            on_a_secondary.contains("value_idx"),
+            "the refusal must name the index the author wrote: {on_a_secondary}"
+        );
+    }
+
+    /// A `vec: true` table accepts it, which is what makes the refusal above a
+    /// redirection rather than a ban.
+    #[test]
+    fn fxhash_is_accepted_on_a_vec_table() {
+        let output = expand(quote! {
+            name: HashedVec,
+            vec: true,
+            columns: {
+                id: u64 primary_key using fxhash,
+                value: u64,
+            },
+        })
+        .expect("a vec: true table takes a hash index");
+        let text = output.to_string();
+        assert!(text.contains("FxHashMap"), "the table should hold a hash map");
+        assert!(
+            !text.contains("pub fn range"),
+            "a hash-backed table must not get a range method"
+        );
     }
 }
 

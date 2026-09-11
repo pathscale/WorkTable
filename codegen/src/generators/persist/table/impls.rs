@@ -266,6 +266,9 @@ impl PersistGenerator {
             }
         } else {
             match self.columns.primary_index_backend {
+                crate::common::model::IndexBackend::FxHash => unreachable!(
+                    "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
+                ),
                 crate::common::model::IndexBackend::WorktablesIndex => quote! {
                     let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
                     inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(

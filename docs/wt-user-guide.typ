@@ -432,6 +432,42 @@ Each page carries its own header, a CRC, a row directory and a fingerprint of th
 type, so a page written by a different declaration is refused rather than misread. The
 codec is `worktable::vec_hydrate` and it is reachable directly.
 
+
+=== Picking an index backend
+
+`using` selects the physical index, and four of the five choices are ordered trees:
+
+#table(
+  columns: (auto, 1fr, auto),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 6pt,
+  [*clause*], [*stores*], [*ranges*],
+  [absent, or `using arctic`], [`ArcticIndex`, the default], [yes],
+  [`using worktables_index`], [WTI's `IndexMap`, leaf width tunable at the call site], [yes],
+  [`using indexset`], [a plain `BTreeMap`], [yes],
+  [`using congee`], [`CongeeIndex`], [yes],
+  [`using fxhash`], [`FxHashMap`], [*no*],
+)
+
+`fxhash` is the odd one and is worth what it costs to explain. Measured on a million
+rows against the default (`perf-benchmarks/benchmarks/fx-index.rs`): *build 4.9x, lookup
+4.0x*. Nothing else in the backend list moves a number that far.
+
+What you give up is order. A table `using fxhash` has no `range` and no `range_by_`
+methods at all — not a method that panics, not one that returns insertion order and calls
+it key order; the methods are simply not generated, so asking for one is a compile error
+at your call site.
+
+It is accepted on `vec: true` and *refused on a paged table*, with an error saying so. Two
+reasons, neither negotiable: a paged table generates `select_by_<column>_range` for every
+index, and a persisted index's on-disk form is sorted pages, rebuilt with `attach_nodes`
+on load. A hash map has neither an order to walk nor a page form to write.
+
+`with_capacity` reserves an `fxhash` index along with the row vector, and that is most of
+the build win: without it the same table managed 2.4x rather than 4.9x. It reserves
+nothing for the tree backends, because there is nothing to gain — making allocation
+completely free measures at *0.92x* for Arctic, below one, since it changes where nodes
+land and sequential order is worse for a tree walked in key order.
 === Ranges
 
 The index is an ordered tree on every backend `using` can name, so a range costs nothing

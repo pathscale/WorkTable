@@ -5,6 +5,31 @@ Change Log
 
 ### Added
 
+- `using fxhash`, a hash-shaped index backend. Accepted on `vec: true` and
+  **refused on a paged table**, which is the whole story: `UniqueIndex` requires
+  `range_values` and `range_links` and a hash map cannot answer either, a paged
+  table generates `select_by_<column>_range` for every index, and a persisted
+  index's on-disk form *is* sorted pages — `from_persisted` rebuilds each one
+  with `attach_nodes`. The `vec: true` generator is the one that asks its index
+  only for point operations and a single order-independent walk, so it is the
+  one place a hash map fits.
+
+  Worth 4.9x on build and 4.0x on lookup at a million rows against the default
+  arctic backend (`perf-benchmarks/benchmarks/fx-index.rs`), which is a larger
+  factor than anything else in the backend list.
+
+  A table using it has **no `range` and no `range_by_`**. Not a method that
+  panics and not one that returns insertion order while claiming key order: the
+  methods are not generated, so asking for one is a compile error at the call
+  site. A paged declaration that asks for it is refused with an error naming
+  `vec: true`.
+
+  `with_capacity` now reserves an `fxhash` index alongside the row vector, and
+  that is most of the build win — without it the same table measured 2.4x rather
+  than 4.9x. It reserves nothing for the tree backends, deliberately: making
+  allocation completely free measures at **0.92x** for Arctic, below one,
+  because it changes where nodes land and sequential order is worse for a tree
+  walked in key order.
 - Ranges on a `vec: true` table: `range(bounds)` by primary key and
   `range_by_<column>(bounds)` for each unique secondary index, both
   `DoubleEndedIterator` so `.rev()` works. This cost nothing to add and was

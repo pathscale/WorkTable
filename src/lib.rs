@@ -130,6 +130,30 @@ pub mod prelude {
     /// `extern crate alloc`.
     pub use alloc::collections::btree_map::Entry as BTreeMapEntry;
     pub use alloc::collections::{BTreeMap, BTreeSet};
+    /// What `using fxhash` stores.
+    ///
+    /// `hashbrown` rather than `std::collections::HashMap`, because this crate
+    /// is `no_std` and `std`'s map is not reachable from one; `FxBuildHasher`
+    /// rather than SipHash, because the keys here are already-checked column
+    /// values and not adversarial input, and SipHash is most of a hash map's
+    /// lookup cost.
+    ///
+    /// Re-exported rather than emitted for the same reason as everything else
+    /// in this module: a consumer that never depended on `hashbrown` or
+    /// `rustc-hash` still has to be able to compile the expansion.
+    pub use hashbrown::HashMap as FxHashMapInner;
+    /// The entry API, so a `vec: true` insert can refuse a duplicate key in one
+    /// traversal rather than a `contains_key` followed by an `insert`.
+    pub use hashbrown::hash_map::Entry as HashMapEntry;
+    pub use rustc_hash::FxBuildHasher;
+
+    /// A hash map from a column value to a row position.
+    ///
+    /// Point operations only: it cannot answer a range, which is why the
+    /// generator refuses to emit `range` and `range_by_` on a table whose index
+    /// is one of these, and why `using fxhash` is accepted on `vec: true` and
+    /// refused on a paged table.
+    pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
     pub use alloc::sync::Arc;
     /// `Vec` and `vec!` for the same reason as `Arc` above: a `no_std`
     /// consumer has neither in scope, and the expansion uses both.

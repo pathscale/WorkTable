@@ -1084,3 +1084,130 @@ fn a_string_key_ranges_lexicographically() {
         .collect();
     assert_eq!(keys, vec!["bravo", "charlie"]);
 }
+
+// ---------------------------------------------------------------------------
+// `using fxhash`: point operations only, and the range methods are absent.
+
+worktable!(
+    name: Hashed,
+    vec: true,
+    columns: {
+        id: u64 primary_key using fxhash,
+        value: u64,
+        tag: u64,
+    },
+    indexes: {
+        tag_idx: tag using fxhash,
+        code_idx: value unique using fxhash,
+    },
+);
+
+/// A hash-backed table is a table: everything but ordering still works.
+///
+/// Deliberately exercises the whole surface rather than a lookup, because the
+/// hash arm reaches a different branch in every one of `insert`, `upsert`,
+/// `update`, `delete` and `compact` — it uses inherent map methods where the
+/// ARTs use the `UniqueIndex` trait, and its entry type is `HashMapEntry`
+/// rather than `BTreeMapEntry`.
+#[test]
+fn a_hash_backed_table_does_everything_but_order() {
+    let mut table = HashedWorkTable::new();
+    for id in 0..8u64 {
+        table
+            .insert(HashedRow {
+                id,
+                value: id * 10,
+                tag: id % 2,
+            })
+            .expect("fresh");
+    }
+
+    // Duplicate primary key, refused in one traversal through the entry API.
+    assert!(
+        table
+            .insert(HashedRow {
+                id: 3,
+                value: 999,
+                tag: 0
+            })
+            .is_err(),
+        "duplicate primary key"
+    );
+    // Duplicate unique secondary, refused independently of the primary key.
+    assert!(
+        table
+            .insert(HashedRow {
+                id: 99,
+                value: 30,
+                tag: 0
+            })
+            .is_err(),
+        "duplicate unique secondary"
+    );
+
+    assert_eq!(table.select(&3).expect("present").value, 30);
+    assert_eq!(table.select_by_value(&40).expect("present").id, 4);
+    let even: Vec<u64> = table.select_by_tag(&0).iter().map(|row| row.id).collect();
+    assert_eq!(even, vec![0, 2, 4, 6]);
+
+    // Update, including a key move, which repairs three maps.
+    assert!(table.update(&5, |row| {
+        row.value = 555;
+        row.tag = 0;
+    }));
+    assert_eq!(table.select(&5).expect("present").value, 555);
+    assert_eq!(table.select_by_value(&555).expect("present").id, 5);
+    assert!(table.select_by_value(&50).is_none(), "the old value kept its entry");
+
+    // Upsert replaces in place.
+    table.upsert(HashedRow {
+        id: 5,
+        value: 5_555,
+        tag: 1,
+    });
+    assert_eq!(table.select(&5).expect("present").value, 5_555);
+    assert_eq!(table.len(), 8, "upsert did not grow the table");
+
+    // Delete ghosts, and compaction renumbers every hash map.
+    assert_eq!(table.delete(&2).expect("present").value, 20);
+    assert_eq!(table.delete(&6).expect("present").value, 60);
+    assert_eq!(table.ghost_count(), 2);
+    assert_eq!(table.compact(), 2);
+    assert_eq!(table.slots(), 6);
+    for id in [0u64, 1, 3, 4, 5, 7] {
+        assert_eq!(
+            table.select(&id).unwrap_or_else(|| panic!("{id} lost")).id,
+            id,
+            "compaction pointed the primary index at the wrong row"
+        );
+    }
+    assert_eq!(
+        table.select_by_value(&70).expect("present").id,
+        7,
+        "compaction pointed the unique secondary at the wrong row"
+    );
+    let even: Vec<u64> = table.select_by_tag(&0).iter().map(|row| row.id).collect();
+    assert_eq!(even, vec![0, 4], "compaction lost or misplaced a posting list entry");
+}
+
+/// Ranges are not emitted for a hash backend, and that is checked by compiling.
+///
+/// `HashedWorkTable::range` and `range_by_value` do not exist. There is nothing
+/// to call here, which is the assertion: a method that existed and panicked, or
+/// returned insertion order and called it key order, is the failure mode this
+/// design avoids. The ordered tables next to this one have both methods and are
+/// tested for them.
+#[test]
+fn a_hash_backed_table_has_no_range() {
+    let mut table = HashedWorkTable::new();
+    table
+        .insert(HashedRow {
+            id: 1,
+            value: 1,
+            tag: 1,
+        })
+        .expect("fresh");
+    // Still walkable in insertion order, which needs no index at all.
+    assert_eq!(table.select_all().count(), 1);
+    assert_eq!(table.iter().count(), 1);
+}

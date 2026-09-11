@@ -107,6 +107,9 @@ impl PersistGenerator {
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
         let derive = match (pk_types_unsized, self.columns.primary_index_backend) {
+            (_, crate::common::model::IndexBackend::FxHash) => unreachable!(
+                "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
+            ),
             (true, crate::common::model::IndexBackend::Indexset) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized, pk_upstream)]

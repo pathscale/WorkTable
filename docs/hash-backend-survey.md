@@ -115,3 +115,37 @@ hash backend would have to give the range API back up, so `using fxhash` would
 become a per-backend capability question — a table that declares a range cannot
 take it — which is exactly what `using` is for, and exactly the kind of
 conditional surface that needs sign-off before anything is built.
+
+---
+
+## Postscript, same day: it was built
+
+The recommendation above was to leave it unbuilt, on the grounds that the survey
+found no candidate. That was overruled, and correctly — the survey answers
+"who would use it today", which is not the same question as "is it worth having",
+and a backend that nothing uses yet is a different thing from one nothing *can*
+use.
+
+`using fxhash` ships. It is accepted on `vec: true` and refused on a paged
+table, with the refusal naming both reasons. Emitting `range` and `range_by_`
+became conditional on the backend being ordered, which is the per-backend
+capability shape this document proposed in its last section; a table using
+`fxhash` has no range methods at all, so a caller who needs one gets a compile
+error at their own call site.
+
+Measured through the real macro rather than the hand-written proxy
+(`perf-benchmarks/benchmarks/fx-index.rs`), at a million rows against the
+default arctic backend: **build 4.9x, lookup 4.0x**.
+
+One thing the survey did not predict and the wiring found. The generated arm
+first measured only 2.4x on build against the hand-written ceiling's 8x, because
+`with_capacity` sized the row vector and left the index alone — right for every
+other backend and wrong for this one. `with_capacity` reserves an `fxhash` index
+now, and that single change took it to 4.9x. **The pre-allocation lever this
+whole line of work went looking for turned out to be here**, on the one backend
+that had not existed when the question was asked.
+
+The three filters in this document are unchanged and still exclude every current
+declaration. What changed is that the first of them — "it only fits `vec: true`,
+and nothing is `vec: true` yet" — is now a statement about adoption rather than
+about capability.

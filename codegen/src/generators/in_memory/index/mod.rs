@@ -156,6 +156,11 @@ impl InMemoryGenerator {
                                 get_index_page_size_from_data_length::<#t>(#const_name)
                             ),
                         },
+                        // Unreachable: refused in `worktable/mod.rs` before any
+                        // generator runs.
+                        crate::common::model::IndexBackend::FxHash => quote! {
+                            #i: compile_error!("`using fxhash` cannot back a paged table"),
+                        },
                         crate::common::model::IndexBackend::Congee
                         | crate::common::model::IndexBackend::Arctic => {
                             quote! { #i: Default::default(), }

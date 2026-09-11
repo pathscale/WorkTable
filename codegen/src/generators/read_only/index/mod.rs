@@ -110,6 +110,7 @@ impl ReadOnlyGenerator {
                 #[allow(clippy::collapsible_else_if)]
                 let res = if idx.is_unique {
                     match idx.backend {
+                        crate::common::model::IndexBackend::FxHash => unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"),
                         crate::common::model::IndexBackend::WorktablesIndex => {
                             if is_unsized(&t.to_string()) {
                                 quote! { #i: IndexMap::with_maximum_node_size(#const_name), }

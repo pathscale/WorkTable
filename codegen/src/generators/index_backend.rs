@@ -26,6 +26,10 @@ pub(crate) fn unique_index_type(
                 Ok(quote! { UpstreamIndexMap<#key, #value> })
             }
         }
+        IndexBackend::FxHash => Err(syn::Error::new_spanned(
+            key,
+            "`using fxhash` cannot back a paged table: it has no ordered scan and no persisted page form. Use `vec: true`, or an ordered backend.",
+        )),
         IndexBackend::Congee => Ok(quote! { CongeeIndex<#key, #value> }),
         IndexBackend::Arctic => Ok(quote! { ArcticIndex<#key, #value> }),
     }
@@ -64,6 +68,9 @@ pub(crate) fn primary_key_backend_impl(
     fields: &[&TokenStream],
 ) -> syn::Result<(TokenStream, TokenStream)> {
     match backend {
+        IndexBackend::FxHash => {
+            unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs")
+        }
         IndexBackend::WorktablesIndex | IndexBackend::Indexset => Ok((quote! {}, quote! {})),
         IndexBackend::Congee => {
             let field = single_supported_field(backend, fields, supported_types(backend))?;

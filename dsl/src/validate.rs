@@ -154,7 +154,7 @@ fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut
     for index in columns.indexes.values().filter(|index| !index.is_unique) {
         match index.backend {
             IndexBackend::WorktablesIndex | IndexBackend::Arctic => {}
-            IndexBackend::Indexset | IndexBackend::Congee => {
+            IndexBackend::Indexset | IndexBackend::Congee | IndexBackend::FxHash => {
                 errors.push(syn::Error::new(
                     index.name.span(),
                     format!(
@@ -275,7 +275,9 @@ pub fn supported_key_types(backend: IndexBackend) -> Option<&'static [&'static s
         IndexBackend::Arctic => Some(&[
             "String", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
         ]),
-        IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
+        // A hash map indexes anything hashable, which every column type this
+        // macro accepts already is, so there is no list to check against.
+        IndexBackend::FxHash | IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
     }
 }
 

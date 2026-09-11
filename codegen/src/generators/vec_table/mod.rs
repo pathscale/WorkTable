@@ -74,6 +74,7 @@
 //! | `using worktables_index` | WTI's `IndexMap` | refused, no shared multimap trait |
 //! | `using congee` | `CongeeIndex` | refused, congee has no multimap |
 //! | `using indexset` | `BTreeMap`, the plain ordered map | `BTreeMap<K, Vec<usize>>` |
+//! | `using fxhash` | `FxHashMap`, **no ranges** | `FxHashMap<K, Vec<usize>>` |
 //!
 //! `worktable!` additionally demands an explicit `persist` before it accepts
 //! congee, because congee behaves differently persisted and the author has to
@@ -82,10 +83,20 @@
 //! here for a while on the strength of that rule's name rather than its
 //! reason.
 //!
-//! `using indexset` is the way to ask for `BTreeMap` deliberately, and there
-//! is one reason to: `delete` shifts every position above the hole, and a
-//! `BTreeMap` shifts them in place while an ART has to reinsert each one. A
-//! delete-heavy table should measure both.
+//! `using fxhash` is the only one of these that is not a tree, and it is the
+//! only one this macro can offer: `UniqueIndex` requires `range_values` and
+//! `range_links`, which a hash map cannot answer, and a paged table both ranges
+//! and writes its indexes to disk as sorted pages. This generator asks its
+//! index for point operations and one order-independent walk, so it is the one
+//! place the trait is not in the way. A table using it gets no `range` and no
+//! `range_by_`, by omission rather than by panic.
+//!
+//! `using indexset` is the way to ask for `BTreeMap` deliberately. The reason
+//! that used to be given for it — that `delete` shifts every position above the
+//! hole and a `BTreeMap` shifts in place where an ART reinserts — no longer
+//! applies: a delete ghosts its slot and shifts nothing. What is left is
+//! `compact`, which renumbers once, and there the same asymmetry holds at a
+//! fraction of the frequency.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -113,6 +124,14 @@ enum Repr {
     Wti,
     Congee,
     Ordered,
+    /// A hash map, reached through inherent methods like `Ordered`.
+    ///
+    /// It cannot implement `UniqueIndex`, because that trait requires
+    /// `range_values` and `range_links`. That is the whole reason this backend
+    /// exists only here: the `vec: true` generator is the one that asks its
+    /// index for point operations and an order-independent walk, and nothing
+    /// else.
+    Fx,
 }
 
 impl Repr {
@@ -122,9 +141,19 @@ impl Repr {
         matches!(self, Repr::Arctic | Repr::Wti | Repr::Congee)
     }
 
+    /// Can this backend answer an ordered scan?
+    ///
+    /// False for exactly one backend today. It decides whether `range` and
+    /// `range_by_` are emitted at all: a hash map cannot answer a range, and a
+    /// method that existed and returned the wrong thing, or panicked, would be
+    /// the silent no-op this crate refuses everywhere else.
+    fn is_ordered(self) -> bool {
+        self != Repr::Fx
+    }
+
     /// Has this backend a multimap for a non-unique index?
     fn has_multimap(self) -> bool {
-        matches!(self, Repr::Arctic | Repr::Ordered)
+        matches!(self, Repr::Arctic | Repr::Ordered | Repr::Fx)
     }
 
     /// The `using` spelling, for error messages.
@@ -134,6 +163,7 @@ impl Repr {
             Repr::Wti => "worktables_index",
             Repr::Congee => "congee",
             Repr::Ordered => "indexset",
+            Repr::Fx => "fxhash",
         }
     }
 }
@@ -148,6 +178,7 @@ fn resolve(backend: IndexBackend, ty: &TokenStream, span: proc_macro2::Span, wha
         IndexBackend::WorktablesIndex => Repr::Wti,
         IndexBackend::Congee => Repr::Congee,
         IndexBackend::Indexset => Repr::Ordered,
+        IndexBackend::FxHash => Repr::Fx,
     };
     // `worktable!` additionally requires `persist` to be stated before it will
     // accept congee, because congee behaves differently persisted and the
@@ -183,6 +214,7 @@ fn unique_type(repr: Repr, ty: &TokenStream) -> TokenStream {
         Repr::Wti => quote! { worktable::prelude::IndexMap<#ty, u64> },
         Repr::Congee => quote! { worktable::prelude::CongeeIndex<#ty, u64> },
         Repr::Ordered => quote! { worktable::prelude::BTreeMap<#ty, usize> },
+        Repr::Fx => quote! { worktable::prelude::FxHashMap<#ty, usize> },
     }
 }
 
@@ -193,6 +225,7 @@ fn multi_type(repr: Repr, ty: &TokenStream) -> TokenStream {
     match repr {
         Repr::Arctic => quote! { worktable::prelude::ArcticMultiIndex<#ty, u64> },
         Repr::Ordered => quote! { worktable::prelude::BTreeMap<#ty, worktable::prelude::Vec<usize>> },
+        Repr::Fx => quote! { worktable::prelude::FxHashMap<#ty, worktable::prelude::Vec<usize>> },
         Repr::Wti | Repr::Congee => {
             quote! { compile_error!("unreachable: this backend has no multimap and was refused during resolution") }
         }
@@ -254,6 +287,16 @@ fn unique_insert_checked(repr: Repr, map: &TokenStream, key: &TokenStream, at: &
     if repr.is_trait_backed() {
         quote! {
             worktable::prelude::UniqueIndex::insert_value_checked(&#map, #key, #at as u64).is_none()
+        }
+    } else if repr == Repr::Fx {
+        quote! {
+            match #map.entry(#key) {
+                worktable::prelude::HashMapEntry::Occupied(_) => true,
+                worktable::prelude::HashMapEntry::Vacant(slot) => {
+                    slot.insert(#at);
+                    false
+                }
+            }
         }
     } else {
         quote! {
@@ -537,30 +580,42 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             let ty = columns.columns_map.get(column).expect("checked above");
             if index.is_unique {
                 let get = unique_get(repr, &map, &quote! { key });
-                let range_fn = Ident::new(&format!("range_by_{column}"), index_name.span());
-                let range = unique_range(repr, &map, &quote! { bounds });
+                // Emitted only for an ordered backend. `using fxhash` gets the
+                // point lookup and no range, so a caller who needs one gets a
+                // missing method at the call site rather than a method that
+                // exists and cannot answer.
+                let range_by = if repr.is_ordered() {
+                    let range_fn = Ident::new(&format!("range_by_{column}"), index_name.span());
+                    let range = unique_range(repr, &map, &quote! { bounds });
+                    quote! {
+                        /// Every row whose indexed value falls inside `bounds`,
+                        /// in that value's order.
+                        ///
+                        /// Free for the same reason the primary-key range is:
+                        /// this index is an ordered tree and was already
+                        /// answering ranges, so the walk is the index's own and
+                        /// the only added work is the row fetch each position
+                        /// names.
+                        pub fn #range_fn<'a, R>(
+                            &'a self,
+                            bounds: R,
+                        ) -> impl DoubleEndedIterator<Item = &'a #row_ident> + 'a
+                        where
+                            R: core::ops::RangeBounds<#ty> + 'a,
+                        {
+                            #range.map(|at| self.row_at(at))
+                        }
+                    }
+                } else {
+                    quote! {}
+                };
                 quote! {
                     /// The row this key indexes, if any.
                     pub fn #fn_name(&self, key: &#ty) -> Option<&#row_ident> {
                         #get.map(|at| self.row_at(at))
                     }
 
-                    /// Every row whose indexed value falls inside `bounds`, in
-                    /// that value's order.
-                    ///
-                    /// Free for the same reason the primary-key range is: this
-                    /// index is an ordered tree and was already answering
-                    /// ranges, so the walk is the index's own and the only
-                    /// added work is the row fetch each position names.
-                    pub fn #range_fn<'a, R>(
-                        &'a self,
-                        bounds: R,
-                    ) -> impl DoubleEndedIterator<Item = &'a #row_ident> + 'a
-                    where
-                        R: core::ops::RangeBounds<#ty> + 'a,
-                    {
-                        #range.map(|at| self.row_at(at))
-                    }
+                    #range_by
                 }
             } else {
                 let positions = match repr {
@@ -647,7 +702,84 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
     };
     let pk_reinsert_moved = unique_insert(pk_repr, &pk_map, &quote! { now_pk }, &quote! { at });
     let pk_renumber = unique_renumber(pk_repr, &pk_map, &quote! { moved });
-    let pk_range = unique_range(pk_repr, &pk_map, &quote! { bounds });
+    // What `with_capacity` can actually reserve.
+    //
+    // For a tree this is nothing: `arctic-prealloc` measured the ceiling on
+    // pooling Arctic's node allocation at **0.92x**, below one, because free
+    // allocation changes where nodes land and sequential order is worse for a
+    // tree walked in key order. There is no reserve to offer and nothing would
+    // be gained by inventing one.
+    //
+    // A hash map is the opposite case and the only one: one growing buffer
+    // with a doubling sequence, which is exactly what `with_capacity` deletes.
+    // Measured hand-written on this shape, reserving is worth a further 3.1x to
+    // 5.1x on build beyond the hash map itself. So the reserve is emitted for
+    // `fxhash` and for nothing else, which is not a special case so much as the
+    // only backend that has an answer.
+    let pk_capacity = if pk_repr == Repr::Fx {
+        quote! {
+            by_pk: <#pk_map_type>::with_capacity_and_hasher(
+                capacity,
+                worktable::prelude::FxBuildHasher,
+            ),
+        }
+    } else {
+        quote! {}
+    };
+    let index_capacity: Vec<_> = index_fields
+        .iter()
+        .zip(index_map_types.iter())
+        .zip(index_reprs.iter().copied())
+        .filter(|((_, _), repr)| *repr == Repr::Fx)
+        .map(|((field, ty), _)| {
+            quote! {
+                #field: <#ty>::with_capacity_and_hasher(
+                    capacity,
+                    worktable::prelude::FxBuildHasher,
+                ),
+            }
+        })
+        .collect();
+
+    // `range` exists only when the primary index can answer one. On a table
+    // `using fxhash` the method is simply not there, so a caller who needs a
+    // range gets "no method named `range`" at their own call site instead of a
+    // method that compiles and cannot do the job.
+    let pk_range_fn = if pk_repr.is_ordered() {
+        let pk_range = unique_range(pk_repr, &pk_map, &quote! { bounds });
+        quote! {
+            /// Every live row whose primary key falls inside `bounds`, in key
+            /// order.
+            ///
+            /// This costs nothing to provide and was simply never exposed. The
+            /// ordered backends are trees, `UniqueIndex` already requires
+            /// `range_links`, and the index was answering ranges the whole
+            /// time.
+            ///
+            /// What it is not is a sorted vector. The keys come out in order
+            /// and the rows they name are wherever insertion put them, so a
+            /// long range is a sequence of random accesses into the row
+            /// vector. Ordered, correct, and not sequential.
+            ///
+            /// Not emitted for `using fxhash`, which has no order to walk.
+            ///
+            /// ```ignore
+            /// for row in table.range(10..20) { .. }
+            /// for row in table.range(..).rev() { .. }
+            /// ```
+            pub fn range<'a, R>(
+                &'a self,
+                bounds: R,
+            ) -> impl DoubleEndedIterator<Item = &'a #row_ident> + 'a
+            where
+                R: core::ops::RangeBounds<#pk_type> + 'a,
+            {
+                #pk_range.map(|at| self.row_at(at))
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     // rkyv's derives only when the table can be written out. They are not free
     // to a caller who never persists: an `Archived` type per row, a resolver
@@ -853,6 +985,8 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
             pub fn with_capacity(capacity: usize) -> Self {
                 Self {
                     rows: worktable::prelude::Vec::with_capacity(capacity),
+                    #pk_capacity
+                    #(#index_capacity)*
                     ..Self::default()
                 }
             }
@@ -1026,32 +1160,7 @@ pub fn expand(name: Ident, columns: Columns) -> syn::Result<TokenStream> {
                 self.rows.iter().flatten()
             }
 
-            /// Every live row whose primary key falls inside `bounds`, in key
-            /// order.
-            ///
-            /// This costs nothing to provide and was simply never exposed.
-            /// Every backend the `using` clause can name is an ordered tree,
-            /// `UniqueIndex` already requires `range_links`, and the index was
-            /// answering ranges the whole time.
-            ///
-            /// What it is not is a sorted vector. The keys come out in order
-            /// and the rows they name are wherever insertion put them, so a
-            /// long range is a sequence of random accesses into the row
-            /// vector. Ordered, correct, and not sequential.
-            ///
-            /// ```ignore
-            /// for row in table.range(10..20) { .. }
-            /// for row in table.range(..).rev() { .. }
-            /// ```
-            pub fn range<'a, R>(
-                &'a self,
-                bounds: R,
-            ) -> impl DoubleEndedIterator<Item = &'a #row_ident> + 'a
-            where
-                R: core::ops::RangeBounds<#pk_type> + 'a,
-            {
-                #pk_range.map(|at| self.row_at(at))
-            }
+            #pk_range_fn
 
             #(#select_by)*
 

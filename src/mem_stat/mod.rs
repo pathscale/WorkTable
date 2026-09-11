@@ -301,7 +301,11 @@ impl<T: MemStat> MemStat for Rc<T> {
     }
 }
 
-impl<K: MemStat + Eq + core::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
+// Generic over the hasher: `using fxhash` stores an `FxHashMap`, which is this
+// type with `FxBuildHasher` rather than the default. Counting capacity rather
+// than length is right for a hash map and is what makes a reserved index show
+// its reservation.
+impl<K: MemStat + Eq + core::hash::Hash, V: MemStat, S> MemStat for HashMap<K, V, S> {
     fn heap_size(&self) -> usize {
         let bucket_size = size_of::<(K, V)>();
         let base_heap = self.capacity() * bucket_size;
