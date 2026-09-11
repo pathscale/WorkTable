@@ -77,8 +77,7 @@ where
 
     /// Explicitly unlocks the [`Lock`] before the [`LockGuard`] is [`Drop`]ped.
     pub fn unlock(self) {
-        self.lock.unlock();
-        self.lock_map.remove_with_lock_check(&self.primary_key);
+        drop(self);
     }
 }
 
@@ -167,6 +166,8 @@ where
 
 #[derive(Debug)]
 pub struct Lock {
+    // A wrapping diagnostic label, not dependency identity. The existing
+    // locked allocation stays unique and stable for this lock lifetime.
     id: u16,
     locked: Arc<AtomicBool>,
     wakers: Mutex<Vec<Arc<AtomicWaker>>>,
@@ -174,7 +175,7 @@ pub struct Lock {
 
 impl PartialEq for Lock {
     fn eq(&self, other: &Self) -> bool {
-        self.id.eq(&other.id)
+        Arc::ptr_eq(&self.locked, &other.locked)
     }
 }
 
@@ -182,7 +183,7 @@ impl Eq for Lock {}
 
 impl Hash for Lock {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.id, state)
+        Hash::hash(&Arc::as_ptr(&self.locked), state)
     }
 }
 
@@ -214,6 +215,7 @@ impl Lock {
         }
     }
 
+    /// Diagnostic label; labels may repeat and do not define lock equality.
     pub fn id(&self) -> u16 {
         self.id
     }
@@ -282,6 +284,20 @@ impl Future for LockWait {
 mod tests {
     use super::*;
     use std::panic::AssertUnwindSafe;
+
+    #[test]
+    #[allow(clippy::mutable_key_type)]
+    fn repeated_labels_do_not_remove_distinct_dependencies() {
+        let first = Arc::new(Lock::new(7));
+        let second = Arc::new(Lock::new(7));
+        let dependencies: hashbrown::HashSet<_> =
+            hashbrown::HashSet::from_iter([first.clone(), first.clone(), second.clone()]);
+        assert_eq!(dependencies.len(), 2);
+        first.unlock();
+        assert_eq!(dependencies.iter().filter(|lock| lock.is_locked()).count(), 1);
+        second.unlock();
+        assert!(dependencies.iter().all(|lock| !lock.is_locked()));
+    }
 
     #[test]
     fn test_unlock_on_drop() {

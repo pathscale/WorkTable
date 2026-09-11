@@ -3,8 +3,8 @@
 Open defects and accepted limitations, recorded so the next audit starts here instead of
 rediscovering them. Source: the 2026-08-31 full audit (WorkTable core plus the
 WorkTablesIndex, congee-wt, and arctic-wt backends) and the fix pass that followed it in
-1.0.0-beta.13. Every item below was deliberately deferred, with the mechanism written down;
-items fixed in beta.13 are not listed.
+1.0.0-beta.13. The 12 September 2026 review updates resolved entries below;
+older backend findings retain their stated scope and are not all newly reproduced.
 
 Severity words: "corruption" means wrong or lost data, "outage" means a hang or abort,
 "perf" means measurable cost with no wrong answers.
@@ -49,30 +49,31 @@ Severity words: "corruption" means wrong or lost data, "outage" means a hang or 
 
 ## In-memory storage
 
-- **Every mutation serializes on the table-global `page_access` write lock**, memcpy and
-  page bookkeeping included. This is the write-throughput ceiling on multicore;
-  per-page locking is the architectural fix.
-- **Every read performs a SeqCst RMW on one shared `active_readers` line** (`read_guard`),
-  and the hot counters are adjacent with no padding (false sharing). A sharded or epoch
-  scheme is the fix.
-- **Reclamation requires a global zero-reader instant.** Under sustained overlapping reads
-  the instant may never occur: retired links, pages, and publications accumulate without
-  bound and deletes stop reclaiming space. When reclamation does trip, the whole backlog
-  drains inline inside one arbitrary mutating call (millisecond-class latency spike; the
-  code warns at a backlog of 1024). Epoch-based reclamation is the fix for both halves.
-- **The publication cache doubles the resident set**: every live row exists as archived
-  page bytes and as `Arc<Row>` plus lock plus map slot, and every mutation republish pays a
-  full-row deserialize. Design cost, paid per row.
+- **Fixed: table-global page mutation and reader counters.** Pages now have their
+  own allocation barrier and exact-cell access guards. Reads pin ps-reclaim
+  epochs rather than incrementing one table-global reader counter; reclamation
+  no longer requires a simultaneous zero-reader instant. The old per-row
+  publication cache was removed. These historical findings do not describe
+  the current read path.
+- **Fixed in the 2026-09-12 review: released collisions split cell locks.**
+  An empty earlier slot could be claimed for a row still locked in a later
+  slot. Registration now keeps each active key unique, with a conservative
+  displaced-entry counter for the common path. See [cell-lock-registry.md](cell-lock-registry.md)
+  for the failing interleaving, invariants and bounded concurrency models.
 - **`unsafe impl Sync for Data` is broader than its discipline**: safe `&self` methods
-  mutate the page `UnsafeCell` relying on callers holding `page_access`; `Arc<Data>` is
-  handed to safe code (vacuum), so the soundness boundary lives in convention, not types.
+  mutate the page `UnsafeCell` under external page/cell coordination; the low-level
+  API does not encode all of those ownership requirements in types. Generated
+  table paths and raw Data-page APIs must not be treated as identical safety surfaces.
 - **A panicking closure inside `with_mut_ref` leaves the archived page image half-mutated**
-  while the publication keeps the old row (guards do not poison): memory and disk diverge
-  silently until reload. Closures are generated code today; nothing enforces that.
+  and guards do not poison. The old publication cache no longer exists, but a
+  panicking callback can still leave a partial edit; a persisted call that unwinds
+  before enqueueing its data operation has no durability guarantee.
 - **`mark_page_full` can race a concurrent failing save's `free_offset` rollback**, leaving
   `free_offset` slightly below `DATA_LENGTH` on a non-current page. Capacity pessimism
   only; no double allocation.
-- **`row_count` restarts at 0 on reload** (`DataPages::from_data`), upstream TODO.
+- **Fixed for table reload: row count restoration.** Loaded-table hydration calls
+  `set_loaded_row_count` after validating live row links. The low-level
+  `DataPages::from_data` constructor alone does not infer row boundaries.
 
 ## On-disk space layer
 
@@ -80,20 +81,15 @@ Full mechanisms and the pinned data_bucket item list live in
 [space-layer-known-issues.md](space-layer-known-issues.md); the summary:
 
 - **There is no fsync/ordering discipline anywhere except the ART checkpoint writer.**
-  Every acknowledgement ends at `File::flush()` (tokio buffer to page cache). On power
-  loss, any acknowledged write may vanish or reorder against any other; only the ART file
-  has checksums, so torn pages surface as rkyv panics or silently wrong links. This needs
+  Ordinary drain is not a power-loss commit or transaction boundary. On power
+  loss, writes may vanish or reorder. DataBucket v3 now validates checksums and
+  row directories; the old assertion that only ART has checksums is obsolete. This needs
   one durability design decision (write ordering plus sync points), not per-site patches.
-- **data_bucket 0.5.2 (pinned) carries these classes, all fixed at the source in the
-  0.5.3 release PR (pathscale/DataBucket#69)**: u32 offset wraps past 4 GiB in the
-  relative page seek and link bound checks, `update_key` size accounting, and unchecked
-  over-budget page persists. Once the pin moves to 0.5.3, WorkTable's TableOfContents
-  wrapper (src/persistence/space/index/table_of_contents.rs) should adopt the new
-  capacity-checked `try_insert`/`try_update_key` and typed overflow errors: its
-  size-change re-key workaround can then delegate, and the inherited oversized-entry
-  own-page fallback (which can still persist an over-budget segment; the last open item
-  in space-layer-known-issues.md) is closed by the checked insert. The small-DATA_LENGTH
-  test fixtures that rely on that fallback need regenerating at the same time.
+- **The old DataBucket 0.5.2 pin is obsolete.** The release graph uses 0.7 with
+  checked page bounds and coordinated v3 integrity validation. The WorkTable TOC
+  wrapper still permits an oversized entry to occupy a segment in memory, but
+  DataBucket rejects an over-budget persist instead of overwriting the next page.
+  Early rejection or segment spilling remains a separate API improvement.
 - **Perf:** every structural index event rewrites every TOC segment (each re-serialized
   from a cloned BTreeMap); each sized single-event insert performs an on-disk free-slot
   scan (one read syscall per cell); ART compaction runs synchronously inside
@@ -122,16 +118,16 @@ Full mechanisms and the pinned data_bucket item list live in
 
 ## Row locking
 
-- **Lock identity is a wrapping u16 id.** Two distinct in-flight locks 65,536 ids apart
-  dedup in a predecessor `HashSet`, silently dropping a real predecessor. Astronomically
-  unlikely per row; structurally wrong.
+- **Fixed in the 2026-09-12 review: wrapping labels lost predecessors.** Two
+  distinct live locks with the same u16 label collapsed in the dependency set.
+  Equality and hashing now use the existing shared flag allocation identity.
+  Labels remain diagnostic; no counter widening, allocation or API change is needed.
 - **`mutation_guard` is an unbounded spin** on an async worker thread; correctness depends
-  on the (honored, but unstated at call sites) invariant that no holder awaits. 64 stripes
+  on the (documented on the guard conversion and mutation APIs) invariant that no holder awaits. 64 stripes
   also collide unrelated keys into one FIFO.
 - **`Lock` waker lists grow per `wait()` call and are never pruned**; unlock wakes every
   historical waiter (thundering herd on hot rows).
-- **`LockGuard::unlock` runs the unlock pair twice** (explicitly and again in Drop);
-  harmless only because unlock is idempotent.
+- **Fixed: explicit guard unlock delegates to Drop.** Cleanup runs once.
 
 ## Generated code (accepted semantics and open items)
 
@@ -151,9 +147,9 @@ Full mechanisms and the pinned data_bucket item list live in
 
 Beta.12 fixed the metrics scans and added the `partition_ref` borrow API. Still open:
 
-- **`gc(&mut self)` is uncallable through the shared-`Arc` deployment shape**, so removed
-  partitions accumulate in the retire list for the process lifetime under key churn.
-  Epoch-based retirement is the fix; until then treat shared routers as append-only.
+- **Fixed: shared routers can reclaim retired partitions.** Epoch retirement and
+  `collect(&self)` work through an Arc. The remaining inline collection cost is
+  described below; the old append-only restriction is obsolete.
 - **`collect` runs inline and its batch is bounded by count, not by cost: a routing
   call can pay 3.3 milliseconds.** (perf. Measured 2026-09-11,
   `perf-benchmarks/benchmarks/partition-collect-inline.rs`.) `get_or_create`
@@ -210,12 +206,11 @@ Beta.12 fixed the metrics scans and added the `partition_ref` borrow API. Still 
 (Additional items fixed or re-documented by the beta.13-era WorkTablesIndex PR are listed
 in that repo; the following remain by design or await redesign.)
 
-- **Iterator lifetimes are transmuted past the node guard**: collected `&T` borrows
-  (`iter().collect::<Vec<&T>>()`) dangle once the iterator advances or drops. Reachable
-  use-after-free from idiomatic code; needs an API change (owned yields or a lending
-  iterator).
+- **Fixed: concurrent iterators yield owned batches.** The old guard-lifetime
+  transmute was removed. Point `Ref` values still hold a node read guard and
+  must be dropped before re-entering the map on the same thread.
 - **`len()`/`is_empty()`/`capacity()` lock every node**: calling them while holding a live
-  `Iter` or `Ref` on the same thread self-deadlocks; with `remove_range` in the mix a
+  point `Ref` on the same thread self-deadlocks; with `remove_range` in the mix a
   three-party variant hangs writers too. Also O(nodes) cost per call.
 - **`Operation::commit` is not unwind-safe**: a panic between the index entry removal and
   the reinsert of the halves silently unlinks a whole node (locks do not poison, and the

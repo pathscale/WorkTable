@@ -208,16 +208,14 @@ impl Drop for CellReadGuard<'_> {
         let previous = self.state.fetch_sub(CELL_READER_ONE, Ordering::Release);
         debug_assert_ne!(previous & CELL_READER_MASK, 0, "cell reader count underflow");
         let remaining = previous - CELL_READER_ONE;
-        if remaining & (CELL_READER_MASK | CELL_WRITER) == 0 {
-            if self
+        if remaining & (CELL_READER_MASK | CELL_WRITER) == 0
+            && self
                 .state
                 .compare_exchange(remaining, 0, Ordering::Release, Ordering::Relaxed)
                 .is_ok()
-            {
-                if let Some(displaced) = self.displaced {
-                    displaced.fetch_sub(1, Ordering::Release);
-                }
-            }
+            && let Some(displaced) = self.displaced
+        {
+            displaced.fetch_sub(1, Ordering::Release);
         }
     }
 }
