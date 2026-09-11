@@ -344,3 +344,5 @@ impl<T: Send + 'static> RuntimeJoinHandle<T> for nagoya::JoinHandle<T> {
         nagoya::JoinHandle::is_finished(self)
     }
 }
+
+impl<F: FlavorMarker, G: FlavorMarker> super::RuntimeCompatibleWith<NagoyaRt<G>> for NagoyaRt<F> {}

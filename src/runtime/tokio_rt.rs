@@ -172,3 +172,5 @@ impl RuntimeSemaphorePermit for tokio::sync::SemaphorePermit<'_> {
         tokio::sync::SemaphorePermit::forget(self);
     }
 }
+
+impl super::RuntimeCompatibleWith<TokioRt> for TokioRt {}

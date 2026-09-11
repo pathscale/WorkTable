@@ -22,8 +22,8 @@ runtimes! {
     tokio_max: tokio,
 }
 
-/// Holds only when `P`'s backend is exactly `B`, which is the same equality
-/// `.runtime()` puts on a call site.
+/// Check the concrete type emitted for a profile. Callsite compatibility
+/// separately admits different Nagoya flavors from the same backend family.
 fn assert_backend<P, B>()
 where
     P: Profile<Backend = B>,

@@ -83,14 +83,15 @@ where
     /// on the selected executor over owned rows. This materializes all input
     /// rows, so use synchronous execution for short or streaming selections.
     ///
-    /// The profile backend, including its Nagoya flavor, must exactly match
-    /// the generated row's `TableRuntime::Backend`. A mutation section profile
+    /// The profile backend family must match `TableRuntime::Backend`; Nagoya
+    /// flavors may differ from the table default. A mutation section profile
     /// applies to its own methods and does not pin unrelated select builders.
     /// Hosted paged tables implement these markers; Vec tables stay synchronous.
     pub fn runtime<P>(mut self, profile: P) -> Self
     where
         Row: TableRuntime + RuntimeUnpinned,
-        P: Profile<Backend = <Row as TableRuntime>::Backend>,
+        P: Profile,
+        P::Backend: crate::runtime::RuntimeCompatibleWith<<Row as TableRuntime>::Backend>,
         <P::Backend as crate::runtime::Runtime>::JoinHandle<()>: Unpin,
     {
         let _ = profile;

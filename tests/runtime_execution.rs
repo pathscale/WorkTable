@@ -265,3 +265,32 @@ fn an_owned_select_future_outlives_the_table() {
     };
     assert_eq!(nagoya::block_on(future).unwrap()[0].id, 1);
 }
+
+runtimes! { on_spread: nagoya(spread), }
+worktable! {
+    name: Tunable,
+    columns: { id: u64 primary_key, value: u64 },
+    queries: { in_place runtime on_spread: { TunedValue(value) by id } }
+}
+#[test]
+fn callsites_can_tune_nagoya_without_changing_the_table_default() {
+    nagoya::block_on(async {
+        let table = Arc::new(TunableWorkTable::default());
+        table.insert(TunableRow { id: 1, value: 2 }).await.unwrap();
+        let caller = std::thread::current().id();
+        table
+            .update_tuned_value_in_place(
+                move |value| {
+                    assert_ne!(std::thread::current().id(), caller);
+                    *value = 3.into();
+                },
+                1u64,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            table.select_all().runtime(on_spread).execute_async().await.unwrap()[0].value,
+            3
+        );
+    });
+}

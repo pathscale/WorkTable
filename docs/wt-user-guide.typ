@@ -569,7 +569,7 @@ where their caller polls them. Table locks remain portable; persistence uses a p
 I/O pool, and engine background work follows the process runtime setting.
 
 ```rust
-runtimes! { scheduled: nagoya(shared_slot), }
+runtimes! { scheduled: nagoya(shared_slot), wide: nagoya(spread), }
 worktable! {
     name: Orders,
     runtime: nagoya(shared_slot),
@@ -585,11 +585,10 @@ table.update_total_by_id(TotalByIdQuery { total: 20 }, 1u64).await?;
 table.update_total_by_id_in_place(|total| *total = 21.into(), 1u64).await?;
 let rows = table.select_all()
     .order_on(OrdersRowFields::Total, Order::Desc)
-    .limit(100).runtime(scheduled).execute_async().await?;
+    .limit(100).runtime(wide).execute_async().await?;
 ```
 
-Omitting the declaration defaults to Nagoya shared_slot. A profile must match both
-the declared backend and flavor. Tokio requires the `tokio-runtime` feature and an
+Omitting the declaration defaults to Nagoya shared_slot. A profile must match the declared backend family; Nagoya profiles may select a different flavor at the callsite. Tokio requires the `tokio-runtime` feature and an
 entered Tokio runtime. `WT_DEFAULT_RUNTIME` overrides Nagoya flavors process-wide;
 `WT_RUNTIME_WORKERS` sets pool size on first use. Keep these fixed when comparing runs.
 

@@ -43,7 +43,8 @@ pub(crate) fn wrap(methods: TokenStream, profile: Option<&Ident>, row: &Ident) -
             }
         }
         scheduled.block = parse_quote!({
-            fn check_profile<P: worktable::runtime::Profile<Backend = <#row as worktable::runtime::TableRuntime>::Backend>>() {}
+            fn check_profile<P: worktable::runtime::Profile>()
+            where P::Backend: worktable::runtime::RuntimeCompatibleWith<<#row as worktable::runtime::TableRuntime>::Backend> {}
             check_profile::<#profile>();
             let table = worktable::prelude::Arc::clone(self);
             worktable::runtime::run_profile::<#profile, _>(async move {

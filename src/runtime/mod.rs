@@ -53,7 +53,7 @@ pub use nagoya_rt::{
     executor_for_flavor,
 };
 
-pub use profile::{Profile, RuntimeUnpinned, TableRuntime};
+pub use profile::{Profile, RuntimeCompatibleWith, RuntimeUnpinned, TableRuntime};
 #[cfg(all(feature = "std", feature = "tokio-runtime"))]
 pub use tokio_rt::{TokioJoinHandle, TokioRt};
 
