@@ -102,6 +102,50 @@ paragraph each in the experience section. Get written OK before naming private r
 Alternatives if A slips: ICDE 2027 R2 (2026-11-11), PVLDB rolling (monthly to 2027-03-01),
 SIGMOD R4 (2026-10-17). DaMoN 2027 CFP not posted.
 
+## Update 2026-09-11: release evidence and paper scope
+
+The release checkout is WorkTable 1.9.0-alpha1. Its runtime and row-lock
+implementation differs from the earlier paper: inspect `src/lock/map.rs`,
+`src/runtime/` and the selected dependency graph at the pinned evaluation
+commit before describing them.
+
+The physical-design paper remains a useful candidate: paged memory and
+persistence, dense bounded partitions, Vec storage, ordered versus hash
+indexes, and columnar replicas expose different access and lifecycle costs.
+The lifecycle paper remains another candidate, requiring renewed contention
+and application-level evaluation on this engine.
+
+The earlier local draft collected useful hypotheses but its numerical table
+is not publication-ready evidence. In particular:
+
+- The original four-way search matrix compiled the default strategy in every
+  arm through dependency feature unification. Its claimed 5% spread cannot
+  compare four strategies.
+- 20,000 rows do not fit in a 16,384-row columnar chunk. Chunk and slot-width
+  claims must carry the actual row count and number of chunks.
+- Vec ghost deletion, row-value destruction, compaction and whole-table drop
+  are different operations. A delete/shift ratio does not establish savings
+  over dropping a generation.
+- The dirty-bit checkpoint experiment is a representation experiment, not a
+  shipped Vec persistence API.
+- A benchmark report containing failed reopening tests cannot establish a
+  complete release pass. The reopened page payload handling has been fixed
+  and is being checked against multiple page strides and index paths.
+- Runtime throughput needs CPU and tail latency beside it; a setting that
+  spins more is not universally faster or more efficient.
+
+The release evidence lives in the sibling `perf-benchmarks` repository:
+`docs/claim-audit.md`, `docs/performance-feature-audit.md`, the dated reports,
+and the benchmark source. Use measured operation definitions and exact
+dependency revisions from there. Do not copy the old draft's unlogged ratios,
+crate counts or benchmark counts into the paper.
+
+The release review does not validate `wt-benchmarks`, establish Linux results,
+add missing sled/redb/SQLite/DashMap comparisons, or select a publication
+venue. Those remain paper work. The physical-design proposal should be
+evaluated against the corrected data before choosing between it and the
+lifecycle proposal.
+
 ## 31-day schedule for option A (long paper)
 
 | Week | Dates | Deliverable |

@@ -39,8 +39,12 @@ See #link(<persistence>)[Persistence].]
 = Getting started
 
 ```sh
-cargo add worktable
+cargo add worktable@=1.9.0-alpha1
 ```
+
+Until this alpha is published, depend on the reviewed checkout with
+`worktable = { path = "../WorkTable" }`. A plain `cargo add worktable` selects the
+published release and may not include the APIs described here.
 
 ```rust
 use worktable::prelude::*;
@@ -66,8 +70,8 @@ worktable! (
 );
 
 let table = OrderWorkTable::default();
-table.insert(OrderRow { id: 1, total: 500 })?;   // errors if the key exists
-table.upsert(OrderRow { id: 1, total: 600 })?;   // overwrites instead
+table.insert(OrderRow { id: 1, total: 500 }).await?;   // errors if the key exists
+table.upsert(OrderRow { id: 1, total: 600 }).await?;   // overwrites instead
 let row = table.select(1).expect("just inserted");
 ```
 
@@ -94,11 +98,11 @@ guess: `<name>: <Type> [primary_key [autoincrement|custom]] [optional] [columnar
 
 ```rust
 let id = table.insert(AccountRow {
-    id: 0,                     // ignored under autoincrement
+    id: table.get_next_pk().into(),
     email: "a@b.c".to_string(),
     nickname: None,            // optional column
     balance: 0,
-})?;
+}).await?;
 ```
 
 `custom` replaces `autoincrement` when you generate keys yourself and still want the
@@ -175,7 +179,7 @@ CamelCase declared, snake_case generated:
 ```rust
 table.update_amount_by_id(AmountByIdQuery { amount: 900 }, 1).await?;  // name + "Query"
 table.delete_by_id(1).await?;
-table.update_state_by_id_in_place(1, |state| *state = 2).await?;
+table.update_state_by_id_in_place(|state| *state = 2.into(), 1).await?;
 ```
 
 `update` reads, changes and writes. `in_place` mutates without selecting first and locks
@@ -470,8 +474,7 @@ completely free measures at *0.92x* for Arctic, below one, since it changes wher
 land and sequential order is worse for a tree walked in key order.
 === Ranges
 
-The index is an ordered tree on every backend `using` can name, so a range costs nothing
-to provide and is simply there:
+The ordered backends expose primary-key ranges. `fxhash` has no range API:
 
 ```rust
 for row in table.range(100..200) { .. }          // by primary key, in key order
@@ -486,11 +489,11 @@ only; a non-unique one holds a posting list per key and has no single row to yie
 
 === Deleting, and the ghosts it leaves
 
-`delete` is constant time. The row leaves its slot and its index entries, and nothing else
-moves:
+`delete` empties one slot and removes its index entries. It avoids shifting all later
+rows; index removal still has the selected backend's cost:
 
 ```rust
-table.delete(&7);                 // O(1): a slot emptied, entries removed
+table.delete(&7);                 // no vector-wide shift; returns the removed row
 table.ghost_count();              // 1
 table.slots();                    // unchanged
 table.compact();                  // reclaims the slot, renumbers the indexes
@@ -512,11 +515,11 @@ compaction the design exists to defer.
 
 === Sizing it
 
-`with_capacity`, `capacity` and `reserve` size the row vector. Only the rows: the indexes
-are trees and have no equivalent knob, so an accurate capacity removes the row vector's
-growth entirely and leaves theirs alone. That is worth less than it sounds, and
-`docs/small-tables.md` has the measurement: reserving is worth 2.1x to 3.5x on a hash
-insert and nothing at all here, because the index is the cost and has nothing to reserve.
+`with_capacity`, `capacity` and `reserve` size the row vector. `with_capacity` also
+reserves the primary FxHash index when selected. Tree indexes do not reserve nodes
+through this callsite. `with_capacity_and_node_size` combines row reserve with WTI
+leaf width on tables that use WTI. Measure build and lookup separately before choosing
+capacity or leaf width.
 
 == 10. Choosing a runtime
 
@@ -618,9 +621,9 @@ speed.
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 6pt,
   [*Backend*], [*When it fits*],
-  [`worktables_index`], [The general one. Takes an ordered key of any type, and the only one that can key an optional or variable-width column.],
+  [`worktables_index`], [The general ordered backend, including composite and optional keys.],
   [`indexset`], [Vanilla IndexSet, selectable explicitly while keeping the same disk representation.],
-  [`arctic`], [*The default.* Fixed-width keys only, and the fast one. Packs a row link into a single `u64`.],
+  [`arctic`], [*The default.* Supported integer keys and `String`; packs a row link into a single `u64`. Page stride must fit its 16-bit offset and length fields.],
   [`congee`], [Fixed-width integer keys. Refuses `String` and other variable-width types.],
 )
 
@@ -630,7 +633,7 @@ Rules:
   because arctic cannot represent a tuple key.
 - Congee must state `persist` explicitly. Its persistence uses native checkpoint and WAL
   adapters rather than the shared page format.
-- Arctic cannot key an optional or variable-width column. `nickname_idx: nickname unique`
+- Arctic supports `String`, but not optional keys. `nickname_idx: nickname unique`
   over a `String optional` is rejected, and the message names the type rather than the
   omission. Say `using worktables_index`.
 - Arctic caps page size at 65535: it packs a link into 64 bits with 16-bit offset and
@@ -744,8 +747,10 @@ voluntary context switches across 25,000 inserts.]
 = Choosing a runtime <runtime>
 
 Syntax is in #link(<examples>)[Example 10]. The parenthesised name is a *flavor*: a set
-of scheduler tunings, not a different scheduler. All flavors share one pool, so choosing
-between them costs no extra code and no rebuild.
+of scheduler tunings, not a different scheduler. Each selected flavor owns a separate
+process-lifetime pool. Reusing a flavor reuses its pool; selecting several starts several
+pools. Idle spinning from those pools can interfere with measurements. Compare flavors
+in separate processes and report CPU next to throughput and latency.
 
 #table(
   columns: (auto, 1fr),
@@ -760,14 +765,11 @@ between them costs no extra code and no rebuild.
   [`low_latency`], [`locality`, looking for work more often before parking.],
 )
 
-#note("Take the default")[Measured across a read/write mix, YCSB and a persisted mix,
-every flavor lands inside the run-to-run noise of every other, on 9 to 16 repetitions per
-point. The one choice that changes anything is a negative: putting an injector-waking
-flavor (`spread`, `throughput`, `wide_injector`) on a write-heavy table costs 55% to 57%,
-because the workload wakes on every await. The default does not do that.
-
-Not a knob to tune per table. If you do measure, report a range rather than a median: a
-3-run reading of this reversed twice under 16 runs.]
+#note("Measure before changing policy")[`shared_slot` remains the shipped default.
+The earlier YCSB figures and the WorkTable workloads in `perf-benchmarks/runtime-flavours`
+are different experiments. They do not establish a universally fastest flavor. Worker
+count, update mix, task wake behavior and CPU consumption all matter. Keep the workload
+and worker count with any quoted result.]
 
 = Concurrency
 
@@ -796,6 +798,229 @@ The three alternative search policies (`wti-hybrid-search`, `wti-std-search`,
 `wti-superslice-search`) are compile-time gates. Enable one, and only one, for an
 unambiguous build. If feature unification turns on several, WorkTablesIndex applies a
 documented precedence rather than refusing the graph.
+
+= Reference coverage
+
+The callsite reference below covers operations beyond the declaration examples. The
+executable `examples/guide_check.rs` demonstrates the public table and maintenance APIs;
+the tests named there cover persistence, dense storage and columnar identity boundaries.
+
+= Rust callsite reference
+
+These are existing Rust APIs, not additional grammar. A declaration chooses a storage
+shape and therefore an API contract. Do not transfer a call between shapes by removing
+an `await` or changing a borrowed key until the ownership and return type are understood.
+
+== Paged table operations
+
+`default()` creates an in-memory table. `insert(row).await` rejects duplicate keys and
+returns the primary key. `upsert(row).await` inserts or replaces. `select(key)` returns an
+owned row in `Option`, while `select_all()` and non-unique-index selects return builders.
+Use `execute()` to materialize those builders. Unique secondary-index selects return an
+`Option<Row>`. Primary-key and secondary-index range methods require an ordered backend.
+
+`insert_many(Vec<Row>).await` validates and publishes the batch atomically to readers;
+`BatchInsertError` identifies the rejected row/index. Persisted success means the batch
+was queued, not committed to stable storage. `delete_many(Vec<Key>).await` and
+`delete_range(range).await` return deleted keys and may report a `BatchDeleteError` with
+partial progress. Range deletion walks the keys present at that walk; it does not promise
+to delete concurrent future inserts into the range. `reinsert(old, new).await` is the
+explicit row-replacement operation; ordinary updates should use `upsert` or declared
+queries so secondary indexes stay synchronized.
+
+With `autoincrement`, get a key from `get_next_pk()`, convert it into the row field, then
+insert. `reserve_pks(count)` reserves a disjoint range for a bulk producer. Reserved keys
+can be unused; allocation is not publication. `custom` lets the application supply its
+generator under the generated primary-key trait contract. `name()`,
+`name_snake_case()` and generated schema metadata identify a table. Persisted tables
+also expose `version()` and `pk_gen_state()`.
+
+`row_count()` and `count()` report live rows. `used_bytes()` reports accounted row and
+index storage; it is not allocator RSS. `system_info()` provides per-index and table
+information. `iter_with(...)` and `iter_with_async(...)` apply a callback using the
+generated available-index/types surface; inspect their generated types when building a
+generic integration instead of relying on an erased string column name.
+
+== Select builders and runtime overrides
+
+Chain `limit(n)`, `offset(n)`, `order_on(Fields::field, Order::Asc)` or `Order::Desc`, and
+`range_on(Fields::field, bounds)` before `execute()`. Generated field and range enums are
+table-specific. A limit alone does not establish an order. Filtering and ordering can
+require more work than the returned row count suggests.
+
+`runtime(profile)` is a Rust builder method for a profile declared by `runtimes!`.
+Runtime defaults and the schema examples are covered in Example 10. `WT_DEFAULT_RUNTIME`
+and `WT_RUNTIME_WORKERS` affect runtime initialization; set them before the process first
+uses the registry. Changing an environment variable afterwards does not rebuild an
+already-created pool. `Runtime`, `NagoyaRt`, optional `TokioRt`, flavor marker types and
+`executor_for_flavor` form the lower-level runtime integration surface. They do not make
+a storage operation durable or turn synchronous file access into nonblocking I/O.
+
+== Vec table operations
+
+`with_capacity(n)` reserves row storage and, for `fxhash`, its primary hash index.
+`with_node_size(n)` selects a WorkTablesIndex leaf width where that backend is used;
+it is not a reserve. `insert`, `upsert`, `update` and `delete` require `&mut self`, are
+synchronous, and return the shape-specific result documented by the generated method.
+Lookups borrow rows; concurrent readers can share an immutable table, but mutation needs
+exclusive access. An external lock changes the measured concurrency contract.
+
+`new/default`, `capacity`, `reserve`, `len`, `is_empty`, `select`, `iter`, `select_all`,
+`into_rows`, `range`, generated secondary-index lookups/ranges, `slots`, `ghost_count`,
+`compact` and `shrink_to_fit` expose the live and physical layout.
+`insert` returns `Result<(), Row>` with the rejected row; `upsert` returns `()`.
+`update(&key, edit)` returns whether a row was found. `delete(&key)` returns the removed
+row in `Option`; its destructor runs when the caller drops that row. It is not merely a
+bit flip for rows owning heap allocations. `compact()` moves
+survivors and repairs index positions. Measure deletion separately from compaction and
+whole-table drop. Hash-indexed access paths do not provide ordered ranges.
+
+`unload()` and `load(bytes)` use the page codec described in Example 9b. This is a caller-
+managed snapshot, with validation errors such as `RowTooLarge`, `NotAnArchive` and
+`LoadError`; it is not the paged persistence worker. `vec_hydrate::{to_pages, from_pages}`
+and `Codec` are the lower-level codec surface. The proposed persisted dirty-bit/sidecar
+design in `vec-persistence-design.md` is *not* a shipped Vec durability API.
+
+== Dense partitions and partition ownership
+
+Dense tables expose `new/default`, `insert`, `upsert`, `select(&key)`, `contains(&key)`,
+`update`, `delete(&key)`, `select_all`, `row_count/len`, `is_empty`, `slots` and
+`used_bytes`. Declared primary-key updates/deletes and generated scalar setters operate
+synchronously. Capacity is bounded by the declared width and a failure returns
+`DenseError`; dense storage does not silently fall back to paged storage or persistence.
+
+Generated partition sets expose `partition(key)` for an owned `Arc`,
+`partition_ref(key)` for a guarded borrowed reference, and `pinned().get(key)` for
+several lookups under one read epoch. Keep guards short: long-lived pins defer reclaim.
+`partition_or_create` applies where a default constructor exists;
+`partition_or_insert_with` accepts a factory. `keys`, `iter`, `contains`, `len` and
+`is_empty` inspect the directory. A removed partition remains usable through an already-
+owned `Arc`; directory removal is not revocation of those handles.
+
+`remove(key)` retires a directory entry. `collect()` performs bounded reclamation and
+can execute destructors on its caller. `gc(&mut self)` requires exclusive access for
+collection. `retired_len`, `retired_bytes`, `memory_by_key`, `memory_total` and
+`rows_by_key` distinguish live directories from retired storage. The low-level
+`PartitionSet<T>` adds `get_or_create`, `for_each`, `for_each_retired` and memory-stat
+methods for integrations without a generated partition wrapper. Do not benchmark only
+the directory unlink and call that the total destruction cost.
+
+== Columnar callsites and identity
+
+For the `Reading` declaration in Example 7:
+
+```rust
+let values = table.columnar_scan_host_id()?;
+let refs = table.columnar_select_host_time(7, 1000)?;
+let projected = table.columnar_project_timestamp(&refs)?;
+let ordered_refs = table.columnar_scan_host_time()?;
+```
+
+Field scans return `(ColumnarRowRef, value)` pairs. Exact clustered-index selects and
+clustered scans return row references; projection reads only the requested column.
+`ColumnarRowRef::primary_key()` exposes the authoritative identity. Its slot,
+generation and table incarnation prevent retained references from addressing a different
+row after slot reuse or loading another table. Rebuilding a replica preserves references
+to surviving rows. Invalidated references are omitted by projection.
+They are not serializable durable IDs and not primary-key sort order.
+
+`columnar_slots_in_use`, `columnar_slots_high_water` and `columnar_is_dirty` expose the
+replica's state; `rebuild_columnar()` reconstructs it from authoritative rows. Normal
+columnar reads ensure the replica is current. The slot width bounds capacity: 8 bits
+cannot represent a 20,000-row table. Reuse and failure behavior are tested in
+`tests/worktable/columnar.rs`. `ColumnarColumn`, `ClusteredColumnarIndex`,
+`ColumnSlotId8/16/32/64` and `ColumnCompression` are lower-level building blocks.
+Only implemented compression policies are accepted; the declaration is not a promise of
+an unimplemented codec.
+
+== Vacuum policy, scheduling and observability
+
+```rust
+let vacuum = table.vacuum_with_pacing(VacuumPacing {
+    batch_pages: 64,
+    backoff: std::time::Duration::from_millis(2),
+    max_backoff: std::time::Duration::from_millis(128),
+    quiet_samples: 3,
+});
+let before = vacuum.analyze_fragmentation();
+let stats = vacuum.vacuum().await?;
+let counters = vacuum.diagnostics();
+```
+
+`vacuum()` uses the default policy: 8 source pages, 2 ms initial backoff, 128 ms maximum
+and three quiet observations. Positive `batch_pages` waits for quiet mutation activity
+before the first and subsequent batches. Zero requests an unpaced sweep. The wait can
+defer all useful sweeping under sustained writes. Completion after the foreground stops
+does not establish reclamation while it was running. A successful sweep may free zero
+pages because free space was reused before sweeping.
+
+`arm_wake(bytes)` sets the reclaimable-space wake threshold; zero disables it.
+`wait_until_worth_running().await` waits for that threshold. `diagnostics()` reports
+cumulative requests, batches, examined/reclaimed pages and completions. Fragmentation
+metadata describes the free-space registry: its `total_pages` is the number represented
+there, not necessarily every allocated page. Empty registries require special care when
+forming ratios.
+
+`VacuumManager::new/with_config`, `register`, `diagnostic_snapshot` and
+`run_vacuum_task` manage registered sweeps. Its task lifetime must be handled explicitly.
+The concrete `EmptyDataVacuum` additionally offers `with_gate`, `gate` and
+`with_persistence`; a `VacuumGate` can pause/resume work at batch boundaries and expose
+stand-down counts. Generated callsites return `Arc<dyn WorkTableVacuum>`; choose their
+policy at construction using `vacuum_with_pacing`, not a mutation of the trait object.
+
+== Persistence, recovery, S3 and versioned schemas
+
+`PersistenceEngine::new(config)` and generated `load(engine)` open a table.
+`load_with(engine, LoadMode::Recovery)` is the explicit offline recovery boundary;
+normal loads use strict validation. `wait_for_ops`, `close`,
+`persisted_data_file_size_bytes` and the error contracts are described above. Stop writers
+before waiting for a drain; consume the table through `close()` when shutting down.
+For an `Arc<Table>`, release all other owners and use `Arc::try_unwrap` first.
+
+Under `s3-support`, `s3_sync_persistence!(TableName)` generates an S3-backed engine alias.
+`S3DiskConfig` combines `DiskConfig` with `S3Config` fields `bucket_name`, `endpoint`,
+`access_key`, `secret_key`, optional `region` and optional `prefix`. Supply credentials
+from application configuration. Local disk remains the working copy; this is not an
+S3-native transactional engine. The HTTP implementation is blocking `ureq`, so it does
+not require a Tokio socket reactor. Networked performance and failure behavior require
+a configured S3 service and are not covered by the offline performance gate.
+
+`worktable_version!` and `migration_engine!` describe explicit versioned conversions;
+see `docs/migration.md` and the executable `tests/migration` fixtures for each required
+trait and transformation. They do not automatically infer data migration from a changed
+schema. For this 1.9 alpha, a planned rebuild/data wipe is supported by the release plan;
+do not infer cross-version file compatibility from a successful same-version reopen.
+`worktable::worktable_dsl` exposes parsing, checking and canonical schema emission for
+tools; the TypeScript emitter is tested against that Rust source of truth.
+
+== Fixed-capacity atomic rows
+
+`AtomicKeyTable<V>::with_capacity(n)` is a separate Rust type for counter-like rows,
+not another macro grammar. `upsert(usize)` claims or finds a slot and returns `Option<&V>`;
+`select`, `iter`, `len`, `is_empty` and `capacity` inspect it. `V` provides interior
+mutability. There is no removal, resizing or multi-field snapshot. Two atomic fields
+can be observed from different logical updates; pack mutually consistent values into one
+atomic or choose a locked table. This type requires a 64-bit target.
+
+== Feature and capability boundaries
+
+The Cargo feature surface includes `std`, `vanilla-index`, `tokio-runtime`,
+`s3-support`, `logical-index-persistence`, `versioned-row-publication` and the four
+`wti-*-search` choices. `versioned-row-publication` is a compatibility no-op: safe row
+publication is mandatory. `vanilla-index` makes upstream indexset available.
+`tokio-runtime` enables that backend; it is independent of merely accepting a runtime
+name in schema metadata. No-std support must be checked through a downstream consumer,
+not just by disabling features on this crate while another dependency re-enables them.
+
+Use `cargo tree -e features` to inspect the resolved graph. Search features are additive
+and have precedence; disabling defaults on one dependency does not cancel another
+dependency's defaults. The release review found exactly this error in the original
+four-way benchmark. Performance claims require the measured graph and an appropriate
+workload, not only a compile-time feature label.
+
+`perf_measurements` enables operation instrumentation; measure its overhead separately
+when enabling it in an application. `runtime-backends` is an empty compatibility feature;
+runtime selection is available through the existing declaration and Rust callsites.
 
 = Where to look next
 
