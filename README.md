@@ -28,6 +28,13 @@ cargo add worktable@1.0.0-beta.5
   key an optional or variable-width column, so an index over `String optional`
   must now say `using worktables_index`. Only `congee` still requires `persist`
   to be stated explicitly.
+- **`using fxhash`, a hash index**, on `vec: true` tables only. Worth 4.9x on
+  build and 4.0x on lookup at a million rows against the default. It is refused
+  on a paged table, because a paged table generates a range select per index and
+  writes each persisted index to disk as sorted pages, and a hash map can do
+  neither. A table using it has no `range` or `range_by_` methods at all — they
+  are not generated, so asking for one is a compile error rather than a method
+  that cannot answer.
 
 ## What you get
 
