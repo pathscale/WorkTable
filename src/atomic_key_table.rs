@@ -105,7 +105,10 @@ impl<V: Default> AtomicKeyTable<V> {
     /// probing, so a table much past half full costs a long probe on every miss.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
-        let slots = capacity.max(1).next_power_of_two();
+        // One slot would require shifting a 64-bit key by 64 in `scatter`.
+        // Keep the same power-of-two probing shape and use the smallest valid
+        // hash table for zero- and one-capacity requests.
+        let slots = capacity.max(2).next_power_of_two();
         let mut keys = Vec::with_capacity(slots);
         let mut values = Vec::with_capacity(slots);
         for _ in 0..slots {
@@ -229,6 +232,16 @@ mod tests {
         assert!(table.upsert(0).is_none(), "zero would be indistinguishable from empty");
         assert!(table.select(0).is_none());
         assert_eq!(table.len(), 0);
+    }
+
+    #[test]
+    fn zero_and_one_capacity_requests_use_a_valid_scatter_shift() {
+        for requested in [0, 1] {
+            let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(requested);
+            assert_eq!(table.capacity(), 2);
+            assert!(table.upsert(1).is_some());
+            assert!(table.select(1).is_some());
+        }
     }
 
     #[test]

@@ -464,6 +464,7 @@ pub fn expand(
 
     // Per-index statement fragments, so the method bodies below stay readable.
     let mut index_reject_duplicate = Vec::new();
+    let mut index_reject_replacement = Vec::new();
     let mut index_validate_replacement = Vec::new();
     let mut index_insert = Vec::new();
     let mut index_upsert_move = Vec::new();
@@ -491,6 +492,11 @@ pub fn expand(
         });
         if unique {
             let owner = unique_get(repr, &map, &key);
+            index_reject_replacement.push(quote! {
+                if #owner.is_some_and(|owner| owner != at) {
+                    return Err(row);
+                }
+            });
             index_validate_replacement.push(quote! {
                 assert!(
                     #owner.is_none_or(|owner| owner == at),
@@ -1172,18 +1178,18 @@ pub fn expand(
 
             /// Insert, or replace the row this key already names.
             ///
-            /// # Panics
-            ///
             /// Refuses a replacement whose unique secondary key belongs to
             /// another row, before changing either the row or its indexes.
-            pub fn upsert(&mut self, row: #row_ident) {
+            /// `Err` returns the rejected row for both a new primary key and
+            /// an existing one.
+            pub fn upsert(&mut self, row: #row_ident) -> Result<(), #row_ident> {
                 if let Some(at) = #pk_get_for_upsert {
-                    #(#index_validate_replacement)*
+                    #(#index_reject_replacement)*
                     #(#index_upsert_move)*
                     self.rows[at] = Some(row);
-                    return;
+                    return Ok(());
                 }
-                let _ = self.insert(row);
+                self.insert(row)
             }
 
             /// The row this key names, if any.

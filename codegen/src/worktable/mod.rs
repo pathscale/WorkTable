@@ -1150,6 +1150,19 @@ mod position_tests {
         assert!(error.contains("partition_max_size: u8"), "must name the fix: {error}");
     }
 
+    #[test]
+    fn full_width_dense_keys_validate_without_shifting_by_the_type_width() {
+        for ty in [quote! { u64 }, quote! { usize }] {
+            expand(quote! {
+                name: WideDenseKey,
+                partition_by: symbol_id: u16,
+                partition_max_size: u16,
+                columns: { exchange_id: #ty primary_key, bid: f64 }
+            })
+            .expect("u64 and usize can address every dense partition slot");
+        }
+    }
+
     /// A narrow key on an unpartitioned table warns.
     #[test]
     fn a_narrow_primary_key_on_an_unpartitioned_table_is_linted() {
@@ -1237,7 +1250,8 @@ mod position_tests {
         assert!(expanded.contains("fn delete_stale"), "missing the delete query");
     }
 
-    /// Keyed by anything else, it refuses rather than quietly scanning.
+    /// A declared secondary index is refused because dense lowering has no
+    /// secondary index storage.
     #[test]
     fn a_dense_query_keyed_by_a_column_it_cannot_index_is_refused() {
         let error = expand(quote! {
@@ -1253,10 +1267,33 @@ mod position_tests {
         .expect_err("a dense partition has no secondary index")
         .to_string();
         assert!(error.contains("venue"), "must name the column: {error}");
-        assert!(error.contains("exchange_id"), "must name the key it can use: {error}");
+        assert!(
+            error.contains("secondary index"),
+            "must name the unsupported guarantee: {error}"
+        );
         assert!(
             error.contains("partition_max_size: u64"),
             "must name the way out: {error}"
+        );
+    }
+
+    #[test]
+    fn a_dense_update_cannot_change_the_primary_key_position() {
+        let error = expand(quote! {
+            name: Price,
+            partition_by: symbol_id: u16,
+            partition_max_size: u8,
+            columns: { exchange_id: u8 primary_key, bid: f64 },
+            queries: {
+                update: { ReKey(exchange_id, bid) by exchange_id, }
+            }
+        })
+        .expect_err("changing a dense primary key would separate identity from position")
+        .to_string();
+        assert!(error.contains("ReKey"), "must name the query: {error}");
+        assert!(
+            error.contains("primary key `exchange_id`"),
+            "must name the identity: {error}"
         );
     }
 

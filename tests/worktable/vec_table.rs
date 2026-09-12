@@ -62,11 +62,13 @@ fn it_behaves_like_a_table() {
     assert_eq!(tagged.len(), 2);
     assert_eq!(tagged[0].id, 1);
 
-    table.upsert(PointRow {
-        id: 1,
-        value: 11,
-        tag: 7,
-    });
+    table
+        .upsert(PointRow {
+            id: 1,
+            value: 11,
+            tag: 7,
+        })
+        .unwrap();
     assert_eq!(table.select(&1).expect("present").value, 11, "upsert replaces");
     assert_eq!(table.len(), 2, "upsert does not grow the table");
 
@@ -349,6 +351,31 @@ fn the_backends_without_a_multimap_still_work() {
     // ...and refusing it must not have left the fresh id behind.
     assert!(wti.select(&6).is_none(), "a rejected insert half-landed");
     assert_eq!(wti.len(), 5);
+
+    let rejected = wti
+        .upsert(WtidRow {
+            id: 7,
+            value: 70,
+            code: 103,
+        })
+        .expect_err("upsert of a fresh id must return a unique-secondary rejection");
+    assert_eq!(rejected.id, 7);
+    assert!(
+        wti.select(&7).is_none(),
+        "a rejected upsert dropped or inserted the row"
+    );
+    assert_eq!(wti.len(), 5);
+
+    let rejected = wti
+        .upsert(WtidRow {
+            id: 1,
+            value: 999,
+            code: 104,
+        })
+        .expect_err("replacement must return a unique-secondary rejection");
+    assert_eq!(rejected.id, 1);
+    assert_eq!(wti.select(&1).expect("original row remains").code, 101);
+    assert_eq!(wti.select_by_code(&104).expect("owner remains").id, 4);
 
     assert_eq!(wti.select_by_code(&103).expect("present").id, 3);
     assert_eq!(wti.delete(&3).expect("present").value, 30);
@@ -1161,11 +1188,13 @@ fn a_hash_backed_table_does_everything_but_order() {
     assert!(table.select_by_value(&50).is_none(), "the old value kept its entry");
 
     // Upsert replaces in place.
-    table.upsert(HashedRow {
-        id: 5,
-        value: 5_555,
-        tag: 1,
-    });
+    table
+        .upsert(HashedRow {
+            id: 5,
+            value: 5_555,
+            tag: 1,
+        })
+        .unwrap();
     assert_eq!(table.select(&5).expect("present").value, 5_555);
     assert_eq!(table.len(), 8, "upsert did not grow the table");
 
@@ -1708,7 +1737,7 @@ fn declared_queries_run_on_a_vec_table() {
 }
 
 #[test]
-fn vec_unique_collisions_and_panicking_edits_leave_rows_and_indexes_unchanged() {
+fn vec_unique_collisions_and_failed_edits_leave_rows_and_indexes_unchanged() {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     let mut table = HashedSavedWorkTable::new();
@@ -1743,16 +1772,15 @@ fn vec_unique_collisions_and_panicking_edits_leave_rows_and_indexes_unchanged() 
         .is_err()
     );
     assert_eq!(table.unload().unwrap(), before);
-    assert!(
-        catch_unwind(AssertUnwindSafe(|| {
-            table.upsert(HashedSavedRow {
-                id: 1,
-                code: 20,
-                label: "changed".into(),
-            });
-        }))
-        .is_err()
-    );
+    let rejected = table
+        .upsert(HashedSavedRow {
+            id: 1,
+            code: 20,
+            label: "changed".into(),
+        })
+        .expect_err("unique secondary collision");
+    assert_eq!(rejected.id, 1);
+    assert_eq!(rejected.code, 20);
     assert_eq!(table.unload().unwrap(), before);
     assert!(
         catch_unwind(AssertUnwindSafe(|| {
@@ -1819,11 +1847,13 @@ fn vec_secondary_key_churn_does_not_retain_empty_posting_lists() {
         .unwrap();
     for revision in 0..100 {
         assert!(table.update(&1, |row| row.label = format!("edited-{revision}")));
-        table.upsert(HashedSavedRow {
-            id: 1,
-            code: 1,
-            label: format!("replaced-{revision}"),
-        });
+        table
+            .upsert(HashedSavedRow {
+                id: 1,
+                code: 1,
+                label: format!("replaced-{revision}"),
+            })
+            .unwrap();
         assert_eq!(table.label_map.len(), 2, "secondary index must contain only live keys");
     }
     table.delete(&1).unwrap();

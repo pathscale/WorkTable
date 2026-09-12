@@ -213,3 +213,25 @@ fn generated_catalog_commits_pages_and_restores_the_database() {
     reopened.commit_generation(generation.finish()).unwrap();
     assert_eq!(reopened.catalog().system_tables()[0].schema_version, 4);
 }
+
+#[test]
+fn registering_an_incompatible_existing_table_does_not_mutate_its_metadata() {
+    let id = StorageDomainId([8; 16]);
+    let database = Database::new(id, 11, MemoryStore::default());
+    let table_id = database
+        .register_table_with_stride("orders", 3, PAGE_SIZE as u32)
+        .unwrap();
+    let generation = database.generation();
+
+    assert!(
+        database
+            .register_table_with_stride("orders", 4, (PAGE_SIZE / 2) as u32)
+            .is_err()
+    );
+
+    assert_eq!(database.generation(), generation);
+    let table = database.catalog().system_tables().pop().unwrap();
+    assert_eq!(table.table_id, table_id);
+    assert_eq!(table.schema_version, 3);
+    assert_eq!(table.page_stride, PAGE_SIZE as u32);
+}

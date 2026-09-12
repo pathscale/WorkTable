@@ -76,6 +76,18 @@ pub fn type_ident(name: &Ident) -> Ident {
 pub fn validate(name: &Ident, columns: &Columns, max_size: PartitionMaxSize) -> syn::Result<(Ident, TokenStream)> {
     let rows = max_size.rows().expect("only a dense width reaches here");
 
+    if let Some(indexed_column) = columns.indexes.keys().next() {
+        return Err(Error::new(
+            indexed_column.span(),
+            format!(
+                "`{indexed_column}` declares a secondary index, but `partition_max_size: {}` lowers each \
+                 partition to a dense table without secondary indexes. Use `partition_max_size: u64` to \
+                 retain declared indexes.",
+                max_size.type_name()
+            ),
+        ));
+    }
+
     if columns.primary_keys.len() != 1 {
         return Err(Error::new(
             name.span(),
@@ -115,8 +127,10 @@ pub fn validate(name: &Ident, columns: &Columns, max_size: PartitionMaxSize) -> 
     // A key narrower than the cap cannot reach it, which is not an error but is
     // always a mistake worth naming: `partition_max_size: u16` beside a `u8`
     // key declares 65,536 rows and can hold 256.
-    let key_span = 1u64 << (8 * key_bytes(&pk_text).unwrap_or(8));
-    if key_bytes(&pk_text).is_some() && key_span < rows {
+    let key_span = key_bytes(&pk_text)
+        .filter(|bytes| *bytes < 8)
+        .map(|bytes| 1u64 << (8 * bytes));
+    if let Some(key_span) = key_span.filter(|key_span| *key_span < rows) {
         return Err(Error::new(
             pk.span(),
             format!(
@@ -384,6 +398,16 @@ fn gen_queries(
         for column in fields {
             if !columns.columns_map.contains_key(column) {
                 return Err(Error::new(column.span(), format!("no column `{column}`")));
+            }
+            if column == pk {
+                return Err(Error::new(
+                    column.span(),
+                    format!(
+                        "`update {query}` cannot update primary key `{pk}` in a dense partition: the key is \
+                         the row's physical position. Remove `{pk}` from the update, or delete and insert the row \
+                         at its new key."
+                    ),
+                ));
             }
         }
         let doc = format!(

@@ -74,22 +74,26 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
     /// changes. Empty bytes are an exact-link tombstone, never a row archive.
     #[cfg(feature = "std")]
     pub(crate) fn row_mutations(&self) -> Vec<(Link, Vec<u8>)> {
-        let mut mutations = Vec::new();
+        self.row_mutation_refs()
+            .map(|(link, bytes)| (link, bytes.to_vec()))
+            .collect()
+    }
+
+    /// Borrow this operation's row images so a batch can discard superseded
+    /// mutations before allocating their owned copies.
+    #[cfg(feature = "std")]
+    pub(crate) fn row_mutation_refs(&self) -> impl Iterator<Item = (Link, &[u8])> {
         let retired_link = match self {
             Self::Insert(insert) => insert.retired_link,
             Self::Update(update) => update.retired_link,
             _ => None,
         };
-        if let Some(link) = retired_link {
-            mutations.push((link, Vec::new()));
-        }
-        if let Self::Delete(delete) = self {
-            mutations.push((delete.link, Vec::new()));
-        }
-        if let Some(bytes) = self.bytes() {
-            mutations.push((self.link(), bytes.to_vec()));
-        }
-        mutations
+        let tombstone = retired_link.or(match self {
+            Self::Delete(delete) => Some(delete.link),
+            _ => None,
+        });
+        let bytes = self.bytes().map(|bytes| (self.link(), bytes));
+        [tombstone.map(|link| (link, &[][..])), bytes].into_iter().flatten()
     }
 
     pub fn primary_key_events(&self) -> Option<&Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {

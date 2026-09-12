@@ -7,7 +7,9 @@ use data_bucket::storage::{
     SystemPageRecord, SystemReplicationRecord, SystemTableRecord, TableId, WriterEpoch,
 };
 use data_bucket::{PageId, SpaceId};
-use parking_lot::RwLock;
+#[cfg(feature = "s3-support")]
+use parking_lot::MutexGuard;
+use parking_lot::{Mutex, RwLock};
 
 use crate::prelude::*;
 use crate::worktable;
@@ -163,12 +165,14 @@ impl SystemCatalogView<'_> {
 /// One database-wide DataBucket domain with one generated system catalog.
 pub struct Database<S: PageStore> {
     domain: Arc<RwLock<StorageDomain<GeneratedSystemCatalog, S>>>,
+    generation_commit: Arc<Mutex<()>>,
 }
 
 impl<S: PageStore> Clone for Database<S> {
     fn clone(&self) -> Self {
         Self {
             domain: self.domain.clone(),
+            generation_commit: self.generation_commit.clone(),
         }
     }
 }
@@ -183,6 +187,7 @@ impl<S: PageStore> Database<S> {
                 GeneratedSystemCatalog::default(),
                 store,
             ))),
+            generation_commit: Arc::new(Mutex::new(())),
         }
     }
 
@@ -190,6 +195,7 @@ impl<S: PageStore> Database<S> {
         let domain = StorageDomain::open(id, writer_epoch, GeneratedSystemCatalog::default(), store)?;
         Ok(Self {
             domain: Arc::new(RwLock::new(domain)),
+            generation_commit: Arc::new(Mutex::new(())),
         })
     }
 
@@ -217,6 +223,7 @@ impl<S: PageStore> Database<S> {
         schema_version: u32,
         page_stride: u32,
     ) -> Result<TableId, DomainError<S::Error>> {
+        let _generation_guard = self.generation_commit.lock();
         let name = CatalogName::new(name).map_err(DomainError::Catalog)?;
         let mut domain = self.domain.write();
         let tables = domain.catalog().records(CatalogRecordKind::Table);
@@ -228,7 +235,7 @@ impl<S: PageStore> Database<S> {
             if table.schema_version == schema_version && table.page_stride == page_stride {
                 return Ok(table.table_id);
             }
-            table
+            return Err(DomainError::Catalog(CatalogError::InvalidMutation));
         } else {
             let next = tables
                 .iter()
@@ -268,6 +275,13 @@ impl<S: PageStore> Database<S> {
 
     pub fn commit_generation(&self, plan: GenerationPlan) -> Result<CommittedGeneration, DomainError<S::Error>> {
         self.domain.write().commit_generation(plan)
+    }
+
+    /// Serialize the read/build/commit interval for generation plans made by
+    /// tables sharing this database handle.
+    #[cfg(feature = "s3-support")]
+    pub(crate) fn generation_commit_guard(&self) -> MutexGuard<'_, ()> {
+        self.generation_commit.lock()
     }
 
     pub fn read_page(&self, address: PageAddress) -> Result<Option<Vec<u8>>, DomainError<S::Error>> {
@@ -388,12 +402,14 @@ impl SystemCatalog for GeneratedSystemCatalog {
         let mut table = StorageCatalogWorkTable::load(&bytes).map_err(|_| CatalogError::Codec)?;
         for mutation in mutations {
             match mutation {
-                CatalogMutation::Upsert(record) => table.upsert(record_to_row(record)),
+                CatalogMutation::Upsert(record) => table
+                    .upsert(record_to_row(record))
+                    .map_err(|_| CatalogError::InvalidMutation)?,
                 CatalogMutation::Delete(key) => {
                     if let Some(existing) = table.select(key) {
                         let mut tombstone = existing.clone();
                         tombstone.kind = 0;
-                        table.upsert(tombstone);
+                        table.upsert(tombstone).map_err(|_| CatalogError::InvalidMutation)?;
                     }
                 }
             }

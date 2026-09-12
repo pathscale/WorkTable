@@ -110,17 +110,27 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
         ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
         order: impl Iterator<Item = usize> + Clone,
     ) -> BatchData {
-        let mutations: Vec<_> = order.flat_map(|sequence| ops[sequence].row_mutations()).collect();
-        let mut latest: HashMap<PhysicalSlot, usize> = HashMap::with_capacity(mutations.len());
-        for (sequence, (link, _)) in mutations.iter().enumerate() {
+        let mutation_count = order
+            .clone()
+            .map(|sequence| ops[sequence].row_mutation_refs().count())
+            .sum();
+        let mut latest: HashMap<PhysicalSlot, usize> = HashMap::with_capacity(mutation_count);
+        for (sequence, (link, _)) in order
+            .clone()
+            .flat_map(|sequence| ops[sequence].row_mutation_refs())
+            .enumerate()
+        {
             latest.insert((link.page_id, link.offset), sequence);
         }
         let mut ordered = HashMap::new();
-        for (sequence, (link, bytes)) in mutations.into_iter().enumerate() {
+        for (sequence, (link, bytes)) in order.flat_map(|sequence| ops[sequence].row_mutation_refs()).enumerate() {
             if latest.get(&(link.page_id, link.offset)) != Some(&sequence) {
                 continue;
             }
-            ordered.entry(link.page_id).or_insert_with(Vec::new).push((link, bytes));
+            ordered
+                .entry(link.page_id)
+                .or_insert_with(Vec::new)
+                .push((link, bytes.to_vec()));
         }
         ordered
     }
@@ -128,23 +138,20 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
     let mut order = (0..ops.len()).collect::<Vec<_>>();
     order.sort_unstable_by_key(|sequence| (ops[*sequence].operation_id(), *sequence));
 
-    // Preserve event-less operations at their operation-id positions, while
-    // putting every primary-event mutation into the order used by the durable
-    // index. Replacing those positions avoids a mixed-key comparator: event
-    // ids and UUIDs are independent clocks and cannot form one total order.
-    let event_positions = order
+    // Primary events and operation UUIDs are independent clocks. Sort the
+    // event-carrying mutations by the clock the durable index replays, then
+    // attach each event-less mutation to its preceding operation in UUID order.
+    // The attachment is essential: an in-place update that followed insert B
+    // must remain after B even when an earlier insert A received its event first
+    // but did not mint its operation UUID until after both B operations.
+    let mut event_sequences = order
         .iter()
-        .enumerate()
-        .filter_map(|(position, sequence)| {
+        .copied()
+        .filter(|sequence| {
             ops[*sequence]
                 .primary_key_events()
                 .is_some_and(|events| !events.is_empty())
-                .then_some(position)
         })
-        .collect::<Vec<_>>();
-    let mut event_sequences = event_positions
-        .iter()
-        .map(|position| order[*position])
         .collect::<Vec<_>>();
     event_sequences.sort_unstable_by_key(|sequence| {
         (
@@ -156,8 +163,32 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
             *sequence,
         )
     });
-    for (position, sequence) in event_positions.into_iter().zip(event_sequences) {
-        order[position] = sequence;
+
+    if !event_sequences.is_empty() {
+        let mut before_events = Vec::new();
+        let mut after_event = vec![Vec::new(); event_sequences.len()];
+        let event_rank = event_sequences
+            .iter()
+            .enumerate()
+            .map(|(rank, sequence)| (*sequence, rank))
+            .collect::<HashMap<_, _>>();
+        let mut anchor = None;
+        for sequence in order.iter().copied() {
+            if let Some(rank) = event_rank.get(&sequence).copied() {
+                anchor = Some(rank);
+            } else if let Some(rank) = anchor {
+                after_event[rank].push(sequence);
+            } else {
+                before_events.push(sequence);
+            }
+        }
+
+        order.clear();
+        order.extend(before_events);
+        for (event, trailing) in event_sequences.into_iter().zip(after_event) {
+            order.push(event);
+            order.extend(trailing);
+        }
     }
 
     collect_in_order(ops, order.into_iter())
@@ -584,6 +615,19 @@ where
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {
         Ok(latest_data_writes(&self.ops))
     }
+
+    #[cfg(feature = "s3-support")]
+    pub(crate) fn row_page_ids(&self) -> Vec<PageId> {
+        let mut pages = self
+            .ops
+            .iter()
+            .flat_map(Operation::row_mutation_refs)
+            .map(|(link, _)| link.page_id)
+            .collect::<Vec<_>>();
+        pages.sort_unstable();
+        pages.dedup();
+        pages
+    }
 }
 
 #[cfg(test)]
@@ -597,7 +641,7 @@ mod tests {
 
     use super::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, latest_data_writes};
     use crate::persistence::OperationType;
-    use crate::persistence::operation::{InsertOperation, Operation, OperationId};
+    use crate::persistence::operation::{InsertOperation, Operation, OperationId, UpdateOperation};
     use crate::persistence::task::LastEventIds;
     use crate::prelude::{IndexChangeEvent, IndexChangeEventId, TableSecondaryIndexEventsOps};
 
@@ -786,6 +830,17 @@ mod tests {
         })
     }
 
+    fn eventless_update(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, TestEvents> {
+        Operation::Update(UpdateOperation {
+            retired_link: None,
+            id: OperationId::Single(Uuid::from_u128(id)),
+            primary_key_events: vec![],
+            secondary_keys_events: TestEvents,
+            bytes,
+            link,
+        })
+    }
+
     #[test]
     fn reused_slot_follows_primary_event_order_when_operation_ids_invert() {
         let link = link_at(128);
@@ -800,6 +855,24 @@ mod tests {
         let batch = latest_data_writes(&[replacement, old]);
 
         assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(link, vec![2; 4])]);
+    }
+
+    #[test]
+    fn eventless_update_stays_after_the_insert_it_followed() {
+        let link = link_at(128);
+
+        // A received the older primary event but paused before minting its
+        // operation id. B then inserted at the reused slot and an in-place
+        // update changed B before A finally queued. Sorting eventful operations
+        // into fixed UUID positions used to produce A, update-B, B and discard
+        // the update as superseded by B's older row image.
+        let insert_b = event_insert(1, link, vec![2; 4], vec![1]);
+        let update_b = eventless_update(2, link, vec![3; 4]);
+        let insert_a = event_insert(3, link, vec![1; 4], vec![0]);
+
+        let batch = latest_data_writes(&[insert_b, update_b, insert_a]);
+
+        assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(link, vec![3; 4])]);
     }
 
     async fn batch_of(op: Operation<(), u64, TestEvents>) -> BatchOperation<(), u64, TestEvents, TestIndex> {

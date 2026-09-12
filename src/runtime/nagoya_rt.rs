@@ -114,6 +114,9 @@ fn workers() -> usize {
             .and_then(|raw| raw.trim().parse::<usize>().ok())
             .filter(|count| *count > 0)
             .unwrap_or_else(|| std::thread::available_parallelism().map_or(2, core::num::NonZeroUsize::get))
+            // Nagoya's worker membership is represented by one `usize` bitset.
+            // A larger count shifts past that bitset while the pool starts.
+            .min(usize::BITS as usize)
     })
 }
 

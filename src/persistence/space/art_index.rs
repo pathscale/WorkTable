@@ -223,7 +223,7 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
     }
 
     async fn read_image(path: &Path, backend: Backend, table_version: u32) -> eyre::Result<Image<K>> {
-        let mut file = crate::fsx::open(path)
+        let mut file = crate::fsx::open_read_only(path)
             .await
             .wrap_err_with(|| format!("open ART index {}", path.display()))?;
         let mut bytes = Vec::new();

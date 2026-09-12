@@ -148,7 +148,7 @@ where
                     if index.primary {
                         PathBuf::from(format!("primary{WT_INDEX_EXTENSION}"))
                     } else {
-                        PathBuf::from(format!("{}{WT_INDEX_EXTENSION}", index.name.as_str()))
+                        safe_index_file_name(&index.name)?
                     }
                 };
                 let address = PageAddress {
@@ -207,13 +207,22 @@ where
         publish_stage(table_path, &stage)
     }
 
-    fn sync_to_database(&self) -> eyre::Result<()> {
+    fn sync_to_database(&self, dirty_data_pages: &[data_bucket::PageId]) -> eyre::Result<()> {
+        let mut dirty_data_pages = dirty_data_pages.iter().copied().collect::<BTreeSet<_>>();
+        // Page zero carries the space metadata and generator state updated by
+        // ordinary mutations.
+        dirty_data_pages.insert(data_bucket::PageId::from(0));
         let scan = scan_table(
             Path::new(self.config.disk.table_path()),
             SpaceData::PAGE_STRIDE,
             self.config.database.id(),
             self.table_id,
+            &dirty_data_pages,
         )?;
+        // A generation is optimistic in DataBucket, so the catalog snapshot,
+        // builder and commit must be one serialized interval for all table
+        // workers sharing this database handle.
+        let _generation_guard = self.config.database.generation_commit_guard();
         let catalog = self.config.database.catalog();
         let current_pages = catalog
             .system_pages()
@@ -235,7 +244,8 @@ where
             changed = true;
         }
         for (key, page) in &current_pages {
-            if !scanned_keys.contains(key) {
+            let observed = page.page_kind != PageKind::Data || dirty_data_pages.contains(&page.page_id);
+            if observed && !scanned_keys.contains(key) {
                 generation.delete_page(PageAddress {
                     domain: self.config.database.id(),
                     table_id: self.table_id,
@@ -340,11 +350,29 @@ where
     type Config = DatabaseS3DiskConfig;
 
     async fn new(config: Self::Config) -> eyre::Result<Self> {
-        let table_id = config.database.register_table_with_stride(
-            Self::table_name(&config)?,
-            config.disk.version(),
-            SpaceData::PAGE_STRIDE,
-        )?;
+        let table_name = Self::table_name(&config)?;
+        let existing = config
+            .database
+            .catalog()
+            .system_tables()
+            .into_iter()
+            .find(|table| table.name.as_str() == table_name);
+        let table_id = if let Some(table) = existing {
+            if table.schema_version != config.disk.version() || table.page_stride != SpaceData::PAGE_STRIDE {
+                return Err(eyre::eyre!(
+                    "remote table metadata mismatch for {table_name}: stored schema version {} and page stride {}, requested {} and {}",
+                    table.schema_version,
+                    table.page_stride,
+                    config.disk.version(),
+                    SpaceData::PAGE_STRIDE
+                ));
+            }
+            table.table_id
+        } else {
+            config
+                .database
+                .register_table_with_stride(table_name, config.disk.version(), SpaceData::PAGE_STRIDE)?
+        };
         Self::restore_from_database(&config, table_id)?;
         let inner = DiskPersistenceEngine::new(config.disk.clone()).await?;
         Ok(Self {
@@ -359,21 +387,27 @@ where
         &mut self,
         operation: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> eyre::Result<()> {
+        let dirty_data_pages = operation
+            .row_mutation_refs()
+            .map(|(link, _)| link.page_id)
+            .collect::<Vec<_>>();
         self.inner.apply_operation(operation).await?;
-        self.sync_to_database()
+        self.sync_to_database(&dirty_data_pages)
     }
 
     async fn apply_batch_operation(
         &mut self,
         operation: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> eyre::Result<()> {
+        let dirty_data_pages = operation.row_page_ids();
         self.inner.apply_batch_operation(operation).await?;
-        self.sync_to_database()
+        self.sync_to_database(&dirty_data_pages)
     }
 
     async fn reclaim_data_pages(&mut self, page_ids: Vec<data_bucket::PageId>) -> eyre::Result<()> {
+        let dirty_data_pages = page_ids.clone();
         self.inner.reclaim_data_pages(page_ids).await?;
-        self.sync_to_database()
+        self.sync_to_database(&dirty_data_pages)
     }
 
     async fn ensure_schema(
@@ -403,6 +437,14 @@ where
     }
 }
 
+fn safe_index_file_name(name: &CatalogName) -> eyre::Result<PathBuf> {
+    let name = name.as_str();
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        return Err(eyre::eyre!("remote index name is not a single file-name component"));
+    }
+    Ok(PathBuf::from(format!("{name}{WT_INDEX_EXTENSION}")))
+}
+
 struct ScannedPage {
     address: PageAddress,
     image: Vec<u8>,
@@ -426,6 +468,7 @@ fn scan_table(
     stride: u32,
     domain: data_bucket::storage::StorageDomainId,
     table_id: TableId,
+    dirty_data_pages: &BTreeSet<data_bucket::PageId>,
 ) -> eyre::Result<TableScan> {
     let mut pages = BTreeMap::new();
     let mut indexes = Vec::new();
@@ -456,10 +499,19 @@ fn scan_table(
                 return Err(eyre::eyre!("data file length is not a whole number of pages"));
             }
             let mut file = std::fs::File::open(&path)?;
-            for _ in 0..length / u64::from(stride) {
+            let page_count = length / u64::from(stride);
+            for page_id in dirty_data_pages {
+                let page_number = usize::from(*page_id) as u64;
+                if page_number >= page_count {
+                    continue;
+                }
+                file.seek(SeekFrom::Start(page_number * u64::from(stride)))?;
                 let mut image = vec![0; stride as usize];
                 file.read_exact(&mut image)?;
                 let header = data_bucket::inspect_page_image_header(&image)?;
+                if header.page_id != *page_id {
+                    return Err(eyre::eyre!("data page identity does not match its file position"));
+                }
                 if data_space_id.0 == 0 {
                     data_space_id = header.space_id;
                 } else if data_space_id != header.space_id {
@@ -596,4 +648,23 @@ fn publish_stage(table_path: &Path, stage: &Path) -> eyre::Result<()> {
     }
     std::fs::remove_dir_all(backup)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_index_file_name;
+    use data_bucket::storage::CatalogName;
+
+    #[test]
+    fn remote_index_names_cannot_escape_the_restore_directory() {
+        for name in ["../victim", "/absolute", r"..\victim", r"C:\victim"] {
+            let name = CatalogName::new(name).unwrap();
+            assert!(safe_index_file_name(&name).is_err(), "accepted {name:?}");
+        }
+        let name = CatalogName::new("orders_by_date").unwrap();
+        assert_eq!(
+            safe_index_file_name(&name).unwrap(),
+            std::path::PathBuf::from(format!("orders_by_date{}", crate::prelude::WT_INDEX_EXTENSION))
+        );
+    }
 }
