@@ -60,7 +60,7 @@ fn current_owner() -> usize {
 
         let mut hasher = rustc_hash::FxHasher::default();
         loom::thread::current().id().hash(&mut hasher);
-        return (hasher.finish() as usize).max(1);
+        (hasher.finish() as usize).max(1)
     }
 
     #[cfg(all(not(wt_loom), unix))]
@@ -68,14 +68,14 @@ fn current_owner() -> usize {
         // SAFETY: pthread_self takes no arguments and returns the live calling
         // thread's identity. POSIX keeps it unique until this thread exits;
         // a cell guard necessarily drops before that can happen.
-        return (unsafe { libc::pthread_self() } as usize).max(1);
+        (unsafe { libc::pthread_self() } as usize).max(1)
     }
 
     #[cfg(all(not(wt_loom), windows))]
     {
         // SAFETY: GetCurrentThreadId takes no arguments and cannot fail. The
         // ID cannot be reused while the calling thread and its guard are live.
-        return (unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() } as usize).max(1);
+        (unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() } as usize).max(1)
     }
 }
 
@@ -172,7 +172,11 @@ impl CellLocks {
         debug_assert_eq!(writer_key & CELL_WRITER, 0);
         state.store(CELL_WRITER | writer_key, Ordering::Relaxed);
         owner.store(current_owner(), Ordering::Release);
-        Ok(CellWriteGuard { state, owner })
+        Ok(CellWriteGuard {
+            state,
+            owner,
+            _not_send: PhantomData,
+        })
     }
 
     fn reset(&self) {
@@ -203,6 +207,7 @@ impl Drop for CellReadGuard<'_> {
 pub(crate) struct CellWriteGuard<'a> {
     state: &'a CellState,
     owner: &'a CellOwner,
+    _not_send: PhantomData<*mut ()>,
 }
 
 impl Drop for CellWriteGuard<'_> {
