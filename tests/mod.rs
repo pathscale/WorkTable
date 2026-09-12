@@ -45,8 +45,16 @@ pub fn check_if_dirs_are_same(got: String, expected: String) -> bool {
 }
 
 pub async fn remove_file_if_exists(path: String) {
-    if Path::new(path.as_str()).exists() {
-        ::worktable::prelude::fsx::remove_file(path.as_str()).await.unwrap();
+    let path = Path::new(path.as_str());
+    if path.exists() {
+        ::worktable::prelude::fsx::remove_file(path).await.unwrap();
+    }
+
+    // Output directories are ignored and therefore absent in a clean checkout.
+    // Recreate the parent so direct SpaceIndex tests do not depend on residue
+    // from an earlier local run.
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
     }
 }
 
