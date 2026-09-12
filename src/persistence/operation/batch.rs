@@ -87,17 +87,20 @@ impl From<QueueInnerRow> for BatchInnerRow {
 }
 
 /// Coalesces durable row writes by physical storage slot and preserves their
-/// creation order.
+/// mutation order.
 ///
 /// `Link::length` can change when an unsized row is reinserted into a reused
 /// `(page_id, offset)`. Treating the two lengths as different keys leaves
 /// overlapping writes in the same batch. The newest operation must be the only
 /// write for an identical physical start, and writes at different starts must
 /// still be applied oldest-to-newest: range splitting can make them overlap.
-/// WorkTable-generated operation IDs use `Uuid::now_v7`, whose shared process
-/// context guarantees creation-order sorting even within one millisecond;
-/// callers constructing `Operation` values manually must preserve that
-/// ordering contract.
+/// Primary-index event ids are assigned while the in-memory mutation is in
+/// progress. Operation ids are minted later, and concurrent writers can be
+/// descheduled between those two points. The durable primary index is replayed
+/// in event-id order, so row mutations that carry primary events must use that
+/// same order or a reused slot can finish with the new index entry and the old
+/// row bytes. Event-less data updates retain operation-id order; their row
+/// mutation gate keeps that order stable for a physical slot.
 fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
     ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
 ) -> BatchData {
@@ -122,19 +125,42 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
         ordered
     }
 
-    // The analyzer already establishes this order. Keep that production path
-    // linear; only defensive callers that construct an unsorted BatchOperation
-    // pay for an index sort.
-    if ops
-        .windows(2)
-        .all(|pair| pair[0].operation_id() <= pair[1].operation_id())
-    {
-        collect_in_order(ops, 0..ops.len())
-    } else {
-        let mut order = (0..ops.len()).collect::<Vec<_>>();
-        order.sort_unstable_by_key(|sequence| (ops[*sequence].operation_id(), *sequence));
-        collect_in_order(ops, order.into_iter())
+    let mut order = (0..ops.len()).collect::<Vec<_>>();
+    order.sort_unstable_by_key(|sequence| (ops[*sequence].operation_id(), *sequence));
+
+    // Preserve event-less operations at their operation-id positions, while
+    // putting every primary-event mutation into the order used by the durable
+    // index. Replacing those positions avoids a mixed-key comparator: event
+    // ids and UUIDs are independent clocks and cannot form one total order.
+    let event_positions = order
+        .iter()
+        .enumerate()
+        .filter_map(|(position, sequence)| {
+            ops[*sequence]
+                .primary_key_events()
+                .is_some_and(|events| !events.is_empty())
+                .then_some(position)
+        })
+        .collect::<Vec<_>>();
+    let mut event_sequences = event_positions
+        .iter()
+        .map(|position| order[*position])
+        .collect::<Vec<_>>();
+    event_sequences.sort_unstable_by_key(|sequence| {
+        (
+            ops[*sequence]
+                .primary_key_events()
+                .and_then(|events| events.first())
+                .expect("event-carrying operation has a first event")
+                .id(),
+            *sequence,
+        )
+    });
+    for (position, sequence) in event_positions.into_iter().zip(event_sequences) {
+        order[position] = sequence;
     }
+
+    collect_in_order(ops, order.into_iter())
 }
 
 #[derive(Debug)]
@@ -758,6 +784,22 @@ mod tests {
             bytes,
             link,
         })
+    }
+
+    #[test]
+    fn reused_slot_follows_primary_event_order_when_operation_ids_invert() {
+        let link = link_at(128);
+
+        // The old row received event 0 and the replacement received event 1,
+        // but the producers reached operation-id creation in reverse order.
+        // The primary index therefore finishes at the replacement link, and
+        // the data batch must finish with the replacement bytes as well.
+        let replacement = event_insert(1, link, vec![2; 4], vec![1]);
+        let old = event_insert(2, link, vec![1; 4], vec![0]);
+
+        let batch = latest_data_writes(&[replacement, old]);
+
+        assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(link, vec![2; 4])]);
     }
 
     async fn batch_of(op: Operation<(), u64, TestEvents>) -> BatchOperation<(), u64, TestEvents, TestIndex> {
