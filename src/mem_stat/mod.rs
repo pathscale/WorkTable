@@ -123,6 +123,16 @@ impl<T: MemStat> MemStat for Vec<T> {
     }
 }
 
+impl<T: MemStat, const N: usize> MemStat for [T; N] {
+    fn heap_size(&self) -> usize {
+        self.iter().map(MemStat::heap_size).sum()
+    }
+
+    fn used_size(&self) -> usize {
+        self.iter().map(MemStat::used_size).sum()
+    }
+}
+
 impl MemStat for String {
     fn heap_size(&self) -> usize {
         self.capacity()

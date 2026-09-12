@@ -7,6 +7,8 @@
 // The 127 `crate::common::` paths across this crate are unchanged, so the diff
 // is a move rather than a sweep.
 mod common;
+#[cfg(feature = "s3-support")]
+mod database_s3_persistence;
 mod generators;
 mod mem_stat;
 mod migration_engine;
@@ -32,6 +34,14 @@ pub fn worktable(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn s3_sync_persistence(input: TokenStream) -> TokenStream {
     s3_persistence::expand(input.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+#[cfg(feature = "s3-support")]
+#[proc_macro]
+pub fn database_s3_persistence(input: TokenStream) -> TokenStream {
+    database_s3_persistence::expand(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

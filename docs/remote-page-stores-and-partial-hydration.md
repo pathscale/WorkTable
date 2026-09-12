@@ -52,12 +52,15 @@ resolved against an owning in-memory page list. This gives point reads their
 current inexpensive synchronous path, but it also makes available memory a
 hard table-size limit.
 
-The current S3 engine runs above the local disk engine. After a mutation it
-walks each table file and hashes 16 KiB page units. It uploads contiguous runs
-of changed pages as immutable segments, coalescing only up to a 4 MiB target,
-then replaces one manifest. The integration fixture's one-row update uploads
-16,842 bytes for a 14,385,146-byte table. This removes the 4 MiB network floor,
-but the full local scan remains the wrong accounting boundary for a page store.
+The database-wide S3 engine runs above the local disk engine. After a persisted
+batch it walks each table file on the private persistence runtime, hashes data
+pages and stable 16 KiB index chunks, and submits only changes to one shared
+storage domain. DataBucket stages immutable segments and WorkTable prepares one
+generated catalog checkpoint for the database before a conditional head update.
+The stateful adapter fixture measures 33,016 uploaded bytes for an isolated page
+mutation with a small catalog and 49,544 bytes after the catalog grows beyond one
+page. This removes the 4 MiB network floor. The full local scan remains a local
+CPU and disk cost until exact dirty-page reporting is connected.
 
 DataBucket already knows the affected `Space`, `PageId`, physical stride and
 row extent at `persist_page`, `persist_pages_batch`, and `update_at`. It should
@@ -66,28 +69,32 @@ report mutations at that point so the S3 engine can skip the scan. A raw
 
 ## Dependency direction
 
-The dependency remains one-way:
+The runtime relationship is deliberately two-way while the Cargo graph stays
+one-way:
 
 ```text
 application
    |-- generated WorkTable API
-   |      `-- data_bucket
+   |      `-- data_bucket storage-domain API
    `-- data_bucket API directly
 
-data_bucket_upstash  --depends on--> data_bucket
-data_bucket_tigris   --depends on--> data_bucket
-data_bucket_hybrid   --depends on--> both adapters and data_bucket
+worktable  --depends on--> data_bucket
+    |                       |
+    `-- generated catalog -'  DataBucket owns its write permit and commit order
 ```
 
-The remote adapters may be workspace crates or standard-library-only optional
-modules. DataBucket core must not depend on WorkTable, an HTTP client, an S3
-client, or a platform runtime.
+DataBucket defines the bounded catalog records, generation transaction and a
+`SystemCatalog` provider interface. WorkTable implements that interface with a
+real generated `vec: true` WorkTable. DataBucket receives a private write
+permit and publishes the prepared table only after the page objects, catalog
+checkpoint and conditional generation head are durable. Applications receive
+read-only typed views over the same generated table.
 
-DataBucket does need table-like behavior for its physical catalog. That
-catalog is a reserved DataBucket `Space` with a fixed internal row format. It
-is not a `worktable::Table`. WorkTable codegen exposes typed, read-only views
-over the catalog rows. Direct DataBucket users get lower-level catalog
-iterators.
+This does not create a Cargo cycle. WorkTable depends on DataBucket's protocol;
+DataBucket never names the WorkTable crate. At runtime, WorkTable supplies the
+catalog implementation that DataBucket owns and updates. The hosted S3 adapter
+is an optional DataBucket module behind `std` and `s3-support`; the storage
+domain records and catalog interface remain `no_std` plus `alloc`.
 
 ## Storage domain and bootstrap
 
@@ -114,9 +121,10 @@ identifier, format version, current generation, parent generation, manifest
 identity, manifest checksum and writer epoch. It does not contain the full
 catalog.
 
-Catalog pages cannot require the catalog to locate themselves. The generation
-manifest therefore names the catalog root and its segments directly. User
-pages are located through the catalog.
+The catalog checkpoint cannot require the catalog to locate itself. The small
+bootstrap head therefore names that immutable checkpoint directly. This is the
+only raw bootstrap record. User data and index pages are located through rows
+in the generated catalog.
 
 The DataBucket v3 data-page format remains the unit validated after a fetch.
 The new catalog has its own format version. It should not add fields to the
@@ -175,7 +183,7 @@ fields and DataBucket-owned types suitable for `no_std` plus `alloc`.
 Human-readable error text belongs in process diagnostics, not the durable
 catalog.
 
-WorkTable should expose generated read-only views such as
+WorkTable exposes generated read-only views such as
 `system_tables()`, `system_pages()` and `system_replication()`. The user can
 filter and inspect them, but cannot insert, update, delete, vacuum, or define
 indexes on them. Generation is automatic and does not add schema grammar.
@@ -270,14 +278,14 @@ The adapter interface needs these operations:
 
 ```rust
 trait PageStore {
-    fn load_head(&self) -> impl Future<Output = Result<Head, StoreError>>;
-    fn read_page(&self, page: PageRef) -> impl Future<Output = Result<PageImage, StoreError>>;
-    fn read_pages(&self, pages: &[PageRef])
-        -> impl Future<Output = Result<Vec<PageImage>, StoreError>>;
-    fn stage(&self, plan: &GenerationPlan)
-        -> impl Future<Output = Result<StagedGeneration, StoreError>>;
-    fn commit(&self, staged: StagedGeneration)
-        -> impl Future<Output = Result<CommittedGeneration, StoreError>>;
+    fn load_head(&self, domain: StorageDomainId) -> Result<Option<Head>, StoreError>;
+    fn load_catalog(&self, head: &Head) -> Result<Vec<u8>, StoreError>;
+    fn read_page(&self, page: &PageRef) -> Result<PageImage, StoreError>;
+    fn read_pages(&self, pages: &[PageRef]) -> Result<Vec<PageImage>, StoreError>;
+    fn stage(&self, plan: &GenerationPlan) -> Result<StagedGeneration, StoreError>;
+    fn stage_catalog(&self, staged: &mut StagedGeneration, checkpoint: &[u8])
+        -> Result<(), StoreError>;
+    fn commit(&self, staged: StagedGeneration) -> Result<CommittedGeneration, StoreError>;
 }
 ```
 
@@ -953,30 +961,35 @@ serving tier. The committed evidence is in
 These are transport gates, not application latency promises. The adapter must
 still pass WAL acknowledgment, restart, partial hydration and repair tests.
 
-## Implementation order
+## Implementation status and order
 
-1. Add DataBucket storage-domain identifiers, catalog codecs, generation plans
-   and a recording page-store test adapter. Keep the core `no_std` clean.
-2. Feed exact mutations from DataBucket page persistence into generation plans.
-   Remove remote dependence on scanning local table files.
-3. Add the local bounded data-page cache, spill state machine and generated
+1. Done: DataBucket storage-domain identifiers, generation plans, private
+   catalog write capability and a stateful page-store fixture. The core remains
+   `no_std` plus `alloc`.
+2. Done: Tigris-compatible immutable page segments, range reads, conditional
+   head publication, restart restore, and a chunked generated-catalog
+   checkpoint. WorkTable supplies one real generated system table per database.
+3. Done as a transition: the database-wide WorkTable engine runs catalog and
+   page accounting on its private persistence runtime and restores tables from
+   catalog mappings. It still discovers dirty pages by scanning the local files.
+4. Next: feed exact mutations from DataBucket page persistence into generation
+   plans and remove the remaining local file scan.
+5. Add the local bounded data-page cache, spill state machine and generated
    `UserSpillableWorkTable` shape. Keep indexes resident for this milestone.
-4. Move `count()`, row bytes, page counts and index-entry counts onto maintained
+6. Move `count()`, row bytes, page counts and index-entry counts onto maintained
    catalog aggregates. Validate them against full offline scans in tests.
-5. Implement Tigris page segments, range hydration, head publication, recovery
-   and garbage collection.
-6. Run the Tigris adapter-level correctness, crash and performance gates.
-7. Implement Upstash staging, batching, head compare-and-set, recovery and
+7. Run the complete Tigris application-level crash and performance gates.
+8. Implement Upstash staging, batching, head compare-and-set, recovery and
    garbage collection after a region-selected service passes the gate.
-8. Compose both adapters into the hybrid state machine and repair worker.
-9. Add pageable lower index nodes and bounded-memory index scans.
-10. Run the complete release gates, then replace the current
-   file-scanning S3 engine.
+9. Compose both adapters into the hybrid state machine and repair worker.
+10. Add pageable lower index nodes and bounded-memory index scans.
+11. Run the complete release gates and retire the per-table compatibility
+   engine.
 
-Steps 1 through 4 establish partial hydration locally and settle the API before
-remote-service behavior is involved. The remote adapters share the same
-catalog and generation fixtures so their differences remain transport and
-commit-policy differences.
+The remote adapters share the same catalog and generation fixtures so their
+differences remain transport and commit-policy differences. Partial hydration
+is still a release blocker: the new catalog and bounded `read_page` path are its
+foundation, but generated queries do not yet evict or fault row pages.
 
 ## External constraints to verify during implementation
 

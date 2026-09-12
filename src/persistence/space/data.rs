@@ -238,6 +238,8 @@ where
     <PkGenState as Archive>::Archived: Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
     SpaceInfoPage<PkGenState>: Persistable,
 {
+    const PAGE_STRIDE: u32 = PAGE_SIZE;
+
     async fn from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
         let path = format!("{}/{}", table_path.as_ref(), WT_DATA_EXTENSION);
         let mut data_file = if !Path::new(&path).exists() {

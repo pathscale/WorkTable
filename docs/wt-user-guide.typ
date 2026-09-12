@@ -39,7 +39,7 @@ See #link(<persistence>)[Persistence].]
 = Getting started
 
 ```sh
-cargo add worktable@=1.9.0-alpha1
+cargo add worktable@1.9.0-alpha1
 ```
 
 Until this alpha is published, depend on the reviewed checkout with
@@ -793,9 +793,10 @@ let engine = OrderPersistenceEngine::new(config).await?;
 let table = OrderWorkTable::load(engine).await?;
 ```
 
-S3 layers on top of the disk engine rather than replacing it:
-`S3SyncDiskPersistenceEngine` wraps a `DiskPersistenceEngine` and syncs it. Enable the
-`s3-support` feature.
+With `s3-support`, the recommended hosted path groups persisted tables into one database
+storage domain. DataBucket owns the generation protocol and S3 adapter; WorkTable supplies
+one generated, read-only system catalog that maps every table, index and durable page.
+The S3 engine still uses the disk engine as its local working copy.
 
 == The durability contract
 
@@ -1103,30 +1104,48 @@ normal loads use strict validation. `wait_for_ops`, `close`,
 before waiting for a drain; consume the table through `close()` when shutting down.
 For an `Arc<Table>`, release all other owners and use `Arc::try_unwrap` first.
 
-Under `s3-support`, `s3_sync_persistence!(TableName)` generates an S3-backed engine alias.
-`S3DiskConfig` combines `DiskConfig` with `S3Config` fields `bucket_name`, `endpoint`,
-`access_key`, `secret_key`, optional `region` and optional `prefix`. Supply credentials
-from application configuration. Local disk remains the working copy. After each completed
-disk operation, the engine compares 16 KiB page units, coalesces adjacent changed pages up
-to a 4 MiB target, uploads only content-addressed segments absent from the preceding
-generation, then replaces one checksummed table manifest. The target is not a minimum:
-one isolated page change uploads one 16 KiB segment plus the manifest.
-That manifest is the remote commit point for the data file and all index files together.
-A failed manifest write leaves the preceding complete generation visible.
+Create one `S3Database` per database, then clone it into every table engine. This is a
+callsite extension; it adds no table grammar.
 
-Startup validates the manifest, segment lengths, BLAKE3 hashes and complete file lengths in
-a sibling staging directory. Only a complete table is renamed over the local working copy.
-A committed manifest that is corrupt or incomplete is a startup error; the engine does not
-continue from possibly stale local data. An old whole-file S3 layout is restored when no
-manifest exists and migrates on its next successful mutation. Immutable segments that fall
-out of the current manifest are retained because deleting them could race a restore that
-already read the prior generation; reclaim them only with an offline or lease-aware tool.
+```rust
+use worktable::{database_s3_persistence, DatabaseS3DiskConfig, S3Database};
 
-The optimization removes repeated network payload, including the historical whole-table
-upload after a small mutation. It still reads and hashes the local table files; dirty-range
-reporting is a future compatible optimization for that local work. The HTTP implementation
-is blocking `ureq`, so it does not require a Tokio socket reactor. S3 does not add local
-`fsync`, multi-process writer coordination, or power-loss atomicity to the disk engine.
+database_s3_persistence!(OrderWorkTable);
+
+let database = S3Database::open_s3(domain_id, writer_epoch, s3_config)?;
+let engine = OrderDatabaseS3PersistenceEngine::new(DatabaseS3DiskConfig {
+    disk: DiskConfig::new_with_table_name(dir, "orders", OrderWorkTable::version()),
+    database: database.clone(),
+}).await?;
+let orders = OrderWorkTable::load(engine).await?;
+```
+
+`data_bucket::storage::s3::S3Config` takes `bucket_name`, `endpoint`, `access_key`,
+`secret_key`, optional `session_token`, `region`, optional `prefix`, and
+`virtual_host_style`. Supply credentials from application configuration. The same database
+handle must be shared by every table in that database. `database.catalog()` returns a
+cloneable, read-only view with `system_tables`, `system_pages`, `system_indexes`,
+`system_replication`, and lookup by catalog key.
+
+After a local batch completes, the private persistence worker scans and hashes the changed
+working copy, stages only page content absent from the preceding generation, prepares the
+generated catalog checkpoint, then conditionally replaces a 160-byte domain head. Table
+callers only enqueue operations; catalog accounting and blocking HTTP stay on the private
+one-worker persistence runtime. Adjacent dirty pages may coalesce up to 4 MiB, but the target
+is not a minimum. The stateful adapter fixture measured 33,016 uploaded bytes for one page
+with a small catalog and 49,544 bytes after the catalog grew beyond one page.
+
+Startup restores the committed generated catalog first. It validates each requested object,
+rebuilds table files in a sibling staging directory, and only then renames the complete
+working copy into place. Content-addressed objects that fall out of the current catalog are
+retained because deleting them could race a restore; reclaim them only with an offline or
+lease-aware tool.
+
+`s3_sync_persistence!(TableName)` and `S3DiskConfig` remain the compatibility callsite for
+existing per-table manifests. New databases should use `database_s3_persistence!` and
+`DatabaseS3DiskConfig`. Both paths use blocking `ureq`, require no Tokio socket reactor,
+and add no local `fsync` guarantee. Exact dirty-page reporting remains a future local-work
+optimization; the scan and network work are already outside the mutation caller.
 
 *The v3 format cutover is a storage migration.* Ordinary persisted tables now
 write format 3, with a page-local directory that records every live row and a

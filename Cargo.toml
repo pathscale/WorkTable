@@ -40,7 +40,7 @@ perf_measurements = ["std", "dep:performance_measurement", "dep:performance_meas
 # separately, and a default-on flag would make this branch red until they do.
 # The arm that runs today declares no runtime and is not behind this flag.
 runtime-backends = []
-s3-support = ["std", "dep:blake3", "dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
+s3-support = ["std", "data_bucket/s3-support", "dep:blake3", "dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
 # path and into the background persistence worker. The persisted page format
 # is unchanged, so stores remain readable with or without this feature.

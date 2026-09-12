@@ -31,6 +31,8 @@ pub type BatchData = HashMap<PageId, Vec<(Link, Vec<u8>)>>;
 pub type BatchChangeEvent<T> = Vec<ChangeEvent<Pair<T, Link>>>;
 
 pub trait SpaceDataOps<PkGenState> {
+    const PAGE_STRIDE: u32;
+
     fn from_table_files_path<S: AsRef<str> + Send>(
         path: S,
         version: u32,

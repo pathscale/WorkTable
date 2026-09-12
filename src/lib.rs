@@ -28,6 +28,7 @@ pub mod persistence;
 /// a table names them whether or not it ever spawns; only the impls need
 /// threads, and those are gated within.
 pub mod runtime;
+mod storage_catalog;
 
 mod primary_key;
 mod row;
@@ -38,6 +39,8 @@ pub mod vec_hydrate;
 
 #[cfg(feature = "s3-support")]
 pub mod features;
+#[cfg(feature = "s3-support")]
+pub use features::{DatabaseS3DiskConfig, DatabaseS3PersistenceEngine};
 
 pub use columnar::{
     ClusteredColumnarIndex, ColumnCompression, ColumnSlotId, ColumnSlotId8, ColumnSlotId16, ColumnSlotId32,
@@ -49,6 +52,9 @@ pub use persistence::{
     LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError, UnloadFailure, UnloadReport,
 };
 pub use row::*;
+pub use storage_catalog::{Database, DatabaseCatalog, GeneratedSystemCatalog, SystemCatalogView};
+#[cfg(feature = "s3-support")]
+pub type S3Database = Database<data_bucket::storage::s3::S3PageStore>;
 pub use table::*;
 
 pub use data_bucket;
@@ -62,6 +68,8 @@ pub use worktable_codegen::worktable_version;
 #[cfg(feature = "std")]
 pub use worktable_dsl;
 
+#[cfg(feature = "s3-support")]
+pub use worktable_codegen::database_s3_persistence;
 #[cfg(feature = "s3-support")]
 pub use worktable_codegen::s3_sync_persistence;
 
@@ -201,12 +209,15 @@ pub mod prelude {
     pub use crate::{
         ArcticEntry, ArcticIndex, ArcticKey, ArcticMultiIndex, ArcticStringKey, AvailableIndex, BatchDeleteError,
         BatchInsertError, ClusteredColumnarIndex, ColumnCompression, ColumnSlotId, ColumnSlotId8, ColumnSlotId16,
-        ColumnSlotId32, ColumnSlotId64, ColumnarColumn, ColumnarRowRef, CongeeIndex, CongeeKey, Difference, IndexError,
-        IndexMap, IndexMultiMap, MultiPairRecreate, PersistentArcticIndex, PersistentArcticMultiIndex,
-        PersistentArtIndex, PersistentCongeeIndex, PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc,
-        TableRow, TableSecondaryIndex, TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo,
-        UniqueIndex, UnsizedNode, WorkTable, WorkTableError, next_columnar_incarnation, validate_arctic_link,
+        ColumnSlotId32, ColumnSlotId64, ColumnarColumn, ColumnarRowRef, CongeeIndex, CongeeKey, Database,
+        DatabaseCatalog, Difference, GeneratedSystemCatalog, IndexError, IndexMap, IndexMultiMap, MultiPairRecreate,
+        PersistentArcticIndex, PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex,
+        PersistentWtiIndex, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
+        TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, TableSecondaryIndexInfo, UniqueIndex, UnsizedNode,
+        WorkTable, WorkTableError, next_columnar_incarnation, validate_arctic_link,
     };
+    #[cfg(feature = "s3-support")]
+    pub use crate::{DatabaseS3DiskConfig, DatabaseS3PersistenceEngine, S3Database};
     /// The upstream IndexSet backend, when the `vanilla-index` feature selects it.
     #[cfg(feature = "vanilla-index")]
     pub use crate::{UpstreamIndexMap, UpstreamIndexPair};

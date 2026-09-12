@@ -59,7 +59,7 @@ cargo add worktable@1.0.0-beta.5
 | **Generated queries** | `select`, `insert`, `insert_many`, `upsert`, `update`, `delete` and a `select_all` query builder on every table, plus the custom update/delete queries you declare. |
 | **Paged in-memory storage** | Records live in `DataPages` with a free list for reuse. `rkyv` gives zero-copy access to archived rows. |
 | **Concurrency** | Lock-free concurrent indexes with change-data-capture, plus a row-level `LockMap` for ordered access. |
-| **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature syncs that to S3. Both opt-in, so a purely in-memory table pays for neither. |
+| **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature adds database-wide S3 generations and a queryable generated system catalog. Both are opt-in, so a purely in-memory table pays for neither. |
 | **Schema migration** | `worktable_version!` and `migration_engine!` version a table's schema and generate migrations between versions. See [docs/migration.md](docs/migration.md). |
 | **Memory accounting** | `MemStat` estimates live heap; resident benchmarks measure allocator and SMR overhead. |
 
@@ -81,14 +81,35 @@ exported from the crate root; the prelude carries `DiskPersistenceEngine`,
 `ReadOnlyPersistenceEngine`, the space and table-of-contents types, and the operation-log
 types (`InsertOperation`, `UpdateOperation`, `DeleteOperation`, `AcknowledgeOperation`).
 
-S3 support layers *on top of* the disk engine rather than replacing it.
-`S3SyncDiskPersistenceEngine` wraps a `DiskPersistenceEngine`. It stores table files
-as immutable content-addressed segments. It compares 16 KiB page units and coalesces
-adjacent changes up to 4 MiB, so one isolated page update uploads 16 KiB plus the
-manifest. It publishes one table manifest after every segment is available. Restore
-validates the manifest and every segment before atomically replacing
-the local working copy. Existing whole-file S3 layouts remain readable and migrate to
-the manifest layout on their next successful write.
+The recommended S3 path is database-wide. Create one `S3Database`, clone that handle
+into each persisted table's `DatabaseS3DiskConfig`, and generate the table-specific
+engine alias with `database_s3_persistence!(TableName)`. DataBucket stages immutable
+content-addressed page segments and WorkTable supplies the domain's generated system
+catalog. A conditional 160-byte head publishes the new generation only after its pages
+and catalog checkpoint are durable. One isolated page mutation measured 33,016 bytes;
+the same mutation with a catalog larger than one page measured 49,544 bytes. The 4 MiB
+segment size is a coalescing ceiling, not a write minimum.
+
+The older `s3_sync_persistence!` callsite remains available for existing per-table
+manifests. New databases should use the shared domain so tables commit against one
+catalog and restore through catalog page mappings.
+
+```rust
+use worktable::{database_s3_persistence, DatabaseS3DiskConfig, S3Database};
+
+database_s3_persistence!(OrderWorkTable);
+
+let database = S3Database::open_s3(domain_id, writer_epoch, s3_config)?;
+let engine = OrderDatabaseS3PersistenceEngine::new(DatabaseS3DiskConfig {
+    disk: DiskConfig::new_with_table_name(dir, "orders", OrderWorkTable::version()),
+    database: database.clone(),
+}).await?;
+let orders = OrderWorkTable::load(engine).await?;
+
+for table in database.catalog().system_tables() {
+    println!("{}: {} rows", table.name.as_str(), table.row_count);
+}
+```
 
 ```toml
 [dependencies]
