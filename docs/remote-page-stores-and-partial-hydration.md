@@ -722,8 +722,10 @@ Bunny Storage. Every page and range was checked before it counted as a result.
 | 4 MiB GET | 455.59 Mbit/s | 653.57 Mbit/s |
 
 Bunny significantly outperformed Tigris for colocated reads. Its very high
-hot-key concurrent read result is treated as cache-assisted, so the cold range
-median is the planning value. Tigris had stronger sustained page and segment
+hot-key concurrent read result is treated as cache-assisted. The lower
+concurrency range median is the planning value, but that measurement also
+reused one object and is not a cold-store result. The adapter-level gate must
+add unique-object cold faults. Tigris had stronger sustained page and segment
 writes. This selects Tigris as the first durable backend while preserving
 Bunny as a supported alternative through the same S3 contract.
 
