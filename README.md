@@ -83,9 +83,10 @@ types (`InsertOperation`, `UpdateOperation`, `DeleteOperation`, `AcknowledgeOper
 
 S3 support layers *on top of* the disk engine rather than replacing it.
 `S3SyncDiskPersistenceEngine` wraps a `DiskPersistenceEngine`. It stores table files
-as immutable 4 MiB content-addressed chunks, uploads only chunks that changed since
-the last committed generation, and publishes one table manifest after every chunk is
-available. Restore validates the manifest and every chunk before atomically replacing
+as immutable content-addressed segments. It compares 16 KiB page units and coalesces
+adjacent changes up to 4 MiB, so one isolated page update uploads 16 KiB plus the
+manifest. It publishes one table manifest after every segment is available. Restore
+validates the manifest and every segment before atomically replacing
 the local working copy. Existing whole-file S3 layouts remain readable and migrate to
 the manifest layout on their next successful write.
 

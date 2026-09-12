@@ -1107,16 +1107,18 @@ Under `s3-support`, `s3_sync_persistence!(TableName)` generates an S3-backed eng
 `S3DiskConfig` combines `DiskConfig` with `S3Config` fields `bucket_name`, `endpoint`,
 `access_key`, `secret_key`, optional `region` and optional `prefix`. Supply credentials
 from application configuration. Local disk remains the working copy. After each completed
-disk operation, the engine hashes fixed 4 MiB regions, uploads only content-addressed
-chunks absent from the preceding generation, then replaces one checksummed table manifest.
+disk operation, the engine compares 16 KiB page units, coalesces adjacent changed pages up
+to a 4 MiB target, uploads only content-addressed segments absent from the preceding
+generation, then replaces one checksummed table manifest. The target is not a minimum:
+one isolated page change uploads one 16 KiB segment plus the manifest.
 That manifest is the remote commit point for the data file and all index files together.
 A failed manifest write leaves the preceding complete generation visible.
 
-Startup validates the manifest, chunk lengths, BLAKE3 hashes and complete file lengths in
+Startup validates the manifest, segment lengths, BLAKE3 hashes and complete file lengths in
 a sibling staging directory. Only a complete table is renamed over the local working copy.
 A committed manifest that is corrupt or incomplete is a startup error; the engine does not
 continue from possibly stale local data. An old whole-file S3 layout is restored when no
-manifest exists and migrates on its next successful mutation. Immutable chunks that fall
+manifest exists and migrates on its next successful mutation. Immutable segments that fall
 out of the current manifest are retained because deleting them could race a restore that
 already read the prior generation; reclaim them only with an offline or lease-aware tool.
 

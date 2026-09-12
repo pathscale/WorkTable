@@ -53,15 +53,16 @@ current inexpensive synchronous path, but it also makes available memory a
 hard table-size limit.
 
 The current S3 engine runs above the local disk engine. After a mutation it
-walks each table file, reads and hashes fixed 4 MiB chunks, uploads new chunks,
-and replaces one manifest. Content addressing avoids uploading unchanged
-chunks, but a one-row mutation still causes a local full-file scan and may
-upload 4 MiB. That is the wrong accounting boundary for a page store.
+walks each table file and hashes 16 KiB page units. It uploads contiguous runs
+of changed pages as immutable segments, coalescing only up to a 4 MiB target,
+then replaces one manifest. The integration fixture's one-row update uploads
+16,842 bytes for a 14,385,146-byte table. This removes the 4 MiB network floor,
+but the full local scan remains the wrong accounting boundary for a page store.
 
 DataBucket already knows the affected `Space`, `PageId`, physical stride and
 row extent at `persist_page`, `persist_pages_batch`, and `update_at`. It should
-report mutations at that point. A raw `AsyncWrite` wrapper cannot recover the
-same meaning reliably from byte offsets.
+report mutations at that point so the S3 engine can skip the scan. A raw
+`AsyncWrite` wrapper cannot recover the same meaning reliably from byte offsets.
 
 ## Dependency direction
 

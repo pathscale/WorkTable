@@ -3,8 +3,8 @@ use core::fmt::{Debug, Write as _};
 use core::hash::Hash;
 use core::marker::PhantomData;
 use core::time::Duration;
-use std::collections::HashSet;
-use std::io::{Read as _, Write as _};
+use std::collections::{HashMap, HashSet};
+use std::io::{BufReader, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,10 +22,15 @@ use crate::persistence::{
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey, WT_DATA_EXTENSION, WT_INDEX_EXTENSION};
 
 const MANIFEST_FILE: &str = "manifest.v1";
-const MANIFEST_MAGIC: &[u8; 8] = b"WTS3M001";
-const CHUNK_SIZE: usize = 4 * 1024 * 1024;
+const MANIFEST_MAGIC_V1: &[u8; 8] = b"WTS3M001";
+const MANIFEST_MAGIC_V2: &[u8; 8] = b"WTS3M002";
+/// The throughput target for a full upload or a run of adjacent dirty pages.
+/// It is deliberately a target rather than a minimum: one changed DataBucket
+/// page is published as one page-sized immutable segment.
+const SEGMENT_TARGET: usize = 4 * 1024 * 1024;
+const CHANGE_BLOCK_SIZE: usize = data_bucket::PAGE_SIZE;
 const MAX_MANIFEST_FILES: usize = 16_384;
-const MAX_MANIFEST_CHUNKS: usize = 1_048_576;
+const MAX_MANIFEST_EXTENTS: usize = 4_194_304;
 
 #[derive(Debug, Clone)]
 pub struct S3Config {
@@ -54,16 +59,27 @@ impl PersistenceConfig for S3DiskConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ChunkRef {
+struct SegmentExtent {
+    file_offset: u64,
     length: u32,
+    segment_offset: u32,
+    segment_length: u32,
     hash: [u8; 32],
+}
+
+impl SegmentExtent {
+    fn file_end(&self) -> eyre::Result<u64> {
+        self.file_offset
+            .checked_add(u64::from(self.length))
+            .ok_or_else(|| eyre::eyre!("S3 manifest extent offset overflow"))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ManifestFile {
     path: String,
     length: u64,
-    chunks: Vec<ChunkRef>,
+    extents: Vec<SegmentExtent>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -74,23 +90,38 @@ struct TableManifest {
 impl TableManifest {
     fn encode(&self) -> eyre::Result<Vec<u8>> {
         let file_count = u32::try_from(self.files.len()).map_err(|_| eyre::eyre!("too many S3 manifest files"))?;
+        if self.files.len() > MAX_MANIFEST_FILES {
+            return Err(eyre::eyre!("too many S3 manifest files"));
+        }
+        let total_extents = self.files.iter().try_fold(0_usize, |total, file| {
+            total
+                .checked_add(file.extents.len())
+                .ok_or_else(|| eyre::eyre!("S3 manifest extent count overflow"))
+        })?;
+        if total_extents > MAX_MANIFEST_EXTENTS {
+            return Err(eyre::eyre!("too many extents in S3 manifest"));
+        }
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(MANIFEST_MAGIC);
+        bytes.extend_from_slice(MANIFEST_MAGIC_V2);
         bytes.extend_from_slice(&file_count.to_le_bytes());
 
         for file in &self.files {
+            validate_manifest_file(file)?;
             validate_relative_path(&file.path)?;
             let path = file.path.as_bytes();
             let path_len = u16::try_from(path.len()).map_err(|_| eyre::eyre!("S3 manifest path is too long"))?;
-            let chunk_count =
-                u32::try_from(file.chunks.len()).map_err(|_| eyre::eyre!("too many chunks in S3 manifest"))?;
+            let extent_count =
+                u32::try_from(file.extents.len()).map_err(|_| eyre::eyre!("too many extents in S3 manifest"))?;
             bytes.extend_from_slice(&path_len.to_le_bytes());
             bytes.extend_from_slice(path);
             bytes.extend_from_slice(&file.length.to_le_bytes());
-            bytes.extend_from_slice(&chunk_count.to_le_bytes());
-            for chunk in &file.chunks {
-                bytes.extend_from_slice(&chunk.length.to_le_bytes());
-                bytes.extend_from_slice(&chunk.hash);
+            bytes.extend_from_slice(&extent_count.to_le_bytes());
+            for extent in &file.extents {
+                bytes.extend_from_slice(&extent.file_offset.to_le_bytes());
+                bytes.extend_from_slice(&extent.length.to_le_bytes());
+                bytes.extend_from_slice(&extent.segment_offset.to_le_bytes());
+                bytes.extend_from_slice(&extent.segment_length.to_le_bytes());
+                bytes.extend_from_slice(&extent.hash);
             }
         }
 
@@ -100,7 +131,7 @@ impl TableManifest {
     }
 
     fn decode(bytes: &[u8]) -> eyre::Result<Self> {
-        if bytes.len() < MANIFEST_MAGIC.len() + 4 + 32 {
+        if bytes.len() < MANIFEST_MAGIC_V2.len() + 4 + 32 {
             return Err(eyre::eyre!("S3 manifest is truncated"));
         }
         let (payload, checksum) = bytes.split_at(bytes.len() - 32);
@@ -108,8 +139,78 @@ impl TableManifest {
             return Err(eyre::eyre!("S3 manifest checksum mismatch"));
         }
 
+        let magic = payload
+            .get(..MANIFEST_MAGIC_V2.len())
+            .ok_or_else(|| eyre::eyre!("S3 manifest is truncated"))?;
+        if magic == MANIFEST_MAGIC_V1 {
+            return Self::decode_v1(payload);
+        }
+        if magic != MANIFEST_MAGIC_V2 {
+            return Err(eyre::eyre!("unsupported S3 manifest format"));
+        }
+
         let mut reader = ManifestReader::new(payload);
-        if reader.take(MANIFEST_MAGIC.len())? != MANIFEST_MAGIC {
+        reader.take(MANIFEST_MAGIC_V2.len())?;
+        let file_count = reader.u32()? as usize;
+        if file_count > MAX_MANIFEST_FILES {
+            return Err(eyre::eyre!("S3 manifest contains too many files"));
+        }
+
+        let mut files = Vec::with_capacity(file_count);
+        let mut previous_path: Option<String> = None;
+        let mut total_extents = 0_usize;
+        for _ in 0..file_count {
+            let path_len = reader.u16()? as usize;
+            if path_len == 0 {
+                return Err(eyre::eyre!("S3 manifest contains an empty path"));
+            }
+            let path = core::str::from_utf8(reader.take(path_len)?)?.to_string();
+            validate_relative_path(&path)?;
+            if previous_path.as_ref().is_some_and(|previous| previous >= &path) {
+                return Err(eyre::eyre!("S3 manifest file paths are not strictly sorted"));
+            }
+            previous_path = Some(path.clone());
+
+            let length = reader.u64()?;
+            let extent_count = reader.u32()? as usize;
+            total_extents = total_extents
+                .checked_add(extent_count)
+                .ok_or_else(|| eyre::eyre!("S3 manifest extent count overflow"))?;
+            if total_extents > MAX_MANIFEST_EXTENTS {
+                return Err(eyre::eyre!("S3 manifest contains too many extents"));
+            }
+
+            let mut extents = Vec::with_capacity(extent_count);
+            for _ in 0..extent_count {
+                let file_offset = reader.u64()?;
+                let extent_length = reader.u32()?;
+                let segment_offset = reader.u32()?;
+                let segment_length = reader.u32()?;
+                let mut hash = [0_u8; 32];
+                let hash_length = hash.len();
+                hash.copy_from_slice(reader.take(hash_length)?);
+                extents.push(SegmentExtent {
+                    file_offset,
+                    length: extent_length,
+                    segment_offset,
+                    segment_length,
+                    hash,
+                });
+            }
+            let file = ManifestFile { path, length, extents };
+            validate_manifest_file(&file)?;
+            files.push(file);
+        }
+
+        if !reader.is_empty() {
+            return Err(eyre::eyre!("S3 manifest has trailing data"));
+        }
+        Ok(Self { files })
+    }
+
+    fn decode_v1(payload: &[u8]) -> eyre::Result<Self> {
+        let mut reader = ManifestReader::new(payload);
+        if reader.take(MANIFEST_MAGIC_V1.len())? != MANIFEST_MAGIC_V1 {
             return Err(eyre::eyre!("unsupported S3 manifest format"));
         }
         let file_count = reader.u32()? as usize;
@@ -137,57 +238,89 @@ impl TableManifest {
             total_chunks = total_chunks
                 .checked_add(chunk_count)
                 .ok_or_else(|| eyre::eyre!("S3 manifest chunk count overflow"))?;
-            if total_chunks > MAX_MANIFEST_CHUNKS {
+            if total_chunks > MAX_MANIFEST_EXTENTS {
                 return Err(eyre::eyre!("S3 manifest contains too many chunks"));
             }
             let expected_chunks = if length == 0 {
                 0
             } else {
-                usize::try_from(length.div_ceil(CHUNK_SIZE as u64))?
+                usize::try_from(length.div_ceil(SEGMENT_TARGET as u64))?
             };
             if chunk_count != expected_chunks {
                 return Err(eyre::eyre!("S3 manifest chunk count does not match file length"));
             }
 
-            let mut chunks = Vec::with_capacity(chunk_count);
-            let mut described_length = 0_u64;
+            let mut extents = Vec::with_capacity(chunk_count);
+            let mut file_offset = 0_u64;
             for index in 0..chunk_count {
                 let chunk_length = reader.u32()?;
-                if chunk_length == 0 || chunk_length as usize > CHUNK_SIZE {
+                if chunk_length == 0 || chunk_length as usize > SEGMENT_TARGET {
                     return Err(eyre::eyre!("S3 manifest contains an invalid chunk length"));
                 }
-                if index + 1 != chunk_count && chunk_length as usize != CHUNK_SIZE {
+                if index + 1 != chunk_count && chunk_length as usize != SEGMENT_TARGET {
                     return Err(eyre::eyre!("S3 manifest contains a short interior chunk"));
                 }
                 let mut hash = [0_u8; 32];
                 let hash_length = hash.len();
                 hash.copy_from_slice(reader.take(hash_length)?);
-                described_length = described_length
-                    .checked_add(u64::from(chunk_length))
-                    .ok_or_else(|| eyre::eyre!("S3 manifest file length overflow"))?;
-                chunks.push(ChunkRef {
+                extents.push(SegmentExtent {
+                    file_offset,
                     length: chunk_length,
+                    segment_offset: 0,
+                    segment_length: chunk_length,
                     hash,
                 });
+                file_offset = file_offset
+                    .checked_add(u64::from(chunk_length))
+                    .ok_or_else(|| eyre::eyre!("S3 manifest file length overflow"))?;
             }
-            if described_length != length {
-                return Err(eyre::eyre!("S3 manifest chunks do not cover the file length"));
-            }
-            files.push(ManifestFile { path, length, chunks });
+            let file = ManifestFile { path, length, extents };
+            validate_manifest_file(&file)?;
+            files.push(file);
         }
-
         if !reader.is_empty() {
             return Err(eyre::eyre!("S3 manifest has trailing data"));
         }
         Ok(Self { files })
     }
 
-    fn committed_chunks(&self) -> HashSet<[u8; 32]> {
+    fn committed_segments(&self) -> HashSet<[u8; 32]> {
         self.files
             .iter()
-            .flat_map(|file| file.chunks.iter().map(|chunk| chunk.hash))
+            .flat_map(|file| file.extents.iter().map(|extent| extent.hash))
             .collect()
     }
+
+    fn file(&self, path: &str) -> Option<&ManifestFile> {
+        self.files
+            .binary_search_by(|file| file.path.as_str().cmp(path))
+            .ok()
+            .map(|index| &self.files[index])
+    }
+}
+
+fn validate_manifest_file(file: &ManifestFile) -> eyre::Result<()> {
+    let mut described_length = 0_u64;
+    for extent in &file.extents {
+        if extent.file_offset != described_length {
+            return Err(eyre::eyre!("S3 manifest extents do not cover the file contiguously"));
+        }
+        if extent.length == 0 || extent.segment_length == 0 || extent.segment_length as usize > SEGMENT_TARGET {
+            return Err(eyre::eyre!("S3 manifest contains an invalid extent length"));
+        }
+        let segment_end = extent
+            .segment_offset
+            .checked_add(extent.length)
+            .ok_or_else(|| eyre::eyre!("S3 manifest segment offset overflow"))?;
+        if segment_end > extent.segment_length {
+            return Err(eyre::eyre!("S3 manifest extent exceeds its segment"));
+        }
+        described_length = extent.file_end()?;
+    }
+    if described_length != file.length {
+        return Err(eyre::eyre!("S3 manifest extents do not cover the file length"));
+    }
+    Ok(())
 }
 
 struct ManifestReader<'a> {
@@ -266,6 +399,7 @@ pub struct S3SyncDiskPersistenceEngine<
     credentials: Credentials,
     client: Agent,
     committed_manifest: Option<TableManifest>,
+    committed_blocks: HashMap<String, Vec<[u8; 32]>>,
     phantom: PhantomData<(PrimaryKey, SecondaryIndexEvents, PrimaryKeyGenState, AvailableIndexes)>,
 }
 
@@ -402,42 +536,80 @@ where
             .collect::<eyre::Result<Vec<_>>>()?;
         local_files.sort_by(|left, right| left.0.cmp(&right.0));
 
-        let committed_chunks = self
+        let committed_segments = self
             .committed_manifest
             .as_ref()
-            .map_or_else(HashSet::new, TableManifest::committed_chunks);
-        let mut uploaded_chunks = HashSet::new();
+            .map_or_else(HashSet::new, TableManifest::committed_segments);
+        let mut uploaded_segments = HashSet::new();
         let mut files = Vec::with_capacity(local_files.len());
+        let mut next_blocks = HashMap::with_capacity(local_files.len());
 
         for (relative, local_path) in local_files {
-            let mut local_file = std::fs::File::open(&local_path)?;
-            let mut buffer = vec![0_u8; CHUNK_SIZE];
-            let mut chunks = Vec::new();
-            let mut file_length = 0_u64;
-            loop {
-                let length = read_chunk(&mut local_file, &mut buffer)?;
-                if length == 0 {
-                    break;
+            let blocks = describe_file_blocks(&local_path)?;
+            let file_length = blocks.last().map_or(0, LocalBlock::end);
+            let previous_file = self
+                .committed_manifest
+                .as_ref()
+                .and_then(|manifest| manifest.file(&relative));
+            let previous_hashes = self.committed_blocks.get(&relative);
+            let mut extents = match previous_file {
+                Some(file) => trim_extents(&file.extents, file_length)?,
+                None => Vec::new(),
+            };
+
+            let dirty = blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| {
+                    previous_file.is_none()
+                        || previous_hashes
+                            .and_then(|hashes| hashes.get(index))
+                            .is_none_or(|hash| hash != &block.hash)
+                })
+                .collect::<Vec<_>>();
+
+            let mut index = 0;
+            while index < blocks.len() {
+                if !dirty[index] {
+                    index += 1;
+                    continue;
                 }
-                let bytes = &buffer[..length];
-                let chunk = ChunkRef {
-                    length: u32::try_from(length)?,
-                    hash: *blake3::hash(bytes).as_bytes(),
+                let first = index;
+                let mut segment_length = blocks[index].length as usize;
+                index += 1;
+                while index < blocks.len()
+                    && dirty[index]
+                    && segment_length + blocks[index].length as usize <= SEGMENT_TARGET
+                {
+                    segment_length += blocks[index].length as usize;
+                    index += 1;
+                }
+
+                let file_offset = blocks[first].offset;
+                let bytes = read_file_range(&local_path, file_offset, segment_length)?;
+                let hash = *blake3::hash(&bytes).as_bytes();
+                if !committed_segments.contains(&hash) && uploaded_segments.insert(hash) {
+                    let key = self.object_key(&Self::chunk_path(&hash))?;
+                    self.put_object_verified(&key, &bytes)?;
+                }
+                let extent = SegmentExtent {
+                    file_offset,
+                    length: u32::try_from(segment_length)?,
+                    segment_offset: 0,
+                    segment_length: u32::try_from(segment_length)?,
+                    hash,
                 };
-                if !committed_chunks.contains(&chunk.hash) && uploaded_chunks.insert(chunk.hash) {
-                    let key = self.object_key(&Self::chunk_path(&chunk.hash))?;
-                    self.put_object_verified(&key, bytes)?;
-                }
-                file_length = file_length
-                    .checked_add(u64::try_from(length)?)
-                    .ok_or_else(|| eyre::eyre!("local table file length overflow"))?;
-                chunks.push(chunk);
+                extents = overlay_extent(&extents, extent)?;
             }
-            files.push(ManifestFile {
+
+            let file = ManifestFile {
                 path: relative,
                 length: file_length,
-                chunks,
-            });
+                extents,
+            };
+            validate_manifest_file(&file)?;
+            next_blocks.insert(file.path.clone(), blocks.into_iter().map(|block| block.hash).collect());
+            files.push(file);
         }
 
         let manifest = TableManifest { files };
@@ -445,8 +617,9 @@ where
         let manifest_key = self.object_key(MANIFEST_FILE)?;
         self.put_object_verified(&manifest_key, &manifest_bytes)?;
         self.committed_manifest = Some(manifest);
+        self.committed_blocks = next_blocks;
 
-        tracing::debug!(new_chunks = uploaded_chunks.len(), "S3 table manifest committed");
+        tracing::debug!(new_segments = uploaded_segments.len(), "S3 table manifest committed");
         Ok(())
     }
 
@@ -499,21 +672,32 @@ where
                     std::fs::create_dir_all(parent)?;
                 }
                 let mut restored_file = std::fs::File::create(&local_path)?;
-                let mut restored_length = 0_u64;
-                for chunk in &file.chunks {
-                    let key = Self::full_s3_path(prefix, &Self::chunk_path(&chunk.hash), table_name);
-                    let bytes = Self::get_object_optional(bucket, credentials, client, &key)?
-                        .ok_or_else(|| eyre::eyre!("S3 manifest references missing chunk {key}"))?;
-                    if bytes.len() != chunk.length as usize || blake3::hash(&bytes).as_bytes() != &chunk.hash {
-                        return Err(eyre::eyre!("S3 chunk failed length or hash validation: {key}"));
+                restored_file.set_len(file.length)?;
+                let mut by_segment: HashMap<[u8; 32], (u32, Vec<&SegmentExtent>)> = HashMap::new();
+                for extent in &file.extents {
+                    let entry = by_segment
+                        .entry(extent.hash)
+                        .or_insert_with(|| (extent.segment_length, Vec::new()));
+                    if entry.0 != extent.segment_length {
+                        return Err(eyre::eyre!("S3 manifest gives one segment conflicting lengths"));
                     }
-                    restored_file.write_all(&bytes)?;
-                    restored_length = restored_length
-                        .checked_add(u64::try_from(bytes.len())?)
-                        .ok_or_else(|| eyre::eyre!("restored S3 file length overflow"))?;
+                    entry.1.push(extent);
                 }
-                if restored_length != file.length {
-                    return Err(eyre::eyre!("restored S3 file has the wrong length: {}", file.path));
+                for (hash, (segment_length, extents)) in by_segment {
+                    let key = Self::full_s3_path(prefix, &Self::chunk_path(&hash), table_name);
+                    let bytes = Self::get_object_optional(bucket, credentials, client, &key)?
+                        .ok_or_else(|| eyre::eyre!("S3 manifest references missing segment {key}"))?;
+                    if bytes.len() != segment_length as usize || blake3::hash(&bytes).as_bytes() != &hash {
+                        return Err(eyre::eyre!("S3 segment failed length or hash validation: {key}"));
+                    }
+                    for extent in extents {
+                        let from = extent.segment_offset as usize;
+                        let to = from
+                            .checked_add(extent.length as usize)
+                            .ok_or_else(|| eyre::eyre!("S3 manifest segment slice overflow"))?;
+                        restored_file.seek(SeekFrom::Start(extent.file_offset))?;
+                        restored_file.write_all(&bytes[from..to])?;
+                    }
                 }
                 restored_file.flush()?;
             }
@@ -588,18 +772,70 @@ fn is_table_name(name: &str) -> bool {
     name.ends_with(WT_DATA_EXTENSION) || name.ends_with(WT_INDEX_EXTENSION)
 }
 
-#[cfg(test)]
-fn describe_chunks(content: &[u8]) -> Vec<ChunkRef> {
-    content
-        .chunks(CHUNK_SIZE)
-        .map(|bytes| ChunkRef {
-            length: u32::try_from(bytes.len()).expect("a fixed S3 chunk always fits in u32"),
-            hash: *blake3::hash(bytes).as_bytes(),
-        })
-        .collect()
+#[derive(Clone, Debug)]
+struct LocalBlock {
+    offset: u64,
+    length: u32,
+    hash: [u8; 32],
 }
 
-fn read_chunk(file: &mut std::fs::File, buffer: &mut [u8]) -> std::io::Result<usize> {
+impl LocalBlock {
+    fn end(&self) -> u64 {
+        self.offset + u64::from(self.length)
+    }
+}
+
+fn describe_file_blocks(path: &Path) -> eyre::Result<Vec<LocalBlock>> {
+    let mut file = BufReader::with_capacity(SEGMENT_TARGET, std::fs::File::open(path)?);
+    let mut buffer = vec![0_u8; CHANGE_BLOCK_SIZE];
+    let mut blocks = Vec::new();
+    let mut offset = 0_u64;
+    loop {
+        let length = read_buffer(&mut file, &mut buffer)?;
+        if length == 0 {
+            break;
+        }
+        blocks.push(LocalBlock {
+            offset,
+            length: u32::try_from(length)?,
+            hash: *blake3::hash(&buffer[..length]).as_bytes(),
+        });
+        offset = offset
+            .checked_add(u64::try_from(length)?)
+            .ok_or_else(|| eyre::eyre!("local table file length overflow"))?;
+    }
+    Ok(blocks)
+}
+
+fn describe_table_blocks(table_path: &Path) -> eyre::Result<HashMap<String, Vec<[u8; 32]>>> {
+    if !table_path.exists() {
+        return Ok(HashMap::new());
+    }
+    let mut result = HashMap::new();
+    for entry in WalkDir::new(table_path) {
+        let entry = entry?;
+        if !entry.file_type().is_file() || !is_table_file(entry.path()) {
+            continue;
+        }
+        let relative = canonical_relative_path(table_path, entry.path())?;
+        let hashes = describe_file_blocks(entry.path())?
+            .into_iter()
+            .map(|block| block.hash)
+            .collect();
+        result.insert(relative, hashes);
+    }
+    Ok(result)
+}
+
+fn read_file_range(path: &Path, offset: u64, length: usize) -> eyre::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = vec![0_u8; length];
+    file.read_exact(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn read_buffer(file: &mut impl std::io::Read, buffer: &mut [u8]) -> std::io::Result<usize> {
     let mut length = 0;
     while length < buffer.len() {
         let read = file.read(&mut buffer[length..])?;
@@ -609,6 +845,94 @@ fn read_chunk(file: &mut std::fs::File, buffer: &mut [u8]) -> std::io::Result<us
         length += read;
     }
     Ok(length)
+}
+
+fn trim_extents(extents: &[SegmentExtent], length: u64) -> eyre::Result<Vec<SegmentExtent>> {
+    let mut trimmed = Vec::new();
+    for extent in extents {
+        if extent.file_offset >= length {
+            break;
+        }
+        let keep = extent.file_end()?.min(length) - extent.file_offset;
+        let mut extent = extent.clone();
+        extent.length = u32::try_from(keep)?;
+        trimmed.push(extent);
+    }
+    Ok(trimmed)
+}
+
+fn overlay_extent(extents: &[SegmentExtent], replacement: SegmentExtent) -> eyre::Result<Vec<SegmentExtent>> {
+    let start = replacement.file_offset;
+    let end = replacement.file_end()?;
+    let mut result = Vec::with_capacity(extents.len() + 2);
+    let mut inserted = false;
+
+    for extent in extents {
+        let extent_end = extent.file_end()?;
+        if extent_end <= start {
+            result.push(extent.clone());
+            continue;
+        }
+        if extent.file_offset >= end {
+            if !inserted {
+                result.push(replacement.clone());
+                inserted = true;
+            }
+            result.push(extent.clone());
+            continue;
+        }
+
+        if extent.file_offset < start {
+            let mut left = extent.clone();
+            left.length = u32::try_from(start - extent.file_offset)?;
+            result.push(left);
+        }
+        if !inserted {
+            result.push(replacement.clone());
+            inserted = true;
+        }
+        if extent_end > end {
+            let skipped = u32::try_from(end - extent.file_offset)?;
+            let mut right = extent.clone();
+            right.file_offset = end;
+            right.length = u32::try_from(extent_end - end)?;
+            right.segment_offset = right
+                .segment_offset
+                .checked_add(skipped)
+                .ok_or_else(|| eyre::eyre!("S3 manifest segment offset overflow"))?;
+            result.push(right);
+        }
+    }
+    if !inserted {
+        result.push(replacement);
+    }
+    merge_adjacent_extents(result)
+}
+
+fn merge_adjacent_extents(extents: Vec<SegmentExtent>) -> eyre::Result<Vec<SegmentExtent>> {
+    let mut merged: Vec<SegmentExtent> = Vec::with_capacity(extents.len());
+    for extent in extents {
+        if let Some(previous) = merged.last_mut() {
+            let contiguous_file = previous.file_end()? == extent.file_offset;
+            let contiguous_segment = previous
+                .segment_offset
+                .checked_add(previous.length)
+                .is_some_and(|offset| offset == extent.segment_offset);
+            if contiguous_file
+                && contiguous_segment
+                && previous.segment_length == extent.segment_length
+                && previous.hash == extent.hash
+            {
+                previous.length = previous
+                    .length
+                    .checked_add(extent.length)
+                    .ok_or_else(|| eyre::eyre!("S3 manifest extent length overflow"))?;
+                continue;
+            }
+        }
+        merged.push(extent);
+    }
+    Ok(merged)
 }
 
 fn is_table_file(path: &Path) -> bool {
@@ -738,6 +1062,7 @@ where
         // could publish stale state over a newer committed remote generation.
         let committed_manifest = Self::sync_from_s3(&bucket, &credentials, &client, &config).await?;
         let inner = DiskPersistenceEngine::new(config.disk.clone()).await?;
+        let committed_blocks = describe_table_blocks(Path::new(config.disk.table_path()))?;
 
         Ok(Self {
             inner,
@@ -746,6 +1071,7 @@ where
             credentials,
             client,
             committed_manifest,
+            committed_blocks,
             phantom: PhantomData,
         })
     }
@@ -775,9 +1101,12 @@ where
 mod tests {
     use super::*;
 
-    fn chunk(bytes: &[u8]) -> ChunkRef {
-        ChunkRef {
+    fn extent(file_offset: u64, bytes: &[u8]) -> SegmentExtent {
+        SegmentExtent {
+            file_offset,
             length: bytes.len() as u32,
+            segment_offset: 0,
+            segment_length: bytes.len() as u32,
             hash: *blake3::hash(bytes).as_bytes(),
         }
     }
@@ -789,12 +1118,12 @@ mod tests {
                 ManifestFile {
                     path: ".wt.data".to_string(),
                     length: 3,
-                    chunks: vec![chunk(b"abc")],
+                    extents: vec![extent(0, b"abc")],
                 },
                 ManifestFile {
                     path: "primary.wt.idx".to_string(),
                     length: 0,
-                    chunks: Vec::new(),
+                    extents: Vec::new(),
                 },
             ],
         };
@@ -809,7 +1138,7 @@ mod tests {
             files: vec![ManifestFile {
                 path: ".wt.data".to_string(),
                 length: 3,
-                chunks: vec![chunk(b"abc")],
+                extents: vec![extent(0, b"abc")],
             }],
         };
         let mut encoded = manifest.encode().unwrap();
@@ -820,23 +1149,22 @@ mod tests {
             files: vec![ManifestFile {
                 path: "../outside.wt.data".to_string(),
                 length: 0,
-                chunks: Vec::new(),
+                extents: Vec::new(),
             }],
         };
         assert!(unsafe_manifest.encode().is_err());
     }
 
     #[test]
-    fn manifest_requires_exact_chunk_coverage() {
+    fn manifest_requires_exact_extent_coverage() {
         let manifest = TableManifest {
             files: vec![ManifestFile {
                 path: ".wt.data".to_string(),
                 length: 4,
-                chunks: vec![chunk(b"abc")],
+                extents: vec![extent(0, b"abc")],
             }],
         };
-        let encoded = manifest.encode().unwrap();
-        assert!(TableManifest::decode(&encoded).is_err());
+        assert!(manifest.encode().is_err());
     }
 
     #[test]
@@ -844,7 +1172,7 @@ mod tests {
         let file = |path: &str| ManifestFile {
             path: path.to_string(),
             length: 0,
-            chunks: Vec::new(),
+            extents: Vec::new(),
         };
         let unsorted = TableManifest {
             files: vec![file("primary.wt.idx"), file(".wt.data")],
@@ -862,23 +1190,46 @@ mod tests {
     }
 
     #[test]
-    fn a_small_change_to_a_large_file_reuses_unchanged_chunks() {
-        let original = vec![7_u8; 10 * 1024 * 1024];
-        let mut changed = original.clone();
-        changed[5 * 1024 * 1024] = 9;
+    fn a_page_change_splits_a_large_segment_without_reuploading_it() {
+        let original = vec![7_u8; SEGMENT_TARGET];
+        let original_extent = extent(0, &original);
+        let changed_page = vec![9_u8; CHANGE_BLOCK_SIZE];
+        let replacement = extent(CHANGE_BLOCK_SIZE as u64, &changed_page);
 
-        let original_chunks = describe_chunks(&original);
-        let changed_chunks = describe_chunks(&changed);
-        assert_eq!(original_chunks.len(), 3);
-        assert_eq!(changed_chunks.len(), 3);
-        assert_eq!(
-            original_chunks
-                .iter()
-                .zip(&changed_chunks)
-                .filter(|(left, right)| left != right)
-                .count(),
-            1
-        );
-        assert_eq!(changed_chunks[1].length as usize, CHUNK_SIZE);
+        let extents = overlay_extent(core::slice::from_ref(&original_extent), replacement.clone()).unwrap();
+        assert_eq!(extents.len(), 3);
+        assert_eq!(extents[0].length as usize, CHANGE_BLOCK_SIZE);
+        assert_eq!(extents[1], replacement);
+        assert_eq!(extents[2].file_offset, (2 * CHANGE_BLOCK_SIZE) as u64);
+        assert_eq!(extents[2].segment_offset, (2 * CHANGE_BLOCK_SIZE) as u32);
+        assert_eq!(extents[2].file_end().unwrap(), SEGMENT_TARGET as u64);
+        assert_eq!(extents[0].hash, original_extent.hash);
+        assert_eq!(extents[2].hash, original_extent.hash);
+    }
+
+    #[test]
+    fn legacy_manifest_decodes_as_segment_extents() {
+        let contents = [vec![1_u8; SEGMENT_TARGET], vec![2_u8; 19]];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(MANIFEST_MAGIC_V1);
+        payload.extend_from_slice(&1_u32.to_le_bytes());
+        let path = b".wt.data";
+        payload.extend_from_slice(&(path.len() as u16).to_le_bytes());
+        payload.extend_from_slice(path);
+        payload.extend_from_slice(&((SEGMENT_TARGET + 19) as u64).to_le_bytes());
+        payload.extend_from_slice(&2_u32.to_le_bytes());
+        for bytes in &contents {
+            payload.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            payload.extend_from_slice(blake3::hash(bytes).as_bytes());
+        }
+        let checksum = blake3::hash(&payload);
+        payload.extend_from_slice(checksum.as_bytes());
+
+        let manifest = TableManifest::decode(&payload).unwrap();
+        let file = &manifest.files[0];
+        assert_eq!(file.extents.len(), 2);
+        assert_eq!(file.extents[0].length as usize, SEGMENT_TARGET);
+        assert_eq!(file.extents[1].file_offset, SEGMENT_TARGET as u64);
+        assert!(manifest.encode().unwrap().starts_with(MANIFEST_MAGIC_V2));
     }
 }

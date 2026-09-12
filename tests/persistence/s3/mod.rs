@@ -198,7 +198,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
                 incremental_bytes as f64 / table_bytes as f64
             );
             assert!(
-                incremental_bytes < table_bytes / 2,
+                incremental_bytes < data_bucket::PAGE_SIZE * 2,
                 "one row update uploaded {incremental_bytes} bytes for a {table_bytes}-byte table"
             );
 
@@ -214,7 +214,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             table.delete(100).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
-            // New immutable chunks may arrive before the commit point. If the
+            // New immutable segments may arrive before the commit point. If the
             // manifest PUT fails, a fresh reader must still see the preceding
             // complete table generation.
             s3.reject_manifest_puts.store(true, Ordering::Release);
@@ -236,7 +236,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
         assert!(
             puts.iter()
                 .all(|(key, _)| key.ends_with("/manifest.v1") || key.contains("/chunks/")),
-            "new S3 writes must use immutable chunks and the table manifest: {puts:?}"
+            "new S3 writes must use immutable segments and the table manifest: {puts:?}"
         );
 
         // Removing the complete local table forces a strict remote restore.
@@ -266,7 +266,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
         // A committed manifest is authoritative, but a failed restore must
         // leave a usable local table untouched until the remote damage is
         // repaired.
-        let missing_chunk = s3
+        let missing_segment = s3
             .gets
             .lock()
             .unwrap()
@@ -274,7 +274,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             .find(|key| key.contains("/chunks/"))
             .cloned()
             .unwrap();
-        s3.objects.lock().unwrap().remove(&missing_chunk);
+        s3.objects.lock().unwrap().remove(&missing_segment);
         assert!(TestS3S3SyncPersistenceEngine::new(config.clone()).await.is_err());
         {
             let engine = TestS3PersistenceEngine::new(config.disk.clone()).await.unwrap();
