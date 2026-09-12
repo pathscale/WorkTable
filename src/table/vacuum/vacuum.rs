@@ -1078,16 +1078,18 @@ mod tests {
     }
 
     /// The wake fires on the *first* crossing of the threshold, which during a
-    /// ranged delete is near its start. Reporting work there sends the sweep in
-    /// while the delete is still streaming, to compete with the workload
-    /// producing the garbage and compact pages that are still being emptied
-    /// behind it.
+    /// ranged delete is near its start. The whole ranged operation carries a
+    /// bulk-mutation guard across its chunk gaps, so the actual sweep must wait
+    /// after waking instead of compacting a moving target.
     ///
-    /// So it settles first. This asserts the sweep is not told to run until the
-    /// burst that woke it has stopped.
+    /// Exercise the complete wake-to-sweep path. The old assertion stopped at
+    /// `wait_until_worth_running` and inferred future work from a wall-clock
+    /// sampling heuristic. A loaded runner could starve the delete task for one
+    /// settle interval and fail that assertion even though `defragment` still
+    /// obeyed the operation-wide activity guard before doing any work.
     #[tokio::test]
-    async fn a_woken_sweep_waits_for_the_delete_burst_to_settle() {
-        let table = Arc::new(TestWorkTable::default());
+    async fn a_woken_sweep_waits_for_a_bulk_delete_to_finish() {
+        let table = TestWorkTable::default();
         let mut ids = Vec::new();
         for i in 0..4_000 {
             let row = TestRow {
@@ -1103,11 +1105,19 @@ mod tests {
         let vacuum = create_vacuum(&table);
         vacuum.arm_wake(1024);
 
-        let burst_done = Arc::new(AtomicBool::new(false));
-        let deleting = tokio::spawn({
-            let (table, burst_done) = (Arc::clone(&table), Arc::clone(&burst_done));
-            let victims: Vec<_> = ids.iter().step_by(2).copied().collect();
-            async move {
+        let burst_done = AtomicBool::new(false);
+        let victims: Vec<_> = ids.iter().step_by(2).copied().collect();
+        tokio::join!(
+            async {
+                vacuum.wait_until_worth_running().await;
+                vacuum.defragment().await.unwrap();
+                assert!(
+                    burst_done.load(Ordering::Acquire),
+                    "the sweep ran while the bulk delete was still active"
+                );
+            },
+            async {
+                let _bulk_mutation = table.0.lock_manager.bulk_mutation_guard();
                 // Spread over well past one settle interval, in the chunks a
                 // ranged delete actually arrives in.
                 for chunk in victims.chunks(100) {
@@ -1118,14 +1128,7 @@ mod tests {
                 }
                 burst_done.store(true, Ordering::Release);
             }
-        });
-
-        vacuum.wait_until_worth_running().await;
-        assert!(
-            burst_done.load(Ordering::Acquire),
-            "the sweep was told to run while deletes were still streaming"
         );
-        deleting.await.unwrap();
     }
 
     /// Creates an EmptyDataVacuum instance from a WorkTable
