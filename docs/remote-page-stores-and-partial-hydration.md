@@ -36,10 +36,13 @@ The 2026-09-12 provider gate changed the implementation priority. Upstash's
 temporary Redis service had a roughly 216 ms request floor from Fly Singapore
 and did not scale independent page requests with concurrency. It is not on the
 first durable write path, and the hybrid backend is deferred until a paid,
-region-selected Upstash deployment passes the same gate. Tigris and Bunny
-Storage both passed exact-read, range-read and conditional-head tests. Tigris
-is the first backend because it had the stronger sustained write shape. Bunny
-is supported by the same S3 adapter as a read-strong alternative.
+region-selected Upstash deployment passes the same gate. Tigris, Bunny Storage
+and Cloudflare R2 all passed exact-read and conditional-head tests. Tigris and
+Bunny passed the complete performance gate. Tigris is the first backend
+because it had the stronger sustained write shape. Bunny is supported by the
+same S3 adapter as a read-strong alternative. R2 remains adapter-compatible
+but is excluded from the first production path by its range and segment
+results.
 
 ## Current boundary
 
@@ -708,18 +711,19 @@ longer references it.
 
 ### S3-compatible provider selection
 
-The same Rust executable ran from Fly Singapore against colocated Tigris and
-Bunny Storage. Every page and range was checked before it counted as a result.
+The same Rust executable ran from Fly Singapore against Tigris, Bunny Storage
+and an R2 bucket with the APAC placement hint. Every page and range was checked
+before it counted as a result.
 
-| Measurement | Tigris | Bunny Singapore |
-|---|---:|---:|
-| 16 KiB PUT p50 | 34.93 ms | 44.57 ms |
-| 16 KiB GET p50 | 18.22 ms | 4.93 ms |
-| HEAD p50 | 4.70 ms | 4.35 ms |
-| 256 KiB range GET p50 | 24.94 ms | 5.14 ms |
-| 16 KiB writes/s at concurrency 16 | 63.28 | 48.11 |
-| 4 MiB PUT | 303.00 Mbit/s | 180.33 Mbit/s |
-| 4 MiB GET | 455.59 Mbit/s | 653.57 Mbit/s |
+| Measurement | Tigris | Bunny Singapore | R2 APAC hint |
+|---|---:|---:|---:|
+| 16 KiB PUT p50 | 34.93 ms | 44.57 ms | 170.83 ms |
+| 16 KiB GET p50 | 18.22 ms | 4.93 ms | 50.17 ms |
+| HEAD p50 | 4.70 ms | 4.35 ms | 38.82 ms |
+| 256 KiB range GET p50 | 24.94 ms | 5.14 ms | 49.73 ms |
+| 16 KiB writes/s at concurrency 16 | 63.28 | 48.11 | 68.14 |
+| 4 MiB PUT | 303.00 Mbit/s | 180.33 Mbit/s | 90.90 Mbit/s |
+| 4 MiB GET | 455.59 Mbit/s | 653.57 Mbit/s | 202.37 Mbit/s |
 
 Bunny significantly outperformed Tigris for colocated reads. Its very high
 hot-key concurrent read result is treated as cache-assisted. The lower
@@ -735,11 +739,23 @@ later enables Bunny geo-replication, the authoritative conditional head must
 still be read and written at the primary; asynchronously replicated copies
 cannot coordinate writers.
 
-Cloudflare R2 exposes the required S3 range and conditional PUT operations and
-documents strong consistency. It remains a candidate rather than a selected
-backend until this exact driver runs against an actual R2 bucket. Provider
-selection is configuration on the S3 adapter and does not alter the durable
-catalog or WorkTable grammar.
+Cloudflare R2 returned the expected `200/412/412/200` conditional-write
+sequence and all 7,888 verified page reads were exact. Its performance misses
+the first backend gate: the 256 KiB range median is 49.73 ms, a 4 MiB PUT takes
+369.15 ms on average, and that PUT sustains 90.90 Mbit/s. Its concurrent small
+writes scale, but its application-facing request and segment shapes are weaker
+than Tigris and Bunny from this Fly Singapore client. R2 remains a compatible
+configuration of the S3 adapter rather than the first production default.
+This provider choice does not alter the durable catalog or WorkTable grammar.
+
+Cloudflare Pipelines addresses a different boundary. It can durably buffer
+HTTP ingestion and deliver records exactly once into an R2 sink. It does not
+provide page-key reads, range hydration or conditional generation-head
+publication. The current 5 MB/s per-stream ingestion limit and minimum
+10-second R2 roll interval also make it unsuitable as the interactive page
+store. A later adapter may measure it as an asynchronous mutation or WAL
+export channel, with recovery consuming the materialized R2 records. It does
+not replace the `PageStore` contract or repair R2's measured fault latency.
 
 ## Hybrid dual-write backend
 
@@ -928,9 +944,10 @@ The first remote provider gate is now measured:
   logical payload; and
 - every returned page passes exact byte verification.
 
-Tigris and Bunny pass this gate. Upstash does not pass the synchronous request
-shape, although large command batches may support a later serving tier. The
-committed evidence is in
+Tigris and Bunny pass this gate. R2 passes the exact-read and conditional-head
+checks but misses all three performance thresholds. Upstash does not pass the
+synchronous request shape, although large command batches may support a later
+serving tier. The committed evidence is in
 `perf-benchmarks/data/fly-sin-shared-cpu-1x/2026-09-12-remote-store-gate.md`.
 These are transport gates, not application latency promises. The adapter must
 still pass WAL acknowledgment, restart, partial hydration and repair tests.
@@ -970,10 +987,16 @@ commit-policy differences.
 - Upstash service limits and billing vary by plan. Batch ceilings must be
   configuration bounded and command/byte metrics must be retained:
   <https://upstash.com/pricing/redis>
-- Tigris and Bunny passed conditional-write and range-read checks with the
-  exact Rust client. Those operations remain release checks because provider
-  behavior and configuration can change:
-  <https://fly.io/docs/tigris/> and <https://bunny.net/storage/>.
+- Tigris, Bunny and R2 passed conditional-write and exact-read checks with the
+  exact Rust client. Only Tigris and Bunny passed the full performance gate.
+  Those operations remain release checks because provider behavior and
+  configuration can change: <https://fly.io/docs/tigris/>,
+  <https://bunny.net/storage/> and
+  <https://developers.cloudflare.com/r2/api/s3/>.
+- Cloudflare Pipelines currently guarantees exactly-once delivery to its sink,
+  caps each stream at 5 MB/s and rolls R2 files no faster than every 10
+  seconds. It remains an optional asynchronous ingestion investigation:
+  <https://developers.cloudflare.com/pipelines/>.
 
 ## Deferred decisions
 
@@ -983,7 +1006,6 @@ the architecture:
 - exact cache policy and data/index budget split;
 - exact coalescing interval around the initial 4 MiB segment target;
 - whether point faults fetch one 256 KiB range or a complete small segment;
-- Cloudflare R2 selection after the same deployed E2E measurement;
 - local WAL acknowledgment policy defaults;
 - retained-generation count and reader-lease duration;
 - when pageable indexes become the default rather than an explicit mode.
