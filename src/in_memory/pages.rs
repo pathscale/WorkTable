@@ -782,7 +782,8 @@ where
                     | DataExecutionError::SerializeError
                     | DataExecutionError::DeserializeError
                     | DataExecutionError::LiveCellCountOverflow
-                    | DataExecutionError::LiveCellCountUnderflow => return Err(e.into()),
+                    | DataExecutionError::LiveCellCountUnderflow
+                    | DataExecutionError::CellLockReentry => return Err(e.into()),
                 },
             }
         }
@@ -846,7 +847,8 @@ where
                     | DataExecutionError::DeserializeError
                     | DataExecutionError::InvalidLink
                     | DataExecutionError::LiveCellCountOverflow
-                    | DataExecutionError::LiveCellCountUnderflow => return Err(e.into()),
+                    | DataExecutionError::LiveCellCountUnderflow
+                    | DataExecutionError::CellLockReentry => return Err(e.into()),
                 },
             };
         }
@@ -1615,6 +1617,41 @@ mod tests {
             pages.with_mut_ref(link, |archived| archived.unghost()).unwrap();
         }
         assert_eq!(pages.select_non_ghosted(link), Ok(row));
+    }
+
+    #[test]
+    fn in_place_callback_can_select_a_colliding_row_without_deadlock() {
+        let pages = DataPages::<TestRow>::new();
+        let links: Vec<_> = (0..24)
+            .map(|value| pages.insert(TestRow { a: value, b: value }).unwrap())
+            .collect();
+        for link in &links {
+            unsafe { pages.with_mut_ref(*link, |row| row.unghost()).unwrap() };
+        }
+        assert_eq!(links[7].offset, 168);
+        assert_eq!(links[23].offset, 552);
+
+        let selected = unsafe {
+            pages
+                .with_mut_ref(links[7], |row| {
+                    row.inner.a = 70.into();
+                    pages.select_non_ghosted(links[23])
+                })
+                .unwrap()
+        };
+        assert_eq!(selected, Ok(TestRow { a: 23, b: 23 }));
+
+        let same_row = unsafe {
+            pages
+                .with_mut_ref(links[7], |_| pages.select_non_ghosted(links[7]))
+                .unwrap()
+        };
+        assert_eq!(
+            same_row,
+            Err(ExecutionError::DataPageError(
+                crate::in_memory::DataExecutionError::CellLockReentry
+            ))
+        );
     }
 
     #[test]

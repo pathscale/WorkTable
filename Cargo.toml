@@ -158,7 +158,7 @@ worktable_dsl = { path = "dsl", version = "^1.0.0-beta.19", optional = true }
 libc = { version = "^0.2", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "^0.61", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation"] }
+windows-sys = { version = "^0.61", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 fastrand = "2"
