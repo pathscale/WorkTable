@@ -10,7 +10,13 @@ use quote::quote;
 impl PersistGenerator {
     pub fn gen_query_update_impl(&mut self) -> syn::Result<TokenStream> {
         let custom_updates = if let Some(q) = &self.queries {
+            let profile = q.update_runtime.clone();
             let custom_updates = self.gen_custom_updates(q.updates.clone());
+            let custom_updates = crate::generators::profile_dispatch::wrap(
+                custom_updates,
+                profile.as_ref(),
+                &WorktableNameGenerator::from_table_name(self.name.to_string()).get_row_type_ident(),
+            )?;
 
             quote! {
                 #custom_updates
@@ -42,7 +48,7 @@ impl PersistGenerator {
             .keys()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -59,6 +65,7 @@ impl PersistGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let const_name = name_generator.get_page_inner_size_const_ident();
         let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
         // A full-row update rewrites every column, hence every secondary
@@ -84,13 +91,15 @@ impl PersistGenerator {
                             #pk_ident,
                             #secondary_events_ident
                         > = Operation::Update(UpdateOperation {
-                            id: OperationId::Single(uuid::Uuid::now_v7()),
+                            retired_link: None,
+                            id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                             primary_key_events: vec![],
                             secondary_keys_events,
                             bytes: self.0.data.select_raw(link)?,
                             link,
                         });
                         self.1.apply_operation(op)?;
+                        #columnar_dirty
                         return core::result::Result::Ok(());
                     }
                 }
@@ -126,15 +135,16 @@ impl PersistGenerator {
         // diverging size_check block.
         let update_body = if self.columns.is_sized {
             quote! {
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+                let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe { worktable::prelude::rkyv::access_unchecked_mut::<<#row_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
                 #diff_process_insert
                 #data_write
                 #persist_op
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -311,8 +321,8 @@ impl PersistGenerator {
                     // compensation above).
                     let mut merged_events = secondary_keys_events;
                     if row_holds_old_values {
-                        let mut reversed_diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> =
-                            std::collections::HashMap::new();
+                        let mut reversed_diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> =
+                            worktable::prelude::HashMap::new();
                         for (key, diff) in diffs {
                             reversed_diffs.insert(key, Difference { old: diff.new, new: diff.old });
                         }
@@ -321,7 +331,7 @@ impl PersistGenerator {
                         merged_events.extend(rollback_events);
                     }
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(uuid::Uuid::now_v7()),
+                        id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                         primary_key_events: vec![],
                         secondary_keys_events: merged_events,
                     });
@@ -433,7 +443,8 @@ impl PersistGenerator {
                             #primary_key_ident,
                             #secondary_events_ident
                         > = Operation::Update(UpdateOperation {
-                            id: OperationId::Single(uuid::Uuid::now_v7()),
+                            retired_link: None,
+                            id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                             primary_key_events: vec![],
                             secondary_keys_events,
                             bytes: self.0.data.select_raw(current_link)?,
@@ -489,6 +500,7 @@ impl PersistGenerator {
                 #primary_key_ident,
                 #secondary_events_ident
             > = Operation::Update(UpdateOperation {
+                retired_link: None,
                 id: op_id,
                 primary_key_events: vec![],
                 secondary_keys_events,
@@ -501,13 +513,14 @@ impl PersistGenerator {
     fn gen_process_diffs_insert_on_index(&self, idents: &[Ident], idx_idents: Option<&Vec<Ident>>) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let avt_type_ident = name_generator.get_available_type_ident();
+        let pk_ident = name_generator.get_primary_key_type_ident();
         // `updated_bytes` is bound by gen_data_write_and_fetch, which captures
         // the real row bytes right after the data write.
         let diff_container = if idx_idents.is_some() {
             quote! {
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 let row_new = row.clone();
-                let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
+                let mut diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> = worktable::prelude::HashMap::new();
             }
         } else {
             quote! {}
@@ -559,7 +572,7 @@ impl PersistGenerator {
                                 merged_events.extend(rollback_secondary_events);
 
                                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                                     primary_key_events: vec![],
                                     secondary_keys_events: merged_events,
                                 });
@@ -567,7 +580,53 @@ impl PersistGenerator {
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
                             }
-                            IndexError::NotFound => Err(WorkTableError::NotFound),
+                            IndexError::ColumnSlotIdExhausted {
+                                bits,
+                                inserted_already,
+                            } => {
+                                let (rollback_secondary_events, _): (#secondary_events_ident, _) = self.0.indexes.delete_from_indexes_cdc(
+                                    row_new.merge(row_old.clone()),
+                                    link,
+                                    inserted_already
+                                );
+
+                                let mut merged_events = secondary_events.clone();
+                                merged_events.extend(rollback_secondary_events);
+
+                                let ack_op: Operation<
+                                    <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                                    #pk_ident,
+                                    #secondary_events_ident
+                                > = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: merged_events,
+                                });
+                                self.1.apply_operation(ack_op)?;
+
+                                Err(WorkTableError::ColumnSlotIdExhausted(bits))
+                            }
+                            IndexError::NotFound => {
+                                // The insert side produced events before it
+                                // failed, and the index has already assigned
+                                // their ids. Returning without queueing them
+                                // leaves a hole the persistence stream can
+                                // never fill, which is what the sibling arm
+                                // above avoids and what this arm used to
+                                // cause.
+                                let ack_op: Operation<
+                                    <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                                    #pk_ident,
+                                    #secondary_events_ident
+                                > = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: secondary_events.clone(),
+                                });
+                                self.1.apply_operation(ack_op)?;
+
+                                Err(WorkTableError::NotFound)
+                            }
                         };
                     }
                     let mut secondary_keys_events = secondary_events;
@@ -587,10 +646,29 @@ impl PersistGenerator {
     }
 
     fn gen_process_diffs_remove_on_index(&self, idx_idents: Option<&Vec<Ident>>) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let pk_ident = name_generator.get_primary_key_type_ident();
+        let secondary_events_ident = name_generator.get_space_secondary_index_events_ident();
         if idx_idents.is_some() {
             quote! {
                 let (secondary_keys_events_remove, res) = self.0.indexes.process_difference_remove_cdc(link, diffs);
-                res?;
+                // The removal produced events whether or not it succeeded, and
+                // their ids are already assigned. Propagating the error without
+                // queueing them gaps the stream permanently, so acknowledge
+                // them first and then propagate unchanged.
+                if let core::result::Result::Err(e) = res {
+                    let ack_op: Operation<
+                        <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                        #pk_ident,
+                        #secondary_events_ident
+                    > = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                        primary_key_events: vec![],
+                        secondary_keys_events: secondary_keys_events_remove,
+                    });
+                    self.1.apply_operation(ack_op)?;
+                    return core::result::Result::Err(e.into());
+                }
                 op.extend_secondary_key_events(secondary_keys_events_remove);
             }
         } else {
@@ -615,7 +693,7 @@ impl PersistGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -632,14 +710,16 @@ impl PersistGenerator {
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
         let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let finish_update = if archived_swap_is_safe {
             quote! {
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
                 #diff_process_insert
                 #data_write
                 #persist_op
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -664,8 +744,8 @@ impl PersistGenerator {
                         .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
 
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+                let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe { worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
                 #size_check
                 #finish_update
@@ -693,7 +773,7 @@ impl PersistGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -775,6 +855,7 @@ impl PersistGenerator {
                                     #primary_key_ident,
                                     #secondary_events_ident
                                 > = Operation::Update(UpdateOperation {
+                                    retired_link: None,
                                     id: op_id,
                                     primary_key_events: vec![],
                                     secondary_keys_events,
@@ -811,6 +892,7 @@ impl PersistGenerator {
         };
         let full_row_lock = self.gen_full_lock_for_update();
         let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         let loop_tail = if has_unsized {
             quote! {}
@@ -860,7 +942,7 @@ impl PersistGenerator {
                 pks.sort_unstable();
                 pks.dedup();
 
-                let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+                let mut guards: worktable::prelude::HashMap<_, _> = worktable::prelude::HashMap::new();
                 // Full-row locks, not per-column custom locks: each row's
                 // unsized reinsert path mutates the whole row under these
                 // guards, and one uniform lock kind keeps every concurrent
@@ -871,7 +953,7 @@ impl PersistGenerator {
                     guards.insert(pk.clone(), pending_lock.into_guard());
                 }
 
-                let op_id = OperationId::Multi(uuid::Uuid::now_v7());
+                let op_id = OperationId::Multi(worktable::prelude::uuid::Uuid::now_v7());
                 for pk in pks.into_iter() {
                     // Re-resolve and re-validate under the held lock. The
                     // query's lock set includes the predicate column, so the
@@ -888,17 +970,18 @@ impl PersistGenerator {
                         continue;
                     }
                     let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
-                    let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                    let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                         .map_err(|_| WorkTableError::SerializeError)?;
 
                     let mut archived_row = unsafe {
-                        rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                        worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                             .unseal_unchecked()
                     };
 
                     #size_check
                     #loop_tail
                 }
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -933,7 +1016,7 @@ impl PersistGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -974,14 +1057,16 @@ impl PersistGenerator {
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
         let data_write = self.gen_data_write_and_fetch(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let finish_update = if archived_swap_is_safe {
             quote! {
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
                 #diff_process_insert
                 #data_write
                 #persist_op
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -993,21 +1078,43 @@ impl PersistGenerator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
-                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                 let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
 
                 let mut archived_row = unsafe {
-                    rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                    worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                         .unseal_unchecked()
                 };
 
-                let mut link: Link = self.0.indexes
-                    .#index
-                    .get_value(#by)
-                    .map(Into::into)
-                    .ok_or(WorkTableError::NotFound)?;
-
-                let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
+                let pk = {
+                    let mut retries = 0u32;
+                    loop {
+                        // Pin before reading the index so a relocated slot
+                        // cannot be reclaimed and reused while resolving its PK.
+                        // Drop the pin before yielding or awaiting the row lock.
+                        let resolved = {
+                            let _read_guard = self.0.data.read_guard();
+                            let link: Link = self.0.indexes.#index.get_value(#by)
+                                .map(Into::into)
+                                .ok_or(WorkTableError::NotFound)?;
+                            self.0.data.select_non_ghosted(link)
+                        };
+                        match resolved {
+                            core::result::Result::Ok(found) => break found.get_primary_key(),
+                            core::result::Result::Err(error) if error.is_row_absent() => {
+                                // Reinsert publishes a replacement before retiring
+                                // the old slot. Resolve the index again, rather than
+                                // reporting a deleted row from that stale slot.
+                                if retries >= 64 {
+                                    return Err(WorkTableError::NotFound);
+                                }
+                                retries += 1;
+                                worktable::prelude::yield_now().await;
+                            }
+                            core::result::Result::Err(error) => return Err(error.into()),
+                        }
+                    }
+                };
 
                 let pending_lock = { #custom_lock };
                 let _guard = pending_lock.into_guard_with_mutation();
@@ -1034,7 +1141,7 @@ impl PersistGenerator {
                                     return Err(WorkTableError::NotFound);
                                 }
                                 vacuum_retries += 1;
-                                tokio::task::yield_now().await;
+                                worktable::prelude::yield_now().await;
                             }
                             core::result::Result::Err(e) => return Err(e.into()),
                         }
@@ -1097,6 +1204,7 @@ mod tests {
             updates,
             deletes: IndexMap::new(),
             in_place: IndexMap::new(),
+            ..Default::default()
         });
         generator.gen_primary_key_def().unwrap();
 
@@ -1143,5 +1251,45 @@ mod tests {
             .find("Operation :: Update (UpdateOperation")
             .expect("update op emitted");
         assert!(insert < write && write < op_build, "emission order broken:\n{emitted}");
+
+        // Every event the index produced must reach the persistence stream,
+        // including on the paths that fail. The index assigns an event id at
+        // the moment it produces the event, so a path that returns without
+        // queueing one leaves a hole `BatchOperation::validate` will refuse
+        // forever, and the stall it causes names a range rather than a cause.
+        //
+        // The `NotFound` arm used to be exactly that: its sibling
+        // `AlreadyExists` arm built an Acknowledge and it did not.
+        let not_found = emitted
+            .find("IndexError :: NotFound =>")
+            .expect("not-found arm emitted");
+        let tail = &emitted[not_found..];
+        let ack = tail
+            .find("Operation :: Acknowledge")
+            .expect("not-found arm must acknowledge its events");
+        let returns = tail
+            .find("Err (WorkTableError :: NotFound)")
+            .expect("not-found arm returns");
+        assert!(
+            ack < returns,
+            "the not-found arm returns before acknowledging, which gaps the stream:\n{emitted}"
+        );
+
+        // Same for the removal side, where the events were dropped by a bare
+        // `res?` before the extend that would have carried them.
+        let removal = emitted
+            .find("process_difference_remove_cdc (link , diffs)")
+            .expect("old-key removal emitted");
+        let tail = &emitted[removal..];
+        let ack = tail
+            .find("Operation :: Acknowledge")
+            .expect("a failed removal must acknowledge its events");
+        let extend = tail
+            .find("op . extend_secondary_key_events")
+            .expect("successful removal extends the operation");
+        assert!(
+            ack < extend,
+            "a failed removal propagates before acknowledging, which gaps the stream:\n{emitted}"
+        );
     }
 }

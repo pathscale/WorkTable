@@ -15,7 +15,7 @@ fn insert(c: &mut Criterion) {
                     id: table.get_next_pk().into(),
                     value: fastrand::u64(..),
                 };
-                futures::executor::block_on(table.insert(black_box(row)))
+                nagoya::block_on(table.insert(black_box(row)))
             },
             BatchSize::SmallInput,
         )
@@ -30,7 +30,7 @@ fn select_by_pk(c: &mut Criterion) {
                 id: table.get_next_pk().into(),
                 value: fastrand::u64(..),
             };
-            futures::executor::block_on(table.insert(row)).unwrap()
+            nagoya::block_on(table.insert(row)).unwrap()
         })
         .collect();
 
@@ -82,7 +82,7 @@ fn delete(c: &mut Criterion) {
                     id: table.get_next_pk().into(),
                     value: fastrand::u64(..),
                 };
-                futures::executor::block_on(table.insert(row)).unwrap()
+                nagoya::block_on(table.insert(row)).unwrap()
             },
             |pk: SimplePrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
@@ -146,7 +146,7 @@ fn batch_insert(c: &mut Criterion) {
                             id: table.get_next_pk().into(),
                             value: i as u64,
                         };
-                        futures::executor::block_on(table.insert(black_box(row))).unwrap();
+                        nagoya::block_on(table.insert(black_box(row))).unwrap();
                     }
                     black_box(table)
                 },
@@ -171,7 +171,7 @@ fn batch_select_pk(c: &mut Criterion) {
                     id: table.get_next_pk().into(),
                     value: fastrand::u64(..),
                 };
-                futures::executor::block_on(table.insert(row)).unwrap()
+                nagoya::block_on(table.insert(row)).unwrap()
             })
             .collect();
 

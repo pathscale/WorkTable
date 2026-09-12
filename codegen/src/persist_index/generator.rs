@@ -17,6 +17,7 @@ pub struct Generator {
     pub struct_def: ItemStruct,
     pub field_types: HashMap<Ident, TokenStream>,
     pub attributes: PersistIndexAttributes,
+    pub skipped_fields: Vec<Ident>,
 }
 
 pub(super) struct IndexLayout {
@@ -90,11 +91,29 @@ impl WorktableNameGenerator {
 }
 
 impl Generator {
-    pub fn with_attributes(struct_def: ItemStruct, attributes: PersistIndexAttributes) -> Self {
+    pub fn with_attributes(mut struct_def: ItemStruct, attributes: PersistIndexAttributes) -> Self {
         let mut fields = vec![];
         let mut types = vec![];
+        let mut skipped_fields = vec![];
 
         for field in &struct_def.fields {
+            let skipped = field.attrs.iter().any(|attribute| {
+                if !attribute.path().is_ident("index") {
+                    return false;
+                }
+                let mut skipped = false;
+                let _ = attribute.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("skip") {
+                        skipped = true;
+                    }
+                    Ok(())
+                });
+                skipped
+            });
+            if skipped {
+                skipped_fields.push(field.ident.clone().expect("index fields should always be named fields"));
+                continue;
+            }
             fields.push(field.ident.clone().expect("index fields should always be named fields"));
 
             let syn::Type::Path(type_path) = &field.ty else {
@@ -122,12 +141,21 @@ impl Generator {
 
             types.push(ty.to_token_stream());
         }
+        if let syn::Fields::Named(named) = &mut struct_def.fields {
+            named.named = named
+                .named
+                .iter()
+                .filter(|field| !skipped_fields.iter().any(|ident| field.ident.as_ref() == Some(ident)))
+                .cloned()
+                .collect();
+        }
         let map = fields.into_iter().zip(types).collect::<HashMap<_, _>>();
 
         Self {
             struct_def,
             field_types: map,
             attributes,
+            skipped_fields,
         }
     }
 
@@ -150,7 +178,7 @@ impl Generator {
                     let field_type = &field.ty;
                     Ok(quote! { #i: #field_type, })
                 } else if is_unsized(&t.to_string()) {
-                    let const_size = name_generator.get_page_inner_size_const_ident();
+                    let const_size = name_generator.get_disk_page_capacity();
                     Ok(quote! {
                         #i: (Vec<GeneralPage<TableOfContentsPage<(#t, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#t, {#const_size as u32}>>>),
                     })
@@ -193,7 +221,8 @@ impl Generator {
     fn gen_persist_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let ident = name_generator.get_work_table_ident();
-        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let page_const_name = name_generator.get_page_size_const_ident();
+        let inner_const_name = name_generator.get_disk_page_capacity();
         let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
 
@@ -216,15 +245,15 @@ impl Generator {
                     },
                     _ => quote! {
                         {
-                            let mut file = tokio::fs::File::create(format!("{}/{}{}", path, #index_name_literal, #index_extension)).await?;
+                            let mut file = worktable::prelude::fsx::create(format!("{}/{}{}", path, #index_name_literal, #index_extension)).await?;
                             let mut info = #ident::space_info_default();
                             info.inner.page_count = self.#i.1.len() as u32 + self.#i.0.len() as u32;
-                            persist_page(&mut info, &mut file).await?;
+                            persist_page::<_, { #page_const_name as u32 }>(&mut info, &mut file).await?;
                             for mut page in &mut self.#i.0 {
-                                persist_page(&mut page, &mut file).await?;
+                                persist_page::<_, { #page_const_name as u32 }>(&mut page, &mut file).await?;
                             }
                             for mut page in &mut self.#i.1 {
-                                persist_page(&mut page, &mut file).await?;
+                                persist_page::<_, { #page_const_name as u32 }>(&mut page, &mut file).await?;
                             }
                         }
                     },
@@ -234,7 +263,7 @@ impl Generator {
             .expect("generated index layouts were validated");
 
         quote! {
-            pub async fn persist(&mut self, path: &str) -> eyre::Result<()>
+            pub async fn persist(&mut self, path: &str) -> worktable::prelude::eyre::Result<()>
             {
                 #(#persist_logic)*
                 Ok(())
@@ -247,7 +276,7 @@ impl Generator {
     fn gen_parse_from_file_fn(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
         let page_const_name = name_generator.get_page_size_const_ident();
-        let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let inner_const_name = name_generator.get_disk_page_capacity();
         let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
 
@@ -295,18 +324,18 @@ impl Generator {
                     _ => quote! {
                         let #i: #parsed_type = {
                             let mut #i = vec![];
-                            let mut file = tokio::fs::File::open(format!("{}/{}{}", path, #literal, #index_extension)).await?;
-                            let info = parse_page::<SpaceInfoPage<()>, { #page_const_name as u32 }>(&mut file, 0).await?;
-                            let file_length = file.metadata().await?.len();
+                            let mut file = worktable::prelude::fsx::open_read_only(format!("{}/{}{}", path, #literal, #index_extension)).await?;
+                            let info = parse_page::<SpaceInfoPage<()>, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut file, 0).await?;
+                            let file_length = worktable::prelude::fsx::file_metadata(&mut file).await?;
                             // Pages sit at a fixed #page_const_name stride
                             // (header inside the slot): the next free page id
                             // is ceil(len / stride). The previous divisor used
                             // stride + header and an unconditional +1.
                             let page_id = file_length.div_ceil(#page_const_name as u64);
-                            let next_page_id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(page_id as u32));
-                            let toc = IndexTableOfContents::<_, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
+                            let next_page_id = worktable::prelude::Arc::new(core::sync::atomic::AtomicU32::new(page_id as u32));
+                            let toc = IndexTableOfContents::<_, { #inner_const_name as u32 }, { #page_const_name as u32 }>::parse_from_file(&mut file, 0.into(), next_page_id.clone()).await?;
                             for page_id in toc.iter().map(|(_, page_id)| page_id) {
-                                let index = parse_page::<_, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
+                                let index = parse_page::<_, { #inner_const_name as u32 }, { #page_const_name as u32 }>(&mut file, (*page_id).into()).await?;
                                 #i.push(index);
                             }
                             (toc.pages, #i)
@@ -326,7 +355,7 @@ impl Generator {
             .collect::<Vec<_>>();
 
         quote! {
-            pub async fn parse_from_file(path: &str) -> eyre::Result<Self> {
+            pub async fn parse_from_file(path: &str) -> worktable::prelude::eyre::Result<Self> {
                 #(#field_names_literals)*
 
                 Ok(Self {
@@ -369,7 +398,8 @@ impl Generator {
     /// `TreeIndex` into `Vec` of `IndexPage`s using `IndexPage::from_nod` function.
     fn gen_get_persisted_index_fn(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let const_name = name_generator.get_page_inner_size_const_ident();
+        let const_name = name_generator.get_disk_page_capacity();
+        let page_const_name = name_generator.get_page_size_const_ident();
 
         let idents = self
             .struct_def
@@ -401,7 +431,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                         }
-                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend == Some(ArtBackend::ArcticMulti) {
@@ -415,7 +445,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(IndexPage::from_node(&node, size));
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend == Some(ArtBackend::Arctic) && is_unsized(&ty.to_string()) {
@@ -428,7 +458,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                         }
-                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend == Some(ArtBackend::Arctic) {
@@ -442,7 +472,7 @@ impl Generator {
                         for node in shadow.snapshot_nodes() {
                             pages.push(IndexPage::from_node(&node, size));
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else if layout.art_backend.is_some() {
@@ -462,7 +492,7 @@ impl Generator {
                                 let page = UnsizedIndexPage::from_node(node.as_ref());
                                 pages.push(page);
                             }
-                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                             let #i = (toc.pages, pages);
                         })
                     } else {
@@ -472,7 +502,7 @@ impl Generator {
                                 let page = UnsizedIndexPage::from_node(node.as_ref());
                                 pages.push(page);
                             }
-                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                            let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                             let #i = (toc.pages, pages);
                         })
                     }
@@ -491,7 +521,7 @@ impl Generator {
                                 .collect();
                             pages.push(IndexPage::from_node(&node, size));
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 } else {
@@ -502,7 +532,7 @@ impl Generator {
                             let page = IndexPage::from_node(&node, size);
                             pages.push(page);
                         }
-                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                        let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }, { #page_const_name as u32 }>(pages);
                         let #i = (toc.pages, pages);
                     })
                 }
@@ -523,7 +553,7 @@ impl Generator {
     /// persisted page back to `TreeIndex`
     fn gen_from_persisted_fn(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let const_name = name_generator.get_page_inner_size_const_ident();
+        let const_name = name_generator.get_disk_page_capacity();
 
         let idents = self
             .struct_def
@@ -701,6 +731,7 @@ impl Generator {
                 }
             })
             .collect::<syn::Result<Vec<_>>>()?;
+        let skipped_fields = &self.skipped_fields;
 
         Ok(quote! {
             fn from_persisted(persisted: Self::PersistedIndex) -> Self {
@@ -708,6 +739,7 @@ impl Generator {
 
                 Self {
                     #(#idents,)*
+                    #(#skipped_fields: Default::default(),)*
                 }
             }
         })

@@ -96,12 +96,28 @@ impl WorktableNameGenerator {
         Ident::new(format!("{}Index", self.name).as_str(), Span::mixed_site())
     }
 
+    /// The alias the generated code names its runtime through.
+    ///
+    /// One name per table rather than the concrete type repeated at every site
+    /// that needs it: the sync primitives, the timers and the vacuum spawn all
+    /// have to agree, and a table that resolved its runtime twice could get two
+    /// answers.
+    pub fn get_runtime_type_ident(&self) -> Ident {
+        Ident::new(format!("{}Runtime", self.name).as_str(), Span::mixed_site())
+    }
+
     pub fn get_page_size_const_ident(&self) -> Ident {
         let upper_snake_case_name = self.name.from_case(Case::Pascal).to_case(Case::UpperSnake);
         Ident::new(
             format!("{}_PAGE_SIZE", upper_snake_case_name.to_uppercase()).as_str(),
             Span::mixed_site(),
         )
+    }
+
+    /// Payload budget for index and metadata pages, independent of row slots.
+    pub fn get_disk_page_capacity(&self) -> proc_macro2::TokenStream {
+        let page_size = self.get_page_size_const_ident();
+        quote::quote! { (#page_size - worktable::prelude::GENERAL_HEADER_SIZE) }
     }
 
     pub fn get_page_inner_size_const_ident(&self) -> Ident {

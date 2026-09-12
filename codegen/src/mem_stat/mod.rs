@@ -3,11 +3,11 @@ use quote::quote;
 use syn::{Data, DeriveInput, Fields, Result, Type};
 
 fn gen_heap_size_body(data: &Data) -> Result<TokenStream> {
-    gen_mem_fn_body(data, quote! { heap_size() }, quote! { std::mem::size_of::<Self>() })
+    gen_mem_fn_body(data, quote! { heap_size() }, quote! { core::mem::size_of::<Self>() })
 }
 
 fn gen_used_size_body(data: &Data) -> Result<TokenStream> {
-    gen_mem_fn_body(data, quote! { used_size() }, quote! { std::mem::size_of::<Self>() })
+    gen_mem_fn_body(data, quote! { used_size() }, quote! { core::mem::size_of::<Self>() })
 }
 
 fn gen_mem_fn_body(data: &Data, method: TokenStream, default_for_copy: TokenStream) -> Result<TokenStream> {

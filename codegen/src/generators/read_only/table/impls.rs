@@ -237,19 +237,19 @@ impl ReadOnlyGenerator {
         let pk_types_unsized = is_unsized_vec(pk_types);
         let index_setup = if self.columns.primary_index_backend == crate::common::model::IndexBackend::Arctic {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                     ArcticIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
                 ));
             }
         } else if self.columns.primary_index_backend == crate::common::model::IndexBackend::Congee {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                     CongeeIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
                 ));
             }
         } else if pk_types_unsized {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                     IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name)
                 ));
             }
@@ -260,7 +260,7 @@ impl ReadOnlyGenerator {
             };
             quote! {
                 let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                     #pk_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                 ));
             }
@@ -279,25 +279,25 @@ impl ReadOnlyGenerator {
                     + 'static,
                 C: Clone + PersistenceConfig,
             {
-                async fn new(engine: E) -> eyre::Result<Self> {
+                async fn new(engine: E) -> worktable::prelude::eyre::Result<Self> {
                     let mut inner = WorkTable::default();
                     inner.table_name = #table_name;
                     #index_setup
                     core::result::Result::Ok(Self(inner))
                 }
 
-                async fn load(engine: E) -> eyre::Result<Self> {
+                async fn load(engine: E) -> worktable::prelude::eyre::Result<Self> {
                     Self::load_with(engine, LoadMode::Strict).await
                 }
 
-                async fn load_with(engine: E, mode: LoadMode) -> eyre::Result<Self> {
+                async fn load_with(engine: E, mode: LoadMode) -> worktable::prelude::eyre::Result<Self> {
                     let table_path = engine.config().table_path().to_owned();
                     if !std::path::Path::new(&table_path).exists() {
                         return Self::new(engine).await;
                     };
                     let table = load_persisted_state(&table_path, async {
                         let space = #space_ident::parse_file(&table_path).await?;
-                        Ok::<_, eyre::Report>(space.into_worktable_with_mode(&table_path, mode)?)
+                        Ok::<_, worktable::prelude::eyre::Report>(space.into_worktable_with_mode(&table_path, mode)?)
                     }).await?;
                     Ok(table)
                 }
@@ -369,7 +369,7 @@ impl ReadOnlyGenerator {
                                                                      #row_fields_ident>
             where
                 #primary_key_type: From<Pk>,
-                R: std::ops::RangeBounds<Pk> + 'a,
+                R: core::ops::RangeBounds<Pk> + 'a,
                 Pk: Clone + 'a,
             {
                 let converted_range = (
@@ -378,7 +378,7 @@ impl ReadOnlyGenerator {
                 );
                 // Delay the grace-period guard until the returned iterator is
                 // consumed so an idle query builder cannot pin reclamation.
-                let rows = std::iter::once_with(move || {
+                let rows = core::iter::once_with(move || {
                     let read_guard = self.0.data.read_guard();
                     self.0.primary_index.pk_map
                         .range_links(converted_range)
@@ -460,7 +460,7 @@ impl ReadOnlyGenerator {
         quote! {
             pub async fn iter_with_async<
                 F: Fn(#row_type) -> Fut,
-                Fut: std::future::Future<Output = core::result::Result<(), WorkTableError>>
+                Fut: core::future::Future<Output = core::result::Result<(), WorkTableError>>
             >(&self, f: F) -> core::result::Result<(), WorkTableError> {
                 #inner
             }

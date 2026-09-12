@@ -95,7 +95,7 @@ async fn vacuum_never_loses_surviving_rows() {
     reader.await.unwrap();
     // Let vacuum run a few more cycles, then stop it and let grace periods drain.
     tokio::time::sleep(Duration::from_millis(200)).await;
-    handle.abort();
+    handle.cancel();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // FULL AUDIT: every survivor must still be present and correct, by pk and

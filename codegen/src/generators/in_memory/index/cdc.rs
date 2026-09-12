@@ -311,7 +311,7 @@ impl InMemoryGenerator {
             fn process_difference_remove_cdc(
                 &self,
                 link: Link,
-                difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
+                difference: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>>
             ) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 #(#process_difference_rows)*
                 (#events_ident {
@@ -381,7 +381,7 @@ impl InMemoryGenerator {
             fn process_difference_insert_cdc(
                 &self,
                 link: Link,
-                difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
+                difference: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>>
             ) -> (#events_ident, Result<(), IndexError<#available_index_ident>>) {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
                 let mut partial_events = #events_ident::default();

@@ -13,10 +13,25 @@ permissions:
   contents: read
 
 jobs:
+  # `scripts/ci-local.sh` runs `cargo fmt --all --check` as its first step. CI
+  # did not, which made the script stricter than CI instead of equal to it, and
+  # formatting drift reached master unnoticed. Same command, same arguments.
+  fmt:
+    name: Formatting
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Formatting (cargo fmt --all --check)
+        run: cargo fmt --all --check
+
   build:
     name: Build and test (${{ matrix.name }})
     runs-on: ubicloud-standard-2
-    timeout-minutes: 15
+    # A cold all-target workspace build plus compile-fail's nested Cargo checks
+    # exceeded 30 minutes when GitHub's cache service was unavailable. Keep
+    # enough room for a real from-scratch release gate.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +77,42 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets ${{ matrix.args }} -- -D warnings
 
+  cell_lock_models:
+    name: Archived-row lock concurrency models
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release --lib cell_lock_models
+        env:
+          RUSTFLAGS: --cfg wt_loom
+          CARGO_TARGET_DIR: target/cell-lock-loom
+
+  no_default_features:
+    name: Library without default features
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sh scripts/check-no-std.sh -p worktable --lib --no-default-features
+      - run: sh scripts/check-no-std.sh --manifest-path tests/nostd-consumer/Cargo.toml
+      - run: cargo test --manifest-path tests/nostd-consumer/Cargo.toml
+      - run: rustup target add x86_64-pc-windows-gnu
+      - run: sh scripts/check-no-std.sh -p worktable --lib --no-default-features
+        env:
+          NO_STD_TARGET: x86_64-pc-windows-gnu
+          CARGO_TARGET_DIR: target/no-std-cross
+      - name: Portable search feature combinations
+        run: |
+          for search in wti-predictable-search wti-hybrid-search wti-std-search; do
+            sh scripts/check-no-std.sh -p worktable --lib --no-default-features --features "$search,logical-index-persistence,versioned-row-publication,runtime-backends"
+          done
+      - run: cargo clippy -p worktable --lib --no-default-features -- -D warnings
+
   duplicate_index_crates:
     name: One version of each shared index crate
     runs-on: ubicloud-standard-2
@@ -91,14 +142,14 @@ jobs:
             echo "$duplicates"
             echo
             echo "WorkTablesIndex, data_bucket and worktable move as one train."
-            echo "Publish them in lockstep, or pin them to agree."
+            echo "Publish compatible releases in dependency order."
             exit 1
           fi
           echo "one version of each: ok"
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [build, clippy_check, duplicate_index_crates]
+    needs: [fmt, build, clippy_check, cell_lock_models, no_default_features, duplicate_index_crates]
     runs-on: ubicloud-standard-2
     timeout-minutes: 45
     steps:
@@ -109,26 +160,49 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then echo "CARGO_REGISTRY_TOKEN not set; skipping publish"; exit 0; fi
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CARGO_REGISTRY_TOKEN is not set on this repository" >&2
+            exit 1
+          fi
 
           # Publish in dependency order. worktable_codegen depends on
           # worktable_dsl and worktable depends on worktable_codegen, both by
-          # path with an exact version, so each must be on the registry before
+          # path with a caret requirement, so each must be on the registry before
           # the next is packaged. Omitting worktable_dsl here is what made
           # `cargo publish -p worktable_codegen` fail with "no matching package
           # named `worktable_dsl` found" the moment the DSL extraction landed.
+          manifest_version() {
+            cargo read-manifest --manifest-path "$1" | jq -er '.version'
+          }
+
+          is_published() {
+            cargo info --registry crates-io "$1@$2" >/dev/null 2>&1
+          }
+
+          wait_until_published() {
+            package=$1
+            version=$2
+            for _ in $(seq 1 60); do
+              if is_published "$package" "$version"; then
+                return 0
+              fi
+              sleep 5
+            done
+            echo "$package $version did not appear on crates.io in five minutes" >&2
+            return 1
+          }
+
           publish_if_new() {
-            crate="$1"
+            package="$1"
             manifest="$2"
-            version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$manifest" | head -1)
-            # crates.io index paths: four or more characters is {first two}/{next two}/{name}.
-            if curl -fsSL "https://index.crates.io/wo/rk/$crate" \
-              | sed -n 's/.*"vers":"\([^"]*\)".*/\1/p' | grep -qx "$version"; then
-              echo "$crate $version is already on crates.io; skipping"
+            version=$(manifest_version "$manifest")
+            if is_published "$package" "$version"; then
+              echo "$package $version is already on crates.io; skipping"
               return 0
             fi
-            echo "publishing $crate $version"
-            cargo publish -p "$crate"
+            echo "publishing $package $version"
+            cargo publish -p "$package"
+            wait_until_published "$package" "$version"
           }
 
           publish_if_new worktable_dsl dsl/Cargo.toml

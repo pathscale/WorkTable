@@ -14,7 +14,13 @@ impl PersistGenerator {
         let table_ident = name_generator.get_work_table_ident();
 
         let custom_deletes = if let Some(q) = &self.queries {
+            let profile = q.delete_runtime.clone();
             let custom_deletes = self.gen_custom_deletes(q.deletes.clone());
+            let custom_deletes = crate::generators::profile_dispatch::wrap(
+                custom_deletes,
+                profile.as_ref(),
+                &name_generator.get_row_type_ident(),
+            )?;
             quote! {
                 #custom_deletes
             }
@@ -38,6 +44,7 @@ impl PersistGenerator {
         let pk_ident = name_generator.get_primary_key_type_ident();
         let delete_logic = self.gen_delete_logic(true);
         let full_row_lock = self.gen_full_lock_for_update();
+        let publication = crate::generators::columnar::table_publication_guard(&self.columns);
 
         quote! {
             pub async fn delete<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -46,6 +53,7 @@ impl PersistGenerator {
                 let pk: #pk_ident = pk.into();
                 let pending_lock = { #full_row_lock };
                 let _guard = pending_lock.into_guard_with_mutation();
+                #publication
 
                 #delete_logic
 
@@ -58,6 +66,7 @@ impl PersistGenerator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_ident = name_generator.get_primary_key_type_ident();
         let delete_logic = self.gen_delete_logic(false);
+        let publication = crate::generators::columnar::table_publication_guard(&self.columns);
 
         quote! {
             pub async fn delete_without_lock<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -65,6 +74,7 @@ impl PersistGenerator {
             {
                 let pk: #pk_ident = pk.into();
                 let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
+                #publication
                 #delete_logic
                 core::result::Result::Ok(())
             }
@@ -98,7 +108,23 @@ impl PersistGenerator {
                     row,
                     link,
                 );
-            res?;
+            // `delete_row_cdc` produces events whether or not it succeeds, and
+            // the index has already assigned their ids. Propagating the error
+            // without queueing them leaves a hole the persistence stream can
+            // never fill, exactly as the restore path below is careful not to.
+            if let core::result::Result::Err(e) = res {
+                let ack_op: Operation<
+                    <<#pk_ident as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
+                    #pk_ident,
+                    #secondary_events_ident
+                > = Operation::Acknowledge(AcknowledgeOperation {
+                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                    primary_key_events: vec![],
+                    secondary_keys_events,
+                });
+                self.1.apply_operation(ack_op)?;
+                return core::result::Result::Err(e.into());
+            }
             let (_, primary_key_events) = self.0.primary_index.remove_cdc(pk.clone(), link);
             if let core::result::Result::Err(e) = self.0.data.delete(link) {
                 let mut secondary_keys_events = secondary_keys_events;
@@ -133,7 +159,7 @@ impl PersistGenerator {
                     #pk_ident,
                     #secondary_events_ident
                 > = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                     primary_key_events,
                     secondary_keys_events,
                 });
@@ -145,7 +171,7 @@ impl PersistGenerator {
                 #pk_ident,
                 #secondary_events_ident
             > = Operation::Delete(DeleteOperation {
-                id: uuid::Uuid::now_v7().into(),
+                id: worktable::prelude::uuid::Uuid::now_v7().into(),
                 secondary_keys_events,
                 primary_key_events,
                 link,
@@ -219,7 +245,7 @@ impl PersistGenerator {
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
-                let pks = std::cell::RefCell::new(Vec::new());
+                let pks = core::cell::RefCell::new(Vec::new());
                 self.iter_with(|row| {
                     if row.#field == by {
                         pks.borrow_mut().push(row.get_primary_key());
@@ -386,6 +412,22 @@ mod tests {
         assert!(
             emitted.contains("Operation :: Acknowledge"),
             "acknowledge op missing:\n{emitted}"
+        );
+
+        // A failed secondary removal used to propagate through a bare `res?`,
+        // dropping the events `delete_row_cdc` had already produced. Their ids
+        // are assigned when the index produces them, so the persistence stream
+        // gapped permanently and the stall named a range rather than a cause.
+        let secondary = emitted.find("delete_row_cdc").expect("secondary removal emitted");
+        let tail = &emitted[secondary..];
+        let ack = tail
+            .find("Operation :: Acknowledge")
+            .expect("a failed secondary removal must acknowledge its events");
+        assert!(
+            ack < tail
+                .find("remove_cdc (pk . clone () , link)")
+                .expect("primary removal emitted"),
+            "the secondary removal propagates before acknowledging, which gaps the stream:\n{emitted}"
         );
     }
 }

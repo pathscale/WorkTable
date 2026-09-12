@@ -15,8 +15,8 @@
 //! the preceding check. Every insert, delete and upsert passes through those
 //! stripes, including mutations that never ask for reclaimable space.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::time::Duration;
 
 use smart_default::SmartDefault;
 
@@ -114,7 +114,7 @@ pub trait ForegroundActivity {
 
 impl<LockType, PrimaryKey> ForegroundActivity for crate::lock::LockMap<LockType, PrimaryKey>
 where
-    PrimaryKey: Clone + std::fmt::Debug + Eq + std::hash::Hash,
+    PrimaryKey: Clone + core::fmt::Debug + Eq + core::hash::Hash,
 {
     fn mutations_in_flight(&self) -> usize {
         crate::lock::LockMap::mutations_in_flight(self)
@@ -132,7 +132,7 @@ impl VacuumPacing {
     /// once even on an idle table, so a waiting insert gets the registry
     /// before vacuum asks for it back.
     pub(crate) async fn wait_until_quiet(&self, activity: &impl ForegroundActivity, gate: &VacuumGate) {
-        tokio::task::yield_now().await;
+        nagoya::yield_now().await;
 
         let mut backoff = self.backoff;
         let mut quiet = 0;
@@ -143,7 +143,7 @@ impl VacuumPacing {
                 gate.note_stand_down();
                 quiet = 0;
                 observed_epoch = current_epoch;
-                tokio::time::sleep(backoff).await;
+                nagoya::sleep(backoff).await;
                 // Doubling, so a table busy for a long time is asked about
                 // cheaply rather than every couple of milliseconds.
                 backoff = backoff.saturating_mul(2).min(self.max_backoff);
@@ -156,15 +156,15 @@ impl VacuumPacing {
             }
             // Idle once is a gap between two writes. Look again, close
             // together, before believing it.
-            tokio::time::sleep(self.backoff).await;
+            nagoya::sleep(self.backoff).await;
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use super::*;
 
@@ -208,7 +208,7 @@ mod tests {
             })
         };
 
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        nagoya::sleep(Duration::from_millis(10)).await;
         assert!(
             !waiting.is_finished(),
             "activity between snapshots must keep vacuum out"

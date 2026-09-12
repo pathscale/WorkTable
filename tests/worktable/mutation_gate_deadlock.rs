@@ -95,7 +95,7 @@ fn concurrent_same_stripe_updates_do_not_deadlock() {
             ta.await.unwrap();
             tb.await.unwrap();
         };
-        timeout(Duration::from_secs(20), joined)
+        timeout(Duration::from_secs(5), joined)
             .await
             .expect("same-stripe concurrent updates deadlocked (gate held across .await)");
 
@@ -137,7 +137,7 @@ fn many_same_stripe_updates_do_not_starve_worker_pool() {
                 h.await.unwrap();
             }
         };
-        timeout(Duration::from_secs(30), joined)
+        timeout(Duration::from_secs(5), joined)
             .await
             .expect("same-stripe pool starved (gate spin held across .await)");
     });

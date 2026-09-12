@@ -1,9 +1,12 @@
-use std::collections::VecDeque;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
+use std::time::Instant;
 
 /// How long retirements have to stop arriving for a delete burst to count as
 /// over. Short enough that a sweep still follows a delete promptly, long
@@ -85,7 +88,7 @@ pub struct EmptyDataVacuum<
     const DATA_LENGTH: usize,
     SecondaryEvents = (),
 > where
-    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static + Debug,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
@@ -139,7 +142,7 @@ impl<
     >
 where
     Row: TableRow<PrimaryKey> + StorableRow + Send + Clone + 'static,
-    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + core::hash::Hash,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
@@ -217,7 +220,7 @@ where
         let deadline = Instant::now() + MAX_SETTLE;
         loop {
             let before = self.data_pages.pending_retirements();
-            tokio::time::sleep(SETTLE_INTERVAL).await;
+            nagoya::sleep(SETTLE_INTERVAL).await;
             if self.data_pages.pending_retirements() == before || Instant::now() >= deadline {
                 return;
             }
@@ -648,7 +651,7 @@ where
                     .reinsert_row_cdc(row.clone(), old_link, row, new_link);
             res.expect("should be ok as index were no violated");
             let (_, primary_key_events) = self.primary_index.insert_cdc(pk.clone(), new_link);
-            persistence.apply_move(raw_data, new_link, primary_key_events, secondary_keys_events)?;
+            persistence.apply_move(raw_data, old_link, new_link, primary_key_events, secondary_keys_events)?;
         } else {
             self.secondary_indexes
                 .reinsert_row(row.clone(), old_link, row, new_link)
@@ -684,7 +687,7 @@ impl<
     >
 where
     Row: TableRow<PrimaryKey> + StorableRow + Send + Sync + Clone + 'static,
-    PrimaryKey: Debug + Clone + Ord + Send + Sync + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + Sync + TablePrimaryKey + core::hash::Hash,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>> + Send + Sync + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     Row: Archive
@@ -737,9 +740,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, VecDeque};
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use alloc::collections::VecDeque;
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use hashbrown::HashMap;
 
     use data_bucket::Link;
     use data_bucket::page::PageId;
@@ -747,7 +751,7 @@ mod tests {
 
     use crate::in_memory::{ArchivedRowWrapper, RowWrapper, StorableRow};
     use crate::prelude::*;
-    use std::time::Duration;
+    use core::time::Duration;
 
     use crate::vacuum::vacuum::{CandidateMove, EmptyDataVacuum};
     use crate::vacuum::{VacuumGate, VacuumPacing, WorkTableVacuum};
@@ -1074,16 +1078,18 @@ mod tests {
     }
 
     /// The wake fires on the *first* crossing of the threshold, which during a
-    /// ranged delete is near its start. Reporting work there sends the sweep in
-    /// while the delete is still streaming, to compete with the workload
-    /// producing the garbage and compact pages that are still being emptied
-    /// behind it.
+    /// ranged delete is near its start. The whole ranged operation carries a
+    /// bulk-mutation guard across its chunk gaps, so the actual sweep must wait
+    /// after waking instead of compacting a moving target.
     ///
-    /// So it settles first. This asserts the sweep is not told to run until the
-    /// burst that woke it has stopped.
+    /// Exercise the complete wake-to-sweep path. The old assertion stopped at
+    /// `wait_until_worth_running` and inferred future work from a wall-clock
+    /// sampling heuristic. A loaded runner could starve the delete task for one
+    /// settle interval and fail that assertion even though `defragment` still
+    /// obeyed the operation-wide activity guard before doing any work.
     #[tokio::test]
-    async fn a_woken_sweep_waits_for_the_delete_burst_to_settle() {
-        let table = Arc::new(TestWorkTable::default());
+    async fn a_woken_sweep_waits_for_a_bulk_delete_to_finish() {
+        let table = TestWorkTable::default();
         let mut ids = Vec::new();
         for i in 0..4_000 {
             let row = TestRow {
@@ -1099,11 +1105,19 @@ mod tests {
         let vacuum = create_vacuum(&table);
         vacuum.arm_wake(1024);
 
-        let burst_done = Arc::new(AtomicBool::new(false));
-        let deleting = tokio::spawn({
-            let (table, burst_done) = (Arc::clone(&table), Arc::clone(&burst_done));
-            let victims: Vec<_> = ids.iter().step_by(2).copied().collect();
-            async move {
+        let burst_done = AtomicBool::new(false);
+        let victims: Vec<_> = ids.iter().step_by(2).copied().collect();
+        tokio::join!(
+            async {
+                vacuum.wait_until_worth_running().await;
+                vacuum.defragment().await.unwrap();
+                assert!(
+                    burst_done.load(Ordering::Acquire),
+                    "the sweep ran while the bulk delete was still active"
+                );
+            },
+            async {
+                let _bulk_mutation = table.0.lock_manager.bulk_mutation_guard();
                 // Spread over well past one settle interval, in the chunks a
                 // ranged delete actually arrives in.
                 for chunk in victims.chunks(100) {
@@ -1114,14 +1128,7 @@ mod tests {
                 }
                 burst_done.store(true, Ordering::Release);
             }
-        });
-
-        vacuum.wait_until_worth_running().await;
-        assert!(
-            burst_done.load(Ordering::Acquire),
-            "the sweep was told to run while deletes were still streaming"
         );
-        deleting.await.unwrap();
     }
 
     /// Creates an EmptyDataVacuum instance from a WorkTable

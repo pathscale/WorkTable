@@ -19,31 +19,42 @@
 
 use crate::model::{Columns, IndexBackend, Persistence};
 
-/// data_bucket's on-disk layer seeks with its own hardcoded `PAGE_SIZE` of
-/// 16384 bytes (`seek_to_page_start`, `seek_by_link`, `persist_page`), while
-/// the generated table threads the user's `page_size` through its page-id and
-/// length arithmetic. Any other value therefore reads and writes the wrong
-/// file offsets as soon as the table persists, silently corrupting it.
-/// In-memory tables never seek a file: for them `page_size` only sizes index
-/// nodes and stays configurable.
-const DATA_BUCKET_PAGE_SIZE: u32 = 16384;
+/// Bytes of `GeneralHeader` at the front of every persisted page. A page has
+/// to be larger than this or there is no room left for a row.
+const GENERAL_HEADER_SIZE: u32 = 28;
 
+/// The smallest persisted page worth allowing. Below this the header is most
+/// of the page and the table spends its time on page transitions; the number
+/// is a floor against obvious mistakes, not a tuned value.
+///
+/// It applies to persisted tables only. An in-memory table writes no header,
+/// so its `page_size` only sizes index nodes and a small one is a legitimate
+/// choice rather than a mistake.
+const MINIMUM_PERSISTED_PAGE_SIZE: u32 = 512;
+
+/// A persisted table used to be refused any page size but 16384, because
+/// `data_bucket` computed every offset from a hardcoded `PAGE_SIZE` in
+/// `seek_to_page_start`, `seek_by_link` and `persist_page` while the generated
+/// table threaded the configured size through its page-id arithmetic. The two
+/// disagreed and the file was silently corrupt.
+///
+/// Those seeks take the stride as a parameter now, and the generated table
+/// passes its own constant to every one of them, in the data file and the index
+/// file alike. The restriction is gone. What is left is the arithmetic that
+/// still has to hold.
 pub fn validate_page_size(config: Option<&crate::model::Config>, persistence: Persistence) -> syn::Result<()> {
     let Some(config) = config else { return Ok(()) };
     let Some(page_size) = config.page_size else {
         return Ok(());
     };
-    if persistence.is_persisted() && page_size != DATA_BUCKET_PAGE_SIZE {
-        let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
+    let span = config.page_size_span.unwrap_or_else(proc_macro2::Span::call_site);
+    if persistence.is_persisted() && page_size < MINIMUM_PERSISTED_PAGE_SIZE {
         return Err(syn::Error::new(
             span,
             format!(
-                "`page_size: {page_size}` cannot be combined with `persist: true`: the on-disk \
-                 layer (data_bucket) hardcodes {DATA_BUCKET_PAGE_SIZE}-byte pages in every file \
-                 seek, so a persisted table with any other page size reads and writes the wrong \
-                 pages and corrupts its files. Remove `page_size` (or set it to \
-                 {DATA_BUCKET_PAGE_SIZE}); custom page sizes remain available for in-memory \
-                 tables, where they only size index nodes"
+                "`page_size: {page_size}` is below the {MINIMUM_PERSISTED_PAGE_SIZE}-byte \
+                 minimum for a persisted table. Each page on disk carries a \
+                 {GENERAL_HEADER_SIZE}-byte header, so a page this small is mostly header"
             ),
         ));
     }
@@ -143,7 +154,7 @@ fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut
     for index in columns.indexes.values().filter(|index| !index.is_unique) {
         match index.backend {
             IndexBackend::WorktablesIndex | IndexBackend::Arctic => {}
-            IndexBackend::Indexset | IndexBackend::Congee => {
+            IndexBackend::Indexset | IndexBackend::Congee | IndexBackend::FxHash => {
                 errors.push(syn::Error::new(
                     index.name.span(),
                     format!(
@@ -264,7 +275,9 @@ pub fn supported_key_types(backend: IndexBackend) -> Option<&'static [&'static s
         IndexBackend::Arctic => Some(&[
             "String", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
         ]),
-        IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
+        // A hash map indexes anything hashable, which every column type this
+        // macro accepts already is, so there is no list to check against.
+        IndexBackend::FxHash | IndexBackend::WorktablesIndex | IndexBackend::Indexset => None,
     }
 }
 
@@ -290,6 +303,9 @@ pub fn all(
 ) -> Vec<syn::Error> {
     let mut errors = Vec::new();
     index_backends_into(columns, persistence, &mut errors);
+    if let Err(error) = validate_columnar_indexes(columns) {
+        errors.push(error);
+    }
     if let Err(error) = validate_page_size(config, persistence) {
         errors.push(error);
     }
@@ -302,4 +318,107 @@ pub fn all(
         errors.push(error);
     }
     errors
+}
+
+/// Columnar indexes must cluster by columnar fields that exist and must not
+/// collide with a columnar field's own generated scan methods.
+pub fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
+    for primary_key in &columns.primary_keys {
+        if columns.columnar_fields.contains_key(primary_key) {
+            return Err(syn::Error::new(
+                primary_key.span(),
+                "the primary key participates in columnar identity implicitly and must not declare `columnar`",
+            ));
+        }
+    }
+
+    if !columns.columnar_indexes.is_empty() && columns.columnar_fields.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "`columnar_indexes` requires at least one field declaring `columnar`",
+        ));
+    }
+
+    for index in columns.columnar_indexes.values() {
+        if columns.columnar_fields.contains_key(&index.name) {
+            return Err(syn::Error::new(
+                index.name.span(),
+                format!(
+                    "columnar index `{}` conflicts with a columnar field name and would generate duplicate scan methods",
+                    index.name
+                ),
+            ));
+        }
+        for field in &index.cluster_by {
+            if !columns.columns_map.contains_key(field) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!("columnar index `{}` references unknown field `{field}`", index.name),
+                ));
+            }
+            if !columns.columnar_fields.contains_key(field) {
+                return Err(syn::Error::new(
+                    field.span(),
+                    format!(
+                        "columnar index `{}` requires field `{field}` to declare `columnar(...)`",
+                        index.name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reject paged query shapes for which no operation is generated. Vec queries
+/// have a separate synchronous implementation and must not inherit these limits.
+pub fn validate_query_storage(
+    columns: &Columns,
+    queries: &crate::model::Queries,
+    storage: crate::model::Storage,
+) -> syn::Result<()> {
+    if storage.is_vec() {
+        if let Some(profile) = queries
+            .update_runtime
+            .as_ref()
+            .or(queries.delete_runtime.as_ref())
+            .or(queries.in_place_runtime.as_ref())
+        {
+            return Err(syn::Error::new(
+                profile.span(),
+                "vec tables are synchronous and cannot schedule a query runtime profile",
+            ));
+        }
+        return Ok(());
+    }
+    for (name, op) in &queries.updates {
+        let by_primary = columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(&op.by);
+        let by_index = columns.indexes.values().any(|index| index.field == op.by);
+        if !by_primary && !by_index {
+            return Err(syn::Error::new(
+                op.by.span(),
+                format!(
+                    "update query `{name}` requires a single-column primary key or a secondary index on `{}`",
+                    op.by
+                ),
+            ));
+        }
+    }
+    for (name, op) in &queries.in_place {
+        if columns.primary_keys.len() != 1 || columns.primary_keys.first() != Some(&op.by) {
+            return Err(syn::Error::new(
+                op.by.span(),
+                format!(
+                    "in_place query `{name}` requires selection by the single-column primary key; use an update query for an indexed predicate"
+                ),
+            ));
+        }
+        if op.columns.iter().any(|column| columns.primary_keys.contains(column)) {
+            return Err(syn::Error::new(
+                name.span(),
+                "in_place queries cannot mutate primary key columns; use an update query to maintain indexes",
+            ));
+        }
+    }
+    Ok(())
 }

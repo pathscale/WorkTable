@@ -95,9 +95,9 @@ impl InMemoryGenerator {
 
         quote! {
             #[allow(clippy::mutable_key_type)]
-            pub fn #ident(&mut self, id: u16) -> (std::collections::HashSet<std::sync::Arc<Lock>>,  std::sync::Arc<Lock>) {
-                let mut set = std::collections::HashSet::new();
-                let new_lock = std::sync::Arc::new(Lock::new(id));
+            pub fn #ident(&mut self, id: u16) -> (worktable::prelude::HashSet<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
+                let mut set = worktable::prelude::HashSet::new();
+                let new_lock = worktable::prelude::Arc::new(Lock::new(id));
                 #(#inner)*
                 (set, new_lock)
             }
@@ -124,7 +124,7 @@ impl InMemoryGenerator {
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
             let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
-            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
             pending_lock
         }
     }
@@ -153,7 +153,7 @@ impl InMemoryGenerator {
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
             let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
-            futures::future::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
             pending_lock
         }
     }

@@ -38,7 +38,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                 source_path: &str,
                 target: &mut #current_table,
                 ctx: &#ctx_type,
-            ) -> eyre::Result<()> {
+            ) -> worktable::prelude::eyre::Result<()> {
                 let config = DiskConfig::new_with_table_name(source_path, #table_name_lit, #version);
                 let engine = ReadOnlyPersistenceEngine::create(config).await?;
                 let source = #table_path::load(engine).await?;
@@ -72,7 +72,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                 source_path: &str,
                 target_path: &str,
                 ctx: &#ctx_type,
-            ) -> eyre::Result<MigrationReport> {
+            ) -> worktable::prelude::eyre::Result<MigrationReport> {
                 let source_table_path = format!("{}/{}", source_path, #table_name_lit);
                 let version = worktable::migration::detect_version::<<<#pk_type as worktable::prelude::TablePrimaryKey>::Generator as worktable::prelude::PrimaryKeyGeneratorState>::State>(&source_table_path).await?;
 
@@ -82,7 +82,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
 
                 match version {
                     #( #match_arms )*
-                    v => return Err(eyre::eyre!("Unsupported version: {}", v)),
+                    v => return Err(worktable::prelude::eyre::eyre!("Unsupported version: {}", v)),
                 };
 
                 target.wait_for_ops().await?;

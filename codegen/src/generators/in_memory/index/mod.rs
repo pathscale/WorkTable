@@ -12,6 +12,7 @@ use quote::quote;
 impl InMemoryGenerator {
     /// Generates index type and it's impls.
     pub fn gen_index_def(&mut self) -> syn::Result<TokenStream> {
+        let columnar_def = crate::generators::columnar::definitions(&self.name, &self.columns);
         let type_def = self.gen_type_def()?;
         let impl_def = self.gen_secondary_index_impl_def();
         let info_def = self.gen_secondary_index_info_impl_def();
@@ -24,6 +25,7 @@ impl InMemoryGenerator {
         let available_indexes = self.gen_available_indexes();
 
         Ok(quote! {
+            #columnar_def
             #type_def
             #impl_def
             #info_def
@@ -101,11 +103,13 @@ impl InMemoryGenerator {
                 #[derive(Debug, MemStat)]
             }
         };
+        let columnar_field = crate::generators::columnar::index_struct_field(&self.name, &self.columns, false);
 
         Ok(quote! {
             #derive
             pub struct #ident {
-                #(#index_rows),*
+                #(#index_rows,)*
+                #columnar_field
             }
         })
     }
@@ -152,6 +156,11 @@ impl InMemoryGenerator {
                                 get_index_page_size_from_data_length::<#t>(#const_name)
                             ),
                         },
+                        // Unreachable: refused in `worktable/mod.rs` before any
+                        // generator runs.
+                        crate::common::model::IndexBackend::FxHash => quote! {
+                            #i: compile_error!("`using fxhash` cannot back a paged table"),
+                        },
                         crate::common::model::IndexBackend::Congee
                         | crate::common::model::IndexBackend::Arctic => {
                             quote! { #i: Default::default(), }
@@ -175,12 +184,14 @@ impl InMemoryGenerator {
                 Ok::<_, syn::Error>(res)
             })
             .collect::<Result<Vec<_>, syn::Error>>()?;
+        let columnar_field = crate::generators::columnar::index_default_field(&self.columns);
 
         Ok(quote! {
             impl Default for #index_type_ident {
                 fn default() -> Self {
                     Self {
                         #(#index_rows)*
+                        #columnar_field
                     }
                 }
             }
@@ -205,9 +216,20 @@ impl InMemoryGenerator {
             }
         } else {
             quote! {
-                #[derive(Debug, Clone, Copy, MoreDisplay, PartialEq, PartialOrd, Ord, Hash, Eq)]
+                #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Hash, Eq)]
                 pub enum #avt_type_ident {
                     #(#indexes)*
+                }
+
+                // Delegated to `Debug` rather than derived. Every variant here
+                // is fieldless, so `Debug` prints exactly the variant name,
+                // which is what `derive_more::Display` produced. Deriving it
+                // put `::derive_more::` paths in the expansion and so put that
+                // crate into this macro's contract.
+                impl core::fmt::Display for #avt_type_ident {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        core::fmt::Debug::fmt(self, f)
+                    }
                 }
 
                 impl AvailableIndex for #avt_type_ident {

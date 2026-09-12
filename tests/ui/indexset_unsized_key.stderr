@@ -1,0 +1,5 @@
+error: `using indexset` does not yet support variable-sized keys; use `worktables_index` for this index
+  --> tests/ui/indexset_unsized_key.rs:12:15
+   |
+12 |         name: String,
+   |               ^^^^^^

@@ -265,8 +265,23 @@ fn a_changed_partition_key_needs_a_person() {
     // cannot be recomputed from the row: it is only knowable from where the
     // row already is.
     let stored = parse("name: Price, columns: { id: u64 primary_key, bid: f64 }");
-    let declared =
-        parse("name: Price, version: 2, partition_by: shard: u32, columns: { id: u64 primary_key, bid: f64 }");
+    let declared = parse(
+        "name: Price, version: 2, partition_by: shard: u32, partition_max_size: u64, columns: { id: u64 primary_key, bid: f64 }",
+    );
+    assert_eq!(Diff::between(&stored, &declared).cost(), Cost::NeedsIntent);
+}
+
+#[test]
+fn a_changed_partition_size_needs_a_person() {
+    // The width is not decoration: it selects which table is generated per
+    // partition, and narrowing it caps a partition that was uncapped. Neither
+    // is recoverable from stored rows, so it lands where a changed key does.
+    let stored = parse(
+        "name: Price, partition_by: shard: u32, partition_max_size: u64, columns: { id: u64 primary_key, bid: f64 }",
+    );
+    let declared = parse(
+        "name: Price, version: 2, partition_by: shard: u32, partition_max_size: u8, columns: { id: u64 primary_key, bid: f64 }",
+    );
     assert_eq!(Diff::between(&stored, &declared).cost(), Cost::NeedsIntent);
 }
 

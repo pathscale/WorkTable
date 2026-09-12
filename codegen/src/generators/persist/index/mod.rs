@@ -11,6 +11,7 @@ use quote::quote;
 
 impl PersistGenerator {
     pub fn gen_index_def(&mut self) -> syn::Result<TokenStream> {
+        let columnar_def = crate::generators::columnar::definitions(&self.name, &self.columns);
         let type_def = self.gen_type_def()?;
         let impl_def = self.gen_secondary_index_impl_def();
         let info_def = self.gen_secondary_index_info_impl_def();
@@ -19,6 +20,7 @@ impl PersistGenerator {
         let available_indexes = self.gen_available_indexes();
 
         Ok(quote! {
+            #columnar_def
             #type_def
             #impl_def
             #info_def
@@ -80,11 +82,13 @@ impl PersistGenerator {
         let derive = quote! {
             #[derive(Debug, MemStat, PersistIndex)]
         };
+        let columnar_field = crate::generators::columnar::index_struct_field(&self.name, &self.columns, true);
 
         Ok(quote! {
             #derive
             pub struct #ident {
-                #(#index_rows),*
+                #(#index_rows,)*
+                #columnar_field
             }
         })
     }
@@ -92,7 +96,7 @@ impl PersistGenerator {
     fn gen_index_default_impl(&self) -> syn::Result<TokenStream> {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let index_type_ident = name_generator.get_index_type_ident();
-        let const_name = name_generator.get_page_inner_size_const_ident();
+        let const_name = name_generator.get_disk_page_capacity();
 
         let index_rows = self
             .columns
@@ -115,6 +119,7 @@ impl PersistGenerator {
                 #[allow(clippy::collapsible_else_if)]
                 let res = if idx.is_unique {
                     match idx.backend {
+                        crate::common::model::IndexBackend::FxHash => unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"),
                         crate::common::model::IndexBackend::WorktablesIndex => {
                             let map = if cfg!(feature = "logical-index-persistence") {
                                 quote! { PersistentWtiIndex }
@@ -155,12 +160,14 @@ impl PersistGenerator {
                 Ok::<_, syn::Error>(res)
             })
             .collect::<Result<Vec<_>, syn::Error>>()?;
+        let columnar_field = crate::generators::columnar::index_default_field(&self.columns);
 
         Ok(quote! {
             impl Default for #index_type_ident {
                 fn default() -> Self {
                     Self {
                         #(#index_rows)*
+                        #columnar_field
                     }
                 }
             }
@@ -185,9 +192,20 @@ impl PersistGenerator {
             }
         } else {
             quote! {
-                #[derive(Debug, Clone, Copy, MoreDisplay, PartialEq, PartialOrd, Ord, Hash, Eq)]
+                #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Hash, Eq)]
                 pub enum #avt_type_ident {
                     #(#indexes)*
+                }
+
+                // Delegated to `Debug` rather than derived. Every variant here
+                // is fieldless, so `Debug` prints exactly the variant name,
+                // which is what `derive_more::Display` produced. Deriving it
+                // put `::derive_more::` paths in the expansion and so put that
+                // crate into this macro's contract.
+                impl core::fmt::Display for #avt_type_ident {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        core::fmt::Debug::fmt(self, f)
+                    }
                 }
 
                 impl AvailableIndex for #avt_type_ident {

@@ -1,7 +1,9 @@
 use crate::WorkTableError;
+use crate::runtime::{Profile, RuntimeUnpinned, TableRuntime};
 use crate::select::{Order, QueryParams};
+use alloc::vec::Vec;
 
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 
 pub struct SelectQueryBuilder<Row, I, ColumnRange, RowFields>
 where
@@ -23,6 +25,8 @@ where
                 order: VecDeque::new(),
                 range: VecDeque::new(),
                 sorted_by: None,
+                tuning: None,
+                dispatch: None,
             },
             iter,
         }
@@ -36,6 +40,8 @@ where
                 order: VecDeque::new(),
                 range: VecDeque::new(),
                 sorted_by: Some(sorted_by),
+                tuning: None,
+                dispatch: None,
             },
             iter,
         }
@@ -67,6 +73,32 @@ where
         self.params.range.push_back((range.into(), column));
         self
     }
+
+    /// Select the executor for an owned asynchronous query.
+    ///
+    /// Finish with `execute_async().await`. Calling synchronous `execute()`
+    /// after this link returns `RuntimeRequiresAsync` instead of ignoring it.
+    /// Borrowed iteration and `where_by` predicates run on the caller while
+    /// constructing the future. Range filters, ordering, offset and limit run
+    /// on the selected executor over owned rows. This materializes all input
+    /// rows, so use synchronous execution for short or streaming selections.
+    ///
+    /// The profile backend family must match `TableRuntime::Backend`; Nagoya
+    /// flavors may differ from the table default. A mutation section profile
+    /// applies to its own methods and does not pin unrelated select builders.
+    /// Hosted paged tables implement these markers; Vec tables stay synchronous.
+    pub fn runtime<P>(mut self, profile: P) -> Self
+    where
+        Row: TableRuntime + RuntimeUnpinned,
+        P: Profile,
+        P::Backend: crate::runtime::RuntimeCompatibleWith<<Row as TableRuntime>::Backend>,
+        <P::Backend as crate::runtime::Runtime>::JoinHandle<()>: Unpin,
+    {
+        let _ = profile;
+        self.params.tuning = Some(P::tuning());
+        self.params.dispatch = Some(P::dispatcher());
+        self
+    }
 }
 
 pub trait SelectQueryExecutor<Row, I, ColumnRange, RowFields>
@@ -81,4 +113,15 @@ where
     ) -> SelectQueryBuilder<Row, impl DoubleEndedIterator<Item = Row> + Sized, ColumnRange, RowFields>
     where
         F: FnMut(&Row) -> bool;
+}
+
+/// Owned asynchronous select execution. Borrowed iteration and predicates are
+/// materialized by the caller; the owned filtering/sorting plan can be dispatched.
+/// A future containing owned rows only, independent of the source iterator's lifetime.
+pub type SelectQueryFuture<Row> = core::pin::Pin<
+    alloc::boxed::Box<dyn core::future::Future<Output = Result<Vec<Row>, WorkTableError>> + Send + 'static>,
+>;
+
+pub trait SelectQueryAsyncExecutor<Row> {
+    fn execute_async(self) -> SelectQueryFuture<Row>;
 }

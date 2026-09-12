@@ -73,7 +73,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                 table.delete(*id).await.unwrap();
             }
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence should catch up before vacuum")
                 .expect("persistence engine failed");
@@ -82,7 +82,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             let vacuum = table.vacuum();
             let stats = vacuum.vacuum().await.unwrap();
             assert!(stats.pages_freed > 0, "vacuum should have moved rows off a page");
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence should catch up after vacuum")
                 .expect("persistence engine failed");
@@ -106,7 +106,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                 table.insert(row.clone()).await.unwrap();
                 rows.insert(id, row);
                 if i % 50 == 49 {
-                    timeout(Duration::from_secs(30), table.wait_for_ops())
+                    timeout(Duration::from_secs(5), table.wait_for_ops())
                         .await
                         .expect("persistence stalled after vacuum on persisted table")
                         .expect("persistence engine failed");
@@ -116,7 +116,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             // Without CDC-aware vacuum this stalls forever: the moved links
             // never reach the persistence stream while their event ids are
             // consumed, leaving a permanent gap the batch validator defers on.
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled after vacuum on persisted table")
                 .expect("persistence engine failed");
@@ -157,7 +157,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
             reused_after_reload_id = reused_id;
             table.insert(reused_row.clone()).await.unwrap();
             rows.insert(reused_id, reused_row);
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence should catch up after durable page reuse")
                 .expect("persistence engine failed");
@@ -195,7 +195,7 @@ fn test_vacuum_on_persisted_table_survives_reload() {
                 exchange: "second-reuse-after-reload".to_string(),
             };
             table.insert(second_reused_row).await.unwrap();
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence should catch up after a second durable page reuse")
                 .expect("persistence engine failed");
@@ -291,7 +291,7 @@ fn test_persisted_vacuum_survives_inserts_reusing_space_mid_sweep() {
             for id in &deleted {
                 table.delete(*id).await.unwrap();
             }
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence should catch up before vacuum")
                 .expect("persistence engine failed");
@@ -337,7 +337,7 @@ fn test_persisted_vacuum_survives_inserts_reusing_space_mid_sweep() {
             // Longer than the engine's own give-up budget, so a stall surfaces
             // as its diagnostic naming the missing event id rather than as a
             // bare timeout here, which says nothing.
-            timeout(Duration::from_secs(90), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled after a sweep interleaved with inserts")
                 .expect("persistence engine failed");

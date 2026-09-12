@@ -14,7 +14,13 @@ impl InMemoryGenerator {
         let table_ident = name_generator.get_work_table_ident();
 
         let custom_deletes = if let Some(q) = &self.queries {
+            let profile = q.delete_runtime.clone();
             let custom_deletes = self.gen_custom_deletes(q.deletes.clone());
+            let custom_deletes = crate::generators::profile_dispatch::wrap(
+                custom_deletes,
+                profile.as_ref(),
+                &name_generator.get_row_type_ident(),
+            )?;
             quote! {
                 #custom_deletes
             }
@@ -38,6 +44,7 @@ impl InMemoryGenerator {
         let pk_ident = name_generator.get_primary_key_type_ident();
         let delete_logic = self.gen_delete_logic(true);
         let full_row_lock = self.gen_full_lock_for_update();
+        let publication = crate::generators::columnar::table_publication_guard(&self.columns);
 
         quote! {
             pub async fn delete<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -46,6 +53,7 @@ impl InMemoryGenerator {
                 let pk: #pk_ident = pk.into();
                 let pending_lock = { #full_row_lock };
                 let _guard = pending_lock.into_guard_with_mutation();
+                #publication
 
                 #delete_logic
 
@@ -58,6 +66,7 @@ impl InMemoryGenerator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_ident = name_generator.get_primary_key_type_ident();
         let delete_logic = self.gen_delete_logic(false);
+        let publication = crate::generators::columnar::table_publication_guard(&self.columns);
 
         quote! {
             pub async fn delete_without_lock<Pk>(&self, pk: Pk) -> core::result::Result<(), WorkTableError>
@@ -65,6 +74,7 @@ impl InMemoryGenerator {
             {
                 let pk: #pk_ident = pk.into();
                 let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
+                #publication
                 #delete_logic
                 core::result::Result::Ok(())
             }
@@ -87,7 +97,7 @@ impl InMemoryGenerator {
                     #pk_ident,
                     #secondary_events_ident
                 > = Operation::Delete(DeleteOperation {
-                    id: uuid::Uuid::now_v7().into(),
+                    id: worktable::prelude::uuid::Uuid::now_v7().into(),
                     secondary_keys_events,
                     primary_key_events,
                     link,
@@ -186,7 +196,7 @@ impl InMemoryGenerator {
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
                 let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
-                let pks = std::cell::RefCell::new(Vec::new());
+                let pks = core::cell::RefCell::new(Vec::new());
                 self.iter_with(|row| {
                     if row.#field == by {
                         pks.borrow_mut().push(row.get_primary_key());

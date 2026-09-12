@@ -1,3 +1,4 @@
+use data_bucket::DEFAULT_PAGE_STRIDE;
 use worktable::prelude::PersistedWorkTable;
 use worktable::prelude::*;
 use worktable_codegen::worktable;
@@ -104,11 +105,12 @@ fn fragmented_string_index_compacts_after_restart_before_appending() {
         }
 
         let index_path = format!("{path}/fragmented_string_secondary/project_idx.wt.idx");
-        let mut index_file = tokio::fs::File::open(index_path).await.unwrap();
-        let page = parse_page::<UnsizedIndexPage<String, { INNER_PAGE_SIZE as u32 }>, { INNER_PAGE_SIZE as u32 }>(
-            &mut index_file,
-            2,
-        )
+        let mut index_file = worktable::prelude::fsx::open(index_path).await.unwrap();
+        let page = parse_page::<
+            UnsizedIndexPage<String, DEFAULT_PAGE_STRIDE>,
+            { INNER_PAGE_SIZE as u32 },
+            DEFAULT_PAGE_STRIDE,
+        >(&mut index_file, 2)
         .await
         .unwrap();
         let utility_size = worktable::data_bucket::UnsizedIndexPageUtility::<String>::persisted_size(

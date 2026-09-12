@@ -1,9 +1,10 @@
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::future::Future;
+use alloc::sync::Arc;
+use alloc::{string::String, string::ToString};
+use core::error::Error;
+use core::fmt::{Display, Formatter};
+use core::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use futures::FutureExt;
 
@@ -39,7 +40,7 @@ impl PersistenceLoadError {
 }
 
 impl Display for PersistenceLoadError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
             formatter,
             "torn or corrupt persisted table at {}: {}",
@@ -111,7 +112,7 @@ impl PersistenceIndexCorruption {
 }
 
 impl Display for PersistenceIndexCorruption {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
             formatter,
             "persisted index at {} was quarantined: {}",
@@ -137,7 +138,7 @@ pub enum PersistenceError {
 }
 
 impl Display for PersistenceError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Closing => formatter.write_str("persistence task is closing"),
             Self::Closed => formatter.write_str("persistence task is closed"),

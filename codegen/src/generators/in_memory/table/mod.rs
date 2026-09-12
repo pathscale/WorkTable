@@ -18,6 +18,8 @@ impl InMemoryGenerator {
         let index_fns = self.gen_table_index_fns()?;
         let select_query_executor_impl = self.gen_table_select_query_executor_impl();
         let column_range_type = self.gen_table_column_range_type();
+        let columnar_methods = crate::generators::columnar::table_methods(&self.name, &self.columns);
+        let table_ident = WorktableNameGenerator::from_table_name(self.name.to_string()).get_work_table_ident();
 
         Ok(quote! {
             #page_size_consts
@@ -27,6 +29,9 @@ impl InMemoryGenerator {
             #index_fns
             #select_query_executor_impl
             #column_range_type
+            impl #table_ident {
+                #columnar_methods
+            }
         })
     }
 
@@ -126,7 +131,7 @@ impl InMemoryGenerator {
                         #index_type,
                         #lock_ident,
                         <#primary_key_type as TablePrimaryKey>::Generator,
-                        { INNER_PAGE_SIZE },
+                        { #inner_const_name },
                         #node_type
                     >
                 );

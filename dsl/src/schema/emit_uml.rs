@@ -72,10 +72,21 @@ impl Schema {
         let _ = writeln!(out, "    }}");
 
         if let Some(key) = &self.partition_by {
+            // The row count rather than the width. The width is how it is
+            // declared; the count is what a reader of a diagram wants, and the
+            // whole reason the key is required is that the shape was not
+            // visible without it.
+            let size = match crate::model::PartitionMaxSize::from_type_name(&key.max_size) {
+                Some(width) => match width.rows() {
+                    Some(rows) => format!("at most {rows} rows each"),
+                    None => "unbounded".to_string(),
+                },
+                None => format!("at most {} rows each", key.max_size),
+            };
             let _ = writeln!(
                 out,
-                "    note for {} \"partitioned by {}: {}\"",
-                self.name, key.name, key.ty
+                "    note for {} \"partitioned by {}: {}, {}\"",
+                self.name, key.name, key.ty, size
             );
         }
     }

@@ -1,7 +1,10 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::{string::ToString, vec::Vec};
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
+use hashbrown::HashMap;
 
 use data_bucket::page::PageId;
 use data_bucket::{Link, SizeMeasurable};
@@ -10,10 +13,11 @@ use indexset::core::pair::Pair;
 use worktable_codegen::{MemStat, worktable};
 
 use crate::persistence::OperationType;
+use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
 use crate::persistence::space::{BatchChangeEvent, BatchData};
 use crate::persistence::task::{LastEventIds, QueueInnerRow};
 use crate::prelude::*;
-use crate::prelude::{From, Order, SelectQueryExecutor};
+use crate::prelude::{Order, SelectQueryExecutor};
 
 /// Cycles of a persistently gapped event stream before the engine gives up and
 /// fails the table.
@@ -83,17 +87,20 @@ impl From<QueueInnerRow> for BatchInnerRow {
 }
 
 /// Coalesces durable row writes by physical storage slot and preserves their
-/// creation order.
+/// mutation order.
 ///
 /// `Link::length` can change when an unsized row is reinserted into a reused
 /// `(page_id, offset)`. Treating the two lengths as different keys leaves
 /// overlapping writes in the same batch. The newest operation must be the only
 /// write for an identical physical start, and writes at different starts must
 /// still be applied oldest-to-newest: range splitting can make them overlap.
-/// WorkTable-generated operation IDs use `Uuid::now_v7`, whose shared process
-/// context guarantees creation-order sorting even within one millisecond;
-/// callers constructing `Operation` values manually must preserve that
-/// ordering contract.
+/// Primary-index event ids are assigned while the in-memory mutation is in
+/// progress. Operation ids are minted later, and concurrent writers can be
+/// descheduled between those two points. The durable primary index is replayed
+/// in event-id order, so row mutations that carry primary events must use that
+/// same order or a reused slot can finish with the new index entry and the old
+/// row bytes. Event-less data updates retain operation-id order; their row
+/// mutation gate keeps that order stable for a physical slot.
 fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
     ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
 ) -> BatchData {
@@ -103,22 +110,20 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
         ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>],
         order: impl Iterator<Item = usize> + Clone,
     ) -> BatchData {
-        let mut latest: HashMap<PhysicalSlot, usize> = HashMap::with_capacity(ops.len());
-        for sequence in order.clone() {
-            let op = &ops[sequence];
-            if op.bytes().is_some() {
-                let link = op.link();
-                latest.insert((link.page_id, link.offset), sequence);
-            }
+        let mutation_count = order
+            .clone()
+            .map(|sequence| ops[sequence].row_mutation_refs().count())
+            .sum();
+        let mut latest: HashMap<PhysicalSlot, usize> = HashMap::with_capacity(mutation_count);
+        for (sequence, (link, _)) in order
+            .clone()
+            .flat_map(|sequence| ops[sequence].row_mutation_refs())
+            .enumerate()
+        {
+            latest.insert((link.page_id, link.offset), sequence);
         }
-
         let mut ordered = HashMap::new();
-        for sequence in order {
-            let op = &ops[sequence];
-            let Some(bytes) = op.bytes() else {
-                continue;
-            };
-            let link = op.link();
+        for (sequence, (link, bytes)) in order.flat_map(|sequence| ops[sequence].row_mutation_refs()).enumerate() {
             if latest.get(&(link.page_id, link.offset)) != Some(&sequence) {
                 continue;
             }
@@ -130,25 +135,73 @@ fn latest_data_writes<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>(
         ordered
     }
 
-    // The analyzer already establishes this order. Keep that production path
-    // linear; only defensive callers that construct an unsorted BatchOperation
-    // pay for an index sort.
-    if ops
-        .windows(2)
-        .all(|pair| pair[0].operation_id() <= pair[1].operation_id())
-    {
-        collect_in_order(ops, 0..ops.len())
-    } else {
-        let mut order = (0..ops.len()).collect::<Vec<_>>();
-        order.sort_unstable_by_key(|sequence| (ops[*sequence].operation_id(), *sequence));
-        collect_in_order(ops, order.into_iter())
+    let mut order = (0..ops.len()).collect::<Vec<_>>();
+    order.sort_unstable_by_key(|sequence| (ops[*sequence].operation_id(), *sequence));
+
+    // Primary events and operation UUIDs are independent clocks. Sort the
+    // event-carrying mutations by the clock the durable index replays, then
+    // attach each event-less mutation to its preceding operation in UUID order.
+    // The attachment is essential: an in-place update that followed insert B
+    // must remain after B even when an earlier insert A received its event first
+    // but did not mint its operation UUID until after both B operations.
+    let mut event_sequences = order
+        .iter()
+        .copied()
+        .filter(|sequence| {
+            ops[*sequence]
+                .primary_key_events()
+                .is_some_and(|events| !events.is_empty())
+        })
+        .collect::<Vec<_>>();
+    event_sequences.sort_unstable_by_key(|sequence| {
+        (
+            ops[*sequence]
+                .primary_key_events()
+                .and_then(|events| events.first())
+                .expect("event-carrying operation has a first event")
+                .id(),
+            *sequence,
+        )
+    });
+
+    if !event_sequences.is_empty() {
+        let mut before_events = Vec::new();
+        let mut after_event = vec![Vec::new(); event_sequences.len()];
+        let event_rank = event_sequences
+            .iter()
+            .enumerate()
+            .map(|(rank, sequence)| (*sequence, rank))
+            .collect::<HashMap<_, _>>();
+        let mut anchor = None;
+        for sequence in order.iter().copied() {
+            if let Some(rank) = event_rank.get(&sequence).copied() {
+                anchor = Some(rank);
+            } else if let Some(rank) = anchor {
+                after_event[rank].push(sequence);
+            } else {
+                before_events.push(sequence);
+            }
+        }
+
+        order.clear();
+        order.extend(before_events);
+        for (event, trailing) in event_sequences.into_iter().zip(after_event) {
+            order.push(event);
+            order.extend(trailing);
+        }
     }
+
+    collect_in_order(ops, order.into_iter())
 }
 
 #[derive(Debug)]
 pub struct BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents, AvailableIndexes> {
     ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>>,
     info_wt: BatchInnerWorkTable,
+    /// Event bookkeeping shared with the queue that produced `ops`, read by
+    /// the event-gap guard in `validate` so a stall names its own cause.
+    /// Diagnostics only, and `None` for batches built outside the analyzer.
+    event_ledger: Option<Arc<EventLedger>>,
     prepared_index_evs: Option<PreparedIndexEvents<PrimaryKey, SecondaryEvents>>,
     phantom_data: PhantomData<AvailableIndexes>,
 }
@@ -173,9 +226,21 @@ where
         Self {
             ops,
             info_wt,
+            event_ledger: None,
             prepared_index_evs: None,
             phantom_data: PhantomData,
         }
+    }
+
+    /// Attaches the analyzer's event bookkeeping, so the gap guard below can
+    /// say which ids in a gap ever reached the persistence queue.
+    ///
+    /// A builder method rather than a `new` parameter, so every existing
+    /// caller of `new` keeps working unchanged and the batch stays usable
+    /// without any bookkeeping at all.
+    pub fn with_event_ledger(mut self, ledger: Arc<EventLedger>) -> Self {
+        self.event_ledger = Some(ledger);
+        self
     }
 
     /// Remove metadata immediately after `self.ops.remove(removed_pos)`.
@@ -272,7 +337,55 @@ where
             prepared_evs.secondary_evs.remove(op_secondary);
         }
 
+        self.record_stage(&removed_ops, Stages::TRIMMED);
+
         Ok(removed_ops)
+    }
+
+    /// Records `stage` against every event id carried by `ops`.
+    ///
+    /// Diagnostics only. Skipped entirely when bookkeeping is off, which keeps
+    /// the `Debug` formatting of secondary index labels out of release builds.
+    fn record_stage(&self, ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryEvents>], stage: Stages) {
+        let Some(ledger) = &self.event_ledger else {
+            return;
+        };
+        if !event_ledger::enabled() {
+            return;
+        }
+        for op in ops {
+            if let Some(evs) = op.primary_key_events() {
+                ledger.record_stage_for_events(EventStream::Primary, evs, stage);
+            }
+            // See the matching note in `QueueAnalyzer::record_ops_stage`: the
+            // producer side records primary ids only, so an id observed on a
+            // secondary stream here is known to have been queued.
+            for (index, id) in op.secondary_key_events().iter_event_ids() {
+                ledger.record_stage(
+                    EventStream::Secondary(format!("{index:?}")),
+                    id.inner(),
+                    stage.union(Stages::QUEUED),
+                );
+            }
+        }
+    }
+
+    /// The bookkeeping's account of a gap, or a note saying there is none.
+    fn gap_report(
+        &self,
+        stream: &EventStream,
+        last_applied: Option<IndexChangeEventId>,
+        next_available: IndexChangeEventId,
+    ) -> String {
+        match &self.event_ledger {
+            // Nothing applied yet reports as `0`, which is what the ledger
+            // means by "everything from the start is missing": the first id is
+            // 0, so there is no id below it to name.
+            Some(ledger) => ledger.gap_report(stream, last_applied.map_or(0, |id| id.inner()), next_available.inner()),
+            None => {
+                " This batch was built without event bookkeeping attached, so the gap cannot be attributed.".to_owned()
+            }
+        }
     }
 
     pub fn get_last_event_ids(&self) -> LastEventIds<AvailableIndexes> {
@@ -281,12 +394,11 @@ where
             .as_ref()
             .expect("should be set before 0 iteration");
 
-        let primary_id = prepared_evs.primary_evs.last().map(|ev| ev.id()).unwrap_or_default();
-        let secondary_ids = prepared_evs.secondary_evs.last_evs();
-        let secondary_ids = secondary_ids
-            .into_iter()
-            .map(|(i, v)| (i, v.unwrap_or_default()))
-            .collect();
+        // `None` where a stream contributed no events, rather than `default()`.
+        // Event ids start at 0 and so does `default()`, so collapsing the two
+        // reported "applied up to event 0" for a batch that applied nothing.
+        let primary_id = prepared_evs.primary_evs.last().map(|ev| ev.id());
+        let secondary_ids = prepared_evs.secondary_evs.last_evs().into_iter().collect();
         LastEventIds {
             primary_id,
             secondary_ids,
@@ -344,9 +456,26 @@ where
                 .prepared_index_evs
                 .as_ref()
                 .expect("should be set before 0 iteration");
+            // No exemption for the first batch any more. It used to carry
+            // `&& last_ids.primary_id != IndexChangeEventId::default()`, so a
+            // stream with nothing applied accepted *any* starting id, and that
+            // is exactly where the ids can be wrong: event ids are allocated
+            // during the index mutation while the operation is enqueued
+            // afterwards, so two concurrent writers invert the two orders (see
+            // `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`). Measured, a first batch of
+            // ids 3..=28 was internally gapless, passed the exemption, and
+            // advanced a node's maximum to key 28; events 0..=2 then arrived
+            // naming a node whose maximum was still 1, resolved against
+            // nothing, and failed with a missing page having already written
+            // the file.
+            //
+            // The exemption was not gratuitous, which is why the fix is in
+            // `LastEventIds` rather than here: ids start at 0 and `default()`
+            // is 0, so the old representation could not tell "nothing applied"
+            // from "applied event 0" and had to wave the first batch through.
+            // `follows` asks the question that representation could not.
             if let Some(id) = prepared_evs.primary_evs.first().map(|ev| ev.id())
-                && !id.is_next_for(last_ids.primary_id)
-                && last_ids.primary_id != IndexChangeEventId::default()
+                && !LastEventIds::<AvailableIndexes>::follows(last_ids.primary_id, id)
             {
                 // Change events are positional (InsertAt/RemoveAt carry node
                 // indices), so a stream with a missing id must never be applied:
@@ -358,8 +487,9 @@ where
                 // that persists is a bug upstream of the analyzer; report it
                 // loudly instead of force-applying and corrupting the file.
                 if attempts > GIVE_UP_AFTER_ATTEMPTS {
+                    let report = self.gap_report(&EventStream::Primary, last_ids.primary_id, id);
                     return Err(eyre::eyre!(
-                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?} after {attempts} attempts, with {} operations queued. Every one of them was collected and the stream is still gapped, so the operation carrying the missing id never reached the queue: an event id was consumed without its event being pushed. The producer is upstream of the analyzer, not here.",
+                        "persistence stalled on primary index event gap: last applied {:?}, next available {:?} after {attempts} attempts, with {} operations queued.{report}",
                         last_ids.primary_id,
                         id,
                         self.ops.len()
@@ -373,16 +503,21 @@ where
                 let Some(last) = last_ids.secondary_ids.get(&index) else {
                     continue;
                 };
+                // Same rule as the primary above, including the absence of a
+                // first-batch exemption. A stream with no entry at all is
+                // skipped by the `continue` above; an entry holding `None` is
+                // a stream nothing has been applied to yet, which is the case
+                // that needs checking rather than the case to wave through.
                 if let Some(id) = id
-                    && !id.is_next_for(*last)
-                    && *last != IndexChangeEventId::default()
+                    && !LastEventIds::<AvailableIndexes>::follows(*last, id)
                 {
                     // Same rule as the primary index above: never apply a gapped
                     // stream, defer until the missing event arrives, and report
                     // a persistent gap as the bug it is.
                     if attempts > GIVE_UP_AFTER_ATTEMPTS {
+                        let report = self.gap_report(&EventStream::Secondary(format!("{index:?}")), *last, id);
                         return Err(eyre::eyre!(
-                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} after {attempts} attempts, with {} operations queued. All of them were collected and the stream is still gapped, so the operation carrying the missing id never reached the queue.",
+                            "persistence stalled on secondary index {index:?} event gap: last applied {last:?}, next available {id:?} after {attempts} attempts, with {} operations queued.{report}",
                             self.ops.len()
                         ));
                     }
@@ -480,24 +615,39 @@ where
     pub fn get_batch_data_op(&self) -> eyre::Result<BatchData> {
         Ok(latest_data_writes(&self.ops))
     }
+
+    #[cfg(feature = "s3-support")]
+    pub(crate) fn row_page_ids(&self) -> Vec<PageId> {
+        let mut pages = self
+            .ops
+            .iter()
+            .flat_map(Operation::row_mutation_refs)
+            .map(|(link, _)| link.page_id)
+            .collect::<Vec<_>>();
+        pages.sort_unstable();
+        pages.dedup();
+        pages
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     use data_bucket::Link;
+    use data_bucket::page::PageId;
     use indexset::core::pair::Pair;
     use uuid::Uuid;
 
     use super::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, latest_data_writes};
     use crate::persistence::OperationType;
-    use crate::persistence::operation::{InsertOperation, Operation, OperationId};
+    use crate::persistence::operation::{InsertOperation, Operation, OperationId, UpdateOperation};
     use crate::persistence::task::LastEventIds;
     use crate::prelude::{IndexChangeEvent, IndexChangeEventId, TableSecondaryIndexEventsOps};
 
     fn insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(Uuid::from_u128(id)),
             primary_key_events: vec![],
             secondary_keys_events: (),
@@ -509,6 +659,7 @@ mod tests {
 
     fn multi_insert(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, ()> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Multi(Uuid::from_u128(id)),
             primary_key_events: vec![],
             secondary_keys_events: (),
@@ -534,7 +685,7 @@ mod tests {
         // Deliberately reverse vector order: operation ids, not incidental
         // collection order, define which bytes are newest.
         let batch = latest_data_writes(&[insert(2, new_link, vec![2; 6]), insert(1, old_link, vec![1; 4])]);
-        let writes = batch.get(&1.into()).unwrap();
+        let writes = batch.get(&PageId::from(1u32)).unwrap();
 
         assert_eq!(writes, &vec![(new_link, vec![2; 6])]);
     }
@@ -554,7 +705,7 @@ mod tests {
 
         for _ in 0..128 {
             let batch = latest_data_writes(&[insert(2, newer_link, vec![2; 8]), insert(1, older_link, vec![1; 8])]);
-            let writes = batch.get(&1.into()).unwrap();
+            let writes = batch.get(&PageId::from(1u32)).unwrap();
 
             assert_eq!(writes, &vec![(older_link, vec![1; 8]), (newer_link, vec![2; 8])]);
         }
@@ -579,7 +730,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            batch.get(&1.into()).unwrap(),
+            batch.get(&PageId::from(1u32)).unwrap(),
             &vec![(older_link, vec![1; 8]), (newer_link, vec![2; 8])]
         );
     }
@@ -602,7 +753,7 @@ mod tests {
             multi_insert(1, new_link, vec![2; 6]),
         ]);
 
-        assert_eq!(batch.get(&1.into()).unwrap(), &vec![(new_link, vec![2; 6])]);
+        assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(new_link, vec![2; 6])]);
     }
 
     #[tokio::test]
@@ -634,7 +785,7 @@ mod tests {
         }
 
         fn iter_event_ids(&self) -> impl Iterator<Item = (TestIndex, IndexChangeEventId)> {
-            std::iter::empty()
+            core::iter::empty()
         }
 
         fn sort(&mut self) {}
@@ -669,6 +820,7 @@ mod tests {
 
     fn event_insert(id: u128, link: Link, bytes: Vec<u8>, event_ids: Vec<u64>) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(Uuid::from_u128(id)),
             primary_key_events: event_ids.into_iter().map(primary_event).collect(),
             secondary_keys_events: TestEvents,
@@ -676,6 +828,117 @@ mod tests {
             bytes,
             link,
         })
+    }
+
+    fn eventless_update(id: u128, link: Link, bytes: Vec<u8>) -> Operation<(), u64, TestEvents> {
+        Operation::Update(UpdateOperation {
+            retired_link: None,
+            id: OperationId::Single(Uuid::from_u128(id)),
+            primary_key_events: vec![],
+            secondary_keys_events: TestEvents,
+            bytes,
+            link,
+        })
+    }
+
+    #[test]
+    fn reused_slot_follows_primary_event_order_when_operation_ids_invert() {
+        let link = link_at(128);
+
+        // The old row received event 0 and the replacement received event 1,
+        // but the producers reached operation-id creation in reverse order.
+        // The primary index therefore finishes at the replacement link, and
+        // the data batch must finish with the replacement bytes as well.
+        let replacement = event_insert(1, link, vec![2; 4], vec![1]);
+        let old = event_insert(2, link, vec![1; 4], vec![0]);
+
+        let batch = latest_data_writes(&[replacement, old]);
+
+        assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(link, vec![2; 4])]);
+    }
+
+    #[test]
+    fn eventless_update_stays_after_the_insert_it_followed() {
+        let link = link_at(128);
+
+        // A received the older primary event but paused before minting its
+        // operation id. B then inserted at the reused slot and an in-place
+        // update changed B before A finally queued. Sorting eventful operations
+        // into fixed UUID positions used to produce A, update-B, B and discard
+        // the update as superseded by B's older row image.
+        let insert_b = event_insert(1, link, vec![2; 4], vec![1]);
+        let update_b = eventless_update(2, link, vec![3; 4]);
+        let insert_a = event_insert(3, link, vec![1; 4], vec![0]);
+
+        let batch = latest_data_writes(&[insert_b, update_b, insert_a]);
+
+        assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(link, vec![3; 4])]);
+    }
+
+    async fn batch_of(op: Operation<(), u64, TestEvents>) -> BatchOperation<(), u64, TestEvents, TestIndex> {
+        let info_wt = BatchInnerWorkTable::default();
+        info_wt
+            .insert(BatchInnerRow {
+                id: 0,
+                operation_id: op.operation_id(),
+                page_id: op.link().page_id,
+                link: op.link(),
+                op_type: OperationType::Insert,
+                pos: 0,
+            })
+            .await
+            .unwrap();
+        BatchOperation::new(vec![op], info_wt)
+    }
+
+    fn link_at(offset: u32) -> Link {
+        Link {
+            page_id: 1.into(),
+            offset,
+            length: 4,
+        }
+    }
+
+    /// A first batch that does not start at the head of the stream must defer.
+    ///
+    /// The gap check used to exempt the first batch outright, because event
+    /// ids start at 0 and so does `IndexChangeEventId::default()`: the
+    /// watermark could not tell "nothing applied yet" from "applied event 0",
+    /// so asking whether the batch followed what came before would have
+    /// deferred every stream's opening batch forever.
+    ///
+    /// The cost of that exemption is this: a first batch of ids 3.. is
+    /// internally gapless, so event validation passes it and nothing else
+    /// looks. It gets applied, advancing the on-disk node maxima, and events
+    /// 0..=2 then arrive naming nodes whose maxima no longer exist. Making the
+    /// watermark an `Option` lets the question be asked of the first batch too.
+    #[tokio::test]
+    async fn a_first_batch_that_skips_the_head_of_the_stream_defers() {
+        let op = event_insert(1, link_at(0), vec![1; 4], vec![3, 4, 5]);
+        let mut batch = batch_of(op).await;
+
+        let outcome = batch.validate(&LastEventIds::default(), 0).await.unwrap();
+
+        assert!(
+            outcome.is_none(),
+            "a first batch starting at event 3 must be deferred until events 0..=2 arrive"
+        );
+    }
+
+    /// The other half: the exemption existed for a reason, and removing it
+    /// must not deadlock a legitimate opening batch. Event 0 is a real id, not
+    /// the absence of one.
+    #[tokio::test]
+    async fn a_first_batch_starting_at_event_zero_applies() {
+        let op = event_insert(1, link_at(0), vec![1; 4], vec![0, 1, 2]);
+        let mut batch = batch_of(op).await;
+
+        let outcome = batch.validate(&LastEventIds::default(), 0).await.unwrap();
+
+        assert!(
+            outcome.is_some(),
+            "a first batch starting at the first event must be applied, not deferred"
+        );
     }
 
     /// Regression: removing the last event-carrying operation from a batch
@@ -734,7 +997,7 @@ mod tests {
 
         let data = batch.get_batch_data_op().unwrap();
         assert_eq!(
-            data.get(&1.into()).unwrap(),
+            data.get(&PageId::from(1u32)).unwrap(),
             &vec![(survivor_link, vec![7; 4])],
             "the surviving data-only write must stay in the applied batch"
         );

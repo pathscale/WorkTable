@@ -33,13 +33,13 @@ impl Generator {
             /// Retires an Arc-owned table generation after the caller's
             /// quiesce barrier has stopped new leases and drained old ones.
             pub async fn unload_gracefully<F, Fut>(
-                self: std::sync::Arc<Self>,
-                timeout: std::time::Duration,
+                self: worktable::prelude::Arc<Self>,
+                timeout: core::time::Duration,
                 quiesce: F,
             ) -> Result<UnloadReport, UnloadFailure<Self>>
             where
                 F: FnOnce() -> Fut,
-                Fut: std::future::Future<Output = ()>,
+                Fut: core::future::Future<Output = ()>,
             {
                 // Attribute the generation at the retirement request. The
                 // quiesce callback can give background maintenance time to
@@ -47,25 +47,25 @@ impl Generator {
                 // measuring afterwards would make the report depend on how
                 // long the reader barrier happened to take.
                 let estimated_released_bytes = self.heap_size();
-                if tokio::time::timeout(timeout, quiesce()).await.is_err() {
+                if worktable::prelude::timeout(timeout, quiesce()).await.is_err() {
                     return Err(UnloadFailure::retained(
                         self,
-                        eyre::eyre!("timed out waiting for generation leases to quiesce"),
+                        worktable::prelude::eyre::eyre!("timed out waiting for generation leases to quiesce"),
                     ));
                 }
 
-                let owned = match std::sync::Arc::try_unwrap(self) {
+                let owned = match worktable::prelude::Arc::try_unwrap(self) {
                     Ok(owned) => owned,
                     Err(arc) => {
-                        let outstanding = std::sync::Arc::strong_count(&arc).saturating_sub(1);
+                        let outstanding = worktable::prelude::Arc::strong_count(&arc).saturating_sub(1);
                         return Err(UnloadFailure::retained(
                             arc,
-                            eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain"),
+                            worktable::prelude::eyre::eyre!("cannot unload generation: {outstanding} Arc lease(s) remain"),
                         ));
                     }
                 };
                 owned.close().await.map_err(|error| {
-                    UnloadFailure::after_close(eyre::Report::new(error))
+                    UnloadFailure::after_close(worktable::prelude::eyre::Report::new(error))
                 })?;
                 Ok(UnloadReport { estimated_released_bytes })
             }
@@ -80,7 +80,7 @@ impl Generator {
                 /// Returns the physical size of this table's `.wt.data` file.
                 /// Persisted vacuum makes freed pages reusable across reloads,
                 /// but does not truncate this file.
-                pub async fn persisted_data_file_size_bytes(&self) -> std::io::Result<u64> {
+                pub async fn persisted_data_file_size_bytes(&self) -> Result<u64, worktable::prelude::fsx::Error> {
                     self.1.persisted_data_file_size_bytes().await
                 }
             }
@@ -184,13 +184,16 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
+        let node_capacity = name_generator.get_disk_page_capacity();
+        let disk_capacity = name_generator.get_disk_page_capacity();
+        let page_const_name = name_generator.get_page_size_const_ident();
         if self.attributes.pk_congee {
             // Congee durability is maintained by its native checkpoint/WAL.
             quote! {}
         } else if self.attributes.pk_arctic_string {
             quote! {
-                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
-                    let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name);
+                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#disk_capacity as u32}>>>) {
+                    let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#node_capacity);
                     for (key, value) in self.0.primary_index.pk_map.iter_values() {
                         shadow.insert(key, value);
                     }
@@ -198,14 +201,14 @@ impl Generator {
                     for node in shadow.snapshot_nodes() {
                         pages.push(UnsizedIndexPage::from_node(node.as_ref()));
                     }
-                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }
         } else if self.attributes.pk_arctic {
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
                     let shadow = IndexMap::<#pk_type, OffsetEqLink<#const_name>>::with_maximum_node_size(size);
                     for (key, value) in self.0.primary_index.pk_map.iter_values() {
                         shadow.insert(key, value);
@@ -214,19 +217,19 @@ impl Generator {
                     for node in shadow.snapshot_nodes() {
                         pages.push(IndexPage::from_node(&node, size));
                     }
-                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }
         } else if self.attributes.pk_unsized {
             quote! {
-                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#const_name as u32}>>>) {
+                pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<UnsizedIndexPage<#pk_type, {#disk_capacity as u32}>>>) {
                     let mut pages = vec![];
                     for node in self.0.primary_index.pk_map.snapshot_nodes() {
                         let page = UnsizedIndexPage::from_node(node.as_ref());
                         pages.push(page);
                     }
-                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                    let (toc, pages) = map_unsized_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }
@@ -254,10 +257,10 @@ impl Generator {
             };
             quote! {
                 pub fn get_peristed_primary_key_with_toc(&self) -> (Vec<GeneralPage<TableOfContentsPage<(#pk_type, Link)>>>, Vec<GeneralPage<IndexPage<#pk_type>>>) {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
                     let mut pages = vec![];
                     #collect_pages
-                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #const_name as u32 }>(pages);
+                    let (toc, pages) = map_index_pages_to_toc_and_general::<_, { #disk_capacity as u32 }, { #page_const_name as u32 }>(pages);
                     (toc.pages, pages)
                 }
             }

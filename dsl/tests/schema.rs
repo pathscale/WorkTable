@@ -107,6 +107,7 @@ fn a_schema_survives_a_trip_through_serde() {
         version: 4,
         persist: true,
         partition_by: shard: u32,
+        partition_max_size: u64,
         columns: {
             id: u64 primary_key autoincrement using congee,
             payload: String optional,

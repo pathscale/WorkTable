@@ -32,6 +32,14 @@ impl InMemoryGenerator {
                         quote! { self.#index_field_name.capacity() },
                         quote! { self.#index_field_name.node_count() },
                     ),
+                    // Refused before any generator runs (`worktable/mod.rs`), so this
+                    // is unreachable. It emits a refusal rather than panicking
+                    // because a future path that reaches it should fail at the
+                    // declaration, not inside the macro.
+                    crate::common::model::IndexBackend::FxHash => (
+                        quote! { compile_error!("`using fxhash` cannot back a paged table") },
+                        quote! { compile_error!("`using fxhash` cannot back a paged table") },
+                    ),
                     crate::common::model::IndexBackend::Congee | crate::common::model::IndexBackend::Arctic => (
                         // Neither ART exposes allocator capacity or internal
                         // node counts through its stable public API.

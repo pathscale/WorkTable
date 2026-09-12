@@ -165,7 +165,7 @@ async fn concurrent_inserts_and_deletes_keep_the_index_consistent() {
                 for n in 0..per_writer {
                     let edge = (writer as u128) << 64 | n as u128;
                     let source = (n as u128) % keys;
-                    futures::executor::block_on(table.insert(row(&table, source, edge, n))).unwrap();
+                    nagoya::block_on(table.insert(row(&table, source, edge, n))).unwrap();
                     // Interleave point reads to race the writers.
                     let _ = table.select_by_source_hash(source).execute().unwrap();
                 }
@@ -192,7 +192,7 @@ async fn concurrent_inserts_and_deletes_keep_the_index_consistent() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_deletes_leave_no_stale_links() {
     let table = Arc::new(ArcticAdjacencyWorkTable::default());
     let mut pks = Vec::new();
@@ -397,7 +397,7 @@ mod persisted {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn non_unique_arctic_recovers_concurrent_shared_key_writes() {
         use tokio::sync::Barrier;
 

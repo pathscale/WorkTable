@@ -1,15 +1,16 @@
+use alloc::vec::Vec;
 mod map;
 mod row_lock;
 
-use std::cell::Cell;
-use std::fmt::Debug;
-use std::future::Future;
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll};
+use alloc::sync::Arc;
+use core::cell::Cell;
+use core::fmt::Debug;
+use core::future::Future;
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::pin::Pin;
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::{Context, Poll};
 
 use futures::task::AtomicWaker;
 use parking_lot::Mutex;
@@ -76,8 +77,7 @@ where
 
     /// Explicitly unlocks the [`Lock`] before the [`LockGuard`] is [`Drop`]ped.
     pub fn unlock(self) {
-        self.lock.unlock();
-        self.lock_map.remove_with_lock_check(&self.primary_key);
+        drop(self);
     }
 }
 
@@ -166,6 +166,8 @@ where
 
 #[derive(Debug)]
 pub struct Lock {
+    // A wrapping diagnostic label, not dependency identity. The existing
+    // locked allocation stays unique and stable for this lock lifetime.
     id: u16,
     locked: Arc<AtomicBool>,
     wakers: Mutex<Vec<Arc<AtomicWaker>>>,
@@ -173,7 +175,7 @@ pub struct Lock {
 
 impl PartialEq for Lock {
     fn eq(&self, other: &Self) -> bool {
-        self.id.eq(&other.id)
+        Arc::ptr_eq(&self.locked, &other.locked)
     }
 }
 
@@ -181,7 +183,7 @@ impl Eq for Lock {}
 
 impl Hash for Lock {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&self.id, state)
+        Hash::hash(&Arc::as_ptr(&self.locked), state)
     }
 }
 
@@ -213,6 +215,7 @@ impl Lock {
         }
     }
 
+    /// Diagnostic label; labels may repeat and do not define lock equality.
     pub fn id(&self) -> u16 {
         self.id
     }
@@ -261,7 +264,7 @@ impl Future for LockWait {
 
         // Spin phase: try up to MAX_SPINS before going async
         for _ in 0..MAX_SPINS {
-            std::hint::spin_loop();
+            core::hint::spin_loop();
             if !self.locked.load(Ordering::Acquire) {
                 return Poll::Ready(());
             }
@@ -281,6 +284,20 @@ impl Future for LockWait {
 mod tests {
     use super::*;
     use std::panic::AssertUnwindSafe;
+
+    #[test]
+    #[allow(clippy::mutable_key_type)]
+    fn repeated_labels_do_not_remove_distinct_dependencies() {
+        let first = Arc::new(Lock::new(7));
+        let second = Arc::new(Lock::new(7));
+        let dependencies: hashbrown::HashSet<_> =
+            hashbrown::HashSet::from_iter([first.clone(), first.clone(), second.clone()]);
+        assert_eq!(dependencies.len(), 2);
+        first.unlock();
+        assert_eq!(dependencies.iter().filter(|lock| lock.is_locked()).count(), 1);
+        second.unlock();
+        assert!(dependencies.iter().all(|lock| !lock.is_locked()));
+    }
 
     #[test]
     fn test_unlock_on_drop() {
@@ -372,7 +389,7 @@ mod tests {
 
         // Create and insert a lock
         let (lock_type, lock) = FullRowLock::with_lock(lock_map.next_id());
-        let rw_lock = Arc::new(tokio::sync::RwLock::new(lock_type));
+        let rw_lock = Arc::new(nagoya::sync::RwLock::new(lock_type));
         lock_map.insert(pk, rw_lock);
 
         // Verify the lock is in the map

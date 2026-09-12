@@ -1,9 +1,11 @@
+use alloc::{boxed::Box, string::String, vec::Vec};
 mod primitives;
 
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::rc::Rc;
-use std::sync::Arc;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::rc::Rc;
+use alloc::sync::Arc;
+use core::fmt::Debug;
+use hashbrown::HashMap;
 
 use data_bucket::Link;
 use data_bucket::page::PageId;
@@ -14,16 +16,22 @@ use ordered_float::OrderedFloat;
 use psc_nanoid::PackedNanoid;
 use psc_nanoid::packed::AlphabetPackExt;
 use uuid::Uuid;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
+#[cfg(feature = "vanilla-index")]
+use crate::UpstreamIndexMap;
 use crate::in_memory::{RowWrapper, StorableRow};
 use crate::persistence::OperationType;
 use crate::prelude::OperationId;
 use crate::util::OffsetEqLink;
+#[allow(unused_imports)]
+use crate::{};
 use crate::{
     ArcticIndex, ArcticKey, ArcticMultiIndex, ArcticValue, CongeeIndex, CongeeKey, IndexMultiMap, PersistentArtIndex,
-    PersistentWtiIndex, UniqueIndex, UpstreamIndexMap, WorkTable,
+    PersistentWtiIndex, UniqueIndex, WorkTable,
 };
 use crate::{IndexMap, impl_memstat_zero};
 
@@ -55,7 +63,7 @@ impl<
         PkMap,
     >
 where
-    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>> + MemStat,
@@ -70,6 +78,33 @@ where
     }
 }
 
+macro_rules! impl_tuple_mem_stat {
+    ($($name:ident),+) => {
+        impl<$($name: MemStat),+> MemStat for ($($name,)+) {
+            fn heap_size(&self) -> usize {
+                #[allow(non_snake_case)]
+                let ($($name,)+) = self;
+                0usize $(+ $name.heap_size())+
+            }
+
+            fn used_size(&self) -> usize {
+                #[allow(non_snake_case)]
+                let ($($name,)+) = self;
+                0usize $(+ $name.used_size())+
+            }
+        }
+    };
+}
+
+impl_tuple_mem_stat!(A);
+impl_tuple_mem_stat!(A, B);
+impl_tuple_mem_stat!(A, B, C);
+impl_tuple_mem_stat!(A, B, C, D);
+impl_tuple_mem_stat!(A, B, C, D, E);
+impl_tuple_mem_stat!(A, B, C, D, E, F);
+impl_tuple_mem_stat!(A, B, C, D, E, F, G);
+impl_tuple_mem_stat!(A, B, C, D, E, F, G, H);
+
 impl<T: MemStat> MemStat for Option<T> {
     fn heap_size(&self) -> usize {
         self.as_ref().map_or(0, |v| v.heap_size())
@@ -81,10 +116,20 @@ impl<T: MemStat> MemStat for Option<T> {
 
 impl<T: MemStat> MemStat for Vec<T> {
     fn heap_size(&self) -> usize {
-        self.capacity() * std::mem::size_of::<T>() + self.iter().map(|v| v.heap_size()).sum::<usize>()
+        self.capacity() * core::mem::size_of::<T>() + self.iter().map(|v| v.heap_size()).sum::<usize>()
     }
     fn used_size(&self) -> usize {
-        self.len() * std::mem::size_of::<T>() + self.iter().map(|v| v.used_size()).sum::<usize>()
+        self.len() * core::mem::size_of::<T>() + self.iter().map(|v| v.used_size()).sum::<usize>()
+    }
+}
+
+impl<T: MemStat, const N: usize> MemStat for [T; N] {
+    fn heap_size(&self) -> usize {
+        self.iter().map(MemStat::heap_size).sum()
+    }
+
+    fn used_size(&self) -> usize {
+        self.iter().map(MemStat::used_size).sum()
     }
 }
 
@@ -104,7 +149,7 @@ where
     Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     fn heap_size(&self) -> usize {
-        let slot_size = std::mem::size_of::<Pair<K, V>>();
+        let slot_size = core::mem::size_of::<Pair<K, V>>();
         let base_heap = self.capacity() * slot_size;
 
         let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
@@ -113,7 +158,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        let pair_size = std::mem::size_of::<Pair<K, V>>();
+        let pair_size = core::mem::size_of::<Pair<K, V>>();
         let base = self.len() * pair_size;
 
         let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
@@ -122,6 +167,7 @@ where
     }
 }
 
+#[cfg(feature = "vanilla-index")]
 impl<K, V, Node> MemStat for UpstreamIndexMap<K, V, Node>
 where
     K: Debug + Ord + Clone + 'static + MemStat + Send,
@@ -129,14 +175,14 @@ where
     Node: VanillaNodeLike<VanillaPair<K, V>> + Send + 'static,
 {
     fn heap_size(&self) -> usize {
-        let slot_size = std::mem::size_of::<VanillaPair<K, V>>();
+        let slot_size = core::mem::size_of::<VanillaPair<K, V>>();
         let base_heap = self.capacity() * slot_size;
         let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
         base_heap + kv_heap
     }
 
     fn used_size(&self) -> usize {
-        let pair_size = std::mem::size_of::<VanillaPair<K, V>>();
+        let pair_size = core::mem::size_of::<VanillaPair<K, V>>();
         let base = self.len() * pair_size;
         let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
         base + used
@@ -151,7 +197,7 @@ where
     fn heap_size(&self) -> usize {
         let values = self.iter_values().map(|(_, value)| value.heap_size()).sum::<usize>();
         self.allocated_node_bytes()
-            + self.len() * (std::mem::size_of::<V>() + 2 * std::mem::size_of::<usize>())
+            + self.len() * (core::mem::size_of::<V>() + 2 * core::mem::size_of::<usize>())
             + values
     }
 
@@ -170,7 +216,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        self.len() * core::mem::size_of::<(K, V)>()
     }
 }
 
@@ -184,7 +230,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        self.len() * std::mem::size_of::<(K, V)>()
+        self.len() * core::mem::size_of::<(K, V)>()
     }
 }
 
@@ -220,7 +266,7 @@ where
     Node: NodeLike<MultiPair<K, V>> + Send + 'static,
 {
     fn heap_size(&self) -> usize {
-        let slot_size = std::mem::size_of::<MultiPair<K, V>>();
+        let slot_size = core::mem::size_of::<MultiPair<K, V>>();
         let base_heap = self.capacity() * slot_size;
 
         let kv_heap: usize = self.iter().map(|(k, v)| k.heap_size() + v.heap_size()).sum();
@@ -229,7 +275,7 @@ where
     }
 
     fn used_size(&self) -> usize {
-        let pair_size = std::mem::size_of::<MultiPair<K, V>>();
+        let pair_size = core::mem::size_of::<MultiPair<K, V>>();
         let base = self.len() * pair_size;
 
         let used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
@@ -240,32 +286,36 @@ where
 
 impl<T: MemStat> MemStat for Box<T> {
     fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
+        core::mem::size_of::<T>() + (**self).heap_size()
     }
     fn used_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).used_size()
+        core::mem::size_of::<T>() + (**self).used_size()
     }
 }
 
 impl<T: MemStat> MemStat for Arc<T> {
     fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
+        core::mem::size_of::<T>() + (**self).heap_size()
     }
     fn used_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).used_size()
+        core::mem::size_of::<T>() + (**self).used_size()
     }
 }
 
 impl<T: MemStat> MemStat for Rc<T> {
     fn heap_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).heap_size()
+        core::mem::size_of::<T>() + (**self).heap_size()
     }
     fn used_size(&self) -> usize {
-        std::mem::size_of::<T>() + (**self).used_size()
+        core::mem::size_of::<T>() + (**self).used_size()
     }
 }
 
-impl<K: MemStat + Eq + std::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
+// Generic over the hasher: `using fxhash` stores an `FxHashMap`, which is this
+// type with `FxBuildHasher` rather than the default. Counting capacity rather
+// than length is right for a hash map and is what makes a reserved index show
+// its reservation.
+impl<K: MemStat + Eq + core::hash::Hash, V: MemStat, S> MemStat for HashMap<K, V, S> {
     fn heap_size(&self) -> usize {
         let bucket_size = size_of::<(K, V)>();
         let base_heap = self.capacity() * bucket_size;
@@ -281,6 +331,40 @@ impl<K: MemStat + Eq + std::hash::Hash, V: MemStat> MemStat for HashMap<K, V> {
         let kv_used: usize = self.iter().map(|(k, v)| k.used_size() + v.used_size()).sum();
 
         base_used + kv_used
+    }
+}
+
+impl<K: MemStat + Ord, V: MemStat> MemStat for BTreeMap<K, V> {
+    fn heap_size(&self) -> usize {
+        self.len() * core::mem::size_of::<(K, V)>()
+            + self
+                .iter()
+                .map(|(key, value)| key.heap_size() + value.heap_size())
+                .sum::<usize>()
+    }
+
+    fn used_size(&self) -> usize {
+        self.heap_size()
+    }
+}
+
+impl<T: MemStat + Ord> MemStat for BTreeSet<T> {
+    fn heap_size(&self) -> usize {
+        self.len() * core::mem::size_of::<T>() + self.iter().map(MemStat::heap_size).sum::<usize>()
+    }
+
+    fn used_size(&self) -> usize {
+        self.heap_size()
+    }
+}
+
+impl<T: MemStat> MemStat for parking_lot::RwLock<T> {
+    fn heap_size(&self) -> usize {
+        self.read().heap_size()
+    }
+
+    fn used_size(&self) -> usize {
+        self.read().used_size()
     }
 }
 

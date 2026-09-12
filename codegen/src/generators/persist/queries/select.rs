@@ -32,7 +32,7 @@ impl PersistGenerator {
                 // Acquire the grace-period guard only when iteration starts.
                 // Merely constructing and retaining a query builder must not
                 // stall retired-link reclamation.
-                let iter = std::iter::once_with(move || {
+                let iter = core::iter::once_with(move || {
                     let read_guard = self.0.data.read_guard();
                     self.0.primary_index.pk_map
                         .iter_values()
@@ -55,7 +55,7 @@ impl PersistGenerator {
                                     return None;
                                 }
                                 current_link = replacement;
-                                std::hint::spin_loop();
+                                core::hint::spin_loop();
                             }
                             None
                         })

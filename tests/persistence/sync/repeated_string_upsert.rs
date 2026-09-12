@@ -76,7 +76,7 @@ fn repeated_varying_string_upserts_keep_the_worker_healthy() {
                     .unwrap();
             }
 
-            timeout(Duration::from_secs(15), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled after repeated string upserts")
                 .expect("persistence worker failed after repeated string upserts");

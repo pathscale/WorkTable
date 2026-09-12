@@ -1,6 +1,6 @@
 [package]
 name = "worktable_codegen"
-version = "1.0.0-beta.19"
+version = "1.9.0-alpha1"
 edition = "2024"
 license = "MIT"
 description = "Proc-macro companion crate for worktable: the worktable! macro and its derives."
@@ -9,6 +9,10 @@ repository = "https://github.com/pathscale/WorkTable"
 [features]
 s3-support = []
 logical-index-persistence = []
+# Mirrors the consuming crate's `std`. The macro emits a runtime type name
+# that only exists in a std build, so the emitter has to know which build it is
+# expanding into. Forwarded from `worktable` so the two cannot disagree.
+std = []
 # Compatibility no-op retained for downstream manifests.
 versioned-row-publication = []
 
@@ -20,13 +24,20 @@ proc-macro = true
 [dependencies]
 # The schema language, extracted so consumers other than this macro can read
 # a declaration. See its crate docs for why that needed a separate crate.
-# Name the pre-release floor explicitly while retaining the workspace's caret
-# policy. beta.18.1 is the first DSL artifact that exports every validator this
-# code generator calls; beta.18 was published before that API landed.
-worktable_dsl = { path = "../dsl", version = "^1.0.0-beta.18.1" }
-rkyv = { version = "0.8" }
+# Name the reviewed prerelease while accepting compatible schema-model and
+# validator updates. Release checks verify the resolved generated API.
+worktable_dsl = { path = "../dsl", version = "^1.0.0-beta.19" }
+# Test-only. As a normal dependency this proc-macro crate put `rkyv` with its
+# default features into the graph, which turned on `rkyv/std` for the target
+# build too and dragged `ptr_meta` with it. The generated code names `rkyv`
+# paths through `quote!`, which needs no dependency here at all.
+#
+# See the `[dev-dependencies]` section below.
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 convert_case = "0.6"
 indexmap = "2"
+
+[dev-dependencies]
+rkyv = { version = "0.8" }

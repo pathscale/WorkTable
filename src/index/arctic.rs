@@ -1,10 +1,11 @@
 //! Arctic adapter for memory-only unique WorkTable indexes.
 
-use std::borrow::Borrow;
-use std::fmt::{self, Debug};
-use std::marker::PhantomData;
-use std::ops::{Bound, RangeBounds};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use alloc::{string::String, vec::Vec};
+use core::borrow::Borrow;
+use core::fmt::{self, Debug};
+use core::marker::PhantomData;
+use core::ops::{Bound, RangeBounds};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use arctic::{ConcurrentMap, Key, Order};
 
@@ -183,15 +184,25 @@ impl ArcticValue for u64 {
     }
 }
 
-#[doc(hidden)]
-pub fn validate_arctic_link(link: data_bucket::Link) -> eyre::Result<()> {
-    if link.offset > u32::from(u16::MAX) || link.length > u32::from(u16::MAX) {
-        eyre::bail!(
+/// An offset or length exceeds Arctic's inline link representation.
+#[derive(Debug)]
+pub struct ArcticLinkError(pub data_bucket::Link);
+
+impl core::fmt::Display for ArcticLinkError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
             "link cannot be represented by Arctic: page {:?}, offset {}, length {}",
-            link.page_id,
-            link.offset,
-            link.length,
-        );
+            self.0.page_id, self.0.offset, self.0.length
+        )
+    }
+}
+impl core::error::Error for ArcticLinkError {}
+
+#[doc(hidden)]
+pub fn validate_arctic_link(link: data_bucket::Link) -> Result<(), ArcticLinkError> {
+    if link.offset > u32::from(u16::MAX) || link.length > u32::from(u16::MAX) {
+        return Err(ArcticLinkError(link));
     }
     Ok(())
 }
@@ -327,6 +338,7 @@ where
         self.inner.allocated_node_bytes()
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn export_topology<T>(
         &mut self,
         mut encode: impl FnMut(&V) -> T,
@@ -337,6 +349,7 @@ where
         self.inner.export_topology(|value| encode(&V::from_arctic(*value)))
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn from_topology<T>(
         topology: arctic::topology::Topology<T>,
         mut decode: impl FnMut(T) -> V,
@@ -481,8 +494,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Bound;
-    use std::sync::{Arc, Barrier};
+    use alloc::sync::Arc;
+    use core::ops::Bound;
+    use std::sync::Barrier;
 
     use super::{ArcticIndex, UniqueIndex};
 

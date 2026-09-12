@@ -1,7 +1,8 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-use crate::common::model::{PartitionKey, Persistence};
+use crate::common::model::{Columns, PartitionKey, Persistence};
+use crate::generators::dense_table;
 
 /// Generate the router for a partitioned table.
 ///
@@ -9,8 +10,51 @@ use crate::common::model::{PartitionKey, Persistence};
 /// `worktable::partition::PartitionSet`, so the code emitted per partitioned
 /// table stays small: one `worktable!` already expands to roughly 1,940 lines,
 /// and a router that grew with it would be paid for by every table.
-pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> TokenStream {
-    let table = format_ident!("{}WorkTable", name);
+///
+/// # Which table a partition holds
+///
+/// `partition_max_size` decides it, and `columns` is here so this can ask. A
+/// narrow width (`bool`, `u8`, `u16`) means the rows fit a position-addressed
+/// table with no index at all, and that is generated beside the router and used
+/// as the payload. A wide one (`u32`, `u64`) keeps the full generated table,
+/// which is what every partitioned table had before the width was declarable.
+///
+/// The router itself does not change between the two. It names its payload
+/// once and calls `Default::default`, `used_bytes` and `row_count` on it, and
+/// both shapes have all three.
+pub fn expand(
+    name: &Ident,
+    key: &PartitionKey,
+    persistence: Persistence,
+    columns: &Columns,
+    queries: &dense_table::DenseQueries,
+) -> syn::Result<TokenStream> {
+    // A dense partition has no persistence engine, no pages and no CDC, so a
+    // persisted declaration asking for one would be told yes and given a table
+    // that never writes anything. Refused rather than silently downgraded.
+    if key.max_size.is_dense() && persistence.is_persisted() {
+        return Err(syn::Error::new(
+            name.span(),
+            format!(
+                "`partition_max_size: {}` generates a partition with no pages, no index and no \
+                 persistence engine, so `persist: true` cannot be honoured for it. Use \
+                 `partition_max_size: u64`, which keeps the full table and persists, or drop \
+                 `persist`.",
+                key.max_size.type_name()
+            ),
+        ));
+    }
+
+    let dense = if key.max_size.is_dense() {
+        Some(dense_table::expand(name, columns, key.max_size, queries)?)
+    } else {
+        None
+    };
+    let table = if key.max_size.is_dense() {
+        dense_table::type_ident(name)
+    } else {
+        format_ident!("{}WorkTable", name)
+    };
     let partitions = format_ident!("{}Partitions", name);
     let pinned = format_ident!("{}Pinned", name);
     let key_name = &key.name;
@@ -38,7 +82,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
             pub fn partition_or_create(
                 &self,
                 #key_name: #key_ty,
-            ) -> Result<std::sync::Arc<#table>, worktable::partition::PartitionError> {
+            ) -> Result<worktable::prelude::Arc<#table>, worktable::partition::PartitionError> {
                 self.inner.get_or_create(#key_name as u64, <#table as Default>::default)
             }
         }
@@ -49,7 +93,9 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
          See `{partitions}::pinned`."
     );
 
-    quote! {
+    Ok(quote! {
+        #dense
+
         #[doc = #pinned_doc]
         pub struct #pinned<'a> {
             inner: worktable::partition::Pinned<'a, #table>,
@@ -82,7 +128,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
 
             /// The partition routed to by `#key_name`, if it exists.
             #[inline]
-            pub fn partition(&self, #key_name: #key_ty) -> Option<std::sync::Arc<#table>> {
+            pub fn partition(&self, #key_name: #key_ty) -> Option<worktable::prelude::Arc<#table>> {
                 self.inner.partition(#key_name as u64)
             }
 
@@ -94,7 +140,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
                 &self,
                 #key_name: #key_ty,
                 make: F,
-            ) -> Result<std::sync::Arc<#table>, worktable::partition::PartitionError>
+            ) -> Result<worktable::prelude::Arc<#table>, worktable::partition::PartitionError>
             where
                 F: FnOnce() -> #table,
             {
@@ -146,7 +192,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
             /// grace period). Removal and creation reclaim opportunistically,
             /// so a router shared behind an `Arc` does not accumulate removed
             /// partitions; `collect` is available for removal-only phases.
-            pub fn remove(&self, #key_name: #key_ty) -> Option<std::sync::Arc<#table>> {
+            pub fn remove(&self, #key_name: #key_ty) -> Option<worktable::prelude::Arc<#table>> {
                 self.inner.remove(#key_name as u64)
             }
 
@@ -156,7 +202,7 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
             }
 
             /// Every live partition with its key.
-            pub fn iter(&self) -> Vec<(#key_ty, std::sync::Arc<#table>)> {
+            pub fn iter(&self) -> Vec<(#key_ty, worktable::prelude::Arc<#table>)> {
                 self.inner
                     .iter()
                     .into_iter()
@@ -232,5 +278,5 @@ pub fn expand(name: &Ident, key: &PartitionKey, persistence: Persistence) -> Tok
                 out
             }
         }
-    }
+    })
 }

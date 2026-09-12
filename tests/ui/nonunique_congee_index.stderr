@@ -1,0 +1,5 @@
+error: non-unique index `group_idx` cannot use `congee`; non-unique indexes currently require `worktables_index` or `arctic`
+  --> tests/ui/nonunique_congee_index.rs:14:9
+   |
+14 |         group_idx: group_id using congee,
+   |         ^^^^^^^^^

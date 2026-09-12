@@ -137,7 +137,7 @@ fn tear_the_store_repeatedly() {
             for i in 0..200 {
                 table.insert(row(i)).await.unwrap();
             }
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled building the base store")
                 .expect("persistence engine failed");
@@ -263,7 +263,7 @@ fn test_store_survives_torn_shutdowns() {
                 }
                 // And the survivor must still accept writes and a drain.
                 table.insert(row(9_000_000)).await.unwrap();
-                timeout(Duration::from_secs(30), table.wait_for_ops())
+                timeout(Duration::from_secs(5), table.wait_for_ops())
                     .await
                     .expect("persistence stalled appending to the survivor store")
                     .expect("persistence engine failed");
@@ -407,7 +407,7 @@ fn test_many_clean_sessions_stay_readable() {
                     .unwrap_or_else(|error| panic!("session {session}: insert {next_id} refused: {error:?}"));
                 next_id += 1;
             }
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .unwrap_or_else(|_| panic!("session {session}: drain stalled"))
                 .expect("persistence engine failed");

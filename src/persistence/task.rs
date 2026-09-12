@@ -1,18 +1,24 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use alloc::{borrow::ToOwned, string::String, string::ToString, vec::Vec};
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
+use core::panic::Location;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::time::Duration;
+use hashbrown::{HashMap, HashSet};
 
 use data_bucket::page::PageId;
+use nagoya::sync::Notify;
 use parking_lot::Mutex as ParkingMutex;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
+
+use nagoya::JoinHandle;
 use worktable_codegen::worktable;
 
-use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId};
+use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
+use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, OperationType};
 use crate::persistence::{
     PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceResult, PersistenceState,
 };
@@ -28,15 +34,25 @@ worktable! (
         page_id: PageId,
         link: Link,
         pos: usize,
+        event_key: u64,
     },
     indexes: {
         operation_id_idx: operation_id using worktables_index,
         page_id_idx: page_id using worktables_index,
         link_idx: link using worktables_index,
+        event_key_idx: event_key using worktables_index,
     },
 );
 
 const MAX_PAGE_AMOUNT: usize = 16;
+
+/// Operations one event-ordered collection will take.
+///
+/// A batch can only ever apply a contiguous run of the event stream, so this
+/// caps the run rather than the page count. It is generous because taking too
+/// few costs an extra round trip while taking too many costs nothing: anything
+/// past the contiguous prefix is trimmed by validation either way.
+const MAX_BATCH_OPERATIONS: usize = 512;
 
 /// Attempts after which batch collection stops grouping by data page and takes
 /// the whole queue.
@@ -136,6 +152,17 @@ struct WorkerCompletionGuard {
     armed: bool,
 }
 
+/// A private blocking-I/O worker must stop its detached pool on every exit.
+struct StopWorkerPool<F: FnOnce()>(Option<F>);
+
+impl<F: FnOnce()> Drop for StopWorkerPool<F> {
+    fn drop(&mut self) {
+        if let Some(stop) = self.0.take() {
+            stop();
+        }
+    }
+}
+
 impl WorkerCompletionGuard {
     fn new(lifecycle: Arc<PersistenceLifecycle>) -> Self {
         Self { lifecycle, armed: true }
@@ -174,7 +201,7 @@ impl PersistenceMonitor {
     pub async fn wait_for_failure(self) -> PersistenceResult {
         loop {
             let notified = self.lifecycle.terminal_notify.notified();
-            tokio::pin!(notified);
+            let mut notified = core::pin::pin!(notified);
             // `notify_waiters` does not retain a permit. Register this waiter
             // before reading the lifecycle state so a terminal transition
             // cannot land between the state read and the first poll of
@@ -194,6 +221,9 @@ pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availabl
     queue_inner_wt: Arc<QueueInnerWorkTable>,
     last_events_ids: LastEventIds<AvailableIndexes>,
     last_invalid_batch_size: usize,
+    /// The event key of the last operation pushed, so an operation carrying no
+    /// primary event keeps its place in the queue instead of sorting to an end.
+    last_event_key: u64,
     page_limit: usize,
     /// Cycles since the engine last declared a batch failed. Drives only the
     /// give-up condition.
@@ -207,12 +237,40 @@ pub struct QueueAnalyzer<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availabl
     /// collection off `attempts` therefore never happened in exactly the case
     /// that needed it. Progress is what should widen the search.
     no_progress: usize,
+    /// Shared with the queue that feeds this analyzer and with every
+    /// `BatchOperation` it builds, so the event-gap guard can say which ids in
+    /// a gap ever reached the queue. Diagnostics only: see
+    /// [`crate::persistence::event_ledger`]. Detached until
+    /// `attach_event_ledger` is called, which unit-test analyzers never do.
+    event_ledger: Arc<EventLedger>,
 }
 
+/// How far each index's event stream has been applied.
+///
+/// `None` means nothing has been applied to that stream yet, and it has to be
+/// a separate value rather than a reserved id. Event ids start at **0** and
+/// `IndexChangeEventId::default()` is also 0, so using the id alone made
+/// "nothing applied" indistinguishable from "applied event 0". The gap check
+/// had to exempt the first batch to avoid deferring on that ambiguity, and the
+/// exemption is what let a first batch of ids 3..=28 be applied ahead of
+/// events 0..=2 and corrupt the index file.
 #[derive(Debug)]
 pub struct LastEventIds<AvailableIndexes> {
-    pub primary_id: IndexChangeEventId,
-    pub secondary_ids: HashMap<AvailableIndexes, IndexChangeEventId>,
+    pub primary_id: Option<IndexChangeEventId>,
+    pub secondary_ids: HashMap<AvailableIndexes, Option<IndexChangeEventId>>,
+}
+
+impl<AvailableIndexes> LastEventIds<AvailableIndexes> {
+    /// Whether `id` is the event this stream is waiting for.
+    ///
+    /// The first event of a stream is [`IndexChangeEventId::default`]; every
+    /// later one must be the immediate successor of the last applied.
+    pub fn follows(last: Option<IndexChangeEventId>, id: IndexChangeEventId) -> bool {
+        match last {
+            None => id == IndexChangeEventId::default(),
+            Some(last) => id.is_next_for(last),
+        }
+    }
 }
 
 impl<AvailableIndexes> Default for LastEventIds<AvailableIndexes>
@@ -232,11 +290,14 @@ where
     AvailableIndexes: Debug + Hash + Eq,
 {
     pub fn merge(&mut self, another: Self) {
-        if another.primary_id != IndexChangeEventId::default() {
+        // `None` is "this batch applied nothing to that stream", which must
+        // not move the watermark backwards. Previously the same test was
+        // `!= default`, which also discarded a genuine advance to event 0.
+        if another.primary_id.is_some() {
             self.primary_id = another.primary_id
         }
         for (index, id) in another.secondary_ids {
-            if id != IndexChangeEventId::default() || !self.secondary_ids.contains_key(&index) {
+            if id.is_some() || !self.secondary_ids.contains_key(&index) {
                 self.secondary_ids.insert(index, id);
             }
         }
@@ -257,20 +318,42 @@ where
             queue_inner_wt,
             last_events_ids: Default::default(),
             last_invalid_batch_size: 0,
+            last_event_key: 0,
             page_limit: MAX_PAGE_AMOUNT,
             attempts: 0,
             no_progress: 0,
+            event_ledger: Arc::new(EventLedger::detached()),
         }
+    }
+
+    /// Shares the feeding queue's event bookkeeping with this analyzer.
+    ///
+    /// Only the producer side records who pushed an event, so the analyzer has
+    /// to read the *same* ledger the queue writes for its gap reports to mean
+    /// anything.
+    pub fn attach_event_ledger(&mut self, ledger: Arc<EventLedger>) {
+        self.event_ledger = ledger;
     }
 
     pub fn push(&mut self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> eyre::Result<()> {
         let link = value.link();
+        // Where this operation sits in the primary event stream, which is the
+        // order a batch can actually apply. An operation that changes no
+        // indexed field carries no event and cannot create a gap, so it takes
+        // the key of the operation queued before it and stays in place rather
+        // than sorting to one end.
+        let event_key = value
+            .primary_key_events()
+            .and_then(|events| events.first())
+            .map_or(self.last_event_key, |event| event.id().inner());
+        self.last_event_key = event_key;
         let mut row = QueueInnerRow {
             id: self.queue_inner_wt.get_next_pk().into(),
             operation_id: value.operation_id(),
             page_id: link.page_id,
             link,
             pos: 0,
+            event_key,
         };
         let pos = self.operations.push(value);
         row.pos = pos;
@@ -301,6 +384,39 @@ where
             .map(|(id, _)| id)
     }
 
+    /// Records `stage` against every event id carried by `ops`.
+    ///
+    /// Diagnostics only. The whole body is skipped when bookkeeping is off,
+    /// which keeps the `Debug` formatting of secondary index labels off the
+    /// path of a release build entirely.
+    fn record_ops_stage(&self, ops: &[Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>], stage: Stages)
+    where
+        SecondaryKeys: TableSecondaryIndexEventsOps<AvailableIndexes>,
+    {
+        if !event_ledger::enabled() {
+            return;
+        }
+        for op in ops {
+            if let Some(evs) = op.primary_key_events() {
+                self.event_ledger
+                    .record_stage_for_events(EventStream::Primary, evs, stage);
+            }
+            // `Stages::QUEUED` is unioned in for secondary streams because the
+            // producer side records primary ids only: an operation reaching
+            // the analyzer at all proves it was queued, and without this the
+            // secondary gap report would call every id it knows about leaked.
+            // The cost is that a secondary record carries no producer call
+            // site, which the report prints as `<unrecorded>`.
+            for (index, id) in op.secondary_key_events().iter_event_ids() {
+                self.event_ledger.record_stage(
+                    EventStream::Secondary(format!("{index:?}")),
+                    id.inner(),
+                    stage.union(Stages::QUEUED),
+                );
+            }
+        }
+    }
+
     pub async fn collect_batch_from_op_id(
         &mut self,
         op_id: OperationId,
@@ -323,8 +439,44 @@ where
             }
         }
 
+        // Event-ordered selection.
+        //
+        // A batch can only apply a contiguous run of the event stream, so that
+        // is the order to select in. Grouping by page instead collected a
+        // page's worth of operations, let validation trim all but the
+        // contiguous prefix, and requeued the rest to be collected again next
+        // round. When the workload writes to scattered pages, which is what
+        // upserts against random keys do, page order and event order disagree
+        // and almost nothing in each collection survives the trim: measured at
+        // 202,000 collections and 198,000 requeues to drain 4,000 operations,
+        // 15.7s against 0.144s for the same count written sequentially.
+        //
+        // Validation stays the authority. Selecting in event order only makes
+        // the common case gapless by construction, so the trim removes nothing
+        // and the operation is collected once.
+        let mut event_ordered_ops = 0usize;
+        if !took_whole_queue {
+            let mut last_key: Option<u64> = None;
+            for (key, _) in self.queue_inner_wt.0.indexes.event_key_idx.iter() {
+                if event_ordered_ops >= MAX_BATCH_OPERATIONS {
+                    break;
+                }
+                // The index holds one entry per row, so a multi-row operation
+                // repeats its key.
+                if last_key == Some(key) {
+                    continue;
+                }
+                last_key = Some(key);
+                for row in self.queue_inner_wt.select_by_event_key(key).execute()? {
+                    if ops_set.insert(row.operation_id) {
+                        event_ordered_ops += 1;
+                    }
+                }
+            }
+        }
+
         let mut next_op_id = op_id;
-        let mut no_more_ops = took_whole_queue;
+        let mut no_more_ops = took_whole_queue || event_ordered_ops > 0;
         while used_page_ids.len() < self.page_limit && !no_more_ops {
             let ops_rows = self.queue_inner_wt.select_by_operation_id(next_op_id).execute()?;
             match next_op_id {
@@ -440,13 +592,26 @@ where
             ops.push(op);
         }
 
-        let mut op = BatchOperation::new(ops, info_wt);
+        self.record_ops_stage(&ops, Stages::COLLECTED);
+        let mut op = BatchOperation::new(ops, info_wt).with_event_ledger(self.event_ledger.clone());
         let invalid_for_this_batch_ops = op.validate(&self.last_events_ids, self.attempts).await?;
         if let Some(invalid_for_this_batch_ops) = invalid_for_this_batch_ops {
+            self.record_ops_stage(&invalid_for_this_batch_ops, Stages::REQUEUED);
             self.extend_from_iter(invalid_for_this_batch_ops.into_iter())?;
             let previous_primary = self.last_events_ids.primary_id;
             let last_ids = op.get_last_event_ids();
             let advanced = last_ids.primary_id > previous_primary;
+            if let Some(id) = last_ids.primary_id {
+                self.event_ledger.record_applied_upto(EventStream::Primary, id.inner());
+            }
+            if event_ledger::enabled() {
+                for (index, id) in &last_ids.secondary_ids {
+                    if let Some(id) = id {
+                        self.event_ledger
+                            .record_applied_upto(EventStream::Secondary(format!("{index:?}")), id.inner());
+                    }
+                }
+            }
             self.last_events_ids.merge(last_ids);
             self.last_invalid_batch_size = 0;
             self.page_limit = MAX_PAGE_AMOUNT;
@@ -461,6 +626,7 @@ where
         } else {
             // can't collect batch for now
             let ops = op.ops();
+            self.record_ops_stage(&ops, Stages::REQUEUED);
             self.attempts += 1;
             self.no_progress += 1;
             if self.last_invalid_batch_size == ops.len() {
@@ -473,6 +639,22 @@ where
         }
     }
 
+    /// Whether the last `None` from collection means "wait for more operations".
+    ///
+    /// Collection returns `None` in two situations that look identical to the
+    /// caller. While it is still escalating it has more to try on its own: a
+    /// wider page limit, and then `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS`, where
+    /// it stops grouping by page and takes everything queued. Only once it has
+    /// taken the whole queue and *still* found a hole does the missing event
+    /// have to arrive from somewhere else.
+    ///
+    /// `no_progress` is at least `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS` when a
+    /// call takes the whole queue and is incremented again when that call
+    /// fails, so strictly greater is exactly "the whole queue was not enough".
+    fn needs_more_operations(&self) -> bool {
+        self.no_progress > COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS
+    }
+
     pub fn len(&self) -> usize {
         self.queue_inner_wt.count()
     }
@@ -480,8 +662,8 @@ where
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use hashbrown::HashMap;
 
     use super::*;
 
@@ -508,7 +690,7 @@ mod lifecycle_tests {
         }
 
         fn iter_event_ids(&self) -> impl Iterator<Item = (TestIndex, IndexChangeEventId)> {
-            std::iter::empty()
+            core::iter::empty()
         }
 
         fn sort(&mut self) {}
@@ -598,6 +780,7 @@ mod lifecycle_tests {
 
     fn insert_operation(id: u128) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(uuid::Uuid::from_u128(id)),
             pk_gen_state: (),
             primary_key_events: vec![],
@@ -621,6 +804,7 @@ mod lifecycle_tests {
             length: 1,
         };
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Single(uuid::Uuid::from_u128(id)),
             pk_gen_state: (),
             primary_key_events: vec![indexset::cdc::change::ChangeEvent::InsertAt {
@@ -660,32 +844,33 @@ mod lifecycle_tests {
     async fn collection_recovers_when_event_order_and_operation_order_disagree() {
         let queue_inner_wt = Arc::new(QueueInnerWorkTable::default());
         let mut analyzer: QueueAnalyzer<(), u64, TestEvents, TestIndex> = QueueAnalyzer::new(queue_inner_wt);
-        analyzer.last_events_ids.primary_id = 1.into();
+        analyzer.last_events_ids.primary_id = Some(1.into());
 
-        // Collecting page 5 from operation 1 also takes operation 3, and
-        // advances past it. Operation 2 sits between them in operation order,
-        // on another page, and carries the event the stream needs next, so it
-        // is skipped and then the walk runs out of operations entirely. The
-        // page-limit growth that normally widens a stuck collection cannot
-        // help here: the loop ended because it ran out, not because it was
-        // full.
+        // Under page grouping, collecting page 5 from operation 1 also took
+        // operation 3 and advanced past it. Operation 2 sits between them in
+        // operation order, on another page, and carries the event the stream
+        // needs next, so it was skipped and the walk then ran out of
+        // operations entirely. The page-limit growth that normally widens a
+        // stuck collection could not help: the loop ended because it ran out,
+        // not because it was full.
         analyzer.push(insert_operation_with_event(1, 5, 3)).unwrap();
         analyzer.push(insert_operation_with_event(2, 9, 2)).unwrap();
         analyzer.push(insert_operation_with_event(3, 5, 4)).unwrap();
 
+        // Selection is event-ordered now, so the inversion costs nothing: the
+        // operation carrying event 2 is picked first because event 2 comes
+        // first, and the batch is gapless on the first attempt. The loop and
+        // its budget stay because what this test guards is that collection
+        // *recovers*, and a future change to selection order must still
+        // recover within the budget rather than rebuild a gapped batch.
         let start = OperationId::Single(uuid::Uuid::from_u128(1));
-        for attempt in 0..12 {
+        for _ in 0..12 {
             if analyzer
                 .collect_batch_from_op_id(start)
                 .await
                 .expect("collection must not fail the engine over an ordering it can recover from")
                 .is_some()
             {
-                assert!(
-                    attempt >= 1,
-                    "the first attempt is expected to defer; progress on attempt 0 would mean \
-                     the inversion was not reproduced"
-                );
                 return;
             }
         }
@@ -698,6 +883,7 @@ mod lifecycle_tests {
 
     fn multi_insert_operation_on(page: u32, id: u128, offset: u32, byte: u8) -> Operation<(), u64, TestEvents> {
         Operation::Insert(InsertOperation {
+            retired_link: None,
             id: OperationId::Multi(uuid::Uuid::from_u128(id)),
             pk_gen_state: (),
             primary_key_events: vec![],
@@ -727,7 +913,7 @@ mod lifecycle_tests {
             .unwrap();
 
         assert_eq!(
-            batch.get(&1.into()).unwrap(),
+            batch.get(&PageId::from(1u32)).unwrap(),
             &vec![
                 (
                     Link {
@@ -765,6 +951,98 @@ mod lifecycle_tests {
         assert_eq!(batches.load(Ordering::Relaxed), 1);
     }
 
+    /// Draining scattered writes must stay linear in the operation count.
+    ///
+    /// A batch applies a contiguous run of the event stream. Collection used to
+    /// group by page instead, so when a workload wrote to scattered pages it
+    /// collected a page of operations, had validation trim all but the few
+    /// whose events happened to be contiguous, and requeued the rest to be
+    /// collected again. Draining 4,000 operations cost 202,000 collections and
+    /// 198,000 requeues.
+    ///
+    /// Scattered is not a corner case: random-key upserts are exactly this
+    /// shape, and sequential inserts were the only workload where page order
+    /// and event order agreed. Measured across the change, for 4,000
+    /// operations over 40 pages: 16.104s to 0.140s, and 300 batches to 8. The
+    /// same count written sequentially took 0.144s both before and after,
+    /// which is what says this closed a gap rather than skipped work.
+    ///
+    /// 2,000 operations here, which took 3.811s before and 0.069s after. The
+    /// bound is loose on purpose: it is there to catch a return to quadratic,
+    /// not to police scheduling noise on a loaded machine.
+    #[tokio::test]
+    async fn draining_scattered_writes_stays_linear() {
+        const OPERATIONS: u128 = 2_000;
+        const PAGES: u128 = 40;
+
+        let batches = Arc::new(AtomicUsize::new(0));
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: batches.clone(),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::None,
+        });
+        for i in 1..=OPERATIONS {
+            let page = (i % PAGES) as u32 + 1;
+            task.apply_operation(insert_operation_with_event(i, page, (i - 1) as u64))
+                .unwrap();
+        }
+
+        let draining = std::time::Instant::now();
+        task.close().await.unwrap();
+        let elapsed = draining.elapsed();
+
+        assert!(batches.load(Ordering::Relaxed) > 0, "the operations have to apply");
+        assert!(
+            elapsed < Duration::from_millis(1_500),
+            "draining {OPERATIONS} scattered writes took {elapsed:?}, which is the quadratic collection returning"
+        );
+    }
+
+    /// Which states may wait, stated exactly.
+    ///
+    /// This pins the predicate the drain loop asks before sleeping, and it
+    /// measures no time at all.
+    ///
+    /// A wall-clock test stood here first, draining three operations with
+    /// inverted event ids and asserting under 400 ms against the 2.027s the
+    /// bug produced. It was deleted rather than kept, for a reason worth
+    /// recording: once selection became event-ordered that fixture drained on
+    /// the first attempt and never reached the sleep at all, so replacing the
+    /// guard with an unconditional sleep left it green. A test that cannot
+    /// fail is worse than none, because it reads like cover. Only mutation
+    /// made that visible.
+    ///
+    /// Event-ordered selection also means a `None` from collection now only
+    /// ever means a genuine wait, so the guard below is defence in depth
+    /// rather than load-bearing. It stays because selection order is exactly
+    /// the kind of thing that gets changed again.
+    #[test]
+    fn only_an_exhausted_collection_waits_for_more_operations() {
+        let mut analyzer: QueueAnalyzer<(), u64, TestEvents, TestIndex> =
+            QueueAnalyzer::new(Arc::new(QueueInnerWorkTable::default()));
+
+        // Still escalating. Each retry widens the page limit, and the last of
+        // these is the one that takes the whole queue, so everything needed is
+        // already here and waiting only delays reaching it.
+        for no_progress in 0..=COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS {
+            analyzer.no_progress = no_progress;
+            assert!(
+                !analyzer.needs_more_operations(),
+                "a collection with {no_progress} failed attempts has not exhausted its own \
+                 escalation, so sleeping delays the fallback rather than waiting for anything"
+            );
+        }
+
+        // The whole queue was taken and the stream still had a hole, so the
+        // missing event is genuinely not here yet.
+        analyzer.no_progress = COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS + 1;
+        assert!(
+            analyzer.needs_more_operations(),
+            "once the whole queue was not enough, the missing event has to arrive from elsewhere"
+        );
+    }
+
     /// Regression: the blocker filter kept the operations *after* a blocking
     /// multi operation instead of the complete ones before it.
     ///
@@ -791,34 +1069,33 @@ mod lifecycle_tests {
             .get_batch_data_op()
             .unwrap();
 
-        let page_one_writes = batch.get(&1.into()).unwrap();
+        // These operations carry no primary events, so nothing constrains
+        // their order and event-ordered selection takes both groups in one
+        // collection. Group A is no longer applied *instead of* group B.
+        //
+        // What must still hold is the invariant the blocker logic existed to
+        // protect: a multi operation is never split across batches, because
+        // applying half of one ships a stream whose remaining event ids never
+        // arrive. Assert that directly rather than asserting the particular
+        // split the page walk used to produce.
+        let page_one_writes = batch.get(&PageId::from(1u32)).expect("group A lives on page 1");
+        for offset in [0u32, 8] {
+            assert!(
+                page_one_writes.iter().any(|(link, _)| link.offset == offset),
+                "group A must be applied whole, missing its write at offset {offset}"
+            );
+        }
+        let group_b_on_page_one = page_one_writes.iter().any(|(link, _)| link.offset == 16);
+        let group_b_on_page_two = batch.get(&PageId::from(2u32)).is_some_and(|writes| !writes.is_empty());
         assert_eq!(
-            page_one_writes,
-            &vec![
-                (
-                    Link {
-                        page_id: 1.into(),
-                        offset: 0,
-                        length: 8,
-                    },
-                    vec![1; 8],
-                ),
-                (
-                    Link {
-                        page_id: 1.into(),
-                        offset: 8,
-                        length: 8,
-                    },
-                    vec![2; 8],
-                ),
-            ],
-            "the complete earlier group must be applied"
+            group_b_on_page_one, group_b_on_page_two,
+            "the multi operation spanning both pages must be applied whole or not at all"
         );
-        assert!(
-            !batch.contains_key(&2.into()),
-            "the blocking group must stay queued, not be applied without its earlier events"
+        assert_eq!(
+            analyzer.len(),
+            0,
+            "one event-ordered collection takes every queued operation"
         );
-        assert_eq!(analyzer.len(), 2, "both rows of the blocked group remain queued");
     }
 
     #[tokio::test]
@@ -888,7 +1165,7 @@ mod lifecycle_tests {
         });
 
         // Drive the worker to its idle poll, where it parks inside the window.
-        tokio::task::yield_now().await;
+        nagoya::yield_now().await;
 
         task.apply_operation(insert_operation(1)).unwrap();
         task.close().await.unwrap();
@@ -918,7 +1195,7 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn wake_landing_inside_the_pop_race_window_is_not_lost() {
         let lifecycle = Arc::new(PersistenceLifecycle::new());
-        let mut queue = Queue::<(), u64, TestEvents>::new(lifecycle.clone());
+        let mut queue = Queue::<(), u64, TestEvents>::new(lifecycle.clone(), "tests/queue");
         let gate = Arc::new(PopRaceWindowGate::new());
         queue.pop_race_window_gate = Some(gate.clone());
         let queue = Arc::new(queue);
@@ -981,41 +1258,62 @@ mod lifecycle_tests {
         assert!(Arc::ptr_eq(&wait_error, &intake_error));
     }
 
-    #[test]
-    fn runtime_shutdown_is_terminal_and_rejects_later_operations() {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .unwrap();
-        let task = runtime.block_on(async {
-            let task = PersistenceTask::run_engine(TestEngine {
-                batches: Arc::new(AtomicUsize::new(0)),
-                events: Arc::new(ParkingMutex::new(Vec::new())),
-                config: TestConfig,
-                failure: TestFailure::None,
-            });
-            tokio::task::yield_now().await;
-            task
+    /// A worker that stops publishes a terminal state instead of leaving its
+    /// waiters parked, and refuses operations afterwards.
+    ///
+    /// This used to build a tokio runtime, spawn the engine onto it and drop
+    /// the runtime out from under the worker. That worked because
+    /// `tokio::spawn` picked up whatever runtime the caller happened to be on,
+    /// and it is no longer how the worker is scheduled: it runs on the
+    /// engine's own pool, so tearing down a caller's runtime leaves it
+    /// running. Deliberately. A flush loop that dies because its caller
+    /// dropped an unrelated runtime loses writes it had already accepted.
+    ///
+    /// So the shutdown under test is the one that still exists: `Drop` on an
+    /// idle task, with `monitor()` for the waiter that has to outlive it.
+    ///
+    /// Both terminal outcomes are accepted, because which one happens is a
+    /// genuine race rather than a fact about the engine. `Drop` wakes the
+    /// queue and then cancels; if a pool thread polls the worker inside that
+    /// window it sees `Closing` and closes cleanly, otherwise the cancellation
+    /// lands first and the completion guard reports it. Asserting one of them
+    /// would be asserting who won.
+    #[tokio::test]
+    async fn a_stopped_worker_is_terminal_and_rejects_later_operations() {
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::None,
         });
+        nagoya::yield_now().await;
 
-        drop(runtime);
+        let monitor = task.monitor();
+        let sink = task.vacuum_sink();
+        drop(task);
 
-        let verifier = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let wait_error = verifier
-            .block_on(async { tokio::time::timeout(Duration::from_secs(1), task.wait_for_failure()).await })
-            .expect("cancelled worker must notify terminal waiters")
-            .unwrap_err();
-        assert_eq!(
-            wait_error.to_string(),
-            "persistence engine failed: persistence worker was cancelled"
-        );
+        let outcome = tokio::time::timeout(Duration::from_secs(1), monitor.wait_for_failure())
+            .await
+            .expect("a stopped worker must notify terminal waiters");
 
-        let intake_error = task.apply_operation(insert_operation(1)).unwrap_err();
-        assert!(Arc::ptr_eq(&wait_error, &intake_error));
+        match &outcome {
+            Ok(()) => {}
+            Err(error) => assert_eq!(
+                error.to_string(),
+                "persistence engine failed: persistence worker was cancelled"
+            ),
+        }
+
+        // Terminal either way means no further operation is accepted. The
+        // queue outlives the task through `vacuum_sink`, which is exactly the
+        // path that made this worth asserting: a push accepted here would be
+        // acknowledged to a caller and then never written.
+        let intake_error = sink
+            .reclaim_pages(vec![1.into()])
+            .expect_err("a terminal engine must refuse operations");
+        if let Err(wait_error) = &outcome {
+            assert!(Arc::ptr_eq(wait_error, &intake_error));
+        }
     }
 
     /// Regression: an operation pushed while `Drop` ran was accepted, then
@@ -1036,7 +1334,7 @@ mod lifecycle_tests {
             failure: TestFailure::None,
         });
         // Let the worker reach its idle poll so `Drop` takes the abort path.
-        tokio::task::yield_now().await;
+        nagoya::yield_now().await;
 
         let sink = task.vacuum_sink();
         drop(task);
@@ -1117,16 +1415,16 @@ enum PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 #[cfg(test)]
 #[derive(Debug)]
 struct PopRaceWindowGate {
-    entered: tokio::sync::Semaphore,
-    proceed: tokio::sync::Semaphore,
+    entered: nagoya::sync::Semaphore,
+    proceed: nagoya::sync::Semaphore,
 }
 
 #[cfg(test)]
 impl PopRaceWindowGate {
     fn new() -> Self {
         Self {
-            entered: tokio::sync::Semaphore::new(0),
-            proceed: tokio::sync::Semaphore::new(0),
+            entered: nagoya::sync::Semaphore::new(0),
+            proceed: nagoya::sync::Semaphore::new(0),
         }
     }
 
@@ -1134,17 +1432,55 @@ impl PopRaceWindowGate {
     /// blocks until [`Self::release`].
     async fn pause(&self) {
         self.entered.add_permits(1);
-        self.proceed.acquire().await.expect("gate semaphore closed").forget();
+        // No `expect` here any more: nagoya's semaphore has no closed state,
+        // so `acquire` yields the permit rather than a `Result`. The panic
+        // this used to carry was for a case that cannot arise.
+        self.proceed.acquire().await.forget();
     }
 
     /// Waits until the popping task is parked inside the window.
     async fn wait_entered(&self) {
-        self.entered.acquire().await.expect("gate semaphore closed").forget();
+        self.entered.acquire().await.forget();
     }
 
     /// Lets the popping task run on from the window.
     fn release(&self) {
         self.proceed.add_permits(1);
+    }
+}
+
+/// Primary index event ids lifted off an operation before it is moved into the
+/// queue, so they can be recorded once the push is known to have been accepted.
+///
+/// Primary only: `Queue` is generic over the secondary event type with no bound
+/// that could iterate it, and the primary stream is the one whose gap guard
+/// stalls the engine. The analyzer records secondary ids at collection time,
+/// where that bound does exist.
+///
+/// Cheap when bookkeeping is off: `EventLedger::event_ids` returns an empty
+/// `Vec`, which allocates nothing, and the rest is two `Copy` field reads.
+struct QueuedEventIds {
+    ids: Vec<u64>,
+    op_id: OperationId,
+    op_type: OperationType,
+}
+
+impl QueuedEventIds {
+    fn of<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>(
+        value: &Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
+    ) -> Self {
+        Self {
+            ids: value
+                .primary_key_events()
+                .map(|evs| EventLedger::event_ids(evs.as_slice()))
+                .unwrap_or_default(),
+            op_id: value.operation_id(),
+            op_type: value.operation_type(),
+        }
+    }
+
+    fn record(&self, ledger: &EventLedger, site: &'static Location<'static>) {
+        ledger.record_queued(EventStream::Primary, &self.ids, self.op_id, self.op_type, site);
     }
 }
 
@@ -1161,38 +1497,75 @@ pub struct Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
     // queue that still holds work.
     len: Arc<AtomicUsize>,
     lifecycle: Arc<PersistenceLifecycle>,
+    /// Producer-side half of the event-gap bookkeeping: every operation that
+    /// reaches persistence passes through this queue, so an event id the
+    /// engine is waiting for that never appears here was assigned by the index
+    /// and dropped before it was queued. Shared with the analyzer, which reads
+    /// it when the gap guard fires. Diagnostics only, and inert unless
+    /// [`event_ledger::enabled`].
+    event_ledger: Arc<EventLedger>,
     #[cfg(test)]
-    pop_race_window_gate: Option<std::sync::Arc<PopRaceWindowGate>>,
+    pop_race_window_gate: Option<alloc::sync::Arc<PopRaceWindowGate>>,
 }
 
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
-    fn new(lifecycle: Arc<PersistenceLifecycle>) -> Self {
+    fn new(lifecycle: Arc<PersistenceLifecycle>, table_path: &str) -> Self {
         Self {
             queue: ParkingMutex::new(VecDeque::new()),
             notify: Notify::new(),
             len: Arc::new(AtomicUsize::new(0)),
             lifecycle,
+            event_ledger: Arc::new(EventLedger::new(table_path)),
             #[cfg(test)]
             pop_race_window_gate: None,
         }
     }
 
-    pub fn push(&self, value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
-        self.push_message(PersistenceMessage::Operation(value))
+    /// The event bookkeeping this queue writes, for sharing with the analyzer.
+    pub fn event_ledger(&self) -> Arc<EventLedger> {
+        self.event_ledger.clone()
     }
 
-    /// Enqueues a whole batch of operations under one lifecycle check, one
-    /// queue lock acquisition and one worker wake-up, so callers producing
-    /// many operations at once (`insert_many`) pay the intake overhead once
-    /// instead of per row. All-or-nothing: either every operation is accepted
-    /// or none is.
-    pub fn push_many(
+    /// Enqueues one operation, naming the producer's call site.
+    ///
+    /// The site is passed explicitly rather than taken with `#[track_caller]`,
+    /// because that only reaches one frame up: a wrapper that wants its own
+    /// caller named in a gap report has to forward a location through here.
+    /// through here rather than call `push` and lose it.
+    pub fn push_at(
+        &self,
+        value: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>,
+        site: &'static Location<'static>,
+    ) -> PersistenceResult {
+        // The ids have to be lifted out before the operation is moved into the
+        // queue, but they are only recorded once the push is accepted: a
+        // refused push (the engine is closing or already failed) genuinely
+        // does not queue its events, and recording it as queued would hide
+        // exactly that leak mode.
+        let queued = QueuedEventIds::of(&value);
+        self.push_message(PersistenceMessage::Operation(value))?;
+        queued.record(&self.event_ledger, site);
+        Ok(())
+    }
+
+    /// Enqueues a whole batch under one lifecycle check, one queue lock and one
+    /// worker wake-up, so a caller producing many operations at once
+    /// (`insert_many`) pays the intake overhead once instead of per row.
+    /// All-or-nothing: either every operation is accepted or none is. Takes the
+    /// producer's call site for the same reason as [`Queue::push_at`].
+    pub fn push_many_at(
         &self,
         values: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
+        site: &'static Location<'static>,
     ) -> PersistenceResult {
         if values.is_empty() {
             return Ok(());
         }
+        let queued = if crate::persistence::event_ledger::enabled() {
+            values.iter().map(QueuedEventIds::of).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let state = self.lifecycle.state.lock();
         match &*state {
             PersistenceState::Running => {}
@@ -1205,6 +1578,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
             .lock()
             .extend(values.into_iter().map(PersistenceMessage::Operation));
         self.notify.notify_one();
+        drop(state);
+        // Recorded after acceptance, for the reason given in `push_at`.
+        for queued in &queued {
+            queued.record(&self.event_ledger, site);
+        }
         Ok(())
     }
 
@@ -1236,7 +1614,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
     ) -> Option<PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         loop {
             let notified = self.notify.notified();
-            tokio::pin!(notified);
+            let mut notified = core::pin::pin!(notified);
             // `wake()` uses `notify_waiters`, which stores no permit: only a
             // waiter that already exists observes it. Register this waiter
             // before draining the queue and reading the lifecycle state, so a
@@ -1305,17 +1683,27 @@ where
     fn apply_move(
         &self,
         bytes: Vec<u8>,
+        old_link: Link,
         new_link: Link,
         primary_key_events: Vec<IndexChangeEvent<IndexPair<PrimaryKey, Link>>>,
         secondary_keys_events: SecondaryKeys,
     ) -> PersistenceResult {
-        self.push(Operation::Update(UpdateOperation {
-            id: OperationId::Single(uuid::Uuid::now_v7()),
-            primary_key_events,
-            secondary_keys_events,
-            bytes,
-            link: new_link,
-        }))
+        // `Location::caller()` without `#[track_caller]` resolves to this line
+        // rather than to vacuum's call site. That is deliberate: the trait
+        // declaration lives outside this module and cannot be annotated, and
+        // this line is already a unique producer label, because `apply_move`
+        // is only ever reached from a vacuum row move.
+        self.push_at(
+            Operation::Update(UpdateOperation {
+                retired_link: Some(old_link),
+                id: OperationId::Single(uuid::Uuid::now_v7()),
+                primary_key_events,
+                secondary_keys_events,
+                bytes,
+                link: new_link,
+            }),
+            Location::caller(),
+        )
     }
 
     fn reclaim_pages(&self, page_ids: Vec<PageId>) -> PersistenceResult {
@@ -1353,11 +1741,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     /// `close()` lifecycle (drain, join, surface terminal errors) is the
     /// long-term replacement for this heuristic.
     fn drop(&mut self) {
-        let Some(handle) = self.engine_task_handle.as_ref() else {
-            return;
-        };
-        if handle.is_finished() {
-            return;
+        match self.engine_task_handle.as_ref() {
+            None => return,
+            Some(handle) if handle.is_finished() => return,
+            Some(_) => {}
         }
         if matches!(
             self.lifecycle.state(),
@@ -1379,7 +1766,12 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
         }
         self.queue.wake();
         if self.check_wait_triggers() {
-            handle.abort();
+            // `cancel` consumes the handle, where `abort` took `&self`. Taking
+            // the field is the whole difference, and it is safe here because
+            // this task is being dropped and nothing reads the handle again.
+            if let Some(handle) = self.engine_task_handle.take() {
+                handle.cancel();
+            }
         } else {
             tracing::error!(
                 "PersistenceTask dropped with work in flight; the engine task keeps draining detached and                  then stops, but its errors can no longer be observed. Call close() (or wait_for_ops()                  before dropping) to guarantee a clean shutdown."
@@ -1391,17 +1783,21 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
+    /// `#[track_caller]` so an event-gap report names the producer that
+    /// pushed the operation rather than this forwarding line.
+    #[track_caller]
     pub fn apply_operation(&self, op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>) -> PersistenceResult {
-        self.queue.push(op)
+        self.queue.push_at(op, Location::caller())
     }
 
     /// Enqueues a batch of operations atomically with a single worker
     /// wake-up. See [`Queue::push_many`].
+    #[track_caller]
     pub fn apply_operations(
         &self,
         ops: Vec<Operation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>>,
     ) -> PersistenceResult {
-        self.queue.push_many(ops)
+        self.queue.push_many_at(ops, Location::caller())
     }
 
     pub fn ensure_running(&self) -> PersistenceResult {
@@ -1417,14 +1813,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     /// This is intentionally separate from `VacuumStats`: online vacuum makes
     /// freed pages durably reusable, but does not truncate `.wt.data`.
     /// Operators can sample this value to observe physical growth and reuse.
-    pub async fn persisted_data_file_size_bytes(&self) -> std::io::Result<u64> {
-        tokio::fs::metadata(format!(
+    pub async fn persisted_data_file_size_bytes(&self) -> Result<u64, crate::fsx::Error> {
+        // `metadata` answers with the length, which is the only thing anything
+        // here ever asked a metadata handle for.
+        crate::fsx::metadata(format!(
             "{}/{}",
             self.table_path.trim_end_matches('/'),
             WT_DATA_EXTENSION
         ))
         .await
-        .map(|metadata| metadata.len())
     }
 
     /// Returns a sink that lets vacuum queue persistence operations for row
@@ -1448,12 +1845,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     {
         let table_path = engine.config().table_path().to_owned();
         let lifecycle = Arc::new(PersistenceLifecycle::new());
-        let queue = Arc::new(Queue::new(lifecycle.clone()));
+        let queue = Arc::new(Queue::new(lifecycle.clone(), &table_path));
 
         let engine_queue = queue.clone();
         let engine_lifecycle = lifecycle.clone();
         let analyzer_inner_wt: Arc<QueueInnerWorkTable> = Default::default();
         let mut analyzer = QueueAnalyzer::new(analyzer_inner_wt.clone());
+        // Producer and consumer must share one ledger: the queue records who
+        // pushed an event, the analyzer's gap guard reads it back.
+        analyzer.attach_event_ledger(queue.event_ledger());
         let analyzer_in_progress = Arc::new(AtomicBool::new(true));
         let task_analyzer_in_progress = analyzer_in_progress.clone();
 
@@ -1476,7 +1876,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     // luck; this yield holds it open. Unit tests only, and it
                     // changes scheduling rather than behaviour.
                     #[cfg(test)]
-                    tokio::task::yield_now().await;
+                    nagoya::yield_now().await;
                     if matches!(engine_lifecycle.state(), PersistenceState::Closing) {
                         // Re-check the queue before giving up on it. An
                         // operation can be enqueued between the poll above and
@@ -1545,8 +1945,14 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                             engine_lifecycle.fail(e);
                             return;
                         }
-                    } else {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    } else if analyzer.needs_more_operations() {
+                        // Only here is waiting the right thing: collection has
+                        // already taken the whole queue and the stream still
+                        // has a hole, so the event it needs is not yet queued.
+                        // Sleeping on the escalating retries instead charged
+                        // 500 ms for each step towards the fallback that fixes
+                        // them, which is how a 0.03s drain became 290s.
+                        nagoya::sleep(Duration::from_millis(500)).await;
                     }
                 } else if let Some(page_ids) = pending_reclaim.take() {
                     // `get_first_op_id_available() == None` is only sufficient
@@ -1571,11 +1977,21 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         // Constructed outside the async block so cancellation before its first
         // poll still drops the guard and publishes terminal failure.
         let completion_guard = WorkerCompletionGuard::new(lifecycle.clone());
+        // HostFile performs blocking I/O. Do not occupy a compute-pool worker
+        // with writes or fsync. Only this persistence task uses the private pool.
+        let engine_runtime = nagoya::runtime::Runtime::new(1);
+        let weak_pool = Arc::downgrade(engine_runtime.pool());
+        let stop_pool = StopWorkerPool(Some(move || {
+            if let Some(pool) = weak_pool.upgrade() {
+                pool.shut_down();
+            }
+        }));
         let task = async move {
+            let _stop_pool = stop_pool;
             worker.await;
             completion_guard.disarm();
         };
-        let engine_task_handle = tokio::spawn(task);
+        let engine_task_handle = engine_runtime.spawn(task);
         Self {
             queue,
             engine_task_handle: Some(engine_task_handle),
@@ -1635,10 +2051,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 tracing::info!("Waiting for {} operations", count);
             }
 
-            tokio::select! {
-                _ = self.lifecycle.progress_notify.notified() => {},
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-            }
+            // A `tokio::select!` racing the notify against a sleep, which is
+            // what a timeout is. The second arm exists so a wake lost to a
+            // race still gets re-checked, not to measure anything.
+            let _ = nagoya::timeout(Duration::from_secs(1), self.lifecycle.progress_notify.notified()).await;
         }
     }
 
@@ -1661,12 +2077,17 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         let begin_result = self.lifecycle.begin_close();
         self.queue.wake();
 
+        // `None` is cancellation. Note what this no longer catches: tokio's
+        // `JoinError` also reported a *panic* in the worker, and nagoya's
+        // handle does not, because the panic propagates out of the await
+        // instead. A panicking worker therefore unwinds through this call
+        // rather than arriving as a terminal error.
         if let Some(handle) = self.engine_task_handle.take()
-            && let Err(error) = handle.await
+            && handle.await.is_none()
         {
             return Err(self
                 .lifecycle
-                .fail(eyre::eyre!("persistence engine task failed to join: {error}")));
+                .fail(eyre::eyre!("persistence engine task was cancelled before it closed")));
         }
 
         match self.lifecycle.state() {

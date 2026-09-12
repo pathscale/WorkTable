@@ -37,7 +37,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::{ColumnSpec, IndexSpec, PartitionKeySpec, Schema};
-use crate::model::{IndexBackend, Persistence};
+use crate::model::{IndexBackend, Persistence, Storage};
 
 /// What applying a change costs.
 ///
@@ -94,6 +94,24 @@ pub enum Change {
         /// The declared name.
         to: String,
     },
+    /// The row storage changed; a caller must choose how to convert it.
+    StorageChanged {
+        /// Stored representation.
+        from: Storage,
+        /// Declared representation.
+        to: Storage,
+    },
+    /// The page layout changed and existing row links cannot be reused.
+    PageSizeChanged {
+        /// Stored setting; absence selects the default.
+        from: Option<u32>,
+        /// Declared setting; absence selects the default.
+        to: Option<u32>,
+    },
+    /// Derived columnar storage or clustering changed.
+    ColumnarChanged,
+    /// Runtime selection changed without changing archived rows.
+    RuntimeChanged,
     /// `persist` changed.
     PersistenceChanged {
         /// What was stored.
@@ -202,8 +220,7 @@ pub enum Change {
     },
     /// The generated queries differ. Nothing on disk depends on them.
     QueriesChanged,
-    /// The `config` block differs. `page_size` is pinned to the on-disk page
-    /// size for persisted tables, so what is left here cannot reach the data.
+    /// Code-only configuration differs. Layout changes are reported separately.
     ConfigChanged,
 }
 
@@ -211,23 +228,26 @@ impl Change {
     /// What applying this change costs.
     pub fn cost(&self) -> Cost {
         match self {
-            Self::Version { .. } | Self::QueriesChanged | Self::ConfigChanged => Cost::Nothing,
+            Self::Version { .. } | Self::QueriesChanged | Self::ConfigChanged | Self::RuntimeChanged => Cost::Nothing,
 
             Self::IndexAdded(_)
             | Self::IndexDropped(_)
             | Self::IndexColumnChanged { .. }
             | Self::IndexUniquenessChanged { .. }
             | Self::IndexBackendChanged { .. }
-            | Self::PrimaryIndexBackendChanged { .. } => Cost::RebuildIndexes,
+            | Self::PrimaryIndexBackendChanged { .. }
+            | Self::ColumnarChanged => Cost::RebuildIndexes,
 
             Self::ColumnAdded(_)
             | Self::ColumnDropped(_)
             | Self::ColumnTypeChanged { .. }
             | Self::ColumnOptionalityChanged { .. }
-            | Self::ColumnMoved { .. } => Cost::RewriteRows,
+            | Self::ColumnMoved { .. }
+            | Self::PageSizeChanged { .. } => Cost::RewriteRows,
 
             Self::Renamed { .. }
             | Self::PersistenceChanged { .. }
+            | Self::StorageChanged { .. }
             | Self::PartitionKeyChanged { .. }
             | Self::PrimaryKeyChanged { .. }
             | Self::PrimaryKeyGeneratorChanged { .. } => Cost::NeedsIntent,
@@ -364,6 +384,12 @@ impl Diff {
                 to: declared.version,
             });
         }
+        if stored.storage != declared.storage {
+            changes.push(Change::StorageChanged {
+                from: stored.storage,
+                to: declared.storage,
+            });
+        }
         if stored.persist != declared.persist {
             changes.push(Change::PersistenceChanged {
                 from: stored.persist,
@@ -398,7 +424,29 @@ impl Diff {
         if stored.queries != declared.queries {
             changes.push(Change::QueriesChanged);
         }
-        if stored.config != declared.config {
+        if stored.runtime != declared.runtime {
+            changes.push(Change::RuntimeChanged);
+        }
+        // A changed explicit page setting is conservatively a row rewrite,
+        // including transitions to/from a default selected by the generator.
+        if stored.config.page_size != declared.config.page_size {
+            changes.push(Change::PageSizeChanged {
+                from: stored.config.page_size,
+                to: declared.config.page_size,
+            });
+        }
+        if stored.columnar_indexes != declared.columnar_indexes
+            || stored.config.columnar_slot_id != declared.config.columnar_slot_id
+            || stored.config.columnar_chunk_rows != declared.config.columnar_chunk_rows
+            || stored.columns.iter().any(|column| {
+                declared
+                    .column(&column.name)
+                    .is_some_and(|after| column.columnar != after.columnar)
+            })
+        {
+            changes.push(Change::ColumnarChanged);
+        }
+        if stored.config.row_derives != declared.config.row_derives {
             changes.push(Change::ConfigChanged);
         }
 
@@ -512,6 +560,10 @@ fn describe_change(change: &Change) -> String {
         Change::PrimaryIndexBackendChanged { from, to } => {
             format!("primary index: {} -> {}", from.name(), to.name())
         }
+        Change::StorageChanged { from, to } => format!("row storage {from:?} -> {to:?}"),
+        Change::PageSizeChanged { from, to } => format!("page size {from:?} -> {to:?}"),
+        Change::ColumnarChanged => "columnar layout or clustering changed".to_string(),
+        Change::RuntimeChanged => "runtime changed".to_string(),
         Change::QueriesChanged => "queries changed".to_string(),
         Change::ConfigChanged => "config changed".to_string(),
     }

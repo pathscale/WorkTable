@@ -1,5 +1,15 @@
 # WorkTable
 
+Read the [user guide](docs/wt-user-guide.typ) for features and Rust callsites, or
+[Why WorkTables](docs/why-worktables.typ) for the design and measured examples.
+Typst is the maintained source. Run `sh scripts/build-guides.sh` to build both PDFs.
+
+Generated mutable paged tables expose `table.vacuum_with_pacing(VacuumPacing {
+batch_pages: 64, ..Default::default() })` for a caller-selected vacuum policy.
+`table.vacuum()` retains the default policy. This is a Rust API, with no new DSL
+syntax. Zero batch pages disables automatic pacing; positive values wait for
+quiet foreground periods and release exclusion between source-page batches.
+
 *Absolutely not a database.*
 
 Embedded table storage for Rust. Declare a table with the `worktable!` macro and get a
@@ -16,6 +26,27 @@ from a macro, and that persisting it is one feature flag away.
 cargo add worktable@1.0.0-beta.5
 ```
 
+## New in 1.9
+
+- **`no_std`.** `default-features = false` builds the library and generated calls without
+  Rust std. Allocation and OS services remain available. Hosted persistence,
+  background vacuum and runtime thread creation require `std`.
+- **Columnar fields and indexes.** `columnar` on a column, `columnar_indexes` with
+  `cluster_by`, so a scan over one field reads only that field's bytes.
+- **Explicit owned runtime execution.** `runtime: nagoya(<flavor>)` or `runtime: tokio` selects the default for `execute_async().await`. Named profiles schedule owned selects and annotated mutations on `Arc<Table>`; ordinary borrowed operations keep their callsite execution.
+- **`page_size` on a persisted table**, at any size above a 512-byte floor.
+- **The default index backend is `arctic`**, not `worktables_index`. Arctic cannot
+  key an optional or variable-width column, so an index over `String optional`
+  must now say `using worktables_index`. Only `congee` still requires `persist`
+  to be stated explicitly.
+- **`using fxhash`, a hash index**, on `vec: true` tables only. Worth 4.9x on
+  build and 4.0x on lookup at a million rows against the default. It is refused
+  on a paged table, because a paged table generates a range select per index and
+  writes each persisted index to disk as sorted pages, and a hash map can do
+  neither. A table using it has no `range` or `range_by_` methods at all — they
+  are not generated, so asking for one is a compile error rather than a method
+  that cannot answer.
+
 ## What you get
 
 | | |
@@ -28,7 +59,7 @@ cargo add worktable@1.0.0-beta.5
 | **Generated queries** | `select`, `insert`, `insert_many`, `upsert`, `update`, `delete` and a `select_all` query builder on every table, plus the custom update/delete queries you declare. |
 | **Paged in-memory storage** | Records live in `DataPages` with a free list for reuse. `rkyv` gives zero-copy access to archived rows. |
 | **Concurrency** | Lock-free concurrent indexes with change-data-capture, plus a row-level `LockMap` for ordered access. |
-| **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature syncs that to S3. Both opt-in, so a purely in-memory table pays for neither. |
+| **Optional persistence** | `PersistedWorkTable` writes to local disk; the `s3-support` feature adds database-wide S3 generations and a queryable generated system catalog. Both are opt-in, so a purely in-memory table pays for neither. |
 | **Schema migration** | `worktable_version!` and `migration_engine!` version a table's schema and generate migrations between versions. See [docs/migration.md](docs/migration.md). |
 | **Memory accounting** | `MemStat` estimates live heap; resident benchmarks measure allocator and SMR overhead. |
 
@@ -50,12 +81,39 @@ exported from the crate root; the prelude carries `DiskPersistenceEngine`,
 `ReadOnlyPersistenceEngine`, the space and table-of-contents types, and the operation-log
 types (`InsertOperation`, `UpdateOperation`, `DeleteOperation`, `AcknowledgeOperation`).
 
-S3 support layers *on top of* the disk engine rather than replacing it.
-`S3SyncDiskPersistenceEngine` wraps a `DiskPersistenceEngine` and syncs it.
+The recommended S3 path is database-wide. Create one `S3Database`, clone that handle
+into each persisted table's `DatabaseS3DiskConfig`, and generate the table-specific
+engine alias with `database_s3_persistence!(TableName)`. DataBucket stages immutable
+content-addressed page segments and WorkTable supplies the domain's generated system
+catalog. A conditional 160-byte head publishes the new generation only after its pages
+and catalog checkpoint are durable. One isolated page mutation measured 33,016 bytes;
+the same mutation with a catalog larger than one page measured 49,544 bytes. The 4 MiB
+segment size is a coalescing ceiling, not a write minimum.
+
+The older `s3_sync_persistence!` callsite remains available for existing per-table
+manifests. New databases should use the shared domain so tables commit against one
+catalog and restore through catalog page mappings.
+
+```rust
+use worktable::{database_s3_persistence, DatabaseS3DiskConfig, S3Database};
+
+database_s3_persistence!(OrderWorkTable);
+
+let database = S3Database::open_s3(domain_id, writer_epoch, s3_config)?;
+let engine = OrderDatabaseS3PersistenceEngine::new(DatabaseS3DiskConfig {
+    disk: DiskConfig::new_with_table_name(dir, "orders", OrderWorkTable::version()),
+    database: database.clone(),
+}).await?;
+let orders = OrderWorkTable::load(engine).await?;
+
+for table in database.catalog().system_tables() {
+    println!("{}: {} rows", table.name.as_str(), table.row_count);
+}
+```
 
 ```toml
 [dependencies]
-worktable = { version = "=1.0.0-beta.5", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "^1.9.0-alpha1", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
@@ -115,7 +173,7 @@ consistent with moved rows, but it does not truncate `.wt.data`. Use
 observe physical growth and decide when to snapshot/rebuild or run future
 offline compaction.
 
-WorkTablesIndex uses its predictable branch-based node search by default in WorkTable. This avoids a measured regression for sequential numeric-key workloads. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-hybrid-search`, `wti-std-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Prefer one search feature for an unambiguous build. If Cargo feature unification enables several, WorkTablesIndex applies the documented deterministic precedence rather than rejecting the graph.
+WorkTablesIndex uses the standard slice binary search by default in WorkTable. At the default node width, the isolated 200,000-key matrix measured randomized lookup at 45.4 ns with this policy and 101.9 ns with the predictable policy. Predictable search remains useful for ordered writes: the alternating table A/B measured about 12-14% less persisted insert-and-drain time, while standard search was faster for four-client in-memory insertion. Alternative search policies remain compile-time feature gates: disable WorkTable's default features and enable one of `wti-predictable-search`, `wti-hybrid-search`, or `wti-superslice-search` (plus any other features such as `s3-support`). Prefer one search feature for an unambiguous build. If Cargo feature unification enables several, WorkTablesIndex applies the documented deterministic precedence rather than rejecting the graph.
 
 ## Concurrent read/write publication
 
@@ -158,7 +216,7 @@ provides the page and link primitives its data layout uses: `PageId`, `Link`,
 backend, and those types appear throughout the in-memory paging, the indexes, the memory
 accounting and the on-disk format alike.
 
-WorkTable re-exports it (`pub use data_bucket;`) and pins an exact version. **Take it
+WorkTable re-exports it (`pub use data_bucket;`) and uses a compatible caret requirement. **Take it
 through that re-export rather than depending on it separately.** A second copy in your
 graph gives you two incompatible sets of the same types, and the resulting error names two
 different `data_bucket` paths while looking like something else entirely.

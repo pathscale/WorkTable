@@ -20,11 +20,20 @@ use std::path::{Path, PathBuf};
 
 use worktable_dsl::{Schema, declarations_in_source};
 
+/// `tests/ui` is a corpus of declarations the macro must **refuse**, so the
+/// scanner has to skip it. Reading it would assert the opposite of what those
+/// files are for, and the failure would read as a parser bug rather than as the
+/// harness finding exactly what it was built to find.
+const NOT_A_CORPUS: &str = "ui";
+
 fn rust_files(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == NOT_A_CORPUS) {
+                continue;
+            }
             rust_files(&path, out);
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             out.push(path);
@@ -112,4 +121,56 @@ fn reading_the_same_declaration_twice_gives_the_same_schema() {
     let second = Schema::parse(source).expect("parses");
     assert_eq!(first, second);
     assert_eq!(first.to_dsl(), second.to_dsl());
+}
+
+/// Every top-level block survives the emitter.
+///
+/// **The corpus round trip above cannot catch a dropped block.** Its property
+/// is `parse(emit(parse(s))) == parse(s)`, stated on `Schema`, so anything
+/// `Schema` does not model is dropped symmetrically and compares equal. That is
+/// not hypothetical: `columnar_indexes` was parsed into the model, discarded
+/// when the `Schema` was built, never emitted, and the corpus test reported
+/// success on the very declarations that use it.
+///
+/// So this states the property against the **text** instead. One minimal
+/// declaration per block, and the block's keyword has to come back out. It is
+/// coarse on purpose: a check that understood the contents would be the same
+/// code as the emitter and would agree with it for the same reasons.
+#[test]
+fn every_top_level_block_survives_the_emitter() {
+    // Each case is the smallest declaration that legally uses its block.
+    let cases: [(&str, &str); 6] = [
+        ("columns", "name: A, columns: { id: u64 primary_key }"),
+        (
+            "indexes",
+            "name: A, columns: { id: u64 primary_key, x: u64 }, indexes: { x_idx: x }",
+        ),
+        (
+            "columnar_indexes",
+            "name: A, columns: { id: u64 primary_key, a: u32 columnar, b: i64 columnar }, \
+             columnar_indexes: { ab: { cluster_by: [a, b], }, }",
+        ),
+        (
+            "queries",
+            "name: A, columns: { id: u64 primary_key, x: u64 }, queries: { update: { X(x) by id } }",
+        ),
+        (
+            "config",
+            "name: A, columns: { id: u64 primary_key }, config: { page_size: 16384, }",
+        ),
+        ("runtime", "name: A, runtime: tokio, columns: { id: u64 primary_key }"),
+    ];
+
+    for (block, source) in cases {
+        let schema = Schema::parse(source).unwrap_or_else(|error| panic!("`{block}` case does not parse: {error}"));
+        let emitted = schema.to_dsl();
+        assert!(
+            emitted.contains(block),
+            "the emitter dropped `{block}`. It parsed, so the loss is between the model and the \
+             text, which is where `columnar_indexes` was lost.\nsource:{source}\nemitted:\n{emitted}"
+        );
+        let reparsed =
+            Schema::parse(&emitted).unwrap_or_else(|error| panic!("`{block}` case does not re-parse: {error}"));
+        assert_eq!(schema, reparsed, "`{block}` case changed across a round trip");
+    }
 }

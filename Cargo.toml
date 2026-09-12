@@ -3,7 +3,7 @@ members = ["codegen", "dsl", "examples", "performance_measurement", "performance
 
 [package]
 name = "worktable"
-version = "1.0.0-beta.19"
+version = "1.9.0-alpha1"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -15,9 +15,32 @@ keywords = ["database", "embedded", "in-memory", "index", "storage"]
 categories = ["database-implementations", "data-structures", "caching"]
 
 [features]
-default = ["wti-predictable-search"]
-perf_measurements = ["dep:performance_measurement", "dep:performance_measurement_codegen"]
-s3-support = ["dep:rusty-s3", "dep:url", "dep:reqwest", "dep:walkdir", "worktable_codegen/s3-support"]
+default = ["std", "wti-std-search", "vanilla-index"]
+# `futures/std` belongs here rather than on the dependency
+# line: written as `features = ["std"]` beside the version, a
+# `--no-default-features` build of this crate would still turn them on. The
+# s3 tests reach `futures::io`, whose traits live behind that feature.
+std = ["nagoya/std", "ps-reclaim/std", "congee/std", "indexset/std", "futures/std", "worktable_codegen/std", "dep:arc-swap", "dep:convert_case", "dep:eyre", "dep:worktable_dsl", "uuid/std", "psc-nanoid/std"]
+# The tokio backend for `Runtime`, selectable with `runtime: tokio` in a
+# schema. **Off, and it stays off.** Getting tokio out of the normal dependency
+# graph is the work this builds on: it used to arrive through the `tokio::`
+# paths `worktable!` emitted into consumer crates, so a runtime was part of the
+# macro's contract whether a consumer ran one or not. The check is
+# `cargo tree -e normal -i tokio` printing nothing in the default feature set.
+tokio-runtime = ["dep:tokio", "std"]
+# The upstream IndexSet backend, selectable per index with `using indexset`.
+# Optional because it reaches `crossbeam-utils`, `parking_lot` and `serde`,
+# none of which build without `std`, and because it is one backend of four
+# rather than something the table needs.
+vanilla-index = ["dep:vanilla_indexset", "std"]
+perf_measurements = ["std", "dep:performance_measurement", "dep:performance_measurement_codegen"]
+# Test-only, and empty on purpose: it compiles the four-backend arms of
+# `tests/worktable/runtime_backends.rs`, which declare `runtime:` on a table.
+# Off by default because the DSL keyword and the `Runtime` trait land
+# separately, and a default-on flag would make this branch red until they do.
+# The arm that runs today declares no runtime and is not behind this flag.
+runtime-backends = []
+s3-support = ["std", "data_bucket/s3-support", "dep:blake3", "dep:rusty-s3", "dep:url", "dep:ureq", "dep:walkdir", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
 # path and into the background persistence worker. The persisted page format
 # is unchanged, so stores remain readable with or without this feature.
@@ -25,7 +48,7 @@ logical-index-persistence = ["worktable_codegen/logical-index-persistence"]
 wti-hybrid-search = ["indexset/wt-slice-binary-search"]
 wti-predictable-search = ["indexset/custom-binary-search"]
 wti-std-search = ["indexset/std-binary-search"]
-wti-superslice-search = ["indexset/superslice-binary-search"]
+wti-superslice-search = ["std", "indexset/superslice-binary-search"]
 # Compatibility no-op: immutable row publication is mandatory for the safe
 # generated API, including `default-features = false` builds.
 versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
@@ -35,54 +58,133 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 [dependencies]
 # Read-mostly snapshots own page Arcs while the fixed directory supplies a
 # pointer-only fast path. Publication is append-only and asserted at each swap.
-arc-swap = "1"
+arc-swap = { version = "1", default-features = false, optional = true }
 async-trait = "0.1"
-arctic = { package = "arctic-wt", version = "^0.1, >=0.1.9", default-features = false, features = ["smr-ps-reclaim"] }
-congee = { package = "congee-wt", version = "^0.4, >=0.4.4" }
-convert_case = "0.6"
-crc32fast = "1"
-data_bucket = { version = "^0.5, >=0.5.7" }
-derive_more = { version = "2", features = ["from", "error", "display", "debug", "into"] }
-eyre = "0.6"
-fastrand = "2"
-futures = "0.3"
-indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.12", default-features = false, features = ["concurrent", "cdc", "multimap"] }
-vanilla_indexset = { package = "indexset", version = "0.15", features = ["concurrent", "cdc", "multimap"] }
+arctic = { package = "arctic-wt", version = "^0.1", default-features = false, features = ["smr-ps-reclaim"] }
+blake3 = { version = "1", optional = true }
+# `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
+# crate links the standard library through a dependency. That matters for
+# EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
+# bare-metal target: we ship on Linux, macOS and Windows.
+congee = { package = "congee-wt", version = "^0.4", default-features = false }
+convert_case = { version = "0.6", default-features = false, optional = true }
+crc32fast = { version = "1", default-features = false }
+# 0.7 supplies the v3 row directory, integrity checks and configurable stride.
+data_bucket = { version = "^0.7" }
+derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
+eyre = { version = "0.6", optional = true }
+hashbrown = "0.15"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+# The file traits and the host implementation. `std` here; the crate takes it
+# without default features wherever the filesystem is not involved.
+# The current 0.1 runtime supplies cancellation/panic handling and worker
+# wake ownership. Runtime::with_tuning marks pool workers correctly. Compatible
+# updates remain open; update ps-st3 in existing lockfiles for scheduler fixes.
+#
+# It also re-exports `Tuning`, which is why `ps-st3` is no longer a direct
+# dependency here: it was named for that one type.
+nagoya = { version = "^0.1", default-features = false }
+indexset = { package = "WorkTablesIndex", version = "^0.0", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+# Pulls `serde` and `serde_core` into every build, and nothing here uses them.
+# They are not reachable from this line: `indexset` 0.15 declares `ftree` with
+# `features = ["serde"]` unconditionally, so no `default-features = false` here
+# removes them and forking `ftree` would not either. This is one of four
+# selectable index backends and making it optional is the fix.
+vanilla_indexset = { package = "indexset", version = "0.15", features = ["concurrent", "cdc", "multimap"], optional = true }
 # indexset = { path = "../indexset", version = "0.15.0", features = ["concurrent", "cdc", "multimap"] }
 # indexset = { package = "wt-indexset", version = "^0.12", features = ["concurrent", "cdc", "multimap"] }
-log = "0.4"
-ordered-float = "5"
-parking_lot = "0.12"
+log = { version = "0.4", default-features = false }
+ordered-float = { version = "5", default-features = false }
+# The house fork, not vanilla: `parking_lot_lite_hack` is what every other
+# consumer here takes. Same crate name via `package`, so no call site changes.
+#
+# Vanilla is still in the default-feature graph, and no longer for the reason
+# it was: it used to arrive through tokio, and now arrives through `indexset
+# 0.15` behind the `vanilla-index` default feature. So it is gone from a
+# `--no-default-features` build and present in a normal one, until that backend
+# is deselected.
+#
+# FairMutex first shipped in 0.12.8. Keep the compatible 0.12 line open so
+# Cargo selects the current fork release and WorkTablesIndex can share it.
+parking_lot = { package = "parking_lot_lite_hack", version = "^0.12", default-features = false }
 performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
-prettytable-rs = "0.10"
-psc-nanoid = { version = "3", features = ["rkyv", "packed"] }
-rkyv = { version = "0.8", features = ["uuid-1"] }
-reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls-webpki-roots", "charset", "http2"] }
-ps-reclaim = { version = "^0.1, >=0.1.3" }
-rustc-hash = "2"
+psc-nanoid = { version = "^3.2", default-features = false, features = ["rkyv", "packed"] }
+rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "uuid-1"] }
+# A blocking HTTP client, not an async one, and that is the point.
+#
+# `rusty-s3` only signs: `action.sign(..)` returns a presigned URL and the four
+# calls here are a PUT and three GETs against those URLs. No streaming, no
+# multipart, no auth headers. `reqwest` was doing that through hyper, h2, tower
+# and tokio, which cost 91 crates and — worse — dragged tokio into a build that
+# otherwise has none, so an S3 write from the nagoya persistence worker panicked
+# with "there is no reactor running".
+#
+# The persistence worker is already on its own thread and does one request at a
+# time. Async HTTP exists to multiplex many connections onto few threads, which
+# is not this. A blocking call is the correct shape here rather than a
+# concession, and it removes the reactor requirement instead of satisfying it.
+ureq = { version = "2", optional = true, default-features = false, features = ["tls"] }
+# `spin` rather than `std`: without it this crate reaches for `thread_local!`,
+# which needs a platform. See its `slot` module for what it falls back to.
+ps-reclaim = { version = "^0.1", default-features = false, features = ["spin"] }
+rustc-hash = { version = "2", default-features = false }
 rusty-s3 = { version = "0.10", optional = true }
 smart-default = "0.7"
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1"
+# Optional, off by default, and reachable only through the `tokio-runtime`
+# feature. See that feature for why this is not a plain dependency. The feature
+# list is what `TokioRt` calls and no more: `full` would put an I/O driver and
+# a process reaper in the graph for a backend that only schedules.
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "sync",
+    "time",
+], optional = true }
+tracing = { version = "0.1", default-features = false }
 url = { version = "2", optional = true }
-uuid = { version = "1", features = ["v4", "v7"] }
+uuid = { version = "^1", default-features = false, features = ["v4", "v7"] }
 walkdir = { version = "2", optional = true }
 # These pre-release workspace crates move as one train. The explicit caret
 # keeps the dependency policy consistent while the local path selects this
 # checkout during validation.
-worktable_codegen = { path = "codegen", version = "^1.0.0-beta.19" }
+worktable_codegen = { path = "codegen", version = "^1.9.0-alpha1" }
 # Re-exported below. Each generated table carries its declaration as a const
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
 # crate.
-worktable_dsl = { path = "dsl", version = "^1.0.0-beta.18.1" }
+worktable_dsl = { path = "dsl", version = "^1.0.0-beta.19", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "^0.2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "^0.61", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
+fastrand = "2"
 chrono = "0.4"
+# For one test, and only one: the flavor registry lives here and the DSL
+# carries a mirror of it so the parser does not have to depend on the runtime
+# crate. A dev-dependency is what lets a test compare the two lists without
+# putting the mirror's `syn` and `proc-macro2` into anybody's runtime graph.
+worktable_dsl = { path = "dsl" }
 criterion = { version = "0.5", features = ["async_tokio"] }
 rand = "0.9"
+# A dev-dependency, and that is the whole of the no_std claim. It was a normal
+# dependency with every feature on, so `cargo tree --no-default-features -e
+# normal -i tokio` found it linked into a build that had asked for no std at
+# all. `cargo check --no-default-features` passed the entire time, because it
+# only ever proved this crate's own source was std-free and never its closure.
+# What kept it there was not the engine: it was six `tokio::` paths emitted by
+# `worktable!` into consumer crates, which made the runtime part of the macro's
+# contract. Those go through `worktable::prelude` now.
+tokio = { version = "1", features = ["full"] }
 tracing-subscriber = "0.3"
+# Drives `tests/ui.rs`. Half of what `worktable!` promises is a refusal, and a
+# refusal is only testable by compiling something that must not compile. The
+# expected diagnostic is a committed `.stderr` beside each case, so the test
+# asserts on the message and not merely on failure.
+trybuild = "1"
 
 # Only under `--cfg loom`, so a normal build and a normal `cargo test` never
 # resolve it. See src/partition/loom_tests.rs for how to run the models.

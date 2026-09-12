@@ -1,9 +1,14 @@
+use alloc::{string::String, vec::Vec};
 pub mod select;
 pub mod system_info;
+#[cfg(feature = "std")]
 pub mod vacuum;
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
-use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation, PersistenceLoadError};
+#[cfg(feature = "std")]
+use crate::persistence::PersistenceLoadError;
+use crate::persistence::operation::new_operation_uuid;
+use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation};
 use crate::prelude::{Link, LockMap, OperationId, PrimaryKeyGeneratorState};
 use crate::primary_key::{PrimaryKeyGenerator, TablePrimaryKey};
 use crate::util::OffsetEqLink;
@@ -11,8 +16,13 @@ use crate::{
     AvailableIndex, IndexError, IndexMap, PrimaryIndex, TableIndex, TableIndexCdc, TableRow, TableSecondaryIndex,
     TableSecondaryIndexCdc, TableSecondaryIndexEventsOps, convert_change_events, in_memory,
 };
+use alloc::sync::Arc;
+use core::fmt::Debug;
+use core::marker::PhantomData;
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
+#[cfg(feature = "std")]
+use hashbrown::HashSet;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 #[cfg(feature = "perf_measurements")]
@@ -24,12 +34,8 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Portable, Serialize};
-use std::collections::HashSet;
-use std::fmt::Debug;
-use std::marker::PhantomData;
+#[cfg(feature = "std")]
 use std::path::Path;
-use std::sync::Arc;
-use uuid::Uuid;
 /// Keys per chunk when a bulk delete takes its mutation guards.
 ///
 /// Guards are striped 64 ways, so any batch wider than that holds every stripe
@@ -51,7 +57,7 @@ pub struct WorkTable<
     const DATA_LENGTH: usize = INNER_PAGE_SIZE,
     PkMap = IndexMap<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 > where
-    PrimaryKey: Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
 {
@@ -94,7 +100,7 @@ impl<
         PkMap,
     >
 where
-    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + core::hash::Hash,
     SecondaryIndexes: Default,
     PkGen: Default,
     PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
@@ -127,7 +133,7 @@ impl<
 > WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, PkMap>
 where
     Row: TableRow<PrimaryKey>,
-    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + TablePrimaryKey + core::hash::Hash,
     PkMap: crate::UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
@@ -138,6 +144,7 @@ where
     /// This load-only scan prevents a torn index link from turning zeroed or
     /// unrelated bytes into a plausible row. It deliberately does not run on
     /// steady-state operations.
+    #[cfg(feature = "std")]
     pub fn validate_persisted_state(&self, path: impl AsRef<Path>) -> Result<(), PersistenceLoadError>
     where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
@@ -146,7 +153,7 @@ where
     {
         let path = path.as_ref();
         let mut links = HashSet::with_capacity(self.primary_index.pk_map.len());
-        let mut cells_by_page = std::collections::HashMap::<data_bucket::page::PageId, u32>::new();
+        let mut cells_by_page = hashbrown::HashMap::<data_bucket::page::PageId, u32>::new();
 
         for (primary_key, offset_link) in self.primary_index.pk_map.iter_values() {
             if !links.insert(offset_link) {
@@ -211,7 +218,7 @@ where
     /// caller can iterate it directly while pre-assigning contiguous keys to a
     /// batch of rows for `insert_many`. Interleaved [`Self::get_next_pk`]
     /// calls keep working and never overlap a reservation.
-    pub fn reserve_pks<Raw>(&self, count: usize) -> std::ops::Range<Raw>
+    pub fn reserve_pks<Raw>(&self, count: usize) -> core::ops::Range<Raw>
     where
         PkGen: crate::primary_key::PrimaryKeyGeneratorRange<Raw>,
     {
@@ -238,7 +245,7 @@ where
             if current_link == Some(link) {
                 return None;
             }
-            std::hint::spin_loop();
+            core::hint::spin_loop();
         }
         None
     }
@@ -302,6 +309,8 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
         LockType: 'static,
     {
+        let _publication =
+            TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
         let pk = row.get_primary_key().clone();
         let link = self.data.insert(row.clone()).map_err(WorkTableError::PagesError)?;
         if self.primary_index.insert_checked(pk.clone(), link).is_none() {
@@ -316,6 +325,13 @@ where
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    self.primary_index.remove(&pk, link);
+                    self.indexes.delete_from_indexes(row, link, inserted_already)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
                 }
                 IndexError::NotFound => {
                     // Mirror the AlreadyExists arm. Returning without rollback
@@ -401,6 +417,8 @@ where
             // delete and a batch insert cannot deadlock against each other. Chunks
             // release before the next is taken, so that ordering holds across them.
             let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
+            let _publication =
+                TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
             let mut links: Vec<Link> = Vec::with_capacity(chunk.len());
 
@@ -475,7 +493,7 @@ where
     /// Returns the keys actually deleted, in key order.
     pub fn delete_range<R>(&self, range: R) -> Result<Vec<PrimaryKey>, BatchDeleteError<PrimaryKey>>
     where
-        R: std::ops::RangeBounds<PrimaryKey>,
+        R: core::ops::RangeBounds<PrimaryKey>,
         Row: Archive
             + Clone
             + for<'a> Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
@@ -516,6 +534,8 @@ where
         // takes, so it is the one that most needs not to hold every stripe.
         for chunk in keys.chunks(DELETE_CHUNK_KEYS) {
             let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
+            let _publication =
+                TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
             // Second walk, under the guards. Links for guarded keys cannot move
             // and are used directly; keys that appeared since the first walk are
@@ -531,8 +551,8 @@ where
                 .primary_index
                 .pk_map
                 .range_values((
-                    std::ops::Bound::Included(chunk[0].clone()),
-                    std::ops::Bound::Included(chunk[chunk.len() - 1].clone()),
+                    core::ops::Bound::Included(chunk[0].clone()),
+                    core::ops::Bound::Included(chunk[chunk.len() - 1].clone()),
                 ))
                 .map(|(key, link)| (key, link.into()))
                 .collect();
@@ -613,6 +633,8 @@ where
         }
         let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
         let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+        let _publication =
+            TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
         let mut links: Vec<Link> = Vec::with_capacity(rows.len());
         for (row_index, row) in rows.iter().enumerate() {
@@ -675,6 +697,12 @@ where
                     self.indexes.delete_from_indexes(row.clone(), link, inserted_already)?;
                     self.data.delete(link).map_err(WorkTableError::PagesError)?;
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    self.primary_index.remove(pk, link);
+                    self.indexes.delete_from_indexes(row.clone(), link, inserted_already)?;
+                    self.data.delete(link).map_err(WorkTableError::PagesError)?;
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
                 }
                 IndexError::NotFound => {
                     self.primary_index.remove(pk, link);
@@ -756,6 +784,8 @@ where
     {
         let pk = row.get_primary_key().clone();
         let _mutation_guard = self.lock_manager.mutation_guard(&pk);
+        let _publication =
+            TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
         let (link, _) = match self.data.insert_cdc(row.clone()) {
             Ok(result) => result,
@@ -789,7 +819,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: merged_primary_events,
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -798,6 +828,32 @@ where
                         (ack_op, WorkTableError::PagesError(e))
                     } else {
                         (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
+                    }
+                }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    let (_, rollback_pk_events) = self.primary_index.remove_cdc(pk.clone(), link);
+                    let rollback_pk_events = convert_change_events(rollback_pk_events);
+
+                    let (rollback_secondary_events, _) =
+                        self.indexes
+                            .delete_from_indexes_cdc(row.clone(), link, inserted_already);
+
+                    let mut merged_primary_events = primary_key_events.clone();
+                    merged_primary_events.extend(rollback_pk_events);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(new_operation_uuid()),
+                        primary_key_events: merged_primary_events,
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
+                    if let Err(e) = self.data.delete(link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::ColumnSlotIdExhausted(bits))
                     }
                 }
                 IndexError::NotFound => {
@@ -816,7 +872,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: merged_primary_events,
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -834,7 +890,7 @@ where
         unsafe {
             if let Err(e) = self.data.with_mut_ref(link, |r| r.unghost()) {
                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(Uuid::now_v7()),
+                    id: OperationId::Single(new_operation_uuid()),
                     primary_key_events: primary_key_events.clone(),
                     secondary_keys_events: secondary_events.clone(),
                 });
@@ -846,7 +902,7 @@ where
             Ok(bytes) => bytes,
             Err(e) => {
                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(Uuid::now_v7()),
+                    id: OperationId::Single(new_operation_uuid()),
                     primary_key_events: primary_key_events.clone(),
                     secondary_keys_events: secondary_events.clone(),
                 });
@@ -855,7 +911,8 @@ where
         };
 
         let op = Operation::Insert(InsertOperation {
-            id: OperationId::Single(Uuid::now_v7()),
+            retired_link: None,
+            id: OperationId::Single(new_operation_uuid()),
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
             secondary_keys_events: secondary_events,
@@ -907,6 +964,8 @@ where
         }
         let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
         let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+        let _publication =
+            TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
         let mut links: Vec<Link> = Vec::with_capacity(rows.len());
         let mut forward_primary: Vec<Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> = Vec::with_capacity(rows.len());
@@ -948,7 +1007,7 @@ where
             }
 
             let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                id: OperationId::Single(Uuid::now_v7()),
+                id: OperationId::Single(new_operation_uuid()),
                 primary_key_events: merged_primary,
                 secondary_keys_events: merged_secondary,
             });
@@ -1011,6 +1070,18 @@ where
                             Err(e) => WorkTableError::PagesError(e),
                         }
                     }
+                    IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                        let (_, rollback_primary) = self.primary_index.remove_cdc(pks[row_index].clone(), link);
+                        primary_key_events.extend(convert_change_events(rollback_primary));
+                        let (rollback_secondary, _) =
+                            self.indexes
+                                .delete_from_indexes_cdc(row.clone(), link, inserted_already);
+                        secondary_events.extend(rollback_secondary);
+                        match self.data.delete(link) {
+                            Ok(()) => WorkTableError::ColumnSlotIdExhausted(bits),
+                            Err(e) => WorkTableError::PagesError(e),
+                        }
+                    }
                     IndexError::NotFound => {
                         let (_, rollback_primary) = self.primary_index.remove_cdc(pks[row_index].clone(), link);
                         primary_key_events.extend(convert_change_events(rollback_primary));
@@ -1049,11 +1120,11 @@ where
         // creation-ordered, so cross-chunk event order survives the
         // analyzer's operation-id sort.
         const PERSIST_GROUP_ROWS: usize = 1024;
-        let mut batch_id = Uuid::now_v7();
+        let mut batch_id = new_operation_uuid();
         let mut ops = Vec::with_capacity(links.len());
         for (row_index, link) in links.iter().enumerate() {
             if row_index != 0 && row_index % PERSIST_GROUP_ROWS == 0 {
-                batch_id = Uuid::now_v7();
+                batch_id = new_operation_uuid();
             }
             let published = unsafe { self.data.with_mut_ref(*link, |r| r.unghost()) };
             let bytes = match published
@@ -1087,10 +1158,11 @@ where
                 }
             };
             ops.push(Operation::Insert(InsertOperation {
+                retired_link: None,
                 id: OperationId::Multi(batch_id),
                 pk_gen_state: self.pk_gen.get_state(),
-                primary_key_events: std::mem::take(&mut forward_primary[row_index]),
-                secondary_keys_events: std::mem::take(&mut forward_secondary[row_index]),
+                primary_key_events: core::mem::take(&mut forward_primary[row_index]),
+                secondary_keys_events: core::mem::take(&mut forward_secondary[row_index]),
                 bytes,
                 link: *link,
             }));
@@ -1125,6 +1197,8 @@ where
         SecondaryIndexes: TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes>,
         LockType: 'static,
     {
+        let _publication =
+            TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
         let pk = row_new.get_primary_key().clone();
         if pk != row_old.get_primary_key() {
             return Err(WorkTableError::PrimaryUpdateTry);
@@ -1156,6 +1230,16 @@ where
                     self.data.delete(new_link).map_err(WorkTableError::PagesError)?;
 
                     Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    // The primary index still points at old_link here (it is
+                    // swung only after every index check passes), so the
+                    // unwind only has to drop what reinsert_row published on
+                    // the new link and release the new slot.
+                    self.indexes.delete_from_indexes(row_new, new_link, inserted_already)?;
+                    self.data.delete(new_link).map_err(WorkTableError::PagesError)?;
+
+                    Err(WorkTableError::ColumnSlotIdExhausted(bits))
                 }
                 IndexError::NotFound => {
                     // The primary index was never swung and the new row is
@@ -1203,6 +1287,8 @@ where
         AvailableIndexes: Debug + AvailableIndex,
         PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
     {
+        let _publication =
+            TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
         let pk = row_new.get_primary_key().clone();
         if pk != row_old.get_primary_key() {
             return (None, Err(WorkTableError::PrimaryUpdateTry));
@@ -1250,7 +1336,7 @@ where
                     merged_secondary_events.extend(rollback_secondary_events);
 
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: vec![],
                         secondary_keys_events: merged_secondary_events,
                     });
@@ -1261,6 +1347,29 @@ where
                         (ack_op, WorkTableError::AlreadyExists(at.to_string_value()))
                     }
                 }
+                IndexError::ColumnSlotIdExhausted { bits, inserted_already } => {
+                    // Same shape as the AlreadyExists arm: the primary index
+                    // was never swung, so only the secondary entries this
+                    // reinsert published have to be taken back out.
+                    let (rollback_secondary_events, _) =
+                        self.indexes
+                            .delete_from_indexes_cdc(row_new, new_link, inserted_already);
+
+                    let mut merged_secondary_events = secondary_events.clone();
+                    merged_secondary_events.extend(rollback_secondary_events);
+
+                    let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                        id: OperationId::Single(new_operation_uuid()),
+                        primary_key_events: vec![],
+                        secondary_keys_events: merged_secondary_events,
+                    });
+
+                    if let Err(e) = self.data.delete(new_link) {
+                        (ack_op, WorkTableError::PagesError(e))
+                    } else {
+                        (ack_op, WorkTableError::ColumnSlotIdExhausted(bits))
+                    }
+                }
                 IndexError::NotFound => {
                     // As in `reinsert`: the primary index was never swung and
                     // the new row is still ghosted, so releasing the new data
@@ -1269,7 +1378,7 @@ where
                     // secondary entries cannot be unwound precisely; no
                     // current index implementation returns it.
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(Uuid::now_v7()),
+                        id: OperationId::Single(new_operation_uuid()),
                         primary_key_events: vec![],
                         secondary_keys_events: secondary_events.clone(),
                     });
@@ -1290,7 +1399,7 @@ where
         // Delete old data
         if let Err(e) = self.data.delete(old_link) {
             let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                id: OperationId::Single(Uuid::now_v7()),
+                id: OperationId::Single(new_operation_uuid()),
                 primary_key_events: primary_key_events.clone(),
                 secondary_keys_events: secondary_events.clone(),
             });
@@ -1302,7 +1411,7 @@ where
             Ok(bytes) => bytes,
             Err(e) => {
                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(Uuid::now_v7()),
+                    id: OperationId::Single(new_operation_uuid()),
                     primary_key_events: primary_key_events.clone(),
                     secondary_keys_events: secondary_events.clone(),
                 });
@@ -1311,7 +1420,8 @@ where
         };
 
         let op = Operation::Insert(InsertOperation {
-            id: OperationId::Single(Uuid::now_v7()),
+            retired_link: Some(old_link),
+            id: OperationId::Single(new_operation_uuid()),
             pk_gen_state: self.pk_gen.get_state(),
             primary_key_events,
             secondary_keys_events: secondary_events,
@@ -1349,7 +1459,7 @@ pub enum BatchInsertError {
 /// batch needs to know the prefix already succeeded rather than assume nothing
 /// happened.
 #[derive(Debug, Display, Error)]
-pub enum BatchDeleteError<PrimaryKey: std::fmt::Debug> {
+pub enum BatchDeleteError<PrimaryKey: core::fmt::Debug> {
     /// One key could not be deleted. Everything before it was.
     #[display("batch delete stopped at {key:?} after {deleted} deleted: {source}")]
     Key {
@@ -1366,15 +1476,22 @@ pub enum BatchDeleteError<PrimaryKey: std::fmt::Debug> {
 
 #[derive(Debug, Display, Error, From)]
 pub enum WorkTableError {
+    #[display("A runtime-selected query requires execute_async().await")]
+    RuntimeRequiresAsync,
+    #[display("The query runtime cancelled execution")]
+    RuntimeCancelled,
     NotFound,
     #[display("Value already exists for `{}` index", _0)]
     AlreadyExists(#[error(not(source))] String),
     #[display("Row with this primary key already exists")]
     PrimaryAlreadyExists,
+    #[display("ColumnSlotId{} capacity is exhausted", _0)]
+    ColumnSlotIdExhausted(#[error(not(source))] u8),
     SerializeError,
     SecondaryIndexError,
     PrimaryUpdateTry,
     PagesError(in_memory::PagesExecutionError),
     #[display("{}", _0)]
-    PersistenceError(#[error(not(source))] std::sync::Arc<crate::persistence::PersistenceError>),
+    #[cfg(feature = "std")]
+    PersistenceError(#[error(not(source))] alloc::sync::Arc<crate::persistence::PersistenceError>),
 }

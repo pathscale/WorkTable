@@ -10,7 +10,13 @@ use quote::quote;
 impl InMemoryGenerator {
     pub fn gen_query_update_impl(&mut self) -> syn::Result<TokenStream> {
         let custom_updates = if let Some(q) = &self.queries {
+            let profile = q.update_runtime.clone();
             let custom_updates = self.gen_custom_updates(q.updates.clone());
+            let custom_updates = crate::generators::profile_dispatch::wrap(
+                custom_updates,
+                profile.as_ref(),
+                &WorktableNameGenerator::from_table_name(self.name.to_string()).get_row_type_ident(),
+            )?;
 
             quote! {
                 #custom_updates
@@ -42,7 +48,7 @@ impl InMemoryGenerator {
             .keys()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -59,6 +65,7 @@ impl InMemoryGenerator {
         let persist_call = self.gen_persist_call();
         let persist_op = self.gen_persist_op();
         let full_row_lock = self.gen_full_lock_for_update();
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         // A full-row `update(row)` replaces EVERY column, so it inherently
         // rewrites every secondary index. The in-place fast path only applies
         // when no updated field is indexed (it emits no index diff), so a
@@ -72,10 +79,10 @@ impl InMemoryGenerator {
         let full_row_in_place_eligible = !self.columns.is_sized && self.columns.indexes.is_empty();
         let update_body = if self.columns.is_sized {
             quote! {
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe {
-                    rkyv::access_unchecked_mut::<<#row_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                    worktable::prelude::rkyv::access_unchecked_mut::<<#row_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                         .unseal_unchecked()
                 };
 
@@ -85,6 +92,7 @@ impl InMemoryGenerator {
                 #data_write
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -99,6 +107,7 @@ impl InMemoryGenerator {
                     self.0.data.update_in_place::<{ #const_name }>(row.clone(), link).is_ok()
                 };
                 if in_place_ok {
+                    #columnar_dirty
                     return core::result::Result::Ok(());
                 }
                 drop(_guard);
@@ -273,8 +282,8 @@ impl InMemoryGenerator {
             let avt_type_ident = name_generator.get_available_type_ident();
             quote! {
                 if let core::result::Result::Err(e) = #write {
-                    let mut reversed_diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> =
-                        std::collections::HashMap::new();
+                    let mut reversed_diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> =
+                        worktable::prelude::HashMap::new();
                     for (key, diff) in diffs {
                         reversed_diffs.insert(key, Difference { old: diff.new, new: diff.old });
                     }
@@ -440,6 +449,7 @@ impl InMemoryGenerator {
                     #primary_key_ident,
                     #secondary_events_ident
                 > = Operation::Update(UpdateOperation {
+                    retired_link: None,
                     id: op_id,
                     primary_key_events: vec![],
                     secondary_keys_events,
@@ -460,7 +470,7 @@ impl InMemoryGenerator {
                 let row_old = self.0.data.select_non_ghosted(link)?;
                 let row_new = row.clone();
                 let updated_bytes: Vec<u8> = vec![];
-                let mut diffs: std::collections::HashMap<&str, Difference<#avt_type_ident>> = std::collections::HashMap::new();
+                let mut diffs: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>> = worktable::prelude::HashMap::new();
             }
         } else {
             quote! {
@@ -517,13 +527,35 @@ impl InMemoryGenerator {
 
                                 // Create AcknowledgeOperation with all events
                                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
                                     primary_key_events: vec![],  // Updates don't modify primary key
                                     secondary_keys_events: merged_events,
                                 });
                                 self.1.apply_operation(ack_op);
 
                                 Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                            }
+                            IndexError::ColumnSlotIdExhausted {
+                                bits,
+                                inserted_already,
+                            } => {
+                                let (rollback_secondary_events, _): (#secondary_events_ident, _) = self.0.indexes.delete_from_indexes_cdc(
+                                    row_new.merge(row_old.clone()),
+                                    link,
+                                    inserted_already
+                                );
+
+                                let mut merged_events = secondary_events.clone();
+                                merged_events.extend(rollback_secondary_events);
+
+                                let ack_op = Operation::Acknowledge(AcknowledgeOperation {
+                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    primary_key_events: vec![],
+                                    secondary_keys_events: merged_events,
+                                });
+                                self.1.apply_operation(ack_op);
+
+                                Err(WorkTableError::ColumnSlotIdExhausted(bits))
                             }
                             IndexError::NotFound => Err(WorkTableError::NotFound),
                         };
@@ -548,6 +580,15 @@ impl InMemoryGenerator {
                                 .delete_from_indexes(row_new.merge(row_old.clone()), link, inserted_already)?;
 
                             Err(WorkTableError::AlreadyExists(at.to_string_value()))
+                        }
+                        IndexError::ColumnSlotIdExhausted {
+                            bits,
+                            inserted_already,
+                        } => {
+                            self.0.indexes
+                                .delete_from_indexes(row_new.merge(row_old.clone()), link, inserted_already)?;
+
+                            Err(WorkTableError::ColumnSlotIdExhausted(bits))
                         }
                         IndexError::NotFound => Err(WorkTableError::NotFound),
                     };
@@ -605,7 +646,7 @@ impl InMemoryGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -619,6 +660,8 @@ impl InMemoryGenerator {
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
         let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
 
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
+
         let finish_update = if archived_swap_is_safe {
             quote! {
                 #diff_process_insert
@@ -627,6 +670,7 @@ impl InMemoryGenerator {
                 #data_write
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -651,8 +695,8 @@ impl InMemoryGenerator {
                         .map(Into::into)
                         .ok_or(WorkTableError::NotFound)?;
 
-                let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
-                let mut archived_row = unsafe { rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
+                let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
+                let mut archived_row = unsafe { worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
                 #size_check
                 #finish_update
@@ -680,7 +724,7 @@ impl InMemoryGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -780,6 +824,7 @@ impl InMemoryGenerator {
         };
         let full_row_lock = self.gen_full_lock_for_update();
         let data_write = self.gen_data_write_with_unwind(&row_updates, idx_idents);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         let loop_tail = if has_unsized {
             quote! {}
@@ -830,7 +875,7 @@ impl InMemoryGenerator {
                 pks.sort_unstable();
                 pks.dedup();
 
-                let mut guards: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+                let mut guards: worktable::prelude::HashMap<_, _> = worktable::prelude::HashMap::new();
                 // Full-row locks, not per-column custom locks: each row's
                 // unsized reinsert path mutates the whole row under these
                 // guards, and one uniform lock kind keeps every concurrent
@@ -857,17 +902,18 @@ impl InMemoryGenerator {
                         continue;
                     }
                     let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
-                    let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                    let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                         .map_err(|_| WorkTableError::SerializeError)?;
 
                     let mut archived_row = unsafe {
-                        rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                        worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                             .unseal_unchecked()
                     };
 
                     #size_check
                     #loop_tail
                 }
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -902,7 +948,7 @@ impl InMemoryGenerator {
             .iter()
             .map(|i| {
                 quote! {
-                    std::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
+                    core::mem::swap(&mut archived.inner.#i, &mut archived_row.#i);
                 }
             })
             .collect::<Vec<_>>();
@@ -945,6 +991,8 @@ impl InMemoryGenerator {
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
 
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
+
         let finish_update = if archived_swap_is_safe {
             quote! {
                 #diff_process_insert
@@ -953,6 +1001,7 @@ impl InMemoryGenerator {
                 #data_write
 
                 #diff_process_remove
+                #columnar_dirty
 
                 #persist_call
 
@@ -964,21 +1013,43 @@ impl InMemoryGenerator {
 
         quote! {
             pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
-                 let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&row)
+                 let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
 
                 let mut archived_row = unsafe {
-                    rkyv::access_unchecked_mut::<<#query_ident as rkyv::Archive>::Archived>(&mut bytes[..])
+                    worktable::prelude::rkyv::access_unchecked_mut::<<#query_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..])
                         .unseal_unchecked()
                 };
 
-                let mut link: Link = self.0.indexes
-                    .#index
-                    .get_value(#by)
-                    .map(Into::into)
-                    .ok_or(WorkTableError::NotFound)?;
-
-                let pk = self.0.data.select_non_ghosted(link)?.get_primary_key().clone();
+                let pk = {
+                    let mut retries = 0u32;
+                    loop {
+                        // Pin before reading the index so a relocated slot
+                        // cannot be reclaimed and reused while resolving its PK.
+                        // Drop the pin before yielding or awaiting the row lock.
+                        let resolved = {
+                            let _read_guard = self.0.data.read_guard();
+                            let link: Link = self.0.indexes.#index.get_value(#by)
+                                .map(Into::into)
+                                .ok_or(WorkTableError::NotFound)?;
+                            self.0.data.select_non_ghosted(link)
+                        };
+                        match resolved {
+                            core::result::Result::Ok(found) => break found.get_primary_key(),
+                            core::result::Result::Err(error) if error.is_row_absent() => {
+                                // Reinsert publishes a replacement before retiring
+                                // the old slot. Resolve the index again, rather than
+                                // reporting a deleted row from that stale slot.
+                                if retries >= 64 {
+                                    return Err(WorkTableError::NotFound);
+                                }
+                                retries += 1;
+                                worktable::prelude::yield_now().await;
+                            }
+                            core::result::Result::Err(error) => return Err(error.into()),
+                        }
+                    }
+                };
 
                 let pending_lock = { #custom_lock };
                 let _guard = pending_lock.into_guard_with_mutation();
@@ -1005,7 +1076,7 @@ impl InMemoryGenerator {
                                     return Err(WorkTableError::NotFound);
                                 }
                                 vacuum_retries += 1;
-                                tokio::task::yield_now().await;
+                                worktable::prelude::yield_now().await;
                             }
                             core::result::Result::Err(e) => return Err(e.into()),
                         }
@@ -1074,6 +1145,7 @@ mod tests {
             updates,
             deletes: IndexMap::new(),
             in_place: IndexMap::new(),
+            ..Default::default()
         });
         generator.gen_primary_key_def().unwrap();
 

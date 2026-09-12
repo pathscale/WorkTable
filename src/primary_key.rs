@@ -1,4 +1,4 @@
-use std::sync::atomic::{
+use core::sync::atomic::{
     AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering,
 };
 
@@ -21,7 +21,7 @@ pub trait PrimaryKeyGeneratorRange<Raw> {
     ///
     /// Concurrent `reserve` and [`PrimaryKeyGenerator::next`] calls never
     /// observe overlapping keys.
-    fn reserve(&self, count: usize) -> std::ops::Range<Raw>;
+    fn reserve(&self, count: usize) -> core::ops::Range<Raw>;
 }
 
 pub trait PrimaryKeyGeneratorState {
@@ -52,7 +52,7 @@ macro_rules! atomic_primary_key {
         }
 
         impl PrimaryKeyGeneratorRange<$ty> for $atomic_ty {
-            fn reserve(&self, count: usize) -> std::ops::Range<$ty> {
+            fn reserve(&self, count: usize) -> core::ops::Range<$ty> {
                 let count = <$ty>::try_from(count).unwrap_or_else(|_| {
                     panic!(
                         "autoincrement primary key space exhausted: cannot reserve {count} {} keys",
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn concurrent_reservations_never_overlap() {
-        use std::sync::Arc;
+        use alloc::sync::Arc;
 
         let generator = Arc::new(AtomicU64::from_state(0));
         let mut handles = vec![];

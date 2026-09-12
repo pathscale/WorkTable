@@ -127,6 +127,7 @@ generated router is the **partition set**.
 worktable! (
     name: Price,
     partition_by: symbol_id: u16,
+    partition_max_size: u64,
     partitions: 1024,
     columns: {
         exchange: Exchange primary_key,
@@ -258,6 +259,7 @@ worktable!(
 worktable!(
     name: Price,
     partition_by: symbol_id: u16,
+    partition_max_size: u64,
     partitions: 1024,
     columns: { exchange: Exchange primary_key, bid: f64, ask: f64, ts: u64 }
 );

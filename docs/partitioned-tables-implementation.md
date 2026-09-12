@@ -222,6 +222,7 @@ share one persistence space across partitions and partition only in memory.
 worktable!(
     name: Price,
     partition_by: symbol_id: u16,
+    partition_max_size: u64,
     columns: { exchange_id: u8 primary_key, bid: f64, ask: f64 }
 );
 ```

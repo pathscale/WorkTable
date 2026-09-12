@@ -26,6 +26,10 @@ pub(crate) fn unique_index_type(
                 Ok(quote! { UpstreamIndexMap<#key, #value> })
             }
         }
+        IndexBackend::FxHash => Err(syn::Error::new_spanned(
+            key,
+            "`using fxhash` cannot back a paged table: it has no ordered scan and no persisted page form. Use `vec: true`, or an ordered backend.",
+        )),
         IndexBackend::Congee => Ok(quote! { CongeeIndex<#key, #value> }),
         IndexBackend::Arctic => Ok(quote! { ArcticIndex<#key, #value> }),
     }
@@ -64,6 +68,9 @@ pub(crate) fn primary_key_backend_impl(
     fields: &[&TokenStream],
 ) -> syn::Result<(TokenStream, TokenStream)> {
     match backend {
+        IndexBackend::FxHash => {
+            unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs")
+        }
         IndexBackend::WorktablesIndex | IndexBackend::Indexset => Ok((quote! {}, quote! {})),
         IndexBackend::Congee => {
             let field = single_supported_field(backend, fields, supported_types(backend))?;
@@ -92,6 +99,9 @@ pub(crate) fn primary_key_backend_impl(
                         }
                     }
 
+                    // Std only, for the same reason as the generated `vacuum`
+                    // method: the trait lives behind the persistence module.
+                    worktable::__wt_if_std! {
                     impl ArtPersistenceKey for #primary_key {
                         const WIDTH: u8 = <#field as ArtPersistenceKey>::WIDTH;
 
@@ -99,9 +109,10 @@ pub(crate) fn primary_key_backend_impl(
                             self.0.encode_art_key(output)
                         }
 
-                        fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+                        fn decode_art_key(bytes: &[u8]) -> worktable::prelude::eyre::Result<Self> {
                             Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
                         }
+                    }
                     }
                 },
             ))
@@ -125,6 +136,9 @@ pub(crate) fn primary_key_backend_impl(
                         }
                     }
 
+                    // Std only, for the same reason as the generated `vacuum`
+                    // method: the trait lives behind the persistence module.
+                    worktable::__wt_if_std! {
                     impl ArtPersistenceKey for #primary_key {
                         const WIDTH: u8 = <#field as ArtPersistenceKey>::WIDTH;
 
@@ -132,9 +146,10 @@ pub(crate) fn primary_key_backend_impl(
                             self.0.encode_art_key(output)
                         }
 
-                        fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
+                        fn decode_art_key(bytes: &[u8]) -> worktable::prelude::eyre::Result<Self> {
                             Ok(Self(<#field as ArtPersistenceKey>::decode_art_key(bytes)?))
                         }
+                    }
                     }
                 },
             ))
@@ -177,7 +192,7 @@ fn single_supported_field<'a>(
     Ok(field)
 }
 
-fn primitive_name(field: &TokenStream) -> Option<String> {
+pub(crate) fn primitive_name(field: &TokenStream) -> Option<String> {
     let syn::Type::Path(type_path) = syn::parse2::<syn::Type>(field.clone()).ok()? else {
         return None;
     };

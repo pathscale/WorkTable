@@ -1,0 +1,5 @@
+error: in_place query `ValueById` mutates column `value`, which is covered by an index; indexed columns cannot be updated in place because secondary indexes are not maintained on this path. Use an `update` query instead
+  --> tests/ui/in_place_over_indexed_column.rs:18:23
+   |
+18 |             ValueById(value) by id,
+   |                       ^^^^^

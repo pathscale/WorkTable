@@ -55,7 +55,17 @@ worktable!(
     },
 );
 
-const DIR: &str = "tests/data/generation_swap/persisted";
+/// One directory per test, and never a shared one.
+///
+/// `a_retired_generation_releases_its_memory` and
+/// `a_generation_can_report_what_it_holds` used to share a single `DIR` const,
+/// each removing and recreating it on entry. The harness runs tests on
+/// parallel threads, so both attached a table to the same files and filled
+/// them at once, and the loser reported a corrupt index. Sharing a fixture
+/// directory between tests that write it is never safe here, however quiet it
+/// stays.
+const RETIRED_DIR: &str = "tests/data/generation_swap/retired";
+const REPORT_DIR: &str = "tests/data/generation_swap/report";
 
 /// A generation big enough that releasing it is worth reporting.
 const ROWS: u64 = 2_000;
@@ -87,12 +97,12 @@ async fn fill(table: &GenerationSwapWorkTable) {
     table.wait_for_ops().await.expect("the queue drains");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_retired_generation_releases_its_memory() {
-    let _ = std::fs::remove_dir_all(DIR);
-    std::fs::create_dir_all(DIR).expect("a directory");
+    let _ = std::fs::remove_dir_all(RETIRED_DIR);
+    std::fs::create_dir_all(RETIRED_DIR).expect("a directory");
 
-    let generation = Arc::new(attach(DIR).await);
+    let generation = Arc::new(attach(RETIRED_DIR).await);
     fill(&generation).await;
 
     // A reader in flight, exactly as during a swap.
@@ -124,21 +134,21 @@ async fn a_retired_generation_releases_its_memory() {
         "the generation had memory to release"
     );
 
-    let _ = std::fs::remove_dir_all(DIR);
+    let _ = std::fs::remove_dir_all(RETIRED_DIR);
 }
 
 #[tokio::test]
 async fn a_generation_can_report_what_it_holds() {
-    let _ = std::fs::remove_dir_all(DIR);
-    std::fs::create_dir_all(DIR).expect("a directory");
+    let _ = std::fs::remove_dir_all(REPORT_DIR);
+    std::fs::create_dir_all(REPORT_DIR).expect("a directory");
 
-    let generation = attach(DIR).await;
+    let generation = attach(REPORT_DIR).await;
     fill(&generation).await;
 
     let held = generation.heap_size();
     assert!(held > 0, "a filled generation holds memory: {held}");
     generation.close().await.expect("generation closes");
-    let _ = std::fs::remove_dir_all(DIR);
+    let _ = std::fs::remove_dir_all(REPORT_DIR);
 }
 
 #[tokio::test]

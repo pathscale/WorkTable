@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use data_bucket::DEFAULT_PAGE_STRIDE;
+use worktable::prelude::HashMap;
 
 use data_bucket::{INNER_PAGE_SIZE, Link, PAGE_SIZE, parse_general_header_by_index};
 use worktable::prelude::{SpaceData, SpaceDataOps};
@@ -46,7 +47,9 @@ async fn rewriting_one_link_does_not_inflate_the_persisted_data_length() {
     space.save_batch_data(batch).await.unwrap();
     assert_eq!(space.current_data_length, 48);
 
-    let header = parse_general_header_by_index(&mut space.data_file, 1).await.unwrap();
+    let header = parse_general_header_by_index::<DEFAULT_PAGE_STRIDE>(&mut space.data_file, 1)
+        .await
+        .unwrap();
     assert_eq!(header.data_length, 48);
 
     drop(space);
@@ -86,7 +89,9 @@ async fn reclaiming_thousands_of_pages_bounds_the_info_page_instead_of_corruptin
     assert!(kept < 2_000, "the overflow condition was not constructed");
 
     // Page 1 must be untouched by the info persist.
-    let header = parse_general_header_by_index(&mut space.data_file, 1).await.unwrap();
+    let header = parse_general_header_by_index::<DEFAULT_PAGE_STRIDE>(&mut space.data_file, 1)
+        .await
+        .unwrap();
     assert_eq!(header.page_type, PageType::Data);
     drop(space);
 
@@ -132,8 +137,9 @@ async fn a_data_file_ending_on_an_exact_page_boundary_reopens() {
     // Fill page 1 completely: the file then ends exactly on a page boundary
     // (2 * PAGE_SIZE), the case where the old floor division computed a last
     // page id one past EOF and reopening failed on the header read.
-    let full_page = vec![3u8; INNER_PAGE_SIZE];
-    let batch = HashMap::from([(1.into(), vec![(link(1, 0, INNER_PAGE_SIZE as u32), full_page)])]);
+    let row_capacity = INNER_PAGE_SIZE - data_bucket::DATA_TRAILER_SIZE - data_bucket::ROW_SLOT_SIZE;
+    let full_page = vec![3u8; row_capacity];
+    let batch = HashMap::from([(1.into(), vec![(link(1, 0, row_capacity as u32), full_page)])]);
     space.save_batch_data(batch).await.unwrap();
     drop(space);
 
@@ -146,7 +152,7 @@ async fn a_data_file_ending_on_an_exact_page_boundary_reopens() {
 
     let space = TestSpaceData::from_table_files_path(&dir, 1).await.unwrap();
     assert_eq!(space.last_page_id, 1);
-    assert_eq!(space.current_data_length, INNER_PAGE_SIZE as u32);
+    assert_eq!(space.current_data_length, row_capacity as u32);
 
     drop(space);
     std::fs::remove_dir_all(&dir).unwrap();

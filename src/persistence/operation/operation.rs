@@ -1,5 +1,6 @@
-use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::hash::{Hash, Hasher};
 
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;
@@ -69,6 +70,32 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
         }
     }
 
+    /// Row-directory changes in the same order as this operation's index
+    /// changes. Empty bytes are an exact-link tombstone, never a row archive.
+    #[cfg(feature = "std")]
+    pub(crate) fn row_mutations(&self) -> Vec<(Link, Vec<u8>)> {
+        self.row_mutation_refs()
+            .map(|(link, bytes)| (link, bytes.to_vec()))
+            .collect()
+    }
+
+    /// Borrow this operation's row images so a batch can discard superseded
+    /// mutations before allocating their owned copies.
+    #[cfg(feature = "std")]
+    pub(crate) fn row_mutation_refs(&self) -> impl Iterator<Item = (Link, &[u8])> {
+        let retired_link = match self {
+            Self::Insert(insert) => insert.retired_link,
+            Self::Update(update) => update.retired_link,
+            _ => None,
+        };
+        let tombstone = retired_link.or(match self {
+            Self::Delete(delete) => Some(delete.link),
+            _ => None,
+        });
+        let bytes = self.bytes().map(|bytes| (self.link(), bytes));
+        [tombstone.map(|link| (link, &[][..])), bytes].into_iter().flatten()
+    }
+
     pub fn primary_key_events(&self) -> Option<&Vec<ChangeEvent<Pair<PrimaryKey, Link>>>> {
         match &self {
             Operation::Insert(insert) => Some(&insert.primary_key_events),
@@ -111,6 +138,8 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
 
 #[derive(Clone, Debug)]
 pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
+    /// Previous physical row retired by a successful reinsert.
+    pub retired_link: Option<Link>,
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,
@@ -121,6 +150,8 @@ pub struct InsertOperation<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> {
 
 #[derive(Clone, Debug)]
 pub struct UpdateOperation<PrimaryKey, SecondaryKeys> {
+    /// Previous physical row retired by a successful move.
+    pub retired_link: Option<Link>,
     pub id: OperationId,
     pub primary_key_events: Vec<ChangeEvent<Pair<PrimaryKey, Link>>>,
     pub secondary_keys_events: SecondaryKeys,

@@ -1,5 +1,7 @@
-use prettytable::{Table, format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR, row};
-use std::fmt::{self, Debug, Display, Formatter};
+use alloc::{string::String, string::ToString, vec::Vec};
+use core::fmt::{self, Debug, Display, Formatter};
+#[cfg(not(feature = "std"))]
+use ordered_float::FloatCore;
 
 use crate::in_memory::{RowWrapper, StorableRow};
 use crate::mem_stat::MemStat;
@@ -55,7 +57,7 @@ impl<
     PkMap,
 > WorkTable<Row, PrimaryKey, AvailableTypes, AvailableIndexes, SecondaryIndexes, LockType, PkGen, DATA_LENGTH, PkMap>
 where
-    PrimaryKey: Debug + Clone + Ord + Send + 'static + std::hash::Hash,
+    PrimaryKey: Debug + Clone + Ord + Send + 'static + core::hash::Hash,
     Row: StorableRow + Send + Clone + 'static,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
     PkMap: UniqueIndex<PrimaryKey, OffsetEqLink<DATA_LENGTH>>,
@@ -118,30 +120,75 @@ impl Display for SystemInfo {
             "Allocated Memory: {mem_fmt} (data) + {idx_fmt} (indexes) = {total_fmt} total\n"
         )?;
 
-        let mut table = Table::new();
-        table.set_format(*FORMAT_NO_BORDER_LINE_SEPARATOR);
-        table.add_row(row!["Index", "Type", "Keys", "Capacity", "Node Count", "Heap", "Used"]);
-
+        // **Padded by hand rather than by a table crate.**
+        //
+        // This used to be `prettytable-rs`, which reaches `csv` and then
+        // `memchr` and fails to build without `std` in 505 places. Every
+        // alternative measured puts its usable API behind `std` too: `tabled`
+        // compiles without `std` but exposes no `Table` at all in that mode,
+        // and `comfy-table` and `ascii_table` do not compile. Seven columns of
+        // short strings are not worth a dependency that decides whether this
+        // crate can be embedded.
+        let mut rows: Vec<[String; COLUMNS]> = Vec::with_capacity(self.indexes_info.len() + 1);
+        rows.push([
+            "Index".to_string(),
+            "Type".to_string(),
+            "Keys".to_string(),
+            "Capacity".to_string(),
+            "Node Count".to_string(),
+            "Heap".to_string(),
+            "Used".to_string(),
+        ]);
         for idx in &self.indexes_info {
-            table.add_row(row![
-                idx.name,
+            rows.push([
+                idx.name.to_string(),
                 idx.index_type.to_string(),
-                idx.key_count,
-                idx.capacity,
-                idx.node_count,
+                idx.key_count.to_string(),
+                idx.capacity.to_string(),
+                idx.node_count.to_string(),
                 fmt_bytes(idx.heap_size),
                 fmt_bytes(idx.used_size),
             ]);
         }
 
-        let mut buffer = Vec::new();
-        table.print(&mut buffer).unwrap();
-        let table_str = String::from_utf8(buffer).unwrap();
-        writeln!(f, "{}", table_str.trim_end())?;
+        // Width by character count, not byte length: an index named with any
+        // multi-byte character would otherwise pad short and skew every column
+        // after it.
+        let mut widths = [0usize; COLUMNS];
+        for row in &rows {
+            for (width, cell) in widths.iter_mut().zip(row) {
+                *width = (*width).max(cell.chars().count());
+            }
+        }
+
+        for (index, row) in rows.iter().enumerate() {
+            for (column, (cell, width)) in row.iter().zip(&widths).enumerate() {
+                if column + 1 == COLUMNS {
+                    write!(f, "{cell}")?;
+                } else {
+                    let padding = width - cell.chars().count();
+                    write!(f, "{cell}{:padding$}{COLUMN_GAP}", "")?;
+                }
+            }
+            writeln!(f)?;
+            // A rule under the header, and nothing between the rows: the same
+            // shape `FORMAT_NO_BORDER_LINE_SEPARATOR` produced.
+            if index == 0 {
+                let rule: usize = widths.iter().sum::<usize>() + COLUMN_GAP.len() * (COLUMNS - 1);
+                writeln!(f, "{:-<rule$}", "")?;
+            }
+        }
 
         Ok(())
     }
 }
+
+/// Columns in the per-index table below: name, type, keys, capacity, node
+/// count, heap, used.
+const COLUMNS: usize = 7;
+
+/// Spaces between one column and the next.
+const COLUMN_GAP: &str = "  ";
 
 fn fmt_bytes(bytes: usize) -> String {
     const KB: f64 = 1024.0;

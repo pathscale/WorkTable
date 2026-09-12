@@ -46,7 +46,7 @@
 use proc_macro2::TokenStream;
 use syn::spanned::Spanned as _;
 
-use crate::model::{Columns, GeneratorType, IndexBackend, Persistence, Queries};
+use crate::model::{Columns, GeneratorType, IndexBackend, Persistence, Queries, RuntimeBackend, Storage};
 use crate::parser::Parser;
 
 mod diff;
@@ -71,6 +71,11 @@ pub struct Schema {
     /// resolved value rather than the absence, because a consumer comparing an
     /// on-disk version against a declared one wants a number either way.
     pub version: u32,
+    /// What holds the rows. `serde(default)` is [`Storage::Paged`], so a
+    /// schema written before this field existed reads back as the table it
+    /// was: every declaration then was paged.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub storage: Storage,
     /// Whether persistence was selected, and whether it was selected at all.
     pub persist: Persistence,
     /// The routing key of a partitioned table. Not a column: it is stored once
@@ -80,10 +85,54 @@ pub struct Schema {
     pub columns: Vec<ColumnSpec>,
     /// Secondary indexes in declaration order.
     pub indexes: Vec<IndexSpec>,
+    /// The runtime the table is built against. Absent in the declaration means
+    /// [`RuntimeBackend::default`], and this stores the resolved value for the
+    /// same reason `version` does: a consumer asking which runtime a table
+    /// uses wants an answer either way.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub runtime: RuntimeBackend,
     /// Generated queries, sorted by name within each kind.
     pub queries: QueriesSpec,
     /// The `config` block.
     pub config: ConfigSpec,
+    /// Columnar indexes in declaration order.
+    ///
+    /// **This was parsed and then dropped.** `from_tokens` read the block into
+    /// the model and the `Schema` it returned never carried it, so a columnar
+    /// table emitted by `to_dsl` came back without its clustering, and every
+    /// consumer downstream of this type, including the TypeScript emitter and
+    /// the JSON dump, was blind to it.
+    ///
+    /// The round-trip test could not catch that: the property is
+    /// `parse(emit(parse(s))) == parse(s)`, which holds trivially for anything
+    /// this type does not model. See `columnar_survives_the_round_trip`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar_indexes: Vec<ColumnarIndexSpec>,
+}
+
+/// A column's `columnar(...)` options.
+///
+/// `Some` means the column declared `columnar`, with or without options.
+/// Absent options are absent rather than defaulted, so an emitted declaration
+/// says what was written: `columnar` and `columnar(chunk_rows(2))` are
+/// different text and the second is not the first plus a default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ColumnarSpec {
+    /// `chunk_rows(n)`, when written.
+    pub chunk_rows: Option<usize>,
+    /// `compression(name)`, when it differs from the default.
+    pub compression: Option<String>,
+}
+
+/// A columnar index: `name: { cluster_by: [field, ..] }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ColumnarIndexSpec {
+    /// Index name.
+    pub name: String,
+    /// The fields it clusters by, in declaration order.
+    pub cluster_by: Vec<String>,
 }
 
 /// A column declaration: `name: Type [primary_key] [autoincrement|custom] [optional] [using backend]`.
@@ -102,6 +151,9 @@ pub struct ColumnSpec {
     /// The primary-key generator. Only meaningful when `primary_key` is set,
     /// and shared by every column of a composite key.
     pub generator: GeneratorType,
+    /// The `columnar(...)` options, when the column declared them.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar: Option<ColumnarSpec>,
     /// The primary index backend. `Some` on primary-key columns, carrying the
     /// declared backend or the default when `using` was omitted; `None`
     /// elsewhere, because `using` on a non-key column is a parse error.
@@ -130,6 +182,13 @@ pub struct PartitionKeySpec {
     pub name: String,
     /// Unsigned integer type. See [`crate::model::PARTITION_KEY_TYPES`].
     pub ty: String,
+    /// The declared `partition_max_size` width, as it is written. See
+    /// [`crate::model::PartitionMaxSize`].
+    ///
+    /// Not optional, because the key it belongs to is not: a stored schema
+    /// without it predates the key and would compare unequal to every
+    /// declaration, which is the honest answer rather than a defect.
+    pub max_size: String,
 }
 
 /// The `queries` block.
@@ -143,6 +202,13 @@ pub struct QueriesSpec {
     pub deletes: Vec<OperationSpec>,
     /// `in_place:` operations.
     pub in_place: Vec<OperationSpec>,
+    /// The profile named by `update runtime <profile>:`, if written. Unresolved:
+    /// see [`crate::model::Queries::update_runtime`].
+    pub update_runtime: Option<String>,
+    /// The profile named by `delete runtime <profile>:`, if written.
+    pub delete_runtime: Option<String>,
+    /// The profile named by `in_place runtime <profile>:`, if written.
+    pub in_place_runtime: Option<String>,
 }
 
 impl QueriesSpec {
@@ -174,12 +240,26 @@ pub struct ConfigSpec {
     pub page_size: Option<u32>,
     /// Extra derives placed on the generated row type.
     pub row_derives: Vec<String>,
+    /// `columnar_slot_id`, when it differs from the default.
+    ///
+    /// Stored as the difference rather than the resolved value, because the
+    /// parser applies defaults and a resolved value cannot be told from a
+    /// written one. Emitting a default that was never written is noise; not
+    /// emitting a written non-default loses it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar_slot_id: Option<String>,
+    /// `columnar_chunk_rows`, when it differs from the default.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub columnar_chunk_rows: Option<usize>,
 }
 
 impl ConfigSpec {
     /// Whether anything was configured.
     pub fn is_empty(&self) -> bool {
-        self.page_size.is_none() && self.row_derives.is_empty()
+        self.page_size.is_none()
+            && self.row_derives.is_empty()
+            && self.columnar_slot_id.is_none()
+            && self.columnar_chunk_rows.is_none()
     }
 }
 
@@ -204,16 +284,20 @@ impl Schema {
 
         let name = parser.parse_name()?;
         let version = parser.parse_version()?.unwrap_or(1);
+        let storage = parser.parse_storage()?;
         let persist = parser.parse_persist()?;
         let partition_by = parser.parse_partition_by()?.map(|key| PartitionKeySpec {
             name: key.name.to_string(),
             ty: key.ty.to_string(),
+            max_size: key.max_size.type_name().to_string(),
         });
 
         let mut columns: Option<Columns> = None;
         let mut indexes = None;
         let mut queries: Option<Queries> = None;
         let mut config = None;
+        let mut columnar_indexes = None;
+        let mut runtime = None;
 
         while let Some(ident) = parser.peek_next() {
             match ident.to_string().as_str() {
@@ -221,24 +305,37 @@ impl Schema {
                 "indexes" => indexes = Some(parser.parse_indexes()?),
                 "queries" => queries = Some(parser.parse_queries()?),
                 "config" => config = Some(parser.parse_configs()?),
+                "columnar_indexes" => columnar_indexes = Some(parser.parse_columnar_indexes()?),
+                // Free-order like the blocks around it, and unlike `persist`
+                // and `partition_by`, because nothing downstream of it depends
+                // on having been read first.
+                "runtime" => {
+                    let span = ident.span();
+                    if runtime.is_some() {
+                        return Err(syn::Error::new(span, crate::parser::DUPLICATE_RUNTIME));
+                    }
+                    runtime = Some(parser.parse_runtime()?);
+                }
                 "version" => {
                     return Err(syn::Error::new(
                         ident.span(),
                         "version must be specified before columns/indexes/queries/config",
                     ));
                 }
-                "persist" | "partition_by" => {
+                "vec" | "persist" | "partition_by" | "partition_max_size" => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "`persist` and `partition_by` are positional; the required order is: \
-                         name, version, persist, partition_by, then columns/indexes/queries/config",
+                        "`vec`, `persist`, `partition_by` and `partition_max_size` are positional; the required \
+                         order is: name, version, vec, persist, partition_by, partition_max_size, then \
+                         columns/indexes/queries/config",
                     ));
                 }
                 other => {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "Unexpected token `{other}`; expected one of `columns`, `indexes`, `queries`, `config`"
+                            "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, \
+                             `queries`, `config`, `runtime`"
                         ),
                     ));
                 }
@@ -247,6 +344,9 @@ impl Schema {
 
         let mut model =
             columns.ok_or_else(|| syn::Error::new(parser.input.span(), "Expected a `columns` block in declaration"))?;
+        if let Some(columnar_indexes) = columnar_indexes {
+            model.columnar_indexes = columnar_indexes.indexes;
+        }
         if let Some(indexes) = indexes {
             model.indexes = indexes;
         }
@@ -254,17 +354,34 @@ impl Schema {
         Ok(Self {
             name: name.to_string(),
             version,
+            storage,
             persist,
             partition_by,
+            runtime: runtime.unwrap_or_default(),
             columns: columns_from_model(&model)?,
             indexes: indexes_from_model(&model),
             queries: queries.map(queries_from_model).unwrap_or_default(),
             config: config
-                .map(|config| ConfigSpec {
-                    page_size: config.page_size,
-                    row_derives: config.row_derives.iter().map(ToString::to_string).collect(),
+                .map(|config| {
+                    let defaults = crate::model::Config::default();
+                    ConfigSpec {
+                        page_size: config.page_size,
+                        row_derives: config.row_derives.iter().map(ToString::to_string).collect(),
+                        columnar_slot_id: (config.columnar_slot_id != defaults.columnar_slot_id)
+                            .then(|| config.columnar_slot_id.type_name().to_owned()),
+                        columnar_chunk_rows: (config.columnar_chunk_rows != defaults.columnar_chunk_rows)
+                            .then_some(config.columnar_chunk_rows),
+                    }
                 })
                 .unwrap_or_default(),
+            columnar_indexes: model
+                .columnar_indexes
+                .values()
+                .map(|index| ColumnarIndexSpec {
+                    name: index.name.to_string(),
+                    cluster_by: index.cluster_by.iter().map(ToString::to_string).collect(),
+                })
+                .collect(),
         })
     }
 
@@ -299,6 +416,14 @@ fn columns_from_model(model: &Columns) -> syn::Result<Vec<ColumnSpec>> {
                 } else {
                     GeneratorType::None
                 },
+                columnar: model.columnar_fields.get(name).map(|config| {
+                    let defaults = crate::model::ColumnarFieldConfig::default();
+                    ColumnarSpec {
+                        chunk_rows: config.chunk_rows,
+                        compression: (config.compression != defaults.compression)
+                            .then(|| config.compression.name().to_owned()),
+                    }
+                }),
                 index_backend: primary_key.then_some(model.primary_index_backend),
             })
         })
@@ -371,6 +496,9 @@ fn queries_from_model(queries: Queries) -> QueriesSpec {
     }
 
     QueriesSpec {
+        update_runtime: queries.update_runtime.map(|profile| profile.to_string()),
+        delete_runtime: queries.delete_runtime.map(|profile| profile.to_string()),
+        in_place_runtime: queries.in_place_runtime.map(|profile| profile.to_string()),
         updates: convert(queries.updates),
         deletes: convert(queries.deletes),
         in_place: convert(queries.in_place),

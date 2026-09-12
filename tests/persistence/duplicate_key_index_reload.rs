@@ -1,3 +1,4 @@
+use data_bucket::DEFAULT_PAGE_STRIDE;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
@@ -111,12 +112,11 @@ async fn assert_straddling_topology(dir: &str) {
     use data_bucket::INNER_PAGE_SIZE;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU32;
-    use tokio::fs::OpenOptions;
 
     let path = format!("{dir}/duplicate_key_reload/score_idx.wt.idx");
-    let mut file = OpenOptions::new().read(true).write(true).open(&path).await.unwrap();
+    let mut file = worktable::prelude::fsx::open(&path).await.unwrap();
     let next_id_gen = Arc::new(AtomicU32::new(1));
-    let toc = IndexTableOfContents::<(u64, Link), { INNER_PAGE_SIZE as u32 }>::parse_from_file(
+    let toc = IndexTableOfContents::<(u64, Link), { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::parse_from_file(
         &mut file,
         0.into(),
         next_id_gen,
@@ -133,9 +133,13 @@ async fn assert_straddling_topology(dir: &str) {
 
     let mut pages_per_key: BTreeMap<u64, u64> = BTreeMap::new();
     for page_id in mappings {
-        let page = parse_page::<IndexPage<u64>, { DUPLICATE_KEY_RELOAD_PAGE_SIZE as u32 }>(&mut file, page_id.into())
-            .await
-            .unwrap();
+        let page = parse_page::<
+            IndexPage<u64>,
+            { (DUPLICATE_KEY_RELOAD_PAGE_SIZE - data_bucket::GENERAL_HEADER_SIZE) as u32 },
+            DEFAULT_PAGE_STRIDE,
+        >(&mut file, page_id.into())
+        .await
+        .unwrap();
         let keys: BTreeSet<u64> = page.inner.index_values[..page.inner.current_length as usize]
             .iter()
             .map(|v| v.key)
@@ -215,7 +219,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
 
             model.assert_matches(&table, "in-memory before first persist");
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on bulk insert")
                 .expect("persistence engine failed");
@@ -278,7 +282,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
 
             model.assert_matches(&table, "in-memory after post-reload mutations");
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on post-reload mutations")
                 .expect("persistence engine failed");
@@ -331,7 +335,7 @@ fn test_single_key_all_duplicates_survives_reload() {
             }
             assert_eq!(table.select_by_score(42).execute().unwrap().len() as u64, ROWS);
 
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on bulk insert")
                 .expect("persistence engine failed");
@@ -365,7 +369,7 @@ fn test_single_key_all_duplicates_survives_reload() {
                 })
                 .await
                 .unwrap();
-            timeout(Duration::from_secs(30), table.wait_for_ops())
+            timeout(Duration::from_secs(5), table.wait_for_ops())
                 .await
                 .expect("persistence stalled on post-reload insert")
                 .expect("persistence engine failed");
@@ -417,7 +421,7 @@ fn test_duplicate_key_mutations_without_reload() {
                 .unwrap();
             model.insert(i, i % KEYS, bucket);
         }
-        timeout(Duration::from_secs(30), table.wait_for_ops())
+        timeout(Duration::from_secs(5), table.wait_for_ops())
             .await
             .expect("persistence stalled on bulk insert")
             .expect("persistence engine failed");
@@ -466,7 +470,7 @@ fn test_duplicate_key_mutations_without_reload() {
 
         model.assert_matches(&table, "in-memory after mutations (no reload)");
 
-        timeout(Duration::from_secs(30), table.wait_for_ops())
+        timeout(Duration::from_secs(5), table.wait_for_ops())
             .await
             .expect("persistence stalled on mutations without any reload")
             .expect("persistence engine failed");

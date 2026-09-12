@@ -1,7 +1,10 @@
+use alloc::vec::Vec;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::multipair::MultiPair;
 use indexset::core::pair::Pair;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::cdc::change::ChangeEvent as VanillaChangeEvent;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
 pub fn convert_change_event<T, L1, L2>(ev: ChangeEvent<Pair<T, L1>>) -> ChangeEvent<Pair<T, L2>>
@@ -142,6 +145,7 @@ where
 
 /// Normalizes upstream IndexSet CDC events into WorkTablesIndex's event type,
 /// which remains the stable persistence boundary used by DataBucket.
+#[cfg(feature = "vanilla-index")]
 pub fn convert_upstream_change_events<T, L1, L2>(
     evs: Vec<VanillaChangeEvent<VanillaPair<T, L1>>>,
 ) -> Vec<ChangeEvent<Pair<T, L2>>>
@@ -193,6 +197,7 @@ where
         .collect()
 }
 
+#[cfg(feature = "vanilla-index")]
 fn upstream_pair<T, L1, L2>(pair: VanillaPair<T, L1>) -> Pair<T, L2>
 where
     L1: Into<L2>,

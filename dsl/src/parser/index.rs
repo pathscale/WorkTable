@@ -18,7 +18,7 @@ impl Parser {
         let backend = self.input_iter.next().ok_or_else(|| {
             syn::Error::new(
                 using_span,
-                "expected an index backend after `using`: `worktables_index`, `indexset`, `congee`, or `arctic`",
+                "expected an index backend after `using`: `worktables_index`, `indexset`, `congee`, `fxhash`, or `arctic`",
             )
         })?;
         let TokenTree::Ident(backend) = backend else {
@@ -32,10 +32,11 @@ impl Parser {
             "worktables_index" => Ok(Some(IndexBackend::WorktablesIndex)),
             "indexset" => Ok(Some(IndexBackend::Indexset)),
             "congee" => Ok(Some(IndexBackend::Congee)),
+            "fxhash" => Ok(Some(IndexBackend::FxHash)),
             "arctic" => Ok(Some(IndexBackend::Arctic)),
             _ => Err(syn::Error::new(
                 backend.span(),
-                "unknown index backend; expected `worktables_index`, `indexset`, `congee`, or `arctic`",
+                "unknown index backend; expected `worktables_index`, `indexset`, `congee`, `fxhash`, or `arctic`",
             )),
         }
     }

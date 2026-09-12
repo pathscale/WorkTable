@@ -13,7 +13,13 @@ impl PersistGenerator {
         let table_ident = name_generator.get_work_table_ident();
 
         let custom_in_place = if let Some(q) = &self.queries {
+            let profile = q.in_place_runtime.clone();
             let custom_in_place = self.gen_in_place_queries(q.in_place.clone());
+            let custom_in_place = crate::generators::profile_dispatch::wrap(
+                custom_in_place,
+                profile.as_ref(),
+                &name_generator.get_row_type_ident(),
+            )?;
             quote! {
                 #custom_in_place
             }
@@ -69,12 +75,12 @@ impl PersistGenerator {
         let column_types = if types.len() == 1 {
             let t = types[0];
             quote! {
-                &mut <#t as rkyv::Archive>::Archived
+                &mut <#t as worktable::prelude::rkyv::Archive>::Archived
             }
         } else {
             let types = types.iter().map(|t| {
                 quote! {
-                    &mut <#t as rkyv::Archive>::Archived
+                    &mut <#t as worktable::prelude::rkyv::Archive>::Archived
                 }
             });
             quote! {
@@ -97,13 +103,14 @@ impl PersistGenerator {
             }
         };
         let custom_lock = self.gen_custom_lock_for_update(lock_ident);
+        let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
 
         quote! {
             pub async fn #method_ident<Pk, F: FnMut(#column_types)>(
                 &self,
                 mut f: F,
                 by: Pk,
-            ) -> eyre::Result<()>
+            ) -> worktable::prelude::eyre::Result<()>
             where #pk_type: From<Pk>
             {
                 let pk: #pk_type = by.into();
@@ -128,13 +135,14 @@ impl PersistGenerator {
                 // reverted on restart. In-place queries cannot touch indexed
                 // columns (rejected at parse time), so the event vectors stay
                 // empty.
-                let op_id = OperationId::Single(uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
                 let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
                 let mut op: Operation<
                     <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
                     #pk_type,
                     #secondary_events_ident
                 > = Operation::Update(UpdateOperation {
+                    retired_link: None,
                     id: op_id,
                     primary_key_events: vec![],
                     secondary_keys_events,
@@ -147,6 +155,8 @@ impl PersistGenerator {
                     unreachable!("just built as an update operation")
                 };
                 self.1.apply_operation(op)?;
+
+                #columnar_dirty
 
                 Ok(())
             }

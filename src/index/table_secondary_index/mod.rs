@@ -1,9 +1,10 @@
+use alloc::vec::Vec;
 mod cdc;
 mod index_events;
 mod info;
 
 use data_bucket::Link;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use crate::WorkTableError;
 use crate::{AvailableIndex, Difference};
@@ -13,6 +14,11 @@ pub use index_events::TableSecondaryIndexEventsOps;
 pub use info::TableSecondaryIndexInfo;
 
 pub trait TableSecondaryIndex<Row, AvailableTypes, AvailableIndexes> {
+    /// Hold through secondary maintenance and authoritative row publication.
+    /// Non-columnar indexes pay no synchronization cost.
+    fn row_publication(&self) -> Option<parking_lot::RwLockReadGuard<'_, ()>> {
+        None
+    }
     fn save_row(&self, row: Row, link: Link) -> Result<(), IndexError<AvailableIndexes>>;
     fn reinsert_row(
         &self,
@@ -93,6 +99,10 @@ pub enum IndexError<IndexNameEnum> {
         at: IndexNameEnum,
         inserted_already: Vec<IndexNameEnum>,
     },
+    ColumnSlotIdExhausted {
+        bits: u8,
+        inserted_already: Vec<IndexNameEnum>,
+    },
     NotFound,
 }
 
@@ -106,6 +116,10 @@ where
                 at,
                 inserted_already: _,
             } => WorkTableError::AlreadyExists(at.to_string_value()),
+            IndexError::ColumnSlotIdExhausted {
+                bits,
+                inserted_already: _,
+            } => WorkTableError::ColumnSlotIdExhausted(bits),
             IndexError::NotFound => WorkTableError::NotFound,
         }
     }

@@ -9,10 +9,17 @@ Cargo.lock
 *.DS_Store
 tests/data/*
 !tests/data/expected/
-!tests/data/persist_index_table_of_contents.wt.idx
+tests/non-existent/
 
 /.claude/settings.local.json
 
 # cargo-mutants run output
 /mutants.out/
 /mutants.out.old/
+
+# Generated documents. `docs/wt-user-guide.typ` and the columnar guide are the
+# sources; the PDFs are build output and were tracked, so every edit to a guide
+# put a new binary blob in the history. Rebuild with:
+#   typst compile docs/wt-user-guide.typ docs/wt-user-guide.pdf
+*.pdf
+.DS_Store

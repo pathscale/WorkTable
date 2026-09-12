@@ -56,6 +56,7 @@ worktable!(
 worktable!(
     name: OrderBook,
     partition_by: symbol_id: u16,
+    partition_max_size: u64,
     partitions: 1024,
     columns: { exchange_id: u8 primary_key, bid: f64, ask: f64, ts: i64 }
 );
@@ -309,6 +310,7 @@ worktable!(
     name: SymbolPosting,
     persist: true,
     partition_by: file_revision: u64,   // Mode B, derived from the BLAKE3 revision
+    partition_max_size: u64,
     columns: {
         id: u64 primary_key autoincrement using arctic,
         posting_hash: u128,

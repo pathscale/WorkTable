@@ -1,11 +1,14 @@
+#[cfg(feature = "std")]
 mod batch;
+mod clock;
 #[allow(clippy::module_inception)]
 mod operation;
+pub(crate) use clock::new_operation_uuid;
 mod util;
 
-use std::cmp::Ordering;
-use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
+use core::cmp::Ordering;
+use core::fmt::Debug;
+use core::hash::{Hash, Hasher};
 
 use data_bucket::SizeMeasurable;
 use derive_more::Display;
@@ -14,6 +17,7 @@ use uuid::Uuid;
 
 use crate::prelude::From;
 
+#[cfg(feature = "std")]
 pub use batch::{BatchInnerRow, BatchInnerWorkTable, BatchOperation};
 pub use operation::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, UpdateOperation};
 pub use util::validate_events;
@@ -70,7 +74,7 @@ impl SizeMeasurable for OperationId {
 
 impl Default for OperationId {
     fn default() -> Self {
-        OperationId::Single(Uuid::now_v7())
+        OperationId::Single(new_operation_uuid())
     }
 }
 

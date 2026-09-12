@@ -231,6 +231,7 @@ impl PersistGenerator {
         let space_ident = name_generator.get_space_file_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
+        let node_capacity = name_generator.get_disk_page_capacity();
         let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
         let avt_index_ident = name_generator.get_available_indexes_ident();
 
@@ -254,33 +255,36 @@ impl PersistGenerator {
         };
         let index_setup = if self.columns.primary_index_backend == crate::common::model::IndexBackend::Arctic {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                     PersistentArcticIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
                 ));
             }
         } else if pk_types_unsized {
             quote! {
-                inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
-                    #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#const_name)
+                inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
+                    #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#node_capacity)
                 ));
             }
         } else {
             match self.columns.primary_index_backend {
+                crate::common::model::IndexBackend::FxHash => unreachable!(
+                    "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
+                ),
                 crate::common::model::IndexBackend::WorktablesIndex => quote! {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
+                    inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         #wti_map::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                     ));
                 },
                 crate::common::model::IndexBackend::Indexset => quote! {
-                    let size = get_index_page_size_from_data_length::<#pk_type>(#const_name);
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    let size = get_index_page_size_from_data_length::<#pk_type>(#node_capacity);
+                    inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         UpstreamIndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                     ));
                 },
                 crate::common::model::IndexBackend::Arctic => unreachable!("handled before variable-size dispatch"),
                 crate::common::model::IndexBackend::Congee => quote! {
-                    inner.primary_index = std::sync::Arc::new(PrimaryIndex::from_map(
+                    inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
                         PersistentCongeeIndex::<#pk_type, OffsetEqLink<#const_name>>::default()
                     ));
                 },
@@ -300,7 +304,7 @@ impl PersistGenerator {
                     + 'static,
                 C: Clone + PersistenceConfig,
             {
-                async fn new(mut engine: E) -> eyre::Result<Self> {
+                async fn new(mut engine: E) -> worktable::prelude::eyre::Result<Self> {
                     let schema = Self::space_info_default().inner;
                     engine
                         .ensure_schema(
@@ -318,11 +322,11 @@ impl PersistGenerator {
                     ))
                 }
 
-                async fn load(engine: E) -> eyre::Result<Self> {
+                async fn load(engine: E) -> worktable::prelude::eyre::Result<Self> {
                     Self::load_with(engine, LoadMode::Strict).await
                 }
 
-                async fn load_with(mut engine: E, mode: LoadMode) -> eyre::Result<Self> {
+                async fn load_with(mut engine: E, mode: LoadMode) -> worktable::prelude::eyre::Result<Self> {
                     let schema = Self::space_info_default().inner;
                     engine
                         .validate_schema(
@@ -337,7 +341,7 @@ impl PersistGenerator {
                     };
                     let table = load_persisted_state(&table_path, async {
                         let space = #space_ident::parse_file(&table_path).await?;
-                        Ok::<_, eyre::Report>(space.into_worktable_with_mode(engine, &table_path, mode).await?)
+                        Ok::<_, worktable::prelude::eyre::Report>(space.into_worktable_with_mode(engine, &table_path, mode).await?)
                     }).await?;
                     Ok(table)
                 }
@@ -409,7 +413,7 @@ impl PersistGenerator {
                                                                      #row_fields_ident>
             where
                 #primary_key_type: From<Pk>,
-                R: std::ops::RangeBounds<Pk> + 'a,
+                R: core::ops::RangeBounds<Pk> + 'a,
                 Pk: Clone + 'a,
             {
                 let converted_range = (
@@ -418,7 +422,7 @@ impl PersistGenerator {
                 );
                 // Delay the grace-period guard until the returned iterator is
                 // consumed so an idle query builder cannot pin reclamation.
-                let rows = std::iter::once_with(move || {
+                let rows = core::iter::once_with(move || {
                     let read_guard = self.0.data.read_guard();
                     self.0.primary_index.pk_map
                         .range_links(converted_range)
@@ -639,7 +643,7 @@ impl PersistGenerator {
                     }
                     if backoff_spins < 8 {
                         backoff_spins = backoff_spins.saturating_add(1);
-                        tokio::task::yield_now().await;
+                        worktable::prelude::yield_now().await;
                     } else {
                         // Cap the exponent BEFORE shifting: `1u64 << 64` panics
                         // (overflow) in debug/test builds. Clamp the shift to a
@@ -648,7 +652,7 @@ impl PersistGenerator {
                         let exponent = core::cmp::min(backoff_spins - 8, 8);
                         let micros = core::cmp::min(1u64 << exponent, 256);
                         backoff_spins = backoff_spins.saturating_add(1);
-                        tokio::time::sleep(std::time::Duration::from_micros(micros)).await;
+                        worktable::prelude::sleep(core::time::Duration::from_micros(micros)).await;
                     }
                 }
             }
@@ -689,7 +693,7 @@ impl PersistGenerator {
             /// assigned contiguous keys before `insert_many`. Interleaved
             /// `get_next_pk` calls keep working and never overlap a
             /// reservation.
-            pub fn reserve_pks(&self, count: usize) -> std::ops::Range<#pk_inner_type> {
+            pub fn reserve_pks(&self, count: usize) -> core::ops::Range<#pk_inner_type> {
                 self.0.reserve_pks(count)
             }
         }
@@ -732,7 +736,7 @@ impl PersistGenerator {
         quote! {
             pub async fn iter_with_async<
                 F: Fn(#row_type) -> Fut,
-                Fut: std::future::Future<Output = core::result::Result<(), WorkTableError>>
+                Fut: core::future::Future<Output = core::result::Result<(), WorkTableError>>
             >(&self, f: F) -> core::result::Result<(), WorkTableError> {
                 #inner
             }
@@ -794,8 +798,14 @@ impl PersistGenerator {
         let lock_type = name_generator.get_lock_type_ident();
 
         quote! {
-            pub fn vacuum(&self) -> std::sync::Arc<dyn WorkTableVacuum + std::marker::Send + Sync> {
-                std::sync::Arc::new(EmptyDataVacuum::<
+            pub fn vacuum(&self) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
+                self.vacuum_with_pacing(worktable::prelude::VacuumPacing::default())
+            }
+
+            /// Creates a persisted sweep with the selected pacing policy.
+            /// Index moves retain the same persistence sink as the default sweep.
+            pub fn vacuum_with_pacing(&self, pacing: worktable::prelude::VacuumPacing) -> worktable::prelude::Arc<dyn WorkTableVacuum + core::marker::Send + Sync> {
+                worktable::prelude::Arc::new(EmptyDataVacuum::<
                     _,
                     _,
                     _,
@@ -807,11 +817,11 @@ impl PersistGenerator {
                     #secondary_index_events
                 >::new(
                     #table_name,
-                    std::sync::Arc::clone(&self.0.data),
-                    std::sync::Arc::clone(&self.0.lock_manager),
-                    std::sync::Arc::clone(&self.0.primary_index),
-                    std::sync::Arc::clone(&self.0.indexes),
-                ).with_persistence(self.1.vacuum_sink()))
+                    worktable::prelude::Arc::clone(&self.0.data),
+                    worktable::prelude::Arc::clone(&self.0.lock_manager),
+                    worktable::prelude::Arc::clone(&self.0.primary_index),
+                    worktable::prelude::Arc::clone(&self.0.indexes),
+                ).with_pacing(pacing).with_persistence(self.1.vacuum_sink()))
             }
         }
     }

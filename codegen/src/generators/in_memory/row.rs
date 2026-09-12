@@ -81,7 +81,8 @@ impl InMemoryGenerator {
         };
 
         quote! {
-            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq, MemStat)]
+            #[derive(worktable::prelude::rkyv::Archive, Debug, worktable::prelude::rkyv::Deserialize, Clone, worktable::prelude::rkyv::Serialize, PartialEq, MemStat)]
+            #[rkyv(crate = worktable::prelude::rkyv)]
             #custom_derives
             #[rkyv(derive(Debug))]
             #[repr(C)]
@@ -122,7 +123,8 @@ impl InMemoryGenerator {
             .collect();
 
         quote! {
-            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, Clone, rkyv::Serialize, PartialEq)]
+            #[derive(worktable::prelude::rkyv::Archive, Debug, worktable::prelude::rkyv::Deserialize, Clone, worktable::prelude::rkyv::Serialize, PartialEq)]
+            #[rkyv(crate = worktable::prelude::rkyv)]
             #[rkyv(derive(Debug))]
             #[repr(C)]
             pub enum #enum_name {

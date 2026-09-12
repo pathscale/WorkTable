@@ -1,8 +1,9 @@
-use std::fmt::Debug;
+use alloc::{string::String, vec::Vec};
+use core::fmt::Debug;
+use core::future::Future;
+use core::hash::Hash;
+use core::marker::PhantomData;
 use std::fs;
-use std::future::Future;
-use std::hash::Hash;
-use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::path::Path;
 
@@ -182,9 +183,15 @@ where
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> eyre::Result<()> {
+        let mut row_mutations = crate::persistence::space::BatchData::new();
+        for (link, bytes) in op.row_mutations() {
+            row_mutations.entry(link.page_id).or_default().push((link, bytes));
+        }
+        if !row_mutations.is_empty() {
+            self.data.save_batch_data(row_mutations).await?;
+        }
         match op {
             Operation::Insert(insert) => {
-                self.data.save_data(insert.link, insert.bytes.as_ref()).await?;
                 for event in insert.primary_key_events {
                     self.primary_index.process_change_event(event).await?;
                 }
@@ -196,7 +203,6 @@ where
                     .await
             }
             Operation::Update(update) => {
-                self.data.save_data(update.link, update.bytes.as_ref()).await?;
                 for event in update.primary_key_events {
                     self.primary_index.process_change_event(event).await?;
                 }

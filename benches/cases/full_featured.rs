@@ -19,7 +19,7 @@ fn insert(c: &mut Criterion) {
                     another: format!("another_{}", fastrand::u64(..)),
                     something: fastrand::u64(..),
                 };
-                futures::executor::block_on(table.insert(black_box(row)))
+                nagoya::block_on(table.insert(black_box(row)))
             },
             BatchSize::SmallInput,
         )
@@ -37,7 +37,7 @@ fn select_by_pk(c: &mut Criterion) {
                 another: format!("another_{}", fastrand::u64(..)),
                 something: fastrand::u64(..),
             };
-            futures::executor::block_on(table.insert(row)).unwrap()
+            nagoya::block_on(table.insert(row)).unwrap()
         })
         .collect();
 
@@ -60,7 +60,7 @@ fn select_by_unique_index(c: &mut Criterion) {
             another: format!("another_{}", i),
             something: i,
         };
-        futures::executor::block_on(table.insert(row)).unwrap();
+        nagoya::block_on(table.insert(row)).unwrap();
     }
 
     c.bench_function("full_featured_select_by_val1", |b| {
@@ -82,7 +82,7 @@ fn select_by_non_unique_index(c: &mut Criterion) {
             another: format!("cat_{}", i % 10),
             something: i,
         };
-        futures::executor::block_on(table.insert(row)).unwrap();
+        nagoya::block_on(table.insert(row)).unwrap();
     }
 
     c.bench_function("full_featured_select_by_another", |b| {
@@ -196,7 +196,7 @@ fn in_place_update(c: &mut Criterion) {
             another: "test".to_string(),
             something: 0,
         };
-        futures::executor::block_on(table.insert(row)).unwrap().into()
+        nagoya::block_on(table.insert(row)).unwrap().into()
     };
 
     c.bench_function("full_featured_in_place_update_val", |b| {
@@ -219,7 +219,7 @@ fn delete(c: &mut Criterion) {
                     another: format!("temp_{}", fastrand::u64(..)),
                     something: fastrand::u64(..),
                 };
-                futures::executor::block_on(table.insert(row)).unwrap()
+                nagoya::block_on(table.insert(row)).unwrap()
             },
             |pk: FullFeaturedPrimaryKey| rt.block_on(async { table.delete(black_box(pk)).await.unwrap() }),
             BatchSize::SmallInput,
@@ -242,7 +242,7 @@ fn delete_by_index_query(c: &mut Criterion) {
                     another: another.clone(),
                     something: fastrand::u64(..),
                 };
-                futures::executor::block_on(table.insert(row)).unwrap();
+                nagoya::block_on(table.insert(row)).unwrap();
                 another
             },
             |another: String| rt.block_on(async { table.delete_by_another(another).await.unwrap() }),
@@ -319,7 +319,7 @@ fn batch_insert(c: &mut Criterion) {
                             another: format!("another_{}", i),
                             something: i as u64,
                         };
-                        futures::executor::block_on(table.insert(black_box(row))).unwrap();
+                        nagoya::block_on(table.insert(black_box(row))).unwrap();
                     }
                     black_box(table)
                 },
@@ -347,7 +347,7 @@ fn batch_select_pk(c: &mut Criterion) {
                     another: format!("another_{}", fastrand::u64(..)),
                     something: fastrand::u64(..),
                 };
-                futures::executor::block_on(table.insert(row)).unwrap()
+                nagoya::block_on(table.insert(row)).unwrap()
             })
             .collect();
 

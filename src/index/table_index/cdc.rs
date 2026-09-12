@@ -1,18 +1,26 @@
-use std::fmt::Debug;
-use std::hash::Hash;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::hash::Hash;
 
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::multipair::MultiPair;
 use indexset::core::node::NodeLike;
 use indexset::core::pair::Pair;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::concurrent::map::BTreeMap as VanillaIndexMap;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::node::NodeLike as VanillaNodeLike;
+#[cfg(feature = "vanilla-index")]
 use vanilla_indexset::core::pair::Pair as VanillaPair;
 
-use crate::index::table_index::util::{convert_change_events, convert_upstream_change_events};
+#[cfg(feature = "vanilla-index")]
+use crate::UpstreamIndexMap;
+use crate::index::table_index::util::convert_change_events;
+#[cfg(feature = "vanilla-index")]
+use crate::index::table_index::util::convert_upstream_change_events;
 use crate::util::OffsetEqLink;
-use crate::{ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, UniqueIndex, UpstreamIndexMap};
+use crate::{ArcticIndex, ArcticKey, CongeeIndex, CongeeKey, IndexMap, IndexMultiMap, UniqueIndex};
 
 pub trait TableIndexCdc<T> {
     fn insert_cdc(&self, value: T, link: Link) -> (Option<Link>, Vec<ChangeEvent<Pair<T, Link>>>);
@@ -74,6 +82,7 @@ where
     }
 }
 
+#[cfg(feature = "vanilla-index")]
 impl<T, Node, const N: usize> TableIndexCdc<T> for UpstreamIndexMap<T, OffsetEqLink<N>, Node>
 where
     T: Debug + Eq + Hash + Clone + Send + Ord,

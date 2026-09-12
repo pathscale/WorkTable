@@ -15,6 +15,7 @@ impl InMemoryGenerator {
         let avt_index_ident = name_generator.get_available_indexes_ident();
 
         let save_row_fn = self.gen_save_row_index_fn();
+        let publication_guard = crate::generators::columnar::publication_guard(&self.columns);
         let reinsert_row_fn = self.gen_reinsert_row_index_fn();
         let delete_row_fn = self.gen_delete_row_index_fn();
         let process_difference_insert_fn = self.gen_process_difference_insert_index_fn();
@@ -24,6 +25,7 @@ impl InMemoryGenerator {
         quote! {
             impl TableSecondaryIndex<#row_type_ident, #avt_type_ident, #avt_index_ident> for #index_type_ident {
                 #save_row_fn
+                #publication_guard
                 #reinsert_row_fn
                 #delete_row_fn
                 #process_difference_insert_fn
@@ -73,11 +75,13 @@ impl InMemoryGenerator {
                 }
             })
             .collect::<Vec<_>>();
+        let columnar_save = crate::generators::columnar::save_row(&self.columns);
 
         quote! {
             fn save_row(&self, row: #row_type_ident, link: Link) -> core::result::Result<(), IndexError<#available_index_ident>> {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
                 #(#save_rows)*
+                #columnar_save
                 core::result::Result::Ok(())
             }
         }
@@ -151,6 +155,7 @@ impl InMemoryGenerator {
                 (insert, remove)
             })
             .unzip();
+        let columnar_reinsert = crate::generators::columnar::reinsert_row(&self.columns);
 
         quote! {
             fn reinsert_row(&self,
@@ -163,6 +168,7 @@ impl InMemoryGenerator {
                 let mut inserted_indexes: Vec<#available_index_ident> = vec![];
                 #(#insert_rows)*
                 #(#remove_rows)*
+                #columnar_reinsert
                 core::result::Result::Ok(())
             }
         }
@@ -196,10 +202,12 @@ impl InMemoryGenerator {
                 }
             })
             .collect::<Vec<_>>();
+        let columnar_delete = crate::generators::columnar::delete_row(&self.columns);
 
         quote! {
             fn delete_row(&self, row: #row_type_ident, link: Link) -> core::result::Result<(), IndexError<#available_index_ident>> {
                 #(#delete_rows)*
+                #columnar_delete
                 core::result::Result::Ok(())
             }
         }
@@ -240,14 +248,16 @@ impl InMemoryGenerator {
                 quote! {}
             }
         });
+        let columnar_dirty = crate::generators::columnar::mark_dirty(&self.columns);
 
         quote! {
             fn process_difference_remove(
                 &self,
                 link: Link,
-                difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
+                difference: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>>
             ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
                 #(#process_difference_remove_rows)*
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }
@@ -299,15 +309,17 @@ impl InMemoryGenerator {
                 quote! {}
             }
         });
+        let columnar_dirty = crate::generators::columnar::mark_dirty(&self.columns);
 
         quote! {
             fn process_difference_insert(
                 &self,
                 link: Link,
-                difference: std::collections::HashMap<&str, Difference<#avt_type_ident>>
+                difference: worktable::prelude::HashMap<&str, Difference<#avt_type_ident>>
             ) -> core::result::Result<(), IndexError<#avt_index_ident>> {
                 let mut inserted_indexes: Vec<#avt_index_ident> = vec![];
                 #(#process_difference_insert_rows)*
+                #columnar_dirty
                 core::result::Result::Ok(())
             }
         }

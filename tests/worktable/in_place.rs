@@ -267,15 +267,15 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
     h1.await?;
     h2.await?;
 
-    for (id, smth) in i_state.lock_arc().iter() {
+    for (id, smth) in i_state.lock().iter() {
         let row = table.select(*id).unwrap();
         assert_eq!(&row.something, smth);
     }
-    for (id, val) in val2_state.lock_arc().iter() {
+    for (id, val) in val2_state.lock().iter() {
         let row = table.select(*id).unwrap();
         assert_eq!(&row.val2, val);
     }
-    for (id, val) in val_state.lock_arc().iter() {
+    for (id, val) in val_state.lock().iter() {
         let row = table.select(*id).unwrap();
         assert_eq!(&row.val, val);
     }
@@ -354,12 +354,12 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
     h1.await?;
     h2.await?;
 
-    for (id, smth) in i_state.lock_arc().iter() {
+    for (id, smth) in i_state.lock().iter() {
         let row = table.select(*id).unwrap();
         assert_eq!(&row.another, smth);
     }
     let mut errors = 0;
-    for (id, val) in val2_state.lock_arc().iter() {
+    for (id, val) in val2_state.lock().iter() {
         let row = table.select(*id).unwrap();
         if &row.val2 != val {
             errors += 1;
@@ -367,7 +367,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
     }
     assert_eq!(errors, 0);
     let mut errors = 0;
-    for (id, val) in val_state.lock_arc().iter() {
+    for (id, val) in val_state.lock().iter() {
         let row = table.select(*id).unwrap();
         if &row.val != val {
             errors += 1;

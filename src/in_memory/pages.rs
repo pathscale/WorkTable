@@ -1,6 +1,15 @@
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use alloc::{boxed::Box, vec::Vec};
+#[cfg(feature = "std")]
 use arc_swap::ArcSwap;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
+use core::sync::atomic::{AtomicU64, Ordering};
 use data_bucket::page::PageId;
 use derive_more::{Display, Error, From};
+use hashbrown::HashSet;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 #[cfg(feature = "perf_measurements")]
@@ -11,14 +20,6 @@ use rkyv::{
     rancor::Strategy,
     ser::{Serializer, allocator::ArenaHandle, sharing::Share},
     util::AlignedVec,
-};
-use std::collections::{HashSet, VecDeque};
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
-use std::{
-    fmt::Debug,
-    sync::Arc,
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
@@ -36,8 +37,41 @@ fn page_id_mapper(page_id: usize) -> usize {
     page_id - 1usize
 }
 
+// Snapshot ownership without arc-swap's std thread-local bookkeeping.
+// Clone under the lock, then release it before running any reader callback.
+#[cfg(not(feature = "std"))]
+#[derive(Debug)]
+struct ArcSwap<T>(RwLock<Arc<T>>);
+
+#[cfg(not(feature = "std"))]
+impl<T> ArcSwap<T> {
+    fn from_pointee(value: T) -> Self {
+        Self(RwLock::new(Arc::new(value)))
+    }
+    fn load(&self) -> Arc<T> {
+        self.0.read().clone()
+    }
+    fn load_full(&self) -> Arc<T> {
+        self.load()
+    }
+    fn store(&self, value: Arc<T>) {
+        *self.0.write() = value;
+    }
+}
+
 const PAGE_DIRECTORY_CHUNK_SIZE: usize = 64;
-const PAGE_DIRECTORY_ROOTS: usize = 64;
+/// Roots in the page directory, so its reach is `ROOTS * CHUNK_SIZE` pages.
+///
+/// **This was 64, which reached 4,096 pages: 64 MiB at the default page size.**
+/// Past that, `publish` returns early and every page access falls back to an
+/// `ArcSwap` snapshot of the owning list. A table of 4 KiB rows, which fit
+/// three to a page, crosses it after twelve thousand rows.
+///
+/// Raising it did not measurably change insert cost on that fixture - the
+/// copy-on-write page list dominated, and still does at these sizes - so this
+/// is a ceiling being moved rather than a cost being removed. 1,024 roots
+/// reach 65,536 pages, or 1 GiB, for an 8 KiB array of pointers.
+const PAGE_DIRECTORY_ROOTS: usize = 1024;
 const GHOSTED: u8 = 1 << 0;
 const DELETED: u8 = 1 << 1;
 const VACUUMED: u8 = 1 << 2;
@@ -67,6 +101,104 @@ const RECLAIM_BATCH_LIMIT: usize = 256;
 /// gain.
 const RECLAIM_BACKLOG_TRIGGER: usize = RECLAIM_BATCH_LIMIT;
 
+/// Pages per chunk of [`PageList`].
+///
+/// The list is copy-on-write, so an append copies whatever the writer has to
+/// replace. Chunking bounds that at one chunk plus the (much shorter) spine,
+/// instead of the whole list.
+const PAGE_LIST_CHUNK: usize = 256;
+
+/// Owns every page, and appends one without copying the ones already there.
+///
+/// **This was a `Vec` behind an `ArcSwap`, and appending cloned all of it.**
+/// Every existing page is an `Arc`, so the clone was one atomic increment per
+/// page, each touching a separately allocated page header: a cache miss apiece.
+/// Appending page N cost O(N) and filling a table cost O(N^2). It only showed
+/// up with large rows, because those are what make pages plentiful - at 4 KiB a
+/// row, three rows to a page, per-row insert cost grew tenfold over twenty
+/// thousand rows while a 256-byte row stayed flat.
+///
+/// Hosted readers take an `ArcSwap` snapshot. Without std, snapshot acquisition
+/// briefly locks the owning Arc; visits run after releasing that lock.
+#[derive(Debug)]
+struct PageList<T> {
+    chunks: ArcSwap<Vec<Arc<Vec<Arc<T>>>>>,
+}
+
+impl<T> PageList<T> {
+    fn from_pages(pages: Vec<Arc<T>>) -> Self {
+        let chunks = pages
+            .chunks(PAGE_LIST_CHUNK)
+            .map(|chunk| Arc::new(chunk.to_vec()))
+            .collect::<Vec<_>>();
+        Self {
+            chunks: ArcSwap::from_pointee(chunks),
+        }
+    }
+
+    /// Append a page. Copies the last chunk, or starts a new one, plus the
+    /// spine of chunk pointers.
+    fn push(&self, page: Arc<T>) {
+        let chunks = self.chunks.load_full();
+        let mut next = (*chunks).clone();
+        match next.last() {
+            // Every chunk but the last is full, so only the last can take one.
+            Some(last) if last.len() < PAGE_LIST_CHUNK => {
+                let mut grown = (**last).clone();
+                grown.push(page);
+                *next.last_mut().expect("the branch matched on it") = Arc::new(grown);
+            }
+            _ => {
+                let mut chunk = Vec::with_capacity(PAGE_LIST_CHUNK);
+                chunk.push(page);
+                next.push(Arc::new(chunk));
+            }
+        }
+        self.chunks.store(Arc::new(next));
+    }
+
+    fn len(&self) -> usize {
+        let chunks = self.chunks.load();
+        match chunks.last() {
+            None => 0,
+            // Full but for the last, so its length is the only remainder.
+            Some(last) => (chunks.len() - 1) * PAGE_LIST_CHUNK + last.len(),
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<Arc<T>> {
+        let chunks = self.chunks.load();
+        chunks
+            .get(index / PAGE_LIST_CHUNK)?
+            .get(index % PAGE_LIST_CHUNK)
+            .cloned()
+    }
+
+    /// Run `visit` against the page at `index`, borrowing it rather than
+    /// handing back an owned `Arc`.
+    ///
+    /// **`get` costs an atomic increment and the matching decrement on drop.**
+    /// A read that only needs the page for the length of one call pays both for
+    /// nothing, and it is measurable: routing the link-based read through `get`
+    /// moved a delete from 665 to 751 ns, while a select by primary key - which
+    /// goes through the page directory and never touches this - did not move at
+    /// all.
+    fn with_page<R>(&self, index: usize, visit: impl FnOnce(&T) -> R) -> Option<R> {
+        let chunks = self.chunks.load();
+        let page = chunks.get(index / PAGE_LIST_CHUNK)?.get(index % PAGE_LIST_CHUNK)?;
+        Some(visit(page))
+    }
+
+    fn for_each(&self, mut visit: impl FnMut(&Arc<T>)) {
+        let chunks = self.chunks.load();
+        for chunk in chunks.iter() {
+            for page in chunk.iter() {
+                visit(page);
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct PageDirectoryChunk<T> {
     pages: [AtomicPtr<T>; PAGE_DIRECTORY_CHUNK_SIZE],
@@ -75,7 +207,7 @@ struct PageDirectoryChunk<T> {
 impl<T> PageDirectoryChunk<T> {
     fn new() -> Self {
         Self {
-            pages: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            pages: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
         }
     }
 }
@@ -95,7 +227,7 @@ struct PageDirectory<T> {
 impl<T> PageDirectory<T> {
     fn new(pages: &[Arc<T>]) -> Self {
         let directory = Self {
-            roots: std::array::from_fn(|_| AtomicPtr::new(std::ptr::null_mut())),
+            roots: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
             chunks: Mutex::new(Vec::new()),
         };
         for (index, page) in pages.iter().enumerate() {
@@ -115,7 +247,7 @@ impl<T> PageDirectory<T> {
             chunk = root.load(Ordering::Acquire);
             if chunk.is_null() {
                 chunks.push(Box::new(PageDirectoryChunk::new()));
-                chunk = std::ptr::from_ref::<PageDirectoryChunk<T>>(
+                chunk = core::ptr::from_ref::<PageDirectoryChunk<T>>(
                     chunks.last().expect("the chunk was just appended").as_ref(),
                 )
                 .cast_mut();
@@ -261,7 +393,7 @@ where
 
     /// Immutable page-directory snapshots. Reads load one snapshot without a
     /// shared read-modify-write; rare growth copies and swaps the short vector.
-    pages: ArcSwap<Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>>,
+    pages: PageList<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>,
     /// Stable pointers for point access without ArcSwap's shared snapshot
     /// accounting. The corresponding `Arc`s remain owned by `pages`.
     page_directory: PageDirectory<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>,
@@ -303,11 +435,11 @@ where
             return Ok(page);
         }
 
-        let page = {
-            let pages = self.pages.load();
-            pages.get(index).map(Arc::as_ptr)
-        }
-        .ok_or(ExecutionError::PageNotFound(page_id))?;
+        let page = self
+            .pages
+            .get(index)
+            .map(|page| Arc::as_ptr(&page))
+            .ok_or(ExecutionError::PageNotFound(page_id))?;
 
         // SAFETY: as above, the current directory retains this allocation and
         // all future directory snapshots clone its Arc.
@@ -358,7 +490,7 @@ where
     /// thread can later collect it; it executes only after every reader
     /// pinned right now has unpinned.
     fn retire(&self, item: Retired) {
-        self.retire_many(std::iter::once(item));
+        self.retire_many(core::iter::once(item));
     }
 
     /// Queue several retired items behind one grace marker.
@@ -578,7 +710,7 @@ where
             queued_page_retirements: AtomicUsize::new(0),
             // We are starting ID's from `1` because `0`'s page in file is info page.
             page_directory: PageDirectory::new(&pages),
-            pages: ArcSwap::from_pointee(pages),
+            pages: PageList::from_pages(pages),
             pages_write: Mutex::new(()),
             empty_links: EmptyLinkRegistry::<DATA_LENGTH>::default(),
             empty_pages: Default::default(),
@@ -602,7 +734,7 @@ where
                 pending_retirements: AtomicUsize::new(0),
                 queued_page_retirements: AtomicUsize::new(0),
                 page_directory,
-                pages: ArcSwap::from_pointee(vec),
+                pages: PageList::from_pages(vec),
                 pages_write: Mutex::new(()),
                 empty_links: EmptyLinkRegistry::default(),
                 empty_pages: Default::default(),
@@ -650,7 +782,8 @@ where
                     | DataExecutionError::SerializeError
                     | DataExecutionError::DeserializeError
                     | DataExecutionError::LiveCellCountOverflow
-                    | DataExecutionError::LiveCellCountUnderflow => return Err(e.into()),
+                    | DataExecutionError::LiveCellCountUnderflow
+                    | DataExecutionError::CellLockReentry => return Err(e.into()),
                 },
             }
         }
@@ -714,7 +847,8 @@ where
                     | DataExecutionError::DeserializeError
                     | DataExecutionError::InvalidLink
                     | DataExecutionError::LiveCellCountOverflow
-                    | DataExecutionError::LiveCellCountUnderflow => return Err(e.into()),
+                    | DataExecutionError::LiveCellCountUnderflow
+                    | DataExecutionError::CellLockReentry => return Err(e.into()),
                 },
             };
         }
@@ -743,18 +877,8 @@ where
         let _write = self.pages_write.lock();
         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
             let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
-            let pages = self.pages.load_full();
-            let mut next = (*pages).clone();
             let page = Arc::new(Data::new(index.into()));
-            next.push(page.clone());
-            debug_assert_eq!(next.len(), pages.len() + 1);
-            debug_assert!(
-                next[..pages.len()]
-                    .iter()
-                    .zip(pages.iter())
-                    .all(|(new, old)| Arc::ptr_eq(new, old))
-            );
-            self.pages.store(Arc::new(next));
+            self.pages.push(page.clone());
             self.publish_page(&page);
             self.current_page_id.store(index, Ordering::Release);
         }
@@ -771,9 +895,11 @@ where
         };
 
         if let Some(page_id) = page_id {
-            let pages = self.pages.load();
             let index = page_id_mapper(page_id.into());
-            let page = pages[index].clone();
+            let page = self
+                .pages
+                .get(index)
+                .expect("an empty page id names a page that was allocated");
             {
                 let _page_guard = page.access.write();
                 page.reset();
@@ -785,17 +911,7 @@ where
         let _write = self.pages_write.lock();
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
         let page = Arc::new(Data::new(index.into()));
-        let pages = self.pages.load_full();
-        let mut next = (*pages).clone();
-        next.push(page.clone());
-        debug_assert_eq!(next.len(), pages.len() + 1);
-        debug_assert!(
-            next[..pages.len()]
-                .iter()
-                .zip(pages.iter())
-                .all(|(new, old)| Arc::ptr_eq(new, old))
-        );
-        self.pages.store(Arc::new(next));
+        self.pages.push(page.clone());
         self.publish_page(&page);
 
         page
@@ -842,22 +958,24 @@ where
             + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>
             + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>,
     {
-        let pages = self.pages.load();
         let page_id: usize = link.page_id.into();
         let page_index = page_id
             .checked_sub(1)
             .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let page = pages
-            .get(page_index)
-            .ok_or(ExecutionError::PageNotFound(link.page_id))?;
-        let wrapped = page.get_row_checked(link).map_err(ExecutionError::DataPageError)?;
-        if wrapped.is_ghosted() {
-            return Err(ExecutionError::Ghosted);
-        }
-        if wrapped.is_deleted() {
-            return Err(ExecutionError::Deleted);
-        }
-        Ok(wrapped.get_inner())
+        // Borrowed rather than cloned: this is a read path and an `Arc` bump
+        // here showed up as a 13% slower delete.
+        self.pages
+            .with_page(page_index, |page| {
+                let wrapped = page.get_row_checked(link).map_err(ExecutionError::DataPageError)?;
+                if wrapped.is_ghosted() {
+                    return Err(ExecutionError::Ghosted);
+                }
+                if wrapped.is_deleted() {
+                    return Err(ExecutionError::Deleted);
+                }
+                Ok(wrapped.get_inner())
+            })
+            .ok_or(ExecutionError::PageNotFound(link.page_id))?
     }
 
     pub fn select_non_vacuumed(&self, link: Link) -> Result<Row, ExecutionError>
@@ -1119,9 +1237,7 @@ where
     }
 
     pub fn get_page(&self, page_id: PageId) -> Option<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>> {
-        let pages = self.pages.load();
-        let page = pages.get(page_id_mapper(page_id.into()))?;
-        Some(page.clone())
+        self.pages.get(page_id_mapper(page_id.into()))
     }
 
     /// Registers an already-indexed cell while rebuilding runtime metadata
@@ -1138,16 +1254,19 @@ where
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn page_has_cells(&self, page_id: PageId) -> Result<bool, ExecutionError> {
         let page = self.page_ref(page_id)?;
         Ok(page.has_live_cells())
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn page_live_cell_count(&self, page_id: PageId) -> Result<u32, ExecutionError> {
         let page = self.page_ref(page_id)?;
         Ok(page.live_cell_count())
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn set_loaded_row_count(&self, count: usize) -> Result<(), ExecutionError> {
         let count = u64::try_from(count).map_err(|_| ExecutionError::RowCountOverflow)?;
         self.row_count.store(count, Ordering::Release);
@@ -1156,6 +1275,7 @@ where
 
     /// Completes the vacuum's source-side accounting after every index has
     /// been swung to the destination link.
+    #[cfg(feature = "std")]
     pub(crate) fn remove_moved_cell(&self, link: Link) -> Result<(), ExecutionError> {
         self.remove_cell(link)
     }
@@ -1170,11 +1290,10 @@ where
     /// Approximate under concurrency: a failing `save_row`'s transient
     /// reservation may be counted before its rollback. Metrics only.
     pub fn used_bytes(&self) -> u64 {
-        let pages = self.pages.load();
-        pages
-            .iter()
-            .map(|p| u64::from(p.free_offset.load(Ordering::Relaxed)))
-            .sum()
+        let mut total = 0u64;
+        self.pages
+            .for_each(|page| total += u64::from(page.free_offset.load(Ordering::Relaxed)));
+        total
     }
 
     /// Copies a row to another page without exposing either mutable byte
@@ -1188,6 +1307,7 @@ where
     /// concurrent low-level mutation may access either physical row while the
     /// move is in progress. After success, the caller must swing every index
     /// reference to the returned link before retiring `from_link`.
+    #[cfg(feature = "std")]
     pub(crate) unsafe fn move_row_for_vacuum(
         &self,
         from_link: Link,
@@ -1230,7 +1350,7 @@ where
     }
 
     pub fn get_page_count(&self) -> usize {
-        self.pages.load().len()
+        self.pages.len()
     }
 
     pub fn get_empty_links(&self) -> Vec<Link> {
@@ -1253,12 +1373,12 @@ where
     /// figure without it cannot be checked, because a sweep that never runs
     /// looks exactly like a sweep that is free.
     pub fn allocated_pages(&self) -> usize {
-        self.pages.load().len()
+        self.pages.len()
     }
 
     /// Heap bytes reserved by the fixed-size data-page allocations.
     pub fn allocated_bytes(&self) -> usize {
-        self.pages.load().len() * std::mem::size_of::<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>()
+        self.pages.len() * core::mem::size_of::<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>()
     }
 
     /// Pages allocated but currently on the empty list, so reusable without
@@ -1281,14 +1401,15 @@ where
         &self.empty_links
     }
 
-    pub fn with_empty_links(mut self, links: Vec<Link>) -> Self {
+    pub fn with_empty_links(mut self, links: Vec<Link>) -> Result<Self, ExecutionError> {
         let registry = EmptyLinkRegistry::default();
         for l in links {
+            self.page_ref(l.page_id)?.reserve_restored_range(l)?;
             registry.push(l)
         }
         self.empty_links = registry;
 
-        self
+        Ok(self)
     }
 
     pub fn current_page_id(&self) -> PageId {
@@ -1302,6 +1423,7 @@ where
     /// current page serves as the sweep's first destination. Concurrent
     /// inserts are safe: the insert path rechecks `current_page_id` under the
     /// page barrier before writing and retries if the target changed.
+    #[cfg(feature = "std")]
     pub(crate) fn rotate_current_for_vacuum(&self, page_id: PageId) {
         debug_assert!(
             self.get_page(page_id).is_some(),
@@ -1348,12 +1470,12 @@ impl ExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use alloc::sync::Arc;
+    use core::sync::atomic::Ordering;
+    use core::time::Duration;
+    use hashbrown::HashSet;
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
     use std::time::Instant;
 
     use parking_lot::RwLock;
@@ -1498,6 +1620,41 @@ mod tests {
     }
 
     #[test]
+    fn in_place_callback_can_select_a_colliding_row_without_deadlock() {
+        let pages = DataPages::<TestRow>::new();
+        let links: Vec<_> = (0..24)
+            .map(|value| pages.insert(TestRow { a: value, b: value }).unwrap())
+            .collect();
+        for link in &links {
+            unsafe { pages.with_mut_ref(*link, |row| row.unghost()).unwrap() };
+        }
+        assert_eq!(links[7].offset, 168);
+        assert_eq!(links[23].offset, 552);
+
+        let selected = unsafe {
+            pages
+                .with_mut_ref(links[7], |row| {
+                    row.inner.a = 70.into();
+                    pages.select_non_ghosted(links[23])
+                })
+                .unwrap()
+        };
+        assert_eq!(selected, Ok(TestRow { a: 23, b: 23 }));
+
+        let same_row = unsafe {
+            pages
+                .with_mut_ref(links[7], |_| pages.select_non_ghosted(links[7]))
+                .unwrap()
+        };
+        assert_eq!(
+            same_row,
+            Err(ExecutionError::DataPageError(
+                crate::in_memory::DataExecutionError::CellLockReentry
+            ))
+        );
+    }
+
+    #[test]
     fn same_row_reader_waits_while_update_is_incomplete() {
         let pages = Arc::new(DataPages::<TestRow>::new());
         let link = pages.insert(TestRow { a: 0, b: 0 }).unwrap();
@@ -1627,7 +1784,7 @@ mod tests {
     impl Drop for RemoteReader {
         fn drop(&mut self) {
             let (disconnected, _rx) = mpsc::channel();
-            let _ = std::mem::replace(&mut self.commands, disconnected);
+            let _ = core::mem::replace(&mut self.commands, disconnected);
             if let Some(thread) = self.thread.take() {
                 thread.join().unwrap();
             }

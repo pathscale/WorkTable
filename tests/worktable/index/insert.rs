@@ -228,7 +228,7 @@ async fn insert_when_unique_violated() {
                 attr3: 123456789,
                 attr4: row_new_attr_4.clone(),
             };
-            assert!(futures::executor::block_on(shared.insert(row)).is_err());
+            assert!(nagoya::block_on(shared.insert(row)).is_err());
         }
     });
 
@@ -315,7 +315,7 @@ async fn insert_when_pk_violated() {
                 attr3: 123456789,
                 attr4: "Attribute__4".to_string(),
             };
-            assert!(futures::executor::block_on(shared.insert(row)).is_err());
+            assert!(nagoya::block_on(shared.insert(row)).is_err());
         }
     });
 

@@ -19,6 +19,8 @@ impl PersistGenerator {
         let index_fns = self.gen_table_index_fns()?;
         let select_query_executor_impl = self.gen_table_select_query_executor_impl();
         let column_range_type = self.gen_table_column_range_type();
+        let columnar_methods = crate::generators::columnar::table_methods(&self.name, &self.columns);
+        let table_ident = WorktableNameGenerator::from_table_name(self.name.to_string()).get_work_table_ident();
 
         Ok(quote! {
             #page_size_consts
@@ -29,6 +31,9 @@ impl PersistGenerator {
             #index_fns
             #select_query_executor_impl
             #column_range_type
+            impl #table_ident {
+                #columnar_methods
+            }
         })
     }
 
@@ -51,17 +56,24 @@ impl PersistGenerator {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let row_type = name_generator.get_row_type_ident();
 
         if let Some(page_size) = &self.config.as_ref().and_then(|c| c.page_size) {
             let page_size = Literal::usize_unsuffixed(*page_size as usize);
             quote! {
                 const #page_const_name: usize = #page_size;
-                const #inner_const_name: usize = #page_size - GENERAL_HEADER_SIZE;
+                const #inner_const_name: usize = worktable::prelude::data_page_row_capacity(
+                    #page_size,
+                    core::mem::size_of::<<<#row_type as worktable::prelude::StorableRow>::WrappedRow as worktable::prelude::rkyv::Archive>::Archived>(),
+                );
             }
         } else {
             quote! {
                 const #page_const_name: usize = PAGE_SIZE;
-                const #inner_const_name: usize = #page_const_name - GENERAL_HEADER_SIZE;
+                const #inner_const_name: usize = worktable::prelude::data_page_row_capacity(
+                    #page_const_name,
+                    core::mem::size_of::<<<#row_type as worktable::prelude::StorableRow>::WrappedRow as worktable::prelude::rkyv::Archive>::Archived>(),
+                );
             }
         }
     }
@@ -102,6 +114,9 @@ impl PersistGenerator {
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
         let derive = match (pk_types_unsized, self.columns.primary_index_backend) {
+            (_, crate::common::model::IndexBackend::FxHash) => unreachable!(
+                "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
+            ),
             (true, crate::common::model::IndexBackend::Indexset) => quote! {
                 #[derive(Debug, PersistTable)]
                 #[table(pk_unsized, pk_upstream)]
@@ -202,52 +217,27 @@ impl PersistGenerator {
             }
         });
 
-        Ok(if self.config.as_ref().and_then(|c| c.page_size).is_some() {
-            quote! {
-                #derive
-                #schema_attribute
-                #secondary_schema_attribute
-                pub struct #ident(
-                    // Public because the crate's own internals reach the inner
-                    // table directly: a synchronous internal path cannot call
-                    // the generated wrapper once that wrapper is async.
-                    pub WorkTable<
-                        #row_type,
-                        #primary_key_type,
-                        #avt_type_ident,
-                        #avt_index_ident,
-                        #index_type,
-                        #lock_ident,
-                        <#primary_key_type as TablePrimaryKey>::Generator,
-                        #inner_const_name,
-                        #node_type
-                    >
-                    , #persistence_task
-                );
-            }
-        } else {
-            quote! {
-                #derive
-                #schema_attribute
-                #secondary_schema_attribute
-                pub struct #ident(
-                    // Public because the crate's own internals reach the inner
-                    // table directly: a synchronous internal path cannot call
-                    // the generated wrapper once that wrapper is async.
-                    pub WorkTable<
-                        #row_type,
-                        #primary_key_type,
-                        #avt_type_ident,
-                        #avt_index_ident,
-                        #index_type,
-                        #lock_ident,
-                        <#primary_key_type as TablePrimaryKey>::Generator,
-                        { INNER_PAGE_SIZE },
-                        #node_type
-                    >
-                    , #persistence_task
-                );
-            }
+        Ok(quote! {
+            #derive
+            #schema_attribute
+            #secondary_schema_attribute
+            pub struct #ident(
+                // Public because the crate's own internals reach the inner
+                // table directly: a synchronous internal path cannot call
+                // the generated wrapper once that wrapper is async.
+                pub WorkTable<
+                    #row_type,
+                    #primary_key_type,
+                    #avt_type_ident,
+                    #avt_index_ident,
+                    #index_type,
+                    #lock_ident,
+                    <#primary_key_type as TablePrimaryKey>::Generator,
+                    #inner_const_name,
+                    #node_type
+                >
+                , #persistence_task
+            );
         })
     }
 }

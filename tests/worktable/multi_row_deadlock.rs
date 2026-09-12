@@ -81,7 +81,7 @@ async fn overlapping_multi_row_updates_do_not_deadlock() {
         })
     };
 
-    tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         by_a.await.expect("group_a updater must not panic");
         by_b.await.expect("group_b updater must not panic");
     })

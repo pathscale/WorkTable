@@ -184,8 +184,14 @@ pub fn check(source: &str) -> Checked {
     // answering "would the macro accept this?" rather than "would a
     // reimplementation of the macro accept this?".
     let diagnostics = match model_of(tokens) {
-        Ok((columns, queries, config, persistence)) => {
-            crate::validate::all(&columns, queries.as_ref(), config.as_ref(), persistence)
+        Ok((columns, queries, config, persistence, storage)) => {
+            let mut errors = crate::validate::all(&columns, queries.as_ref(), config.as_ref(), persistence);
+            if let Some(queries) = &queries
+                && let Err(error) = crate::validate::validate_query_storage(&columns, queries, storage)
+            {
+                errors.push(error);
+            }
+            errors
                 .iter()
                 .map(|error| Diagnostic {
                     message: error.to_string(),
@@ -215,6 +221,7 @@ type Model = (
     Option<crate::model::Queries>,
     Option<crate::model::Config>,
     crate::model::Persistence,
+    crate::model::Storage,
 );
 
 /// The macro's own top-level dispatch, kept to the parts the rules read.
@@ -222,6 +229,12 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     let mut parser = crate::Parser::new(tokens);
     parser.parse_name()?;
     parser.parse_version()?;
+    // `vec` sits between `version` and `persist`, and this walk skipped it, so
+    // every `vec: true` declaration fell through to the block loop below and
+    // was rejected as "Unexpected token `vec`". That made `wt-check` and
+    // `wt-dsl` refuse a whole storage the macro accepts, which the TypeScript
+    // emitter's cross-implementation test found the moment it emitted one.
+    let storage = parser.parse_storage()?;
     let persistence = parser.parse_persist()?;
     parser.parse_partition_by()?;
 
@@ -229,17 +242,36 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     let mut indexes = None;
     let mut queries = None;
     let mut config = None;
+    let mut runtime = None;
+    let mut columnar_indexes = None;
     while let Some(ident) = parser.peek_next() {
         match ident.to_string().as_str() {
             "columns" => columns = Some(parser.parse_columns()?),
             "indexes" => indexes = Some(parser.parse_indexes()?),
+            "columnar_indexes" => columnar_indexes = Some(parser.parse_columnar_indexes()?),
             "queries" => queries = Some(parser.parse_queries()?),
             "config" => config = Some(parser.parse_configs()?),
+            "runtime" => {
+                let span = ident.span();
+                if runtime.is_some() {
+                    return Err(syn::Error::new(span, crate::parser::DUPLICATE_RUNTIME));
+                }
+                runtime = Some(parser.parse_runtime()?);
+            }
             other => {
-                return Err(syn::Error::new(ident.span(), format!("Unexpected token `{other}`")));
+                return Err(syn::Error::new(
+                    ident.span(),
+                    format!(
+                        "Unexpected token `{other}`; expected one of `columns`, `indexes`, `columnar_indexes`, \
+                         `queries`, `config`, `runtime`"
+                    ),
+                ));
             }
         }
     }
+
+    // Runtime selection does not affect the shared validation rules.
+    let _ = runtime;
 
     let mut columns = columns.ok_or_else(|| {
         syn::Error::new(
@@ -250,5 +282,104 @@ fn model_of(tokens: proc_macro2::TokenStream) -> syn::Result<Model> {
     if let Some(indexes) = indexes {
         columns.indexes = indexes;
     }
-    Ok((columns, queries, config, persistence))
+    if let Some(indexes) = columnar_indexes {
+        columns.columnar_indexes = indexes.indexes;
+    }
+    Ok((columns, queries, config, persistence, storage))
+}
+
+#[cfg(test)]
+mod dispatch_agreement {
+    use super::check;
+
+    /// Every top-level section, in one declaration.
+    ///
+    /// The order is deliberately not the canonical one: the dispatch is a
+    /// free-order loop, so a section is only really wired if it is reachable
+    /// from wherever it appears.
+    const EVERY_SECTION: &str = "
+        name: EverySection,
+        persist: false,
+        runtime: nagoya(spread),
+        columns: {
+            id: u64 primary_key,
+            host_id: u64 columnar(chunk_rows(2)),
+            qty: u64,
+        },
+        indexes: { qty_idx: qty },
+        columnar_indexes: { host_order: { cluster_by: [host_id] } },
+        queries: { update: { Fill(qty) by id } },
+        config: { page_size: 4096 },
+        ";
+
+    /// There are three copies of the section dispatch: the macro's own in
+    /// `worktable_codegen`, the schema mirror in `schema::mod`, and `model_of`
+    /// here. A section wired into one and not another is not a compile error
+    /// anywhere; it surfaces as `check` rejecting a declaration the macro
+    /// happily expands, which is precisely backwards for a function whose job
+    /// is to explain why something will not compile.
+    ///
+    /// `columnar_indexes` was missing from this loop and did exactly that.
+    #[test]
+    fn check_accepts_every_section_the_macro_does() {
+        let checked = check(EVERY_SECTION);
+        assert!(
+            checked.schema.is_some(),
+            "check failed to parse a declaration the macro accepts: {:?}",
+            checked.diagnostics
+        );
+        assert!(
+            checked.is_acceptable(),
+            "check rejected a valid declaration: {:?}",
+            checked.diagnostics
+        );
+    }
+
+    /// The schema mirror has to agree with `model_of` on the same input, since
+    /// a caller reads the schema out of `Checked` and draws it.
+    #[test]
+    fn the_schema_mirror_accepts_every_section_too() {
+        let schema = crate::Schema::parse(EVERY_SECTION).expect("the schema mirror parses every section");
+        assert_eq!(schema.name, "EverySection");
+        assert_eq!(
+            schema.runtime,
+            crate::model::RuntimeBackend::Nagoya(crate::model::Flavor::Spread)
+        );
+    }
+
+    /// The rejection message names the sections that would have worked. A
+    /// bare "Unexpected token" is the same text a missing arm produces, so it
+    /// cannot tell a typo from a section somebody forgot to wire.
+    #[test]
+    fn an_unknown_section_is_told_what_was_expected() {
+        let checked = check("name: Bad, columns: { id: u64 primary_key }, bananas: { x: 1 }");
+        let message = &checked.diagnostics[0].message;
+        for section in ["columns", "indexes", "columnar_indexes", "queries", "config", "runtime"] {
+            assert!(message.contains(section), "{section} missing from: {message}");
+        }
+    }
+
+    /// Every storage the macro accepts, the checker must also accept.
+    ///
+    /// `vec: true` was rejected here as "Unexpected token `vec`", because this
+    /// module's own walk of the positional prefix skipped `parse_storage`. The
+    /// macro accepted the declaration and `wt-check` and `wt-dsl` refused it,
+    /// so the two disagreed about what the language is. Found by the
+    /// TypeScript emitter's cross-implementation test, which round-trips
+    /// through `wt-dsl` and hit it the first time it emitted a `vec` table.
+    #[test]
+    fn the_checker_accepts_every_storage_the_macro_does() {
+        for declaration in [
+            "name: Paged, columns: { id: u64 primary_key, v: u64 }",
+            "name: Vecced, vec: true, columns: { id: u64 primary_key, v: u64 }",
+            "name: Versioned, version: 2, vec: true, columns: { id: u64 primary_key, v: u64 }",
+        ] {
+            let checked = crate::check(declaration);
+            assert!(
+                checked.is_acceptable(),
+                "the checker refused `{declaration}`: {:?}",
+                checked.diagnostics
+            );
+        }
+    }
 }

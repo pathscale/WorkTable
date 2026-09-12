@@ -52,7 +52,7 @@ async fn recovery_mode_reads_valid_rows_through_a_surviving_secondary_index() {
 
     let table_dir = format!("{DIR}/{}", RecoveryLoadWorkTable::name_snake_case());
     let primary_path = format!("{table_dir}/primary{WT_INDEX_EXTENSION}");
-    tokio::fs::rename(&primary_path, format!("{primary_path}.damaged"))
+    worktable::prelude::fsx::rename(&primary_path, format!("{primary_path}.damaged"))
         .await
         .unwrap();
 
@@ -104,7 +104,7 @@ async fn recovery_mode_rejects_corrupt_rows_reached_through_a_secondary_index() 
 
     let table_dir = format!("{CORRUPT_DIR}/{}", RecoveryLoadWorkTable::name_snake_case());
     let primary_path = format!("{table_dir}/primary{WT_INDEX_EXTENSION}");
-    tokio::fs::rename(&primary_path, format!("{primary_path}.damaged"))
+    worktable::prelude::fsx::rename(&primary_path, format!("{primary_path}.damaged"))
         .await
         .unwrap();
 
@@ -127,7 +127,7 @@ async fn recovery_mode_rejects_corrupt_rows_reached_through_a_secondary_index() 
         .downcast_ref::<PersistenceLoadError>()
         .expect("recovery must return a typed corruption error");
     assert!(
-        typed.reason().contains("project_idx") && typed.reason().contains("key does not match"),
+        typed.reason().contains("v3 data page checksum"),
         "unexpected recovery-load reason: {}",
         typed.reason()
     );

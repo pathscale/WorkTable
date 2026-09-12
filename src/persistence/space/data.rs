@@ -1,15 +1,17 @@
-use std::collections::HashSet;
-use std::io::SeekFrom;
+use alloc::{string::String, string::ToString, vec::Vec};
+use hashbrown::HashSet;
 use std::path::Path;
 
+use crate::fsx::File;
 use crate::persistence::SpaceDataOps;
 use crate::persistence::space::{BatchData, open_or_create_file};
 use crate::prelude::WT_DATA_EXTENSION;
 use convert_case::{Case, Casing};
 use data_bucket::{
     DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage,
-    parse_data_pages_batch, parse_general_header_by_index, parse_page, persist_page, persist_pages_batch, update_at,
+    parse_data_pages_batch, parse_general_header_by_index, persist_page, persist_pages_batch,
 };
+use nagoya::io::{Read as _, Write as _};
 use rkyv::api::high::HighDeserializer;
 use rkyv::rancor::Strategy;
 use rkyv::ser::Serializer;
@@ -17,8 +19,6 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
-use tokio::fs::File;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 fn link_sort_key(link: &Link) -> (u32, u32) {
     (link.page_id.into(), link.offset)
@@ -144,18 +144,32 @@ pub struct SpaceData<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: 
 }
 
 impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<PkGenState, INNER_PAGE_SIZE, PAGE_SIZE> {
-    async fn update_data_length(&mut self) -> eyre::Result<()> {
-        let offset = (u32::default().aligned_size() * 6) as u64;
-        // The multiplication must happen in u64: `last_page_id * PAGE_SIZE`
-        // in u32 wraps once the file passes 4 GiB, and the wrapped position
-        // lands inside a live early page, overwriting its header in place.
-        self.data_file
-            .seek(SeekFrom::Start(
-                u64::from(self.last_page_id) * u64::from(PAGE_SIZE) + offset,
-            ))
-            .await?;
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&self.current_data_length)?;
-        self.data_file.write_all(bytes.as_ref()).await?;
+    /// Creates every page from the current high-water mark through `target`.
+    ///
+    /// A link can name a page more than one past `last_page_id`: two writers
+    /// allocating pages at once hand the queue the higher page first. Creating
+    /// only the named page left the skipped ids as holes of zeros that the
+    /// file nonetheless spans, and a hole is not a page. The batch path then
+    /// classifies a skipped id as already existing, parses the zeroed header
+    /// back as page 0 and looks up a key the batch never held; reload reads
+    /// the same junk. So close the gap at the moment it opens.
+    ///
+    /// `already_written` names ids the caller persists itself, so the batch
+    /// path does not pay a second write for each page it is about to write
+    /// with its rows in it.
+    async fn create_pages_up_to(&mut self, target: u32, already_written: &HashSet<u32>) -> eyre::Result<()> {
+        while self.last_page_id < target {
+            let id = self.last_page_id + 1;
+            if !already_written.contains(&id) {
+                let mut page = GeneralPage {
+                    header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
+                    inner: DataPage::<INNER_PAGE_SIZE>::new(),
+                };
+                persist_page::<_, PAGE_SIZE>(&mut page, &mut self.data_file).await?;
+            }
+            self.last_page_id = id;
+            self.current_data_length = 0;
+        }
         Ok(())
     }
 
@@ -206,7 +220,7 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
     /// those writes can leak reusable space, but can never leave a live row
     /// described as free and eligible to be overwritten after reload.
     fn consume_reusable_ranges(&mut self, used_links: impl IntoIterator<Item = Link>) -> bool {
-        let free_ranges = std::mem::take(&mut self.info.inner.empty_links_list);
+        let free_ranges = core::mem::take(&mut self.info.inner.empty_links_list);
         let (remaining, changed) = subtract_used_ranges(free_ranges, used_links);
         self.info.inner.empty_links_list = remaining;
         changed
@@ -224,6 +238,8 @@ where
     <PkGenState as Archive>::Archived: Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
     SpaceInfoPage<PkGenState>: Persistable,
 {
+    const PAGE_STRIDE: u32 = PAGE_SIZE;
+
     async fn from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
         let path = format!("{}/{}", table_path.as_ref(), WT_DATA_EXTENSION);
         let mut data_file = if !Path::new(&path).exists() {
@@ -241,8 +257,32 @@ where
         } else {
             open_or_create_file(path).await?
         };
-        let info = parse_page::<_, PAGE_SIZE>(&mut data_file, 0).await?;
-        let file_length = data_file.metadata().await?.len();
+        // The metadata occupies the payload, not the page stride. Read its
+        // declared length after validating against that payload. DataBucket's
+        // generic metadata reader takes a u32 capacity while ours is usize;
+        // stable Rust cannot cast a generic const in another const argument.
+        let header = parse_general_header_by_index::<PAGE_SIZE>(&mut data_file, 0).await?;
+        eyre::ensure!(
+            header.page_type == PageType::SpaceInfo,
+            "expected a WorkTable space-info page"
+        );
+        let capacity = (PAGE_SIZE as usize)
+            .checked_sub(data_bucket::GENERAL_HEADER_SIZE)
+            .ok_or_else(|| eyre::eyre!("page stride is smaller than its header"))?;
+        eyre::ensure!(INNER_PAGE_SIZE <= capacity, "inner page exceeds page payload");
+        let length = if header.data_length == 0 {
+            capacity
+        } else {
+            header.data_length as usize
+        };
+        eyre::ensure!(length <= capacity, "metadata exceeds page payload capacity");
+        let mut bytes = vec![0; length];
+        data_file.read_exact(&mut bytes).await?;
+        let info = GeneralPage {
+            inner: SpaceInfoPage::from_bytes(&bytes, header.data_version),
+            header,
+        };
+        let file_length = crate::fsx::file_metadata(&mut data_file).await?;
         // Mirror the index file's ceil logic: a file whose length is an exact
         // page multiple ends with a full last page, so the plain floor
         // division names a page id one past EOF and reopening the table fails
@@ -253,7 +293,7 @@ where
         } else {
             file_length / PAGE_SIZE as u64
         };
-        let last_page_header = parse_general_header_by_index(&mut data_file, page_id as u32).await?;
+        let last_page_header = parse_general_header_by_index::<PAGE_SIZE>(&mut data_file, page_id as u32).await?;
 
         Ok(Self {
             data_file,
@@ -279,57 +319,19 @@ where
             header: GeneralHeader::new(0.into(), PageType::SpaceInfo, 0.into()),
             inner: info,
         };
-        persist_page(&mut page, file).await
+        Ok(persist_page::<_, PAGE_SIZE>(&mut page, file).await?)
     }
 
     async fn save_data(&mut self, link: Link, bytes: &[u8]) -> eyre::Result<()> {
-        if self.consume_reusable_ranges([link]) {
-            self.save_info().await?;
-        }
-        if link.page_id > self.last_page_id.into() {
-            let mut page = GeneralPage {
-                header: GeneralHeader::new(link.page_id, PageType::Data, 0.into()),
-                inner: DataPage {
-                    length: 0,
-                    data: [0; 1],
-                },
-            };
-            persist_page(&mut page, &mut self.data_file).await?;
-            self.current_data_length = 0;
-            // High-water mark, as in the batch path below: the new page is the
-            // one the link names, which can be more than one past the current
-            // last page. A bare increment left `last_page_id` behind it, so a
-            // later write to that page would re-create it zero-filled.
-            self.last_page_id = self.last_page_id.max(link.page_id.into());
-        }
-        // `current_data_length` mirrors the last page's persisted data_length:
-        // the number of bytes occupied from the page start. Only a write that
-        // lands on the last page AND ends past the currently occupied extent
-        // grows it. Rewrites of an existing link and writes into reused free
-        // ranges (which always sit inside previously occupied extents) must
-        // not touch it: unconditionally adding `link.length` inflated the
-        // persisted length on every hot-row update until it exceeded the page
-        // capacity and a later batch persist sliced out of range.
-        if u32::from(link.page_id) == self.last_page_id {
-            let link_end = link
-                .offset
-                .checked_add(link.length)
-                .ok_or_else(|| eyre::eyre!("link range {link:?} overflows u32"))?;
-            if link_end > self.current_data_length {
-                self.current_data_length = link_end;
-                self.update_data_length().await?;
-            }
-        }
-        update_at::<{ PAGE_SIZE }>(&mut self.data_file, link, bytes).await?;
-        // `update_at` ends with a buffered `write_all` that `tokio::fs::File`
-        // completes on a background blocking task. Flush before reporting the
-        // save done so the bytes are visible to any other handle.
-        self.data_file.flush().await?;
-        Ok(())
+        let mut batch = BatchData::new();
+        batch.insert(link.page_id, vec![(link, bytes.to_vec())]);
+        self.save_batch_data(batch).await
     }
 
     async fn save_batch_data(&mut self, batch_data: BatchData) -> eyre::Result<()> {
-        let used_links = batch_data.values().flat_map(|ops| ops.iter().map(|(link, _)| *link));
+        let used_links = batch_data
+            .values()
+            .flat_map(|ops| ops.iter().filter(|(_, bytes)| !bytes.is_empty()).map(|(link, _)| *link));
         if self.consume_reusable_ranges(used_links) {
             self.save_info().await?;
         }
@@ -351,24 +353,28 @@ where
         // creating several pages could leave `last_page_id` below a page that
         // now exists. The next batch touching that page would see it as "new"
         // and re-create it zero-filled, wiping the rows persisted before.
-        if let Some(max) = ids_to_create.iter().max() {
-            // High-water mark: every id in `ids_to_create` is > last_page_id by
-            // construction, but state the monotonic invariant directly so a
-            // future refactor of the filter above cannot regress it.
-            self.last_page_id = self.last_page_id.max(*max);
+        //
+        // Moving the mark to the maximum is necessary but not sufficient: the
+        // ids between it and the old mark that this batch does not touch have
+        // to become real pages too, or they stay holes. `create_pages_up_to`
+        // skips the ids this batch writes for itself below.
+        if let Some(max) = ids_to_create.iter().max().copied() {
+            let written_by_this_batch = ids_to_create.iter().copied().collect::<HashSet<_>>();
+            self.create_pages_up_to(max, &written_by_this_batch).await?;
         }
         let created_pages = ids_to_create
             .into_iter()
             .map(|id| GeneralPage {
                 header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
                 inner: DataPage {
+                    rows: Vec::new(),
                     length: 0,
                     data: [0; INNER_PAGE_SIZE],
                 },
             })
             .collect::<Vec<_>>();
         let parsed_pages =
-            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE>(&mut self.data_file, ids_to_parse).await?;
+            parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE, PAGE_SIZE>(&mut self.data_file, ids_to_parse).await?;
 
         let updated_pages = vec![parsed_pages, created_pages]
             .into_iter()
@@ -379,7 +385,11 @@ where
                     .get(&id)
                     .expect("should be available as pages parsed from these ids");
                 for (link, bytes) in ops {
-                    page.inner.update_at(*link, bytes)?;
+                    if bytes.is_empty() {
+                        page.inner.remove_at(*link);
+                    } else {
+                        page.inner.update_at(*link, bytes)?;
+                    }
                 }
                 Ok::<_, eyre::Report>(page)
             })
@@ -397,7 +407,7 @@ where
             self.current_data_length = page.inner.length;
         }
 
-        persist_pages_batch(updated_pages, &mut self.data_file).await?;
+        persist_pages_batch::<_, PAGE_SIZE>(updated_pages, &mut self.data_file).await?;
         // The batch's last page write is a buffered `write_all`; flush so the
         // batch is visible to other handles once it reports done.
         self.data_file.flush().await?;
@@ -417,6 +427,18 @@ where
         if page_ids.is_empty() {
             return Ok(());
         }
+
+        // A reclaimed page must contain no live directory entries. Persist
+        // that state before advertising the whole page as reusable.
+        let cleared = page_ids
+            .iter()
+            .map(|page_id| GeneralPage {
+                header: GeneralHeader::new(*page_id, PageType::Data, 0.into()),
+                inner: DataPage::<INNER_PAGE_SIZE>::new(),
+            })
+            .collect();
+        persist_pages_batch::<_, PAGE_SIZE>(cleared, &mut self.data_file).await?;
+        self.data_file.flush().await?;
 
         self.info
             .inner
@@ -447,7 +469,7 @@ where
         // Single choke point for the info page reaching disk: enforce the
         // page-0 slot budget however the free-range list was mutated.
         self.bound_empty_links_list();
-        persist_page(&mut self.info, &mut self.data_file).await?;
+        persist_page::<_, PAGE_SIZE>(&mut self.info, &mut self.data_file).await?;
         // A generated table may immediately reopen this file through a
         // separate handle. Make the updated metadata visible before reporting
         // success, just as `save_data` does for row bytes.
@@ -460,7 +482,9 @@ where
 mod tests {
     use data_bucket::page::PageId;
 
-    use super::subtract_used_ranges;
+    use super::{SpaceData, subtract_used_ranges};
+    use crate::persistence::SpaceDataOps;
+    use crate::persistence::space::BatchData;
     use crate::prelude::Link;
 
     fn link(page_id: u32, offset: u32, length: u32) -> Link {
@@ -532,5 +556,59 @@ mod tests {
 
             assert_eq!(actual, expected, "case {case}");
         }
+    }
+
+    /// A gap in the page sequence must not make the batch path parse a hole.
+    ///
+    /// Two writers allocating pages at once can hand the queue a link on the
+    /// higher page first. `save_data` then creates only that page and moves
+    /// `last_page_id` up to it, so the skipped page is a hole of zeros that
+    /// the file nonetheless spans. The next batch touching the skipped page
+    /// classifies it as already existing (`id <= last_page_id`), parses the
+    /// hole back, reads a `page_id` of 0 out of the zeroed header and looks up
+    /// a key the batch never contained.
+    ///
+    /// This is the mechanism behind
+    /// `tests/persistence/concurrent_upsert_batch.rs`, reduced to the two
+    /// calls that produce it so it takes milliseconds instead of forty
+    /// minutes.
+    #[tokio::test]
+    async fn a_batch_touching_a_skipped_page_does_not_parse_a_hole() {
+        const PAGE: u32 = data_bucket::PAGE_SIZE as u32;
+        const INNER: usize = data_bucket::PAGE_SIZE - data_bucket::GENERAL_HEADER_SIZE;
+
+        let dir = std::env::temp_dir().join(format!("wt-page-gap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let path = dir.to_str().expect("utf-8 path").to_owned();
+
+        let mut space = SpaceData::<u64, INNER, PAGE>::from_table_files_path(path, 1)
+            .await
+            .expect("a fresh space");
+
+        // Page 3, with 1 and 2 never written: the out-of-order case.
+        space
+            .save_data(link(3, 0, 8), &[1u8; 8])
+            .await
+            .expect("the high page saves");
+        assert_eq!(space.last_page_id, 3, "the high-water mark follows the link");
+
+        // Now hand the batch path the page that was skipped.
+        let mut batch = BatchData::new();
+        batch.insert(PageId::from(1u32), vec![(link(1, 0, 8), vec![2u8; 8])]);
+        space.save_batch_data(batch).await.expect("the skipped page saves");
+
+        // The point of the fix is on disk, not in the call returning: every id
+        // through the high-water mark has to carry its own header. Reading
+        // them back is what distinguishes a filled gap from a hole that this
+        // particular call happened to survive.
+        for id in 1..=3u32 {
+            let header = super::parse_general_header_by_index::<PAGE>(&mut space.data_file, id)
+                .await
+                .expect("a header at every page through the mark");
+            assert_eq!(u32::from(header.page_id), id, "page {id} is a page, not a hole");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

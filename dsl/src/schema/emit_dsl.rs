@@ -18,7 +18,7 @@
 use std::fmt::Write as _;
 
 use super::{ColumnSpec, IndexSpec, OperationSpec, Schema};
-use crate::model::{GeneratorType, IndexBackend, Persistence};
+use crate::model::{GeneratorType, IndexBackend, Persistence, RuntimeBackend};
 
 const INDENT: &str = "    ";
 
@@ -29,6 +29,13 @@ impl Schema {
 
         let _ = writeln!(out, "name: {},", self.name);
         let _ = writeln!(out, "version: {},", self.version);
+
+        // Only when true. `vec: false` is what every declaration written
+        // before this key existed meant, so writing it out would add a line to
+        // every emitted schema in the corpus to say nothing.
+        if self.storage.is_vec() {
+            let _ = writeln!(out, "vec: true,");
+        }
 
         match self.persist {
             // An omitted `persist` is not the same as `persist: false`: the
@@ -46,6 +53,16 @@ impl Schema {
 
         if let Some(key) = &self.partition_by {
             let _ = writeln!(out, "partition_by: {}: {},", key.name, key.ty);
+            // Required beside it, so emitting one without the other produces
+            // text this crate's own parser refuses.
+            let _ = writeln!(out, "partition_max_size: {},", key.max_size);
+        }
+
+        // Same rule as `using` on a column: writing the default back out would
+        // be correct but noisy, and an omitted `runtime` and an explicit
+        // `runtime: nagoya` are the same table.
+        if self.runtime != RuntimeBackend::default() {
+            let _ = writeln!(out, "runtime: {},", runtime_to_dsl(self.runtime));
         }
 
         let _ = writeln!(out, "columns: {{");
@@ -62,11 +79,36 @@ impl Schema {
             let _ = writeln!(out, "}},");
         }
 
+        if !self.columnar_indexes.is_empty() {
+            let _ = writeln!(out, "columnar_indexes: {{");
+            for index in &self.columnar_indexes {
+                let _ = writeln!(out, "{INDENT}{}: {{", index.name);
+                let _ = writeln!(out, "{INDENT}{INDENT}cluster_by: [{}],", index.cluster_by.join(", "));
+                let _ = writeln!(out, "{INDENT}}},");
+            }
+            let _ = writeln!(out, "}},");
+        }
+
         if !self.queries.is_empty() {
             let _ = writeln!(out, "queries: {{");
-            write_query_block(&mut out, "update", &self.queries.updates);
-            write_query_block(&mut out, "delete", &self.queries.deletes);
-            write_query_block(&mut out, "in_place", &self.queries.in_place);
+            write_query_block(
+                &mut out,
+                "update",
+                self.queries.update_runtime.as_deref(),
+                &self.queries.updates,
+            );
+            write_query_block(
+                &mut out,
+                "delete",
+                self.queries.delete_runtime.as_deref(),
+                &self.queries.deletes,
+            );
+            write_query_block(
+                &mut out,
+                "in_place",
+                self.queries.in_place_runtime.as_deref(),
+                &self.queries.in_place,
+            );
             let _ = writeln!(out, "}},");
         }
 
@@ -74,6 +116,12 @@ impl Schema {
             let _ = writeln!(out, "config: {{");
             if let Some(page_size) = self.config.page_size {
                 let _ = writeln!(out, "{INDENT}page_size: {page_size},");
+            }
+            if let Some(slot_id) = &self.config.columnar_slot_id {
+                let _ = writeln!(out, "{INDENT}columnar_slot_id: {slot_id},");
+            }
+            if let Some(chunk_rows) = self.config.columnar_chunk_rows {
+                let _ = writeln!(out, "{INDENT}columnar_chunk_rows: {chunk_rows},");
             }
             if !self.config.row_derives.is_empty() {
                 // `row_derives` reads identifiers until it meets another config
@@ -121,6 +169,23 @@ fn column_to_dsl(column: &ColumnSpec) -> String {
         out.push_str(" optional");
     }
 
+    // `columnar`, with only the options that were written. A bare `columnar`
+    // and `columnar(chunk_rows(2))` are different declarations, and the second
+    // is not the first plus a default, so nothing is filled in here.
+    if let Some(columnar) = &column.columnar {
+        out.push_str(" columnar");
+        let mut options = Vec::new();
+        if let Some(chunk_rows) = columnar.chunk_rows {
+            options.push(format!("chunk_rows({chunk_rows})"));
+        }
+        if let Some(compression) = &columnar.compression {
+            options.push(format!("compression({compression})"));
+        }
+        if !options.is_empty() {
+            let _ = write!(out, "({})", options.join(", "));
+        }
+    }
+
     // A primary-key column always carries a backend once parsed, because the
     // model fills the default in. Writing the default back out would be
     // correct but noisy, and the point of this emitter is text a person will
@@ -145,11 +210,29 @@ fn index_to_dsl(index: &IndexSpec) -> String {
     out
 }
 
-fn write_query_block(out: &mut String, kind: &str, operations: &[OperationSpec]) {
+fn runtime_to_dsl(backend: RuntimeBackend) -> String {
+    match backend {
+        // The flavor is written even when it is the default one, because this
+        // arm is only reached for a backend that is not the default, and a
+        // reader comparing two declarations should not have to know which
+        // flavor `nagoya` alone means.
+        RuntimeBackend::Nagoya(flavor) => format!("{}({})", backend.name(), flavor.name()),
+        RuntimeBackend::Tokio => backend.name().to_string(),
+    }
+}
+
+fn write_query_block(out: &mut String, kind: &str, runtime: Option<&str>, operations: &[OperationSpec]) {
     if operations.is_empty() {
         return;
     }
-    let _ = writeln!(out, "{INDENT}{kind}: {{");
+    match runtime {
+        Some(profile) => {
+            let _ = writeln!(out, "{INDENT}{kind} runtime {profile}: {{");
+        }
+        None => {
+            let _ = writeln!(out, "{INDENT}{kind}: {{");
+        }
+    }
     for operation in operations {
         let _ = writeln!(
             out,
@@ -164,4 +247,39 @@ fn write_query_block(out: &mut String, kind: &str, operations: &[OperationSpec])
     // also what versions before 1.0.0-beta.17 accept, and emitted text is
     // routinely fed to a macro older than the emitter that wrote it.
     let _ = writeln!(out, "{INDENT}}}");
+}
+
+#[cfg(test)]
+mod storage_round_trip {
+    use crate::schema::Schema;
+
+    /// `storage: vec` survives a parse and an emit.
+    ///
+    /// The emitter is fed back to the macro, so a key it drops is a key that
+    /// silently changes which table a regenerated declaration produces. Paged
+    /// is the default and is deliberately not written; vec always is.
+    #[test]
+    fn storage_vec_survives_but_paged_is_never_written() {
+        let declared = "name: T,\nversion: 1,\nvec: true,\ncolumns: {\n    id: u64 primary_key,\n}\n";
+        let schema = Schema::parse(declared).expect("valid");
+        assert!(schema.storage.is_vec());
+        assert!(schema.to_dsl().contains("vec: true,"), "got: {}", schema.to_dsl());
+
+        let paged = "name: T,\nversion: 1,\ncolumns: {\n    id: u64 primary_key,\n}\n";
+        let schema = Schema::parse(paged).expect("valid");
+        assert!(!schema.storage.is_vec());
+        assert!(!schema.to_dsl().contains("vec:"), "got: {}", schema.to_dsl());
+    }
+
+    /// And the emitted text parses back to the same schema.
+    #[test]
+    fn the_emitted_text_round_trips() {
+        let declared = "name: T,\nversion: 1,\nvec: true,\ncolumns: {\n    id: u64 primary_key,\n    value: u64,\n}\n";
+        let once = Schema::parse(declared).expect("valid");
+        let text = once.to_dsl();
+        let twice = Schema::parse(&text).expect("the emitter writes valid text");
+        assert_eq!(once.storage, twice.storage);
+        assert_eq!(once.persist, twice.persist);
+        assert_eq!(text, twice.to_dsl());
+    }
 }

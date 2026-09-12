@@ -1,7 +1,7 @@
-use std::collections::HashSet;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::fmt::Debug;
+use core::hash::Hash;
+use hashbrown::HashSet;
 
 use crate::lock::{Lock, LockGuard, LockMap, LockWait};
 

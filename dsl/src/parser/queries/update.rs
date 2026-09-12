@@ -6,7 +6,13 @@ use crate::Parser;
 use crate::model::Operation;
 
 impl Parser {
-    pub fn parse_updates(&mut self) -> syn::Result<IndexMap<Ident, Operation>> {
+    /// The `update` block, and the profile it was annotated with.
+    ///
+    /// The annotation is returned beside the operations rather than folded
+    /// into them because it applies to the block: every query in it runs on
+    /// the same runtime, and saying so once is the point of writing it at the
+    /// section rather than on each query.
+    pub fn parse_updates(&mut self) -> syn::Result<(Option<Ident>, IndexMap<Ident, Operation>)> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
             "Expected `update` field in declaration",
@@ -19,6 +25,8 @@ impl Parser {
             return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
         };
 
+        let runtime = self.try_parse_section_runtime()?;
+
         self.parse_colon()?;
 
         let ops = self
@@ -27,9 +35,9 @@ impl Parser {
             .ok_or(syn::Error::new(self.input.span(), "Expected operation declarations"))?;
         if let TokenTree::Group(ops) = ops {
             let mut parser = Parser::new(ops.stream());
-            let ops = parser.parse_operations();
+            let ops = parser.parse_operations()?;
             self.try_parse_comma()?;
-            ops
+            Ok((runtime, ops))
         } else {
             Err(syn::Error::new(ops.span(), "Expected operation declarations"))
         }
@@ -52,7 +60,7 @@ mod tests {
             }
         };
         let mut parser = Parser::new(tokens);
-        let ops = parser.parse_updates().unwrap();
+        let (_, ops) = parser.parse_updates().unwrap();
 
         assert_eq!(ops.len(), 2);
         let op = ops.get(&Ident::new("TestQuery", Span::mixed_site())).unwrap();

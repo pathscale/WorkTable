@@ -28,6 +28,7 @@ worktable! (
             AnotherByExchange(another) by exchange,
             AnotherByTest(another) by test,
             AnotherById(another) by id,
+            ExchangeById(exchange) by id,
         },
         delete: {
             ByAnother() by another,
@@ -109,7 +110,7 @@ async fn iter_with_async() {
     table.iter_with_async(|_| async move { Ok(()) }).await.unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn update_spawn() {
     let table = Arc::new(TestWorkTable::default());
     let row = TestRow {
@@ -137,7 +138,7 @@ async fn update_spawn() {
     assert!(table.select(2).is_none())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn upsert_spawn() {
     let table = Arc::new(TestWorkTable::default());
     let row = TestRow {
@@ -266,10 +267,46 @@ async fn update_parallel() {
     }
     h.await.unwrap();
 
-    for (test, val) in i_state.lock_arc().iter() {
+    for (test, val) in i_state.lock().iter() {
         let row = table.select_by_test(*test).unwrap();
         assert_eq!(row.another, *val)
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secondary_update_follows_concurrent_row_relocation() {
+    let table = Arc::new(TestWorkTable::default());
+    table.insert(TestRow {
+        id: 0,
+        test: 1,
+        another: 0,
+        exchange: "initial".into(),
+    }).await.unwrap();
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let writer_table = table.clone();
+    let writer_barrier = barrier.clone();
+    let writer = tokio::spawn(async move {
+        writer_barrier.wait().await;
+        for revision in 1..=2000 {
+            writer_table.update_exchange_by_id(ExchangeByIdQuery {
+                exchange: format!("relocated-{revision}-{}", "x".repeat(revision % 64)),
+            }, 0).await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    });
+    barrier.wait().await;
+    for revision in 1..=2000 {
+        table.update_another_by_test(AnotherByTestQuery { another: revision }, 1)
+            .await.unwrap();
+        tokio::task::yield_now().await;
+    }
+    writer.await.unwrap();
+    let row = table.select(0).unwrap();
+    assert_eq!(row.another, 2000);
+    assert_eq!(row.exchange, format!("relocated-2000-{}", "x".repeat(2000 % 64)));
+    assert_eq!(table.select_by_test(1).unwrap(), row);
+    let indexed = table.select_by_another(2000).execute().unwrap();
+    assert_eq!(indexed, vec![row]);
 }
 
 #[tokio::test]

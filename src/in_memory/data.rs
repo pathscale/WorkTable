@@ -1,8 +1,13 @@
-use std::cell::UnsafeCell;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use alloc::vec::Vec;
+use core::cell::UnsafeCell;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
+#[cfg(not(wt_loom))]
+use core::sync::atomic::{AtomicU32 as CellState, AtomicUsize as CellOwner};
+use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(wt_loom)]
+use loom::sync::atomic::{AtomicU32 as CellState, AtomicUsize as CellOwner};
 
 use data_bucket::page::INNER_PAGE_SIZE;
 use data_bucket::page::PageId;
@@ -23,79 +28,118 @@ use rkyv::{
 use crate::in_memory::ArchivedRowWrapper;
 use crate::prelude::Link;
 
-const CELL_LOCK_SLOTS: usize = 64;
-const CELL_KEY_MASK: u64 = u32::MAX as u64;
-const CELL_READER_ONE: u64 = 1 << 32;
-const CELL_READER_MASK: u64 = ((1_u64 << 31) - 1) << 32;
-const CELL_WRITER: u64 = 1 << 63;
+#[cfg(all(not(wt_loom), not(any(unix, windows))))]
+compile_error!("archived cell locks require a hosted unix or Windows target");
+
+const CELL_LOCK_SLOTS: usize = 256;
+const CELL_READER_MASK: u32 = (1_u32 << 31) - 1;
+const CELL_WRITER: u32 = 1 << 31;
 
 #[derive(Debug)]
 struct CellLocks {
-    slots: [AtomicU64; CELL_LOCK_SLOTS],
+    states: [CellState; CELL_LOCK_SLOTS],
+    owners: [CellOwner; CELL_LOCK_SLOTS],
+    nested_reads: CellState,
 }
 
 impl Default for CellLocks {
     fn default() -> Self {
         Self {
-            slots: std::array::from_fn(|_| AtomicU64::new(0)),
+            states: core::array::from_fn(|_| CellState::new(0)),
+            owners: core::array::from_fn(|_| CellOwner::new(0)),
+            nested_reads: CellState::new(0),
         }
+    }
+}
+
+#[inline]
+fn current_owner() -> usize {
+    #[cfg(wt_loom)]
+    {
+        use core::hash::{Hash, Hasher};
+
+        let mut hasher = rustc_hash::FxHasher::default();
+        loom::thread::current().id().hash(&mut hasher);
+        (hasher.finish() as usize).max(1)
+    }
+
+    #[cfg(all(not(wt_loom), unix))]
+    {
+        // SAFETY: pthread_self takes no arguments and returns the live calling
+        // thread's identity. POSIX keeps it unique until this thread exits;
+        // a cell guard necessarily drops before that can happen.
+        (unsafe { libc::pthread_self() } as usize).max(1)
+    }
+
+    #[cfg(all(not(wt_loom), windows))]
+    {
+        // SAFETY: GetCurrentThreadId takes no arguments and cannot fail. The
+        // ID cannot be reused while the calling thread and its guard are live.
+        (unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() } as usize).max(1)
     }
 }
 
 impl CellLocks {
     #[inline]
-    fn key(link: Link) -> Result<u64, ExecutionError> {
-        u64::from(link.offset)
-            .checked_add(1)
-            .filter(|key| *key <= CELL_KEY_MASK)
-            .ok_or(ExecutionError::InvalidLink)
-    }
-
-    #[inline]
-    fn start(key: u64) -> usize {
-        (key.wrapping_mul(0x9e37_79b9) as usize) & (CELL_LOCK_SLOTS - 1)
+    fn start(link: Link) -> usize {
+        // Record starts are aligned to the archived row shape, so their low
+        // bits alone are a poor stripe selector. Mix all offset bits before
+        // taking the power-of-two table index.
+        let mut key = link.offset;
+        key ^= key >> 16;
+        key = key.wrapping_mul(0x7feb_352d);
+        key ^= key >> 15;
+        key = key.wrapping_mul(0x846c_a68b);
+        key ^= key >> 16;
+        key as usize & (CELL_LOCK_SLOTS - 1)
     }
 
     #[inline]
     fn wait(spins: &mut u32) {
+        #[cfg(wt_loom)]
+        {
+            let _ = spins;
+            loom::thread::yield_now();
+        }
+        #[cfg(not(wt_loom))]
         if *spins < 64 {
-            std::hint::spin_loop();
+            core::hint::spin_loop();
             *spins += 1;
         } else {
-            std::thread::yield_now();
+            crate::util::yield_now();
         }
     }
 
     fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
-        let key = Self::key(link)?;
-        let start = Self::start(key);
+        let index = Self::start(link);
+        let state = &self.states[index];
         let mut spins = 0;
-        'retry: loop {
-            for distance in 0..CELL_LOCK_SLOTS {
-                let state = &self.slots[(start + distance) & (CELL_LOCK_SLOTS - 1)];
-                let current = state.load(Ordering::Acquire);
-                let current_key = current & CELL_KEY_MASK;
-                if current_key == key {
-                    if current & CELL_WRITER != 0 || current & CELL_READER_MASK == CELL_READER_MASK {
-                        Self::wait(&mut spins);
-                        continue 'retry;
-                    }
-                    if state
-                        .compare_exchange_weak(current, current + CELL_READER_ONE, Ordering::Acquire, Ordering::Relaxed)
-                        .is_ok()
-                    {
-                        return Ok(CellReadGuard { state });
-                    }
-                    continue 'retry;
+        loop {
+            let current = state.load(Ordering::Acquire);
+            if current & CELL_WRITER == 0
+                && current & CELL_READER_MASK != CELL_READER_MASK
+                && state
+                    .compare_exchange_weak(current, current + 1, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+            {
+                return Ok(CellReadGuard { state });
+            }
+            if current & CELL_WRITER != 0 && self.owners[index].load(Ordering::Acquire) == current_owner() {
+                let writer_key = current & CELL_READER_MASK;
+                let requested_key = link.offset.checked_add(1).ok_or(ExecutionError::InvalidLink)?;
+                if writer_key == requested_key {
+                    return Err(ExecutionError::CellLockReentry);
                 }
-                if current == 0 {
-                    if state
-                        .compare_exchange_weak(0, key | CELL_READER_ONE, Ordering::Acquire, Ordering::Relaxed)
-                        .is_ok()
-                    {
-                        return Ok(CellReadGuard { state });
-                    }
-                    continue 'retry;
+                if writer_key != 0 {
+                    // The outer write owns this entire stripe, so no other
+                    // thread can touch either row. Lending a different row to
+                    // its callback is therefore safe without incrementing the
+                    // state that callback itself must eventually release.
+                    let previous = self.nested_reads.fetch_add(1, Ordering::Relaxed);
+                    debug_assert_ne!(previous & CELL_READER_MASK, CELL_READER_MASK);
+                    return Ok(CellReadGuard {
+                        state: &self.nested_reads,
+                    });
                 }
             }
             Self::wait(&mut spins);
@@ -103,78 +147,73 @@ impl CellLocks {
     }
 
     fn write(&self, link: Link) -> Result<CellWriteGuard<'_>, ExecutionError> {
-        let key = Self::key(link)?;
-        let start = Self::start(key);
+        let index = Self::start(link);
+        let state = &self.states[index];
+        let owner = &self.owners[index];
         let mut spins = 0;
-        'retry: loop {
-            for distance in 0..CELL_LOCK_SLOTS {
-                let state = &self.slots[(start + distance) & (CELL_LOCK_SLOTS - 1)];
-                let current = state.load(Ordering::Acquire);
-                let current_key = current & CELL_KEY_MASK;
-                if current_key == key {
-                    if current & CELL_WRITER != 0 {
-                        Self::wait(&mut spins);
-                        continue 'retry;
-                    }
-                    if state
-                        .compare_exchange_weak(current, current | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
-                        .is_err()
-                    {
-                        continue 'retry;
-                    }
-                    while state.load(Ordering::Acquire) & CELL_READER_MASK != 0 {
-                        Self::wait(&mut spins);
-                    }
-                    return Ok(CellWriteGuard { state });
-                }
-                if current == 0 {
-                    if state
-                        .compare_exchange_weak(0, key | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
-                        .is_ok()
-                    {
-                        return Ok(CellWriteGuard { state });
-                    }
-                    continue 'retry;
-                }
+        loop {
+            let current = state.load(Ordering::Acquire);
+            if current & CELL_WRITER == 0
+                && state
+                    .compare_exchange_weak(current, current | CELL_WRITER, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+            {
+                break;
+            }
+            if current & CELL_WRITER != 0 && owner.load(Ordering::Acquire) == current_owner() {
+                return Err(ExecutionError::CellLockReentry);
             }
             Self::wait(&mut spins);
         }
+        while state.load(Ordering::Acquire) != CELL_WRITER {
+            Self::wait(&mut spins);
+        }
+        let writer_key = link.offset.checked_add(1).ok_or(ExecutionError::InvalidLink)?;
+        debug_assert_eq!(writer_key & CELL_WRITER, 0);
+        state.store(CELL_WRITER | writer_key, Ordering::Relaxed);
+        owner.store(current_owner(), Ordering::Release);
+        Ok(CellWriteGuard {
+            state,
+            owner,
+            _not_send: PhantomData,
+        })
     }
 
     fn reset(&self) {
-        for slot in &self.slots {
-            slot.store(0, Ordering::Release);
+        for owner in &self.owners {
+            owner.store(0, Ordering::Relaxed);
         }
+        for state in &self.states {
+            state.store(0, Ordering::Release);
+        }
+        self.nested_reads.store(0, Ordering::Relaxed);
     }
 }
 
 /// Shared access to one exact archived cell.
 pub(crate) struct CellReadGuard<'a> {
-    state: &'a AtomicU64,
+    state: &'a CellState,
 }
 
 impl Drop for CellReadGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        let previous = self.state.fetch_sub(CELL_READER_ONE, Ordering::Release);
+        let previous = self.state.fetch_sub(1, Ordering::Release);
         debug_assert_ne!(previous & CELL_READER_MASK, 0, "cell reader count underflow");
-        let remaining = previous - CELL_READER_ONE;
-        if remaining & (CELL_READER_MASK | CELL_WRITER) == 0 {
-            let _ = self
-                .state
-                .compare_exchange(remaining, 0, Ordering::Release, Ordering::Relaxed);
-        }
     }
 }
 
 /// Exclusive access to one exact archived cell.
 pub(crate) struct CellWriteGuard<'a> {
-    state: &'a AtomicU64,
+    state: &'a CellState,
+    owner: &'a CellOwner,
+    _not_send: PhantomData<*mut ()>,
 }
 
 impl Drop for CellWriteGuard<'_> {
     #[inline]
     fn drop(&mut self) {
+        self.owner.store(0, Ordering::Relaxed);
         self.state.store(0, Ordering::Release);
     }
 }
@@ -222,9 +261,11 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
     #[rkyv(with = Skip)]
     pub(crate) access: parking_lot::RwLock<()>,
 
-    /// Runtime-only exact-cell reader/writer coordination. The fixed table is
-    /// outside the archived row image, so lock state can never reach disk and
-    /// the beta.17 wrapper layout remains unchanged.
+    /// Runtime-only striped reader/writer coordination for archived cells. A
+    /// hash collision may conservatively make unrelated writes wait, while
+    /// every read/write pair for one offset always uses the same stripe. The
+    /// table is outside the archived row image, so lock state never reaches
+    /// disk and the beta.17 wrapper layout remains unchanged.
     #[rkyv(with = Skip)]
     cell_locks: CellLocks,
 
@@ -303,6 +344,18 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             inner_data: UnsafeCell::new(AlignedBytes::<DATA_LENGTH>(page.inner.data)),
             _phantom: PhantomData,
         }
+    }
+
+    /// Keep append allocation out of ranges owned by the restored free list.
+    pub(crate) fn reserve_restored_range(&self, link: Link) -> Result<(), ExecutionError> {
+        let end = (link.offset as usize)
+            .checked_add(link.length as usize)
+            .ok_or(ExecutionError::InvalidLink)?;
+        if link.page_id != self.id || link.length == 0 || end > DATA_LENGTH {
+            return Err(ExecutionError::InvalidLink);
+        }
+        self.free_offset.fetch_max(end as u32, Ordering::Release);
+        Ok(())
     }
 
     pub fn set_page_id(&mut self, id: PageId) {
@@ -497,7 +550,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         // Use ptr::copy for overlapping memory regions (safe for shifting left)
         // When moving left (dst_offset < src_offset), this works correctly
         unsafe {
-            std::ptr::copy(
+            core::ptr::copy(
                 inner_data.as_ptr().add(src_offset),
                 inner_data.as_mut_ptr().add(dst_offset),
                 length,
@@ -567,10 +620,12 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             .map_err(|_| ExecutionError::LiveCellCountUnderflow)
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn has_live_cells(&self) -> bool {
         self.live_cells.load(Ordering::Acquire) != 0
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn live_cell_count(&self) -> u32 {
         self.live_cells.load(Ordering::Acquire)
     }
@@ -601,12 +656,16 @@ pub enum ExecutionError {
 
     /// A row was removed from a page whose live-cell count was already zero.
     LiveCellCountUnderflow,
+
+    /// A callback tried to re-enter a cell stripe already held by this thread.
+    CellLockReentry,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(wt_loom)))]
 mod tests {
-    use std::sync::atomic::Ordering;
-    use std::sync::{Arc, mpsc};
+    use alloc::sync::Arc;
+    use core::sync::atomic::Ordering;
+    use std::sync::mpsc;
     use std::thread;
 
     use rkyv::{Archive, Deserialize, Serialize};
@@ -620,6 +679,58 @@ mod tests {
     struct TestRow {
         a: u64,
         b: u64,
+    }
+
+    #[test]
+    fn colliding_rows_keep_using_one_stable_stripe() {
+        let locks = super::CellLocks::default();
+        let first = Link {
+            page_id: 1.into(),
+            offset: 7,
+            length: 16,
+        };
+        let second = Link { offset: 14, ..first };
+        assert_eq!(super::CellLocks::start(first), super::CellLocks::start(second));
+        let preceding = locks.read(first).unwrap();
+        let existing = locks.read(second).unwrap();
+        drop(preceding);
+        let joining = locks.read(second).unwrap();
+        assert!(
+            core::ptr::eq(existing.state, joining.state),
+            "readers of one row must share the state that excludes its writer"
+        );
+    }
+
+    #[test]
+    fn mixed_offsets_do_not_collapse_into_one_low_bit_stripe() {
+        let locks = super::CellLocks::default();
+        let first = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 16,
+        };
+        let second = Link { offset: 64, ..first };
+        assert_ne!(super::CellLocks::start(first), super::CellLocks::start(second));
+        let first = locks.write(first).unwrap();
+        let second = locks.write(second).unwrap();
+        assert!(!core::ptr::eq(first.state, second.state));
+    }
+
+    #[test]
+    fn callback_can_read_a_different_row_on_its_write_stripe() {
+        let locks = super::CellLocks::default();
+        let first = Link {
+            page_id: 1.into(),
+            offset: 7,
+            length: 16,
+        };
+        let second = Link { offset: 14, ..first };
+        assert_eq!(super::CellLocks::start(first), super::CellLocks::start(second));
+
+        let _callback_write = locks.write(first).unwrap();
+        let _nested_read = locks.read(second).unwrap();
+        assert!(matches!(locks.read(first), Err(ExecutionError::CellLockReentry)));
+        assert!(matches!(locks.write(second), Err(ExecutionError::CellLockReentry)));
     }
 
     #[test]
@@ -1000,5 +1111,109 @@ mod tests {
 
         let retrieved = page.get_row(link3).unwrap();
         assert_eq!(retrieved, row3);
+    }
+}
+
+#[cfg(all(test, wt_loom))]
+mod cell_lock_models {
+    use super::{CellLocks, Link};
+    use loom::{cell::UnsafeCell, sync::Arc, thread};
+
+    struct Protected {
+        locks: CellLocks,
+        value: UnsafeCell<(u64, u64)>,
+    }
+
+    // Every access to value below holds the same row's read or write guard.
+    unsafe impl Sync for Protected {}
+
+    #[test]
+    fn colliding_offsets_cannot_split_readers_from_a_writer() {
+        let mut model = loom::model::Builder::new();
+        model.preemption_bound = Some(2);
+        model.max_branches = 10_000;
+        model.check(|| {
+            let protected = Arc::new(Protected {
+                locks: CellLocks::default(),
+                value: UnsafeCell::new((0, 0)),
+            });
+            let first = Link {
+                page_id: 1.into(),
+                offset: 7,
+                length: 16,
+            };
+            let second = Link { offset: 14, ..first };
+            assert_eq!(CellLocks::start(first), CellLocks::start(second));
+            let preceding = protected.locks.read(first).unwrap();
+            let existing = protected.locks.read(second).unwrap();
+            drop(preceding);
+            let reader = {
+                let protected = protected.clone();
+                thread::spawn(move || {
+                    let _guard = protected.locks.read(second).unwrap();
+                    protected.value.with(|value| unsafe {
+                        let a = (*value).0;
+                        thread::yield_now();
+                        assert_eq!(a, (*value).1);
+                    });
+                })
+            };
+            drop(existing);
+            {
+                let _guard = protected.locks.write(second).unwrap();
+                protected.value.with_mut(|value| unsafe {
+                    (*value).0 = 1;
+                    thread::yield_now();
+                    (*value).1 = 1;
+                });
+            }
+            reader.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn readers_and_writers_never_overlap_and_publish_complete_rows() {
+        let mut model = loom::model::Builder::new();
+        model.preemption_bound = Some(2);
+        model.max_branches = 10_000;
+        model.check(|| {
+            let protected = Arc::new(Protected {
+                locks: CellLocks::default(),
+                value: UnsafeCell::new((0, 0)),
+            });
+            let link = Link {
+                page_id: 1.into(),
+                offset: 64,
+                length: 16,
+            };
+            let mut handles = Vec::new();
+            for writer in [false, true] {
+                let protected = protected.clone();
+                handles.push(thread::spawn(move || {
+                    if writer {
+                        let _guard = protected.locks.write(link).unwrap();
+                        protected.value.with_mut(|value| unsafe {
+                            (*value).0 += 1;
+                            thread::yield_now();
+                            (*value).1 += 1;
+                        });
+                    } else {
+                        let _guard = protected.locks.read(link).unwrap();
+                        protected.value.with(|value| unsafe {
+                            let first = (*value).0;
+                            thread::yield_now();
+                            assert_eq!(first, (*value).1);
+                        });
+                    }
+                }));
+            }
+            for handle in handles {
+                handle.join().unwrap();
+            }
+            let _guard = protected.locks.read(link).unwrap();
+            protected.value.with(|value| unsafe {
+                assert_eq!(*value, (1, 1));
+            });
+        });
     }
 }

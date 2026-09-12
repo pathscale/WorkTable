@@ -24,7 +24,8 @@ impl ReadOnlyGenerator {
         let wrapper_ident = name_generator.get_wrapper_type_ident();
 
         quote! {
-            #[derive(rkyv::Archive, Debug, rkyv::Deserialize, rkyv::Serialize)]
+            #[derive(worktable::prelude::rkyv::Archive, Debug, worktable::prelude::rkyv::Deserialize, worktable::prelude::rkyv::Serialize)]
+            #[rkyv(crate = worktable::prelude::rkyv)]
             #[repr(C)]
             pub struct #wrapper_ident {
                 inner: #row_ident,

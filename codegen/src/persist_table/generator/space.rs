@@ -32,6 +32,8 @@ impl Generator {
         let ident = name_generator.get_persistence_engine_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
+        let disk_capacity = name_generator.get_disk_page_capacity();
+        let page_const_name = name_generator.get_page_size_const_ident();
         let const_name = name_generator.get_page_size_const_ident();
         let space_primary_index = name_generator.get_space_primary_index_ident();
         let space_secondary_indexes = name_generator.get_space_secondary_index_ident();
@@ -40,23 +42,23 @@ impl Generator {
         let space_index_type =
             if self.attributes.pk_arctic_string || (self.attributes.pk_unsized && self.attributes.pk_wti_logical) {
                 quote! {
-                    SpaceLogicalIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>
+                    SpaceLogicalIndexUnsized<#primary_key_type, { #disk_capacity as u32 }, { #page_const_name as u32 }>
                 }
             } else if self.attributes.pk_unsized {
                 quote! {
-                    SpaceIndexUnsized<#primary_key_type, { #inner_const_name as u32 }>
+                    SpaceIndexUnsized<#primary_key_type, { #disk_capacity as u32 }, { #page_const_name as u32 }>
                 }
             } else if self.attributes.pk_wti_logical || self.attributes.pk_arctic {
                 quote! {
-                    SpaceLogicalIndex<#primary_key_type, { #inner_const_name as u32 }>
+                    SpaceLogicalIndex<#primary_key_type, { #disk_capacity as u32 }, { #page_const_name as u32 }>
                 }
             } else if self.attributes.pk_congee {
                 quote! {
-                    SpaceCongeeIndex<#primary_key_type, { #inner_const_name as u32 }>
+                    SpaceCongeeIndex<#primary_key_type, { #disk_capacity as u32 }>
                 }
             } else {
                 quote! {
-                    SpaceIndex<#primary_key_type, { #inner_const_name as u32 }>
+                    SpaceIndex<#primary_key_type, { #disk_capacity as u32 }, { #page_const_name as u32 }>
                 }
             };
 

@@ -1,3 +1,4 @@
+use data_bucket::DEFAULT_PAGE_STRIDE;
 use std::fs::copy;
 
 use data_bucket::{INNER_PAGE_SIZE, Link};
@@ -14,7 +15,7 @@ mod run_first {
     async fn test_space_index_process_create_node() {
         remove_file_if_exists("tests/data/space_index/process_create_node.wt.idx".to_string()).await;
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/process_create_node.wt.idx",
             0.into(),
             1,
@@ -52,7 +53,7 @@ mod run_first {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/process_create_second_node.wt.idx",
             0.into(),
             1,
@@ -90,7 +91,7 @@ mod run_first {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/process_insert_at.wt.idx",
             0.into(),
             1,
@@ -137,7 +138,7 @@ mod run_first {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/process_insert_at_big_amount.wt.idx",
             0.into(),
             1,
@@ -210,7 +211,7 @@ mod run_first {
         )
         .unwrap();
 
-        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+        let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
             "tests/data/space_index/process_remove_node.wt.idx",
             0.into(),
             1,
@@ -249,7 +250,7 @@ async fn test_space_index_process_insert_at_with_node_id_update() {
     )
     .unwrap();
 
-    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
         "tests/data/space_index/process_insert_at_with_node_id_update.wt.idx",
         0.into(),
         1,
@@ -296,7 +297,7 @@ async fn test_space_index_process_remove_at() {
     )
     .unwrap();
 
-    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
         "tests/data/space_index/process_remove_at.wt.idx",
         0.into(),
         1,
@@ -343,7 +344,7 @@ async fn test_space_index_process_remove_at_node_id() {
     )
     .unwrap();
 
-    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
         "tests/data/space_index/process_remove_at_node_id.wt.idx",
         0.into(),
         1,
@@ -390,7 +391,7 @@ async fn test_space_index_process_insert_at_removed_place() {
     )
     .unwrap();
 
-    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
         "tests/data/space_index/process_insert_at_removed_place.wt.idx",
         0.into(),
         1,
@@ -483,7 +484,7 @@ async fn test_space_index_process_create_node_after_remove() {
     )
     .unwrap();
 
-    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
         "tests/data/space_index/process_create_node_after_remove.wt.idx",
         0.into(),
         1,
@@ -521,7 +522,7 @@ async fn test_space_index_process_split_node() {
     )
     .unwrap();
 
-    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
         "tests/data/space_index/process_split_node.wt.idx",
         0.into(),
         1,
@@ -560,10 +561,13 @@ async fn test_space_index_process_split_node() {
 async fn batch_split_then_max_remove_then_historical_identity_insert_applies() {
     remove_file_if_exists("tests/data/space_index/batch_alias.wt.idx".to_string()).await;
 
-    let mut space_index =
-        SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new("tests/data/space_index/batch_alias.wt.idx", 0.into(), 1)
-            .await
-            .unwrap();
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
+        "tests/data/space_index/batch_alias.wt.idx",
+        0.into(),
+        1,
+    )
+    .await
+    .unwrap();
 
     fn link(offset: u32) -> Link {
         Link {
@@ -636,7 +640,7 @@ async fn batch_split_then_max_remove_then_historical_identity_insert_applies() {
 async fn batch_replay_of_real_cdc_stream_with_splits_matches_the_source() {
     remove_file_if_exists("tests/data/space_index/batch_cdc_replay.wt.idx".to_string()).await;
 
-    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }>::new(
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
         "tests/data/space_index/batch_cdc_replay.wt.idx",
         0.into(),
         1,
