@@ -3,7 +3,8 @@
 **Status:** accepted, 2026-09-12
 
 **Scope:** DataBucket storage domains, WorkTable partial hydration, Upstash Redis,
-Tigris object storage, and a dual-write backend using both services.
+Tigris object storage, a dual-write backend using both services, and measured
+S3-compatible provider alternatives.
 
 ## Decision
 
@@ -14,8 +15,8 @@ backend contract. WorkTable remains the typed table and query layer above it.
 WorkTable will no longer require every row page to be resident. A spillable
 table starts fully resident and uses the same in-memory path while it remains
 below its configured memory high-water mark. After it crosses that boundary,
-it evicts eligible pages and faults them back from a local file, Upstash,
-Tigris, or the dual-write backend when a query needs them. Fully resident
+it evicts eligible pages and faults them back from a local file or a configured
+remote page store when a query needs them. Fully resident
 tables keep their current synchronous API and hot path. Spillable tables use a
 distinct generated wrapper with asynchronous, fallible query and mutation
 callsites. This requires no DSL grammar change.
@@ -24,12 +25,21 @@ The three remote configurations are:
 
 | Configuration | Primary purpose | Commit authority | Read shape |
 |---|---|---|---|
-| Upstash | Low-latency page service for small and irregular workloads | Upstash generation head | Direct page keys, batched with `MGET` or REST pipelines |
-| Tigris | Economical durable capacity and scans | Tigris generation head | Range reads from immutable page segments |
-| Hybrid | Upstash serving latency plus a Tigris durable copy | Upstash live head plus a Tigris commit marker | Upstash first for point reads, Tigris for scans and repair |
+| Upstash | Optional batched page cache and metadata service | Upstash generation head | Direct page keys, batched with `MGET` |
+| Tigris | Default durable capacity and scans | Conditional Tigris generation head | Range reads from immutable page segments |
+| Hybrid | Optional Upstash serving tier plus a Tigris durable copy | Upstash live head plus a Tigris commit marker | Upstash first for point reads, Tigris for scans and repair |
 
 Hybrid means every acknowledged generation is written to both services. It is
 not a cache with an optional backup.
+
+The 2026-09-12 provider gate changed the implementation priority. Upstash's
+temporary Redis service had a roughly 216 ms request floor from Fly Singapore
+and did not scale independent page requests with concurrency. It is not on the
+first durable write path, and the hybrid backend is deferred until a paid,
+region-selected Upstash deployment passes the same gate. Tigris and Bunny
+Storage both passed exact-read, range-read and conditional-head tests. Tigris
+is the first backend because it had the stronger sustained write shape. Bunny
+is supported by the same S3 adapter as a read-strong alternative.
 
 ## Current boundary
 
@@ -495,6 +505,15 @@ default 16 KiB page is well below current record and request limits. Keys use
 one Redis hash tag per storage domain so generation-head coordination and its
 metadata share a locking domain.
 
+This remains a defined adapter path, but it did not pass the first provider
+gate. From a Fly Singapore Machine, SET and GET medians were both about 216 ms
+and a one-page write plus Lua head compare-and-set was about 444 ms. Sending
+128 pages in one MSET reached 213 page writes/s, but the generation still
+needed a second request and completed only 1.67 times/s. The command API also
+requires base64 for binary pages carried in JSON. An implementation must batch
+behind the local WAL; it must not synchronously call Upstash for every row
+mutation.
+
 One possible key layout is:
 
 ```text
@@ -657,6 +676,11 @@ shows that small range GETs are inefficient, the cache may fetch the complete
 segment, but it still publishes pages individually and charges the fetched
 bytes against its budget.
 
+The initial target is 4 MiB of encoded pages per segment, with a 256 KiB read
+window for cold faults. The segment target is not a correctness boundary. An
+idle or pressured writer may flush a smaller segment, and adjacent requested
+pages may expand a read window within the query budget.
+
 The background writer may compress a segment when the codec allows bounded
 independent page decoding. Compression metadata is stored per page or per
 small frame so reading one page does not require expanding a large segment.
@@ -664,10 +688,13 @@ Already compressed archived values should be detected by measurement, not
 assumed.
 
 Commit uploads all segments, catalog parts and the immutable generation
-manifest before updating `head`. The head update must be conditional on the
-expected parent and writer epoch when the selected Tigris S3 API and Rust
-client prove that behavior. Until that is tested end to end, the supported
-mode is one writer guarded by a renewable lease and read-back verification.
+manifest before updating `head`. The head update is conditional on the
+expected parent and writer epoch. The Rust QA driver verified conditional
+creation and replacement against Tigris: stale `If-None-Match` and `If-Match`
+requests were rejected with HTTP 412, while the current ETag replacement
+succeeded. The first implementation still supports one writer guarded by a
+renewable lease; conditional publication makes stale writers fail instead of
+silently replacing the head.
 
 This removes the current full-file scan and 4 MiB mutation floor. A single
 changed page stages roughly one page image plus manifest and catalog metadata.
@@ -678,6 +705,39 @@ Garbage collection is manifest based. It computes reachability across every
 retained generation and active reader lease before deleting immutable
 segments. It never deletes an object merely because the current generation no
 longer references it.
+
+### S3-compatible provider selection
+
+The same Rust executable ran from Fly Singapore against colocated Tigris and
+Bunny Storage. Every page and range was checked before it counted as a result.
+
+| Measurement | Tigris | Bunny Singapore |
+|---|---:|---:|
+| 16 KiB PUT p50 | 34.93 ms | 44.57 ms |
+| 16 KiB GET p50 | 18.22 ms | 4.93 ms |
+| HEAD p50 | 4.70 ms | 4.35 ms |
+| 256 KiB range GET p50 | 24.94 ms | 5.14 ms |
+| 16 KiB writes/s at concurrency 16 | 63.28 | 48.11 |
+| 4 MiB PUT | 303.00 Mbit/s | 180.33 Mbit/s |
+| 4 MiB GET | 455.59 Mbit/s | 653.57 Mbit/s |
+
+Bunny significantly outperformed Tigris for colocated reads. Its very high
+hot-key concurrent read result is treated as cache-assisted, so the cold range
+median is the planning value. Tigris had stronger sustained page and segment
+writes. This selects Tigris as the first durable backend while preserving
+Bunny as a supported alternative through the same S3 contract.
+
+Bunny replication is not part of the measured or selected protocol. The tested
+zone had Singapore as its primary and no replication regions. If a deployment
+later enables Bunny geo-replication, the authoritative conditional head must
+still be read and written at the primary; asynchronously replicated copies
+cannot coordinate writers.
+
+Cloudflare R2 exposes the required S3 range and conditional PUT operations and
+documents strong consistency. It remains a candidate rather than a selected
+backend until this exact driver runs against an actual R2 bucket. Provider
+selection is configuration on the S3 adapter and does not alter the durable
+catalog or WorkTable grammar.
 
 ## Hybrid dual-write backend
 
@@ -738,10 +798,14 @@ trusted. The local DataBucket store uses `pread`-shaped page access where the
 platform adapter permits it, avoiding one shared seek cursor. This provides a
 deterministic correctness and performance baseline for cache faults.
 
-A local write-ahead staging area is optional for Upstash and required for
-Tigris write coalescing when the process wants to acknowledge before a remote
-flush. It stores complete generation plans with checksums. Truncation happens
-only after the configured remote commit condition is satisfied.
+A local write-ahead staging area is the default for every remote backend. It
+is required whenever the process acknowledges before the remote generation
+commits, and it is what lets Tigris or Bunny coalesce writes without exposing
+their request latency to each mutation. It stores complete generation plans
+with checksums. Truncation happens only after the configured remote commit
+condition is satisfied. A configuration that waits synchronously for the
+remote generation commit may omit it, but inherits the measured provider
+latency.
 
 If no synchronously durable local WAL is configured, an enqueue acknowledgment
 retains WorkTable's existing best-effort boundary. The API and system catalog
@@ -853,8 +917,21 @@ The first useful performance targets are structural:
   and
 - the fully resident suite has no statistically meaningful regression.
 
-Latency targets should be set from measured local, Upstash and Tigris
-baselines rather than invented before the adapters exist.
+The first remote provider gate is now measured:
+
+- conditional generation-head creation and replacement must reject stale
+  expectations;
+- a colocated 256 KiB range GET has a p50 no higher than 25 ms;
+- a 4 MiB PUT averages no more than 250 ms and sustains at least 150 Mbit/s of
+  logical payload; and
+- every returned page passes exact byte verification.
+
+Tigris and Bunny pass this gate. Upstash does not pass the synchronous request
+shape, although large command batches may support a later serving tier. The
+committed evidence is in
+`perf-benchmarks/data/fly-sin-shared-cpu-1x/2026-09-12-remote-store-gate.md`.
+These are transport gates, not application latency promises. The adapter must
+still pass WAL acknowledgment, restart, partial hydration and repair tests.
 
 ## Implementation order
 
@@ -866,13 +943,14 @@ baselines rather than invented before the adapters exist.
    `UserSpillableWorkTable` shape. Keep indexes resident for this milestone.
 4. Move `count()`, row bytes, page counts and index-entry counts onto maintained
    catalog aggregates. Validate them against full offline scans in tests.
-5. Implement Upstash staging, batching, head compare-and-set, recovery and
-   garbage collection.
-6. Implement Tigris page segments, range hydration, head publication, recovery
+5. Implement Tigris page segments, range hydration, head publication, recovery
    and garbage collection.
-7. Compose both adapters into the hybrid state machine and repair worker.
-8. Add pageable lower index nodes and bounded-memory index scans.
-9. Run the correctness, crash and performance gates, then replace the current
+6. Run the Tigris adapter-level correctness, crash and performance gates.
+7. Implement Upstash staging, batching, head compare-and-set, recovery and
+   garbage collection after a region-selected service passes the gate.
+8. Compose both adapters into the hybrid state machine and repair worker.
+9. Add pageable lower index nodes and bounded-memory index scans.
+10. Run the complete release gates, then replace the current
    file-scanning S3 engine.
 
 Steps 1 through 4 establish partial hydration locally and settle the API before
@@ -890,10 +968,10 @@ commit-policy differences.
 - Upstash service limits and billing vary by plan. Batch ceilings must be
   configuration bounded and command/byte metrics must be retained:
   <https://upstash.com/pricing/redis>
-- Tigris is S3-compatible, but conditional-write and range-read behavior must
-  be tested with the exact Rust client and deployed bucket before stronger
-  concurrency claims are enabled:
-  <https://fly.io/docs/tigris/>
+- Tigris and Bunny passed conditional-write and range-read checks with the
+  exact Rust client. Those operations remain release checks because provider
+  behavior and configuration can change:
+  <https://fly.io/docs/tigris/> and <https://bunny.net/storage/>.
 
 ## Deferred decisions
 
@@ -901,8 +979,9 @@ These choices need measurements or adapter prototypes, but they do not block
 the architecture:
 
 - exact cache policy and data/index budget split;
-- Tigris target segment size and coalescing interval;
-- whether Tigris point faults fetch one range or a complete small segment;
+- exact coalescing interval around the initial 4 MiB segment target;
+- whether point faults fetch one 256 KiB range or a complete small segment;
+- Cloudflare R2 selection after the same deployed E2E measurement;
 - local WAL acknowledgment policy defaults;
 - retained-generation count and reader-lease duration;
 - when pageable indexes become the default rather than an explicit mode.
