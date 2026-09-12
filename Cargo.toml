@@ -60,13 +60,13 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 # pointer-only fast path. Publication is append-only and asserted at each swap.
 arc-swap = { version = "1", default-features = false, optional = true }
 async-trait = "0.1"
-arctic = { package = "arctic-wt", version = "^0.1, >=0.1.12", default-features = false, features = ["smr-ps-reclaim"] }
+arctic = { package = "arctic-wt", version = "^0.1", default-features = false, features = ["smr-ps-reclaim"] }
 blake3 = { version = "1", optional = true }
 # `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
 # crate links the standard library through a dependency. That matters for
 # EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
 # bare-metal target: we ship on Linux, macOS and Windows.
-congee = { package = "congee-wt", version = "^0.4.6", default-features = false }
+congee = { package = "congee-wt", version = "^0.4", default-features = false }
 convert_case = { version = "0.6", default-features = false, optional = true }
 crc32fast = { version = "1", default-features = false }
 # 0.7 supplies the v3 row directory, integrity checks and configurable stride.
@@ -77,14 +77,14 @@ hashbrown = "0.15"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # The file traits and the host implementation. `std` here; the crate takes it
 # without default features wherever the filesystem is not involved.
-# Require the reviewed 0.1.2 runtime for cancellation/panic handling and worker
+# The current 0.1 runtime supplies cancellation/panic handling and worker
 # wake ownership. Runtime::with_tuning marks pool workers correctly. Compatible
 # updates remain open; update ps-st3 in existing lockfiles for scheduler fixes.
 #
 # It also re-exports `Tuning`, which is why `ps-st3` is no longer a direct
 # dependency here: it was named for that one type.
-nagoya = { version = "^0.1.2", default-features = false }
-indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.14", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+nagoya = { version = "^0.1", default-features = false }
+indexset = { package = "WorkTablesIndex", version = "^0.0", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 # Pulls `serde` and `serde_core` into every build, and nothing here uses them.
 # They are not reachable from this line: `indexset` 0.15 declares `ftree` with
 # `features = ["serde"]` unconditionally, so no `default-features = false` here
@@ -104,12 +104,12 @@ ordered-float = { version = "5", default-features = false }
 # `--no-default-features` build and present in a normal one, until that backend
 # is deselected.
 #
-# FairMutex requires 0.12.8. Use a registry requirement so the published
-# package can resolve it and WorkTablesIndex can share the same crate.
-parking_lot = { package = "parking_lot_lite_hack", version = "^0.12, >=0.12.8", default-features = false }
+# FairMutex first shipped in 0.12.8. Keep the compatible 0.12 line open so
+# Cargo selects the current fork release and WorkTablesIndex can share it.
+parking_lot = { package = "parking_lot_lite_hack", version = "^0.12", default-features = false }
 performance_measurement = { path = "performance_measurement", version = "^0.1", optional = true }
 performance_measurement_codegen = { path = "performance_measurement/codegen", version = "^0.1", optional = true }
-psc-nanoid = { version = "^3.2.0", default-features = false, features = ["rkyv", "packed"] }
+psc-nanoid = { version = "^3.2", default-features = false, features = ["rkyv", "packed"] }
 rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "uuid-1"] }
 # A blocking HTTP client, not an async one, and that is the point.
 #
@@ -127,7 +127,7 @@ rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytech
 ureq = { version = "2", optional = true, default-features = false, features = ["tls"] }
 # `spin` rather than `std`: without it this crate reaches for `thread_local!`,
 # which needs a platform. See its `slot` module for what it falls back to.
-ps-reclaim = { version = "^0.1, >=0.1.4", default-features = false, features = ["spin"] }
+ps-reclaim = { version = "^0.1", default-features = false, features = ["spin"] }
 rustc-hash = { version = "2", default-features = false }
 rusty-s3 = { version = "0.10", optional = true }
 smart-default = "0.7"
