@@ -16,6 +16,6 @@ rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytech
 derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
 
 [dev-dependencies]
-nagoya = { version = "^0.1.2", default-features = false }
+nagoya = { version = "^0.1", default-features = false }
 
 [workspace]
