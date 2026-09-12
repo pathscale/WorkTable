@@ -28,10 +28,10 @@ jobs:
   build:
     name: Build and test (${{ matrix.name }})
     runs-on: ubicloud-standard-2
-    # A cold all-target workspace build plus the integration suite exceeded
-    # 15 minutes when GitHub's cache service was unavailable. Keep enough room
-    # for a real from-scratch release gate instead of failing on cache health.
-    timeout-minutes: 30
+    # A cold all-target workspace build plus compile-fail's nested Cargo checks
+    # exceeded 30 minutes when GitHub's cache service was unavailable. Keep
+    # enough room for a real from-scratch release gate.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
