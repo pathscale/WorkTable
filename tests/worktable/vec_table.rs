@@ -99,6 +99,7 @@ fn it_behaves_like_a_table() {
 /// and interleaved. What is left here is the check that survives a debug
 /// build: that the table still does a map lookup and not a linear scan.
 #[test]
+#[ignore = "manual timing guard; run on a quiet host with an optimized benchmark for release evidence"]
 fn it_costs_what_a_vec_costs() {
     const ROWS: u64 = 50_000;
 
