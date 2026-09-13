@@ -166,6 +166,17 @@ impl WorktableNameGenerator {
         quote::quote! { (#page_size - worktable::prelude::GENERAL_HEADER_SIZE) }
     }
 
+    /// Payload budget whose end is aligned for a tail-stored archived key.
+    /// Variable-width index entries are written backwards from this boundary.
+    pub fn get_aligned_disk_page_capacity(&self, key_type: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let capacity = self.get_disk_page_capacity();
+        quote::quote! {
+            (#capacity - (#capacity % core::mem::align_of::<
+                <#key_type as worktable::prelude::rkyv::Archive>::Archived
+            >()))
+        }
+    }
+
     pub fn get_page_inner_size_const_ident(&self) -> Ident {
         let upper_snake_case_name = self.name.from_case(Case::Pascal).to_case(Case::UpperSnake);
         Ident::new(

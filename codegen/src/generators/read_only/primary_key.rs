@@ -55,13 +55,7 @@ impl ReadOnlyGenerator {
                     .expect("should exist as got from definition")
             })
             .collect::<Vec<_>>();
-        let unsized_derive = if is_unsized_vec(&types.iter().map(|v| v.to_string()).collect::<Vec<_>>()) {
-            quote! {
-                VariableSizeMeasure,
-            }
-        } else {
-            quote! {}
-        };
+        let is_unsized_key = is_unsized_vec(&types.iter().map(|v| v.to_string()).collect::<Vec<_>>());
         let (backend_derive, backend_impl) =
             primary_key_backend_impl(self.columns.primary_index_backend, &ident, types)?;
         let borrowed_impl = gen_borrowed_primary_key_impl(&ident, types);
@@ -117,24 +111,47 @@ impl ReadOnlyGenerator {
             }
         };
 
-        // `data_bucket_derive::SizeMeasure` currently reports only 8-byte
-        // field alignment. A generated newtype around `u128` therefore says
-        // its archived alignment is unknown even though rkyv aligns it to 16.
-        // Index page capacity then budgets 28 bytes per entry while the
-        // archive writes 32, overflowing a default page. Measure the generated
-        // wrapper directly so its storage model follows rkyv's actual layout.
-        let field_indexes = (0..types.len()).map(syn::Index::from).collect::<Vec<_>>();
+        // `data_bucket_derive::SizeMeasure` reports only 8-byte field
+        // alignment, so a generated `u128` newtype under-budgets fixed index
+        // pages. It also cannot derive `VariableSizeMeasure` for a composite
+        // `(String, u128)` key because the fixed member does not implement the
+        // variable-size trait. Model the archived wrapper itself: fixed keys
+        // are exactly its archived root, while String keys add only their
+        // out-of-line payload to that root.
+        let string_fields = types
+            .iter()
+            .enumerate()
+            .filter(|(_, ty)| ty.to_string() == "String")
+            .map(|(index, ty)| (syn::Index::from(index), *ty))
+            .collect::<Vec<_>>();
+        let string_field_indexes = string_fields.iter().map(|(index, _)| index);
+        let string_field_types = string_fields.iter().map(|(_, ty)| ty);
+        let aligned_size_body = if is_unsized_key {
+            quote! {
+                let len = core::mem::size_of::<
+                    <Self as worktable::prelude::rkyv::Archive>::Archived
+                >() #(+ worktable::prelude::SizeMeasurable::aligned_size(
+                    &self.#string_field_indexes
+                ).saturating_sub(core::mem::size_of::<
+                    <#string_field_types as worktable::prelude::rkyv::Archive>::Archived
+                >()))*;
+                let alignment = core::mem::align_of::<
+                    <Self as worktable::prelude::rkyv::Archive>::Archived
+                >();
+                let remainder = len % alignment;
+                if remainder == 0 { len } else { len + alignment - remainder }
+            }
+        } else {
+            quote! {
+                core::mem::size_of::<
+                    <Self as worktable::prelude::rkyv::Archive>::Archived
+                >()
+            }
+        };
         let size_measure_impl = quote! {
             impl worktable::prelude::SizeMeasurable for #ident {
                 fn aligned_size(&self) -> usize {
-                    let len = #(
-                        worktable::prelude::SizeMeasurable::aligned_size(&self.#field_indexes)
-                    +)* 0;
-                    let alignment = core::mem::align_of::<
-                        <Self as worktable::prelude::rkyv::Archive>::Archived
-                    >().max(8);
-                    let remainder = len % alignment;
-                    if remainder == 0 { len } else { len + alignment - remainder }
+                    #aligned_size_body
                 }
 
                 fn align() -> Option<usize> {
@@ -143,6 +160,29 @@ impl ReadOnlyGenerator {
                     >())
                 }
             }
+        };
+
+        let variable_size_measure_impl = if is_unsized_key {
+            let string_field_types = string_fields.iter().map(|(_, ty)| ty);
+            quote! {
+                impl worktable::prelude::VariableSizeMeasurable for #ident {
+                    fn aligned_size(length: usize) -> usize {
+                        let len = core::mem::size_of::<
+                            <Self as worktable::prelude::rkyv::Archive>::Archived
+                        >() #(+ <#string_field_types as worktable::prelude::VariableSizeMeasurable>
+                            ::aligned_size(length).saturating_sub(core::mem::size_of::<
+                                <#string_field_types as worktable::prelude::rkyv::Archive>::Archived
+                            >()))*;
+                        let alignment = core::mem::align_of::<
+                            <Self as worktable::prelude::rkyv::Archive>::Archived
+                        >();
+                        let remainder = len % alignment;
+                        if remainder == 0 { len } else { len + alignment - remainder }
+                    }
+                }
+            }
+        } else {
+            quote! {}
         };
         Ok(quote! {
             #[derive(
@@ -159,7 +199,6 @@ impl ReadOnlyGenerator {
                 PartialOrd,
                 Ord,
                 MemStat,
-                #unsized_derive
             )]
             #[rkyv(crate = worktable::prelude::rkyv)]
             #[rkyv(derive(PartialEq, Eq, PartialOrd, Ord, Debug))]
@@ -168,6 +207,7 @@ impl ReadOnlyGenerator {
             #from_impl
             #into_impl
             #size_measure_impl
+            #variable_size_measure_impl
 
             #borrowed_impl
             #backend_impl

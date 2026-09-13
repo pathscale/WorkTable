@@ -248,6 +248,8 @@ impl PersistGenerator {
             })
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
+        let pk_tokens = quote! { #pk_type };
+        let unsized_node_capacity = name_generator.get_aligned_disk_page_capacity(&pk_tokens);
         let wti_map = if cfg!(feature = "logical-index-persistence") {
             quote! { PersistentWtiIndex }
         } else {
@@ -262,7 +264,7 @@ impl PersistGenerator {
         } else if pk_types_unsized {
             quote! {
                 inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
-                    #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#node_capacity)
+                    #wti_map::<#pk_type, OffsetEqLink<#const_name>, UnsizedNode<_>>::with_maximum_node_size(#unsized_node_capacity)
                 ));
             }
         } else {

@@ -31,6 +31,7 @@ mod toc;
 mod torn_shutdown;
 mod tuple_primary_key;
 mod u128_primary_index_capacity;
+mod uuid_primary_upsert;
 mod vacuum;
 
 #[cfg(feature = "s3-support")]
