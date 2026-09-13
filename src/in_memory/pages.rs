@@ -1134,13 +1134,12 @@ where
     /// the current slot (so it fits exactly).
     ///
     /// # Persistence
-    /// This path emits **no** persistence CDC. It is only sound for tables that
-    /// are not persisted (or on a persistence sink that reconstructs state from
-    /// the page image on reload). Do NOT route a persisted-table update through
-    /// this method: the row would change in memory and republish but no change
-    /// event would reach disk, silently losing durability until reload. The
-    /// generated persisted update path deliberately keeps the reinsert path for
-    /// this reason.
+    /// This storage primitive emits **no** persistence CDC. A persisted caller
+    /// must read the replacement bytes from this slot and enqueue its durable
+    /// update before returning success. Omitting that operation changes memory
+    /// without changing disk, so a cold reload restores the old row. Generated
+    /// persisted updates follow that contract; memory-only callers need no
+    /// additional operation.
     ///
     /// Serialization and the exact-length check finish before any page byte is
     /// changed. The exact cell guard excludes readers of this cell during the

@@ -679,6 +679,113 @@ mod tests {
         );
     }
 
+    #[test]
+    fn opaque_archived_update_rebuilds_for_memory_and_persistence() {
+        for persist in [false, true] {
+            let output = expand(quote! {
+                name: OpaqueArchivedUpdate,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    secret: EncryptedSecret,
+                },
+                queries: {
+                    update: {
+                        Secret(secret) by id,
+                    }
+                }
+            })
+            .unwrap()
+            .to_string();
+
+            let update = output
+                .split("pub async fn update_secret")
+                .nth(1)
+                .expect("generated opaque-field update");
+            assert!(
+                update.contains("data . update_in_place"),
+                "opaque fields must be serialized as part of the complete row"
+            );
+            assert!(
+                update.contains("self . reinsert"),
+                "a changed serialized length must fall back to reinsert"
+            );
+            assert!(
+                !update.contains("swap (& mut archived . inner . secret"),
+                "moving an opaque archived field can retain pointers into the temporary query buffer"
+            );
+
+            let full_update = output
+                .split("async fn update_with_guard")
+                .nth(1)
+                .expect("generated full-row update");
+            assert!(full_update.contains("data . update_in_place"));
+            assert!(full_update.contains("self . reinsert"));
+            assert!(!full_update.contains("swap (& mut archived . inner . secret"));
+        }
+    }
+
+    #[test]
+    fn optional_string_update_rebuilds_for_memory_and_persistence() {
+        for persist in [false, true] {
+            let output = expand(quote! {
+                name: OptionalStringUpdate,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    display_name: String optional,
+                },
+                queries: {
+                    update: {
+                        DisplayName(display_name) by id,
+                    }
+                }
+            })
+            .unwrap()
+            .to_string();
+
+            let update = output
+                .split("pub async fn update_display_name")
+                .nth(1)
+                .expect("generated optional-string update");
+            assert!(update.contains("data . update_in_place"));
+            assert!(update.contains("self . reinsert"));
+            assert!(!update.contains("swap (& mut archived . inner . display_name"));
+        }
+    }
+
+    #[test]
+    fn indexed_opaque_update_uses_index_maintaining_reinsert() {
+        for persist in [false, true] {
+            let output = expand(quote! {
+                name: IndexedOpaqueUpdate,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    secret: EncryptedSecret,
+                },
+                indexes: {
+                    secret_idx: secret unique using worktables_index,
+                },
+                queries: {
+                    update: {
+                        Secret(secret) by id,
+                    }
+                }
+            })
+            .unwrap()
+            .to_string();
+
+            let update = output
+                .split("pub async fn update_secret")
+                .nth(1)
+                .expect("generated indexed opaque-field update");
+            assert!(update.contains("self . reinsert"));
+            assert!(!update.contains("data . update_in_place"));
+            assert!(!update.contains("swap (& mut archived . inner . secret"));
+        }
+    }
+
     #[cfg(feature = "logical-index-persistence")]
     #[test]
     fn logical_persistence_wraps_explicit_wti_backends() {

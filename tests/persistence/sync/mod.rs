@@ -8,6 +8,7 @@ use worktable::worktable;
 mod failure;
 mod failure_multi_index;
 mod many_strings;
+mod opaque_unsized_update;
 mod option;
 mod repeated_string_upsert;
 mod string_primary_index;
