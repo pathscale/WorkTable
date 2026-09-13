@@ -226,7 +226,7 @@ impl InMemoryGenerator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
 
         quote! {
-            pub async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+            async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
                 self.0.reinsert(row_old, row_new).await
             }
         }

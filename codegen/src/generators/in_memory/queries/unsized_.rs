@@ -49,7 +49,7 @@ impl InMemoryGenerator {
     fn gen_get_unsized_field_len_query_fn(&self) -> TokenStream {
         if let Some(q) = &self.queries {
             let query_impls: Vec<_> = q
-                .update_partials
+                .updates
                 .iter()
                 .filter(|(_, op)| {
                     op.columns

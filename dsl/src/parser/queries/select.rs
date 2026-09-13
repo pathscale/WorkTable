@@ -44,13 +44,13 @@ mod tests {
     #[test]
     fn test_update() {
         let tokens = quote! {
-            update_partial: {
+            update: {
                 TestQuery(id, test) by name,
                 Test1Query(id, name) by test,
             }
         };
         let mut parser = Parser::new(tokens);
-        let (_, ops) = parser.parse_update_partials().unwrap();
+        let (_, ops) = parser.parse_updates().unwrap();
 
         assert_eq!(ops.len(), 2);
         let op = ops.get(&Ident::new("TestQuery", Span::mixed_site())).unwrap();

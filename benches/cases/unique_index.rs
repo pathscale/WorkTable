@@ -156,7 +156,7 @@ fn update(c: &mut Criterion) {
                 test: fastrand::i64(..),
                 another: fastrand::u64(..),
             };
-            black_box(table.update(row).await)
+            black_box(table.replace(row).await)
         })
     });
 }

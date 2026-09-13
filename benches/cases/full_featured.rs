@@ -123,7 +123,7 @@ fn update(c: &mut Criterion) {
                 another: format!("updated_{}", fastrand::u64(..)),
                 something: fastrand::u64(..),
             };
-            black_box(table.update(row).await)
+            black_box(table.replace(row).await)
         })
     });
 }
@@ -151,7 +151,11 @@ fn update_by_pk_query(c: &mut Criterion) {
             let query = AnotherByIdQuery {
                 another: format!("upd_{}", fastrand::u64(..)),
             };
-            black_box(table.update_partial_another_by_id(query, id).await)
+            black_box(
+                table
+                    .update_by_id(id, FullFeaturedColumns::ANOTHER, (query).another)
+                    .await,
+            )
         })
     });
 }
@@ -179,7 +183,11 @@ fn update_by_unique_index_query(c: &mut Criterion) {
             let query = AnotherByVal1Query {
                 another: format!("upd_{}", fastrand::u64(..)),
             };
-            black_box(table.update_partial_another_by_val_1(query, val1).await)
+            black_box(
+                table
+                    .update_by_val1(val1, FullFeaturedColumns::ANOTHER, (query).another)
+                    .await,
+            )
         })
     });
 }
@@ -202,7 +210,7 @@ fn in_place_update(c: &mut Criterion) {
     c.bench_function("full_featured_in_place_update_val", |b| {
         b.to_async(&rt).iter(|| async {
             table
-                .update_partial_in_place_val_by_id(|val| *val += 1, black_box(pk))
+                .update_in_place_by_id(black_box(pk), FullFeaturedColumns::VAL, |val| *val += 1)
                 .await
         })
     });

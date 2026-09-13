@@ -178,7 +178,7 @@ async fn all_unique_backends_support_crud_ranges_and_conflict_rollback() {
         congee_key: 23,
         arctic_key: 24,
     };
-    table.update(updated.clone()).await.unwrap();
+    table.replace(updated.clone()).await.unwrap();
     assert_eq!(table.select(pk), Some(updated.clone()));
     assert!(table.select_by_wti_key(11).is_none());
     assert!(table.select_by_upstream_key(12).is_none());
@@ -223,7 +223,7 @@ async fn alternative_primary_backends_support_point_crud() {
                 id: original.id,
                 value: 2,
             };
-            table.update(updated.clone()).await.unwrap();
+            table.replace(updated.clone()).await.unwrap();
             assert_eq!(table.select(pk.clone()), Some(updated));
 
             table.delete(original.id).await.unwrap();
@@ -428,7 +428,7 @@ async fn native_art_backends_recover_concurrent_same_row_updates() {
             barrier.wait().await;
             for update in 0..UPDATES_PER_WORKER {
                 table
-                    .update(PersistedArcticRow {
+                    .replace(PersistedArcticRow {
                         id,
                         congee_key: 10_000 + worker * UPDATES_PER_WORKER + update,
                     })
@@ -496,7 +496,7 @@ async fn logical_wti_recovers_concurrent_same_row_updates() {
             barrier.wait().await;
             for update in 0..UPDATES_PER_WORKER {
                 table
-                    .update(wti::ProviderSwitchRow {
+                    .replace(wti::ProviderSwitchRow {
                         id,
                         unique_key: 10_000 + worker * UPDATES_PER_WORKER + update,
                     })

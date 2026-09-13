@@ -1,6 +1,6 @@
 use crate::worktable::index::{
-    Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable, TwoAttrByThirdQuery,
-    UniqueTwoAttrByThirdQuery,
+    Test3NonUniqueColumns, Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueColumns, Test3UniqueRow,
+    Test3UniqueWorkTable, TwoAttrByThirdQuery, UniqueTwoAttrByThirdQuery,
 };
 use worktable::prelude::SelectQueryExecutor;
 
@@ -25,12 +25,13 @@ async fn update_two_via_query_unique_indexes() {
 
     let _ = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_partial_unique_two_attr_by_third(
+        .update_by_attr3(
+            attr3_old,
+            Test3UniqueColumns::ATTR1_AND_ATTR2,
             UniqueTwoAttrByThirdQuery {
                 attr1: attr1_new.clone(),
                 attr2: attr2_new,
             },
-            attr3_old,
         )
         .await
         .unwrap();
@@ -75,7 +76,7 @@ async fn update_with_reinsert_and_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_partial_unique_two_attr_by_third(update, row1.attr3,)
+            .update_by_attr3(row1.attr3, Test3UniqueColumns::ATTR1_AND_ATTR2, update)
             .await
             .is_err()
     );
@@ -115,7 +116,7 @@ async fn update_with_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_partial_unique_two_attr_by_third(update, row1.attr3)
+            .update_by_attr3(row1.attr3, Test3UniqueColumns::ATTR1_AND_ATTR2, update)
             .await
             .is_err()
     );
@@ -150,12 +151,13 @@ async fn update_two_via_query_non_unique_indexes() {
 
     let _ = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_partial_two_attr_by_third(
+        .update_by_attr3(
+            attr3_old,
+            Test3NonUniqueColumns::ATTR1_AND_ATTR2,
             TwoAttrByThirdQuery {
                 attr1: attr1_new,
                 attr2: attr2_new,
             },
-            attr3_old,
         )
         .await
         .unwrap();

@@ -1783,7 +1783,7 @@ mod tests {
             another: 11,
             exchange: "updated0".to_string(),
         };
-        table.update(updated_target.clone()).await.unwrap();
+        table.replace(updated_target.clone()).await.unwrap();
         let current_target_link = table
             .0
             .primary_index

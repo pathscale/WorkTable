@@ -12,7 +12,7 @@ worktable! (
         another: u64,
     },
     queries: {
-        update_partial: {
+        update: {
             FieldAnotherById(field, another) by id,
         },
     }
@@ -63,7 +63,10 @@ fn test_space_update_query_pk_sync() {
                 field: "Some field value".to_string(),
                 another: 0,
             };
-            table.update_partial_field_another_by_id(q, pk.clone()).await.unwrap();
+            table
+                .update_by_id(pk.clone(), TestSyncColumns::FIELD_AND_ANOTHER, q)
+                .await
+                .unwrap();
             table.wait_for_ops().await.unwrap();
         }
         {
@@ -122,7 +125,10 @@ fn test_space_update_query_pk_many_times_sync() {
                     field: "Some field value".to_string(),
                     another: i,
                 };
-                table.update_partial_field_another_by_id(q, pk.clone()).await.unwrap();
+                table
+                    .update_by_id(pk.clone(), TestSyncColumns::FIELD_AND_ANOTHER, q)
+                    .await
+                    .unwrap();
             }
 
             table.wait_for_ops().await.unwrap();

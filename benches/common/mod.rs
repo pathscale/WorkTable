@@ -53,10 +53,10 @@ worktable!(
         another_idx: another,
     },
     queries: {
-        update_partial_in_place: {
+        update_in_place: {
             ValById(val) by id,
         }
-        update_partial: {
+        update: {
             AnotherById(another) by id,
             SomethingById(something) by id,
             AnotherByVal1(another) by val1,

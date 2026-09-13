@@ -91,7 +91,7 @@ fn update(c: &mut Criterion) {
                 value: fastrand::u64(..),
                 category: fastrand::u64(0..10),
             };
-            black_box(table.update(row).await)
+            black_box(table.replace(row).await)
         })
     });
 }

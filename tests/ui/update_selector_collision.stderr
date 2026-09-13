@@ -1,0 +1,5 @@
+error: update queries `First` and `Second` both generate `update_by_id(..., Columns::AMOUNT, ...)`
+  --> tests/ui/update_selector_collision.rs:12:13
+   |
+12 |             Second(amount) by id,
+   |             ^^^^^^

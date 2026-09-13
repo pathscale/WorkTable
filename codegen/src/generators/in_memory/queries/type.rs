@@ -92,12 +92,12 @@ impl InMemoryGenerator {
 
         if let Some(queries) = &self.queries {
             let query_defs = queries
-                .update_partials
+                .updates
                 .keys()
                 .map(|v| {
                     let ident = Ident::new(format!("{v}Query").as_str(), Span::mixed_site());
                     let (rows, updates): (Vec<_>, Vec<_>) = queries
-                        .update_partials
+                        .updates
                         .get(v)
                         .expect("exists")
                         .columns
@@ -159,7 +159,7 @@ impl InMemoryGenerator {
                 .collect::<Result<Vec<_>, _>>()?;
 
             let by_defs = queries
-                .update_partials
+                .updates
                 .values()
                 .map(|op| {
                     let ident = Ident::new(format!("{}By", op.name).as_str(), Span::mixed_site());

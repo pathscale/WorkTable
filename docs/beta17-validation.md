@@ -45,7 +45,7 @@ checked as follows.
 ## WT DSL findings and fixes
 
 The trailing-comma fix already on the branch passes five focused cases:
-`config`, `delete`, `update_partial_in_place`, reordered blocks, and the existing no-comma
+`config`, `delete`, `update_in_place`, reordered blocks, and the existing no-comma
 form.
 
 Validation found a separate real beta.17 defect: macro expansion could vary

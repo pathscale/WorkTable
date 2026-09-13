@@ -56,7 +56,7 @@ fn test_reinsert_pk_mismatch() {
                 unique_b: 200,
             };
 
-            let result = table.update(new_row).await;
+            let result = table.replace(new_row).await;
             assert!(result.is_err());
 
             let valid_row3 = TwoUniqueIdxRow {
@@ -148,7 +148,7 @@ fn test_reinsert_two_indexes_first_fail() {
                 unique_b: 500,
             };
 
-            let result = table.update(updated_row).await;
+            let result = table.replace(updated_row).await;
             assert!(result.is_err());
 
             let valid_row3 = TwoUniqueIdxRow {
@@ -248,7 +248,7 @@ fn test_reinsert_two_indexes_second_fail() {
                 unique_b: conflict_b,
             };
 
-            let result = table.update(updated_row).await;
+            let result = table.replace(updated_row).await;
             assert!(result.is_err());
 
             let valid_row3 = TwoUniqueIdxRow {
@@ -353,7 +353,7 @@ fn test_reinsert_three_indexes_first_fail() {
                 unique_c: 800,
             };
 
-            let result = table.update(updated_row).await;
+            let result = table.replace(updated_row).await;
             assert!(result.is_err());
 
             let valid_row3 = ThreeUniqueIdxRow {
@@ -454,7 +454,7 @@ fn test_reinsert_three_indexes_middle_fail() {
                 unique_c: 800,
             };
 
-            let result = table.update(updated_row).await;
+            let result = table.replace(updated_row).await;
             assert!(result.is_err());
 
             let valid_row3 = ThreeUniqueIdxRow {
@@ -558,7 +558,7 @@ fn test_reinsert_three_indexes_last_fail() {
                 unique_c: conflict_c,
             };
 
-            let result = table.update(updated_row).await;
+            let result = table.replace(updated_row).await;
             assert!(result.is_err());
 
             let valid_row3 = ThreeUniqueIdxRow {

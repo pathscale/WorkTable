@@ -53,7 +53,7 @@ worktable!(
         unique_value_idx: unique_value unique,
     },
     queries: {
-        update_partial: { UniqueValueByCategory(unique_value) by category },
+        update: { UniqueValueByCategory(unique_value) by category },
     },
 );
 
@@ -80,7 +80,7 @@ worktable!(
         unique_value_idx: unique_value unique,
     },
     queries: {
-        update_partial: { NameAndValueByCategory(name, unique_value) by category },
+        update: { NameAndValueByCategory(name, unique_value) by category },
     },
 );
 

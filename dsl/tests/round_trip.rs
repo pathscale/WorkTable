@@ -115,7 +115,7 @@ fn reading_the_same_declaration_twice_gives_the_same_schema() {
     let source = "
         name: Repeatable,
         columns: { id: u64 primary_key, a: u64, b: u64, c: String },
-        queries: { update_partial: { A(a) by id, B(b) by id, C(c) by id } }
+        queries: { update: { A(a) by id, B(b) by id, C(c) by id } }
     ";
     let first = Schema::parse(source).expect("parses");
     let second = Schema::parse(source).expect("parses");
@@ -152,7 +152,7 @@ fn every_top_level_block_survives_the_emitter() {
         ),
         (
             "queries",
-            "name: A, columns: { id: u64 primary_key, x: u64 }, queries: { update_partial: { X(x) by id } }",
+            "name: A, columns: { id: u64 primary_key, x: u64 }, queries: { update: { X(x) by id } }",
         ),
         (
             "config",

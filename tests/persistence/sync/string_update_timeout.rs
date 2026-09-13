@@ -26,7 +26,7 @@ worktable!(
         fk_app_public_id_idx: fk_app_pub_id,
     },
     queries: {
-        update_partial: {
+        update: {
             DisplayNameByPublicId(display_name) by public_id,
             UsernameByPublicId(username) by public_id,
             StatusByPublicId(status) by public_id,
@@ -83,7 +83,7 @@ fn test_string_update_doesnt_block_persistence() {
             let engine = UserPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UserWorkTable::load(engine).await.unwrap();
 
-            table.update(row.clone()).await.unwrap();
+            table.replace(row.clone()).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await

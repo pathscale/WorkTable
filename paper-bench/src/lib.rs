@@ -22,13 +22,13 @@ worktable!(
         a_idx: a,
     },
     queries: {
-        update_partial: {
+        update: {
             UpdA(a) by id,
             UpdB(b) by id,
             UpdE(e) by id,
             UpdBE(b, e) by id,
         },
-        update_partial_in_place: {
+        update_in_place: {
             IncB(b) by id,
         }
     }

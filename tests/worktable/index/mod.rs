@@ -24,7 +24,7 @@ worktable!(
         idx3: attr3 unique,
     },
     queries: {
-        update_partial: {
+        update: {
             UniqueThreeAttrById(attr1, attr2, attr3) by id,
             UniqueTwoAttrByThird(attr1, attr2) by attr3,
         },
@@ -50,7 +50,7 @@ worktable!(
         idx3: attr3,
     },
     queries: {
-        update_partial: {
+        update: {
             ThreeAttrById(attr1, attr2, attr3) by id,
             TwoAttrByThird(attr1, attr2) by attr3,
         },
@@ -75,7 +75,7 @@ worktable!(
         idx2: attr2,
     },
     queries: {
-        update_partial: {
+        update: {
             AllAttrById(attr1, attr2) by id,
         },
         delete: {
@@ -103,12 +103,13 @@ async fn update_2_idx() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_partial_all_attr_by_id(
+        .update_by_id(
+            pk.clone(),
+            Test2Columns::ATTR1_AND_ATTR2,
             AllAttrByIdQuery {
                 attr1: attr1_new.clone(),
                 attr2: attr2_new,
             },
-            pk.clone(),
         )
         .await
         .unwrap();
@@ -145,7 +146,7 @@ async fn update_2_idx_full_row() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update(Test2Row {
+        .replace(Test2Row {
             id: pk.clone().into(),
             attr1: attr1_new.clone(),
             attr2: attr2_new,
@@ -181,7 +182,7 @@ worktable!(
         idx1: attr1,
     },
     queries: {
-        update_partial: {
+        update: {
             ValByAttr(val) by attr1,
             Attr1ById(attr1) by id,
         },
@@ -209,12 +210,7 @@ async fn update_1_idx() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_partial_attr_1_by_id(
-            Attr1ByIdQuery {
-                attr1: attr1_new.clone(),
-            },
-            pk.clone(),
-        )
+        .update_by_id(pk.clone(), TestColumns::ATTR1, attr1_new.clone())
         .await
         .unwrap();
 
@@ -245,7 +241,7 @@ async fn update_1_idx_full_row() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update(TestRow {
+        .replace(TestRow {
             attr2: row.attr2,
             id: pk.clone().into(),
             attr1: attr1_new.clone(),

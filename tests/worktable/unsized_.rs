@@ -24,7 +24,7 @@ worktable! (
         another_idx: another,
     }
     queries: {
-        update_partial: {
+        update: {
             ExchangeByTest(exchange) by test,
             ExchangeById(exchange) by id,
             ExchangeByAbother(exchange) by another,
@@ -45,7 +45,7 @@ async fn test_update_string_full_row() {
     let first_link = table.0.primary_index.pk_map.get_value(&pk).unwrap();
 
     table
-        .update(TestRow {
+        .replace(TestRow {
             id: row.id,
             test: 1,
             another: 1,
@@ -87,7 +87,7 @@ async fn test_update_string_by_unique() {
     let row = ExchangeByTestQuery {
         exchange: "bigger test to test string update".to_string(),
     };
-    table.update_partial_exchange_by_test(row, 1).await.unwrap();
+    table.update_by_test(1, TestColumns::EXCHANGE, (row).exchange).await.unwrap();
 
     let row = table.select_by_test(1).unwrap();
 
@@ -122,7 +122,7 @@ async fn test_update_string_by_pk() {
     let row = ExchangeByIdQuery {
         exchange: "bigger test to test string update".to_string(),
     };
-    table.update_partial_exchange_by_id(row, pk).await.unwrap();
+    table.update_by_id(pk, TestColumns::EXCHANGE, (row).exchange).await.unwrap();
 
     let row = table.select_by_test(1).unwrap();
 
@@ -165,7 +165,7 @@ async fn test_update_string_by_non_unique() {
     let row = ExchangeByAbotherQuery {
         exchange: "bigger test to test string update".to_string(),
     };
-    table.update_partial_exchange_by_abother(row, 1).await.unwrap();
+    table.update_by_another(1, TestColumns::EXCHANGE, (row).exchange).await.unwrap();
 
     let all = table.select_all().execute().unwrap();
 
@@ -219,12 +219,7 @@ async fn update_many_times() {
         let val = fastrand::u64(..);
         let id_to_update = fastrand::u64(0..=99);
         table
-            .update_partial_exchange_by_id(
-                ExchangeByIdQuery {
-                    exchange: format!("test_{val}"),
-                },
-                id_to_update,
-            )
+            .update_by_id(id_to_update, TestColumns::EXCHANGE, format!("test_{val}"))
             .await
             .unwrap();
         {
@@ -261,12 +256,7 @@ async fn update_parallel() {
             let val = fastrand::u64(..);
             let id_to_update = fastrand::i64(1..=100);
             shared
-                .update_partial_exchange_by_test(
-                    ExchangeByTestQuery {
-                        exchange: format!("test_{val}"),
-                    },
-                    id_to_update,
-                )
+                .update_by_test(id_to_update, TestColumns::EXCHANGE, format!("test_{val}"))
                 .await
                 .unwrap();
             {
@@ -284,12 +274,7 @@ async fn update_parallel() {
         let val = fastrand::u64(..);
         let id_to_update = fastrand::u64(0..=99);
         table
-            .update_partial_exchange_by_id(
-                ExchangeByIdQuery {
-                    exchange: format!("test_{val}"),
-                },
-                id_to_update,
-            )
+            .update_by_id(id_to_update, TestColumns::EXCHANGE, format!("test_{val}"))
             .await
             .unwrap();
         {
@@ -326,7 +311,7 @@ worktable! (
         another_idx: another,
     }
     queries: {
-        update_partial: {
+        update: {
             ExchangeAndSomeByTest(exchange, some_string) by test,
             ExchangeAndSomeById(exchange, some_string) by id,
             ExchangeAgainById(exchange) by id,
@@ -356,7 +341,7 @@ async fn test_update_many_strings_by_unique() {
         exchange: "bigger test to test string update".to_string(),
         some_string: "some bigger some to test".to_string(),
     };
-    table.update_partial_exchange_and_some_by_test(row, 1).await.unwrap();
+    table.update_by_test(1, TestMoreStringsColumns::EXCHANGE_AND_SOME_STRING, row).await.unwrap();
 
     let row = table.select_by_test(1).unwrap();
 
@@ -396,7 +381,7 @@ async fn test_update_many_strings_by_pk() {
         exchange: "bigger test to test string update".to_string(),
         some_string: "some bigger some to test".to_string(),
     };
-    table.update_partial_exchange_and_some_by_id(row, pk).await.unwrap();
+    table.update_by_id(pk, TestMoreStringsColumns::EXCHANGE_AND_SOME_STRING, row).await.unwrap();
 
     let row = table.select_by_test(1).unwrap();
 
@@ -446,7 +431,7 @@ async fn test_update_many_strings_by_non_unique() {
         exchange: "bigger test to test string update".to_string(),
         some_string: "some bigger some to test".to_string(),
     };
-    table.update_partial_exchange_and_some_by_another(row, 1).await.unwrap();
+    table.update_by_another(1, TestMoreStringsColumns::EXCHANGE_AND_SOME_STRING, row).await.unwrap();
 
     let all = table.select_all().execute().unwrap();
 
@@ -516,7 +501,7 @@ async fn test_update_many_strings_by_string() {
         some_string: "some bigger some to test".to_string(),
     };
     table
-        .update_partial_some_other_by_exchange(row, "test".to_string())
+        .update_by_exchange("test".to_string(), TestMoreStringsColumns::SOME_STRING_AND_OTHER_SRTING, row)
         .await
         .unwrap();
 
@@ -582,12 +567,7 @@ async fn update_parallel_more_strings() {
             let val = fastrand::u64(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_partial_exchange_again_by_id(
-                    ExchangeAgainByIdQuery {
-                        exchange: format!("test_{val}"),
-                    },
-                    id_to_update,
-                )
+                .update_by_id(id_to_update, TestMoreStringsColumns::EXCHANGE, format!("test_{val}"))
                 .await
                 .unwrap();
             {
@@ -603,12 +583,7 @@ async fn update_parallel_more_strings() {
         let val = fastrand::u64(..);
         let id_to_update = fastrand::u64(0..=99);
         table
-            .update_partial_some_by_id(
-                SomeByIdQuery {
-                    some_string: format!("some_{val}"),
-                },
-                id_to_update,
-            )
+            .update_by_id(id_to_update, TestMoreStringsColumns::SOME_STRING, format!("some_{val}"))
             .await
             .unwrap();
         {
@@ -655,12 +630,7 @@ async fn update_parallel_more_strings_more_threads() {
             let val = fastrand::u64(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_partial_exchange_again_by_id(
-                    ExchangeAgainByIdQuery {
-                        exchange: format!("test_{val}"),
-                    },
-                    id_to_update,
-                )
+                .update_by_id(id_to_update, TestMoreStringsColumns::EXCHANGE, format!("test_{val}"))
                 .await
                 .unwrap();
             {
@@ -679,7 +649,7 @@ async fn update_parallel_more_strings_more_threads() {
             let val = fastrand::u64(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_partial_another_by_id(AnotherByIdQuery { another: val }, id_to_update)
+                .update_by_id(id_to_update, TestMoreStringsColumns::ANOTHER, val)
                 .await
                 .unwrap();
             {
@@ -692,12 +662,7 @@ async fn update_parallel_more_strings_more_threads() {
         let val = fastrand::u64(..);
         let id_to_update = fastrand::u64(0..=99);
         table
-            .update_partial_some_by_id(
-                SomeByIdQuery {
-                    some_string: format!("some_{val}"),
-                },
-                id_to_update,
-            )
+            .update_by_id(id_to_update, TestMoreStringsColumns::SOME_STRING, format!("some_{val}"))
             .await
             .unwrap();
         {
@@ -750,12 +715,7 @@ async fn update_parallel_more_strings_with_select_non_unique() {
             let val = fastrand::u8(0..100);
             let id_to_update = fastrand::u64(0..1000);
             shared
-                .update_partial_exchange_again_by_id(
-                    ExchangeAgainByIdQuery {
-                        exchange: format!("test_{val}"),
-                    },
-                    id_to_update,
-                )
+                .update_by_id(id_to_update, TestMoreStringsColumns::EXCHANGE, format!("test_{val}"))
                 .await
                 .unwrap();
             {
@@ -774,7 +734,7 @@ async fn update_parallel_more_strings_with_select_non_unique() {
             let val = fastrand::u64(..);
             let id_to_update = fastrand::u64(0..1000);
             shared
-                .update_partial_another_by_id(AnotherByIdQuery { another: val }, id_to_update)
+                .update_by_id(id_to_update, TestMoreStringsColumns::ANOTHER, val)
                 .await
                 .unwrap();
             {
@@ -889,12 +849,7 @@ async fn update_parallel_more_strings_with_select_unique() {
             let val = fastrand::u8(0..100);
             let id_to_update = fastrand::u64(0..1000);
             shared
-                .update_partial_exchange_again_by_id(
-                    ExchangeAgainByIdQuery {
-                        exchange: format!("test_{val}"),
-                    },
-                    id_to_update,
-                )
+                .update_by_id(id_to_update, TestMoreStringsColumns::EXCHANGE, format!("test_{val}"))
                 .await
                 .unwrap();
             {
@@ -913,7 +868,7 @@ async fn update_parallel_more_strings_with_select_unique() {
             let val = fastrand::u64(..);
             let id_to_update = fastrand::u64(0..1000);
             shared
-                .update_partial_another_by_id(AnotherByIdQuery { another: val }, id_to_update)
+                .update_by_id(id_to_update, TestMoreStringsColumns::ANOTHER, val)
                 .await
                 .unwrap();
             {

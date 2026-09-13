@@ -18,7 +18,7 @@ worktable! (
         non_unique_idx: non_unique
     },
     queries: {
-        update_partial: {
+        update: {
             AnotherById(another) by id,
             FieldByAnother(field) by another,
             AnotherByNonUnique(another) by non_unique
@@ -145,7 +145,7 @@ fn test_space_update_full_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update(TestSyncRow {
+                .replace(TestSyncRow {
                     another: 13,
                     non_unique: 0,
                     field: 0.0,
@@ -194,7 +194,7 @@ fn test_space_update_query_pk_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_partial_another_by_id(AnotherByIdQuery { another: 13 }, row.id.clone())
+                .update_by_id(row.id.clone(), TestSyncColumns::ANOTHER, 13)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -237,10 +237,7 @@ fn test_space_update_query_unique_sync() {
                 id: "Some string before".to_string(),
             };
             table.insert(row.clone()).await.unwrap();
-            table
-                .update_partial_field_by_another(FieldByAnotherQuery { field: 1.0 }, 42)
-                .await
-                .unwrap();
+            table.update_by_another(42, TestSyncColumns::FIELD, 1.0).await.unwrap();
             table.wait_for_ops().await.unwrap();
             row.id
         };
@@ -282,7 +279,7 @@ fn test_space_update_query_non_unique_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_partial_another_by_non_unique(AnotherByNonUniqueQuery { another: 13 }, 10)
+                .update_by_non_unique(10, TestSyncColumns::ANOTHER, 13)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();

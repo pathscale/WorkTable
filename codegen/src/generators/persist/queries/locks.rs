@@ -13,8 +13,8 @@ impl PersistGenerator {
             let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
             let lock_type_ident = name_generator.get_lock_type_ident();
 
-            let update_fns = Self::gen_update_query_locks(&q.update_partials);
-            let update_in_place_fns = Self::gen_in_place_update_query_locks(&q.update_partials_in_place);
+            let update_fns = Self::gen_update_query_locks(&q.updates);
+            let update_in_place_fns = Self::gen_in_place_update_query_locks(&q.updates_in_place);
 
             Ok(quote! {
                 impl #lock_type_ident {
@@ -33,7 +33,7 @@ impl PersistGenerator {
             .map(|name| {
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
 
-                let lock_ident = WorktableNameGenerator::get_update_partial_in_place_query_lock_ident(&snake_case_name);
+                let lock_ident = WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
 
                 let columns = &updates.get(name).as_ref().expect("exists").columns;
                 let lock_fn = Self::gen_rows_lock_fn(columns, lock_ident);
@@ -55,7 +55,7 @@ impl PersistGenerator {
             .map(|name| {
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
 
-                let lock_ident = WorktableNameGenerator::get_update_partial_query_lock_ident(&snake_case_name);
+                let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
                 let op = updates.get(name).expect("exists");
                 // The lock set covers the updated columns AND the predicate

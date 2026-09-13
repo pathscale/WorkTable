@@ -425,7 +425,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             let table = TestS3WorkTable::load(engine).await.unwrap();
             let mut row = table.select(257).expect("persisted row");
             row.value = 10_000;
-            table.update(row).await.unwrap();
+            table.replace(row).await.unwrap();
             table.wait_for_ops().await.unwrap();
 
             let uploaded_before = s3.puts.lock().unwrap().iter().map(|(_, length)| length).sum::<usize>();
@@ -435,7 +435,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
                 .sum::<usize>();
             let mut row = table.select(1300).expect("persisted row");
             row.value = 20_000;
-            table.update(row).await.unwrap();
+            table.replace(row).await.unwrap();
             table.wait_for_ops().await.unwrap();
             let uploaded_after = s3.puts.lock().unwrap().iter().map(|(_, length)| length).sum::<usize>();
             let incremental_bytes = uploaded_after - uploaded_before;
