@@ -113,7 +113,7 @@ for table in database.catalog().system_tables() {
 
 ```toml
 [dependencies]
-worktable = { version = "^1.9.0-alpha1", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "^1.9.0-beta1", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
