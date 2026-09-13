@@ -1351,7 +1351,7 @@ mod tests {
             },
         );
         generator.set_queries(Queries {
-            updates: updates,
+            updates,
             deletes: IndexMap::new(),
             updates_in_place: IndexMap::new(),
             ..Default::default()
