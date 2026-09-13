@@ -21,8 +21,9 @@ Change Log
   them. This removes roughly 16 KiB page and directory temporaries from normal
   thread stacks. In AgentCode's eight-table empty-store startup, the generated
   load future shrank from 17,832 bytes to 2,392 bytes and the restart path no
-  longer overflows Tokio's default 2 MiB worker stack. Table read and mutation
-  paths are unchanged.
+  longer overflows Tokio's default 2 MiB worker stack. Existing-page reads and
+  mutations are unchanged; fresh construction and page-growing inserts use the
+  new final-allocation initializer.
 
 ## [1.9.0-alpha1]
 
