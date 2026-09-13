@@ -158,16 +158,67 @@ owns and whether an absent key is valid:
 
 #text(size: 7.5pt)[
 #table(
-  columns: (1.4fr, 1.1fr, 0.9fr, 3fr),
+  columns: (1.7fr, 1.05fr, 0.85fr, 2.7fr),
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 5pt,
   [*operation*], [*input*], [*key absent*], [*meaning*],
   [`insert(row)`], [complete `Row`], [insert], [Create a new row. An existing primary key returns `PrimaryAlreadyExists`; the caller does not authorize replacement.],
   [`upsert(row)`], [complete `Row`], [insert], [Insert or replace. The caller declares the complete row authoritative. A row selected earlier can overwrite newer fields if it is later passed here.],
   [`replace(row)`], [complete `Row`], [`NotFound`], [Replace every field of an existing row. It never creates a missing row, but the supplied row is still a complete authoritative snapshot.],
-  [`update_by_<key>(key, Columns::FIELD_SET, value)`], [declared fields], [`NotFound`], [Change only the selector's declared fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
-  [`update_in_place_by_<pk>(key, Columns::FIELD_SET, closure)`], [declared mutable archived fields], [`NotFound`], [Directly mutate a declared, unindexed field set of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
+  [#stack(spacing: 0.22em, [`update_by_<key>(`], [`key, Columns::`], [`FIELD_SET, value)`])], [declared fields], [`NotFound`], [Change only the selector's declared fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
+  [#stack(spacing: 0.22em, [`update_in_place_`], [`by_<pk>(key,`], [`Columns::FIELD_SET,`], [`closure)`])], [#stack(spacing: 0.22em, [declared mutable], [archived fields])], [`NotFound`], [Directly mutate a declared, unindexed field set of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
 )
+]
+
+#text(size: 7.5pt)[
+#block(
+  fill: rgb("#f7f7f4"),
+  inset: 8pt,
+  radius: 2pt,
+  width: 100%,
+  breakable: false,
+)[
+*Pays shipping-schema cost, Apple M4 Max, `taskpolicy -b`.* Persisted
+`CustomerPayment`: autoincrement `u64` private key, packed 16-character Base62
+`payment_id` public key, four secondary indexes, 32,768 rows, 9 balanced
+fresh-process samples. Monetary columns are strings; rerun after typed money.
+Base `b1b9546` uses historical `update(row)` / generated query structs. Final
+`45c015d` uses `replace` and typed selectors. Strings and custom archived
+wrappers take the conservative complete-row `update` path, not in-place.
+
+#table(
+  columns: (1.6fr, 1.1fr, 1.1fr, 0.9fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*operation*], [*base ns/op*], [*final ns/op*], [*final / in-place*],
+  [`upsert`], [76175], [74430], [9.83x],
+  [`replace`], [71118], [69518], [9.18x],
+  [`update`], [11907], [11561], [1.53x],
+  [`update_in_place`], [7340], [7571], [1.00x],
+)
+
+#let bar(label, ns, max-ns) = {
+  let frac = ns / max-ns
+  grid(
+    columns: (3.4cm, 1fr, 1.8cm),
+    column-gutter: 6pt,
+    text(size: 7pt, raw(label)),
+    box(width: 100%, height: 7pt, fill: rgb("#e6e6e1"),
+      box(width: frac * 100%, height: 7pt, fill: rgb("#3a6ea5"))),
+    align(right, text(size: 7pt, [#ns ns])),
+  )
+}
+#v(0.3em)
+*Final `45c015d` median ns/op*
+#v(0.15em)
+#bar("upsert", 74430, 74430)
+#v(0.1em)
+#bar("replace", 69518, 74430)
+#v(0.1em)
+#bar("update", 11561, 74430)
+#v(0.1em)
+#bar("update_in_place", 7571, 74430)
+]
 ]
 
 Declare targeted updates, deletes and direct archived-field mutations with the table:
