@@ -22,7 +22,7 @@
   #text(size: 11pt, style: "italic")[Absolutely not a database.]
   #v(0.6em)
   #text(size: 9.5pt)[A user's guide to the `worktable!` macro, its queries, its indexes and its
-  persistence tier. Written against 1.9.0-alpha1.]
+  persistence tier. Written against 1.9.0-beta1.]
 ]
 #v(1.2em)
 
@@ -39,10 +39,10 @@ See #link(<persistence>)[Persistence].]
 = Getting started
 
 ```sh
-cargo add worktable@1.9.0-alpha1
+cargo add worktable@1.9.0-beta1
 ```
 
-Until this alpha is published, depend on the reviewed checkout with
+Until this beta is published, depend on the reviewed checkout with
 `worktable = { path = "../WorkTable" }`. A plain `cargo add worktable` selects the
 published release and may not include the APIs described here.
 
@@ -911,7 +911,7 @@ more than halved randomized leaf lookup and was faster for four-client in-memory
 insertion. Select that tradeoff at the Cargo callsite:
 
 ```toml
-worktable = { version = "^1.9.0-alpha1", default-features = false,
+worktable = { version = "^1.9.0-beta1", default-features = false,
   features = ["std", "vanilla-index", "wti-predictable-search"] }
 ```
 
@@ -1160,7 +1160,7 @@ opened as ordinary WorkTable space files.
 `worktable_version!` and `migration_engine!` describe explicit versioned conversions;
 see `docs/migration.md` and the executable `tests/migration` fixtures for each required
 trait and transformation. They do not automatically infer data migration from a changed
-schema. For this 1.9 alpha, a planned rebuild/data wipe is supported by the release plan;
+schema. For this 1.9 beta, a planned rebuild/data wipe is supported by the release plan;
 do not infer cross-version file compatibility from a successful same-version reopen.
 `worktable::worktable_dsl` exposes parsing, checking and canonical schema emission for
 tools; the TypeScript emitter is tested against that Rust source of truth.

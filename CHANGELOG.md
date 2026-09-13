@@ -1,6 +1,29 @@
 Change Log
 ==========
 
+## [1.9.0-beta1]
+
+### Added
+
+- The frozen `LinearTable` and `VecTable` API is now part of WorkTable itself,
+  replacing the retired `worktable-vec` compatibility crate. PathDB's indexed
+  lookup compiles to instruction-for-instruction identical AArch64 code before
+  and after the move.
+
+### Fixed
+
+- Dropping a persisted table with queued writes now joins its private writer
+  before the final handle disappears. An immediate same-path reopen can no
+  longer race detached writes and observe a partial store or torn index header.
+
+- Generated persisted-table startup now constructs its page storage directly
+  in the final `Arc` allocation and pins nested load futures before awaiting
+  them. This removes roughly 16 KiB page and directory temporaries from normal
+  thread stacks. In AgentCode's eight-table empty-store startup, the generated
+  load future shrank from 17,832 bytes to 2,392 bytes and the restart path no
+  longer overflows Tokio's default 2 MiB worker stack. Table read and mutation
+  paths are unchanged.
+
 ## [1.9.0-alpha1]
 
 
