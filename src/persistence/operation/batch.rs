@@ -6,8 +6,8 @@ use core::hash::Hash;
 use core::marker::PhantomData;
 use hashbrown::HashMap;
 
+use data_bucket::Link;
 use data_bucket::page::PageId;
-use data_bucket::{Link, SizeMeasurable};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use worktable_codegen::{MemStat, worktable};

@@ -10,11 +10,13 @@ worktable!(
     columns: {
         id: u64 primary_key,
         counter: u64,
+        revision: u64,
         note: String,
     },
     queries: {
         update_in_place: {
             CounterById(counter) by id,
+            CounterAndRevisionById(counter, revision) by id,
         }
     }
 );
@@ -52,12 +54,20 @@ fn in_place_update_survives_reload() {
                 .insert(InPlaceDurabilityRow {
                     id: 1,
                     counter: 10,
+                    revision: 1,
                     note: "row".to_string(),
                 })
                 .await
                 .unwrap();
             table
-                .update_in_place_by_id(1, InPlaceDurabilityColumns::COUNTER, |counter| *counter = 42u64.into())
+                .update_in_place_by_id(
+                    1,
+                    InPlaceDurabilityColumns::COUNTER_AND_REVISION,
+                    |(counter, revision)| {
+                        *counter = 42u64.into();
+                        *revision = 2u64.into();
+                    },
+                )
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -70,6 +80,7 @@ fn in_place_update_survives_reload() {
                 42,
                 "the in-place update was not persisted"
             );
+            assert_eq!(table.select(1).unwrap().revision, 2);
         }
 
         remove_dir_if_exists(dir.to_string()).await;

@@ -1649,6 +1649,7 @@ worktable!(
         owner: u64,
         state: u8,
         amount: u64,
+        revision: u64,
     },
     indexes: {
         owner_idx: owner using fxhash,
@@ -1666,6 +1667,7 @@ worktable!(
         },
         update_in_place: {
             Status(state) by id,
+            StateAndRevisionById(state, revision) by id,
         },
     },
 );
@@ -1690,6 +1692,7 @@ fn declared_queries_run_on_a_vec_table() {
                 owner: id % 2,
                 state: 0,
                 amount: 100 + id,
+                revision: 0,
             })
             .expect("fresh");
     }
@@ -1727,6 +1730,18 @@ fn declared_queries_run_on_a_vec_table() {
     // in_place edits one column through a closure.
     assert_eq!(table.update_in_place_by_id(0, TicketColumns::STATE, |s| *s = 42), 1);
     assert_eq!(table.select(&0).expect("present").state, 42);
+    assert_eq!(
+        table.update_in_place_by_id(2, TicketColumns::STATE_AND_REVISION, |(state, revision)| {
+            *state = 8;
+            *revision = 1;
+        }),
+        1
+    );
+    assert_eq!(
+        (table.select(&2).unwrap().state, table.select(&2).unwrap().revision),
+        (8, 1)
+    );
+    assert_eq!(table.select_by_amount(&102).unwrap().id, 2);
 
     // Deletes, by the key and by a non-unique secondary.
     assert_eq!(table.delete_by_id(&0), 1);
@@ -1813,6 +1828,7 @@ fn vec_declared_query_cannot_steal_another_rows_unique_key() {
                 owner: id,
                 state: 0,
                 amount: 100 + id,
+                revision: 0,
             })
             .unwrap();
     }

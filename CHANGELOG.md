@@ -10,7 +10,9 @@ Change Log
   `update_by_id(id, InvoiceColumns::AMOUNT, value)` and
   `update_in_place_by_id(id, InvoiceColumns::STATE, edit)`. Multi-column
   declarations expose one selector for their exact atomic field set and take
-  the generated query struct. Full-row replacement is now `replace(row)`.
+  the generated query struct. Multi-column `update_in_place` declarations pass
+  a tuple of mutable archived fields to one closure, preserving the declared
+  atomic field set. Full-row replacement is now `replace(row)`.
 
 ### Added
 
@@ -20,6 +22,11 @@ Change Log
   and after the move.
 
 ### Fixed
+
+- Generated fixed-size primary-key wrappers now report their actual archived
+  alignment. A `u128` primary key previously under-budgeted each persisted WTI
+  entry, producing an 18,518-byte index archive for a 16,356-byte default inner
+  page; the corrected 16-byte alignment selects a capacity whose archive fits.
 
 - Dropping a persisted table with queued writes now joins its private writer
   before the final handle disappears. An immediate same-path reopen can no

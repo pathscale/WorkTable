@@ -121,6 +121,33 @@ impl InMemoryGenerator {
             }
         };
 
+        // `data_bucket_derive::SizeMeasure` currently reports only 8-byte
+        // field alignment. A generated newtype around `u128` therefore says
+        // its archived alignment is unknown even though rkyv aligns it to 16.
+        // Index page capacity then budgets 28 bytes per entry while the
+        // archive writes 32, overflowing a default page. Measure the generated
+        // wrapper directly so its storage model follows rkyv's actual layout.
+        let field_indexes = (0..types.len()).map(syn::Index::from).collect::<Vec<_>>();
+        let size_measure_impl = quote! {
+            impl worktable::prelude::SizeMeasurable for #ident {
+                fn aligned_size(&self) -> usize {
+                    let len = #(
+                        worktable::prelude::SizeMeasurable::aligned_size(&self.#field_indexes)
+                    +)* 0;
+                    let alignment = core::mem::align_of::<
+                        <Self as worktable::prelude::rkyv::Archive>::Archived
+                    >().max(8);
+                    let remainder = len % alignment;
+                    if remainder == 0 { len } else { len + alignment - remainder }
+                }
+
+                fn align() -> Option<usize> {
+                    Some(core::mem::align_of::<
+                        <Self as worktable::prelude::rkyv::Archive>::Archived
+                    >())
+                }
+            }
+        };
         Ok(quote! {
             #[derive(
                 Clone,
@@ -135,7 +162,6 @@ impl InMemoryGenerator {
                 PartialEq,
                 PartialOrd,
                 Ord,
-                SizeMeasure,
                 MemStat,
                 #unsized_derive
             )]
@@ -145,6 +171,7 @@ impl InMemoryGenerator {
 
             #from_impl
             #into_impl
+            #size_measure_impl
 
             #borrowed_impl
             #backend_impl

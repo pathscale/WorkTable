@@ -231,8 +231,10 @@ names no columns.
 `update_in_place_by_id(id, OrdersColumns::SOME_VALUE, |value| ...)`, which
 mutates without selecting first. Its locking is internal, so it is safe from
 several threads without the caller holding anything — which is also why it is a
-*different concurrency point* from `update`. **Only `by {pk_field}` is
-supported.**
+*different concurrency point* from `update`. A multi-column declaration uses
+one field-set selector such as `OrdersColumns::STATUS_AND_LAST_USED_AT` and a
+tuple closure `|(status, last_used_at)| ...`; the declared set changes under one
+row lock. **Only `by {pk_field}` is supported.**
 
 ## Selects, which are not declared
 
