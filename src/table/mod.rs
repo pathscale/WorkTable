@@ -109,7 +109,7 @@ where
 {
     fn default() -> Self {
         Self {
-            data: Arc::new(DataPages::new()),
+            data: DataPages::new_arc(),
             primary_index: Arc::new(PrimaryIndex::<PrimaryKey, DATA_LENGTH, PkMap>::default()),
             indexes: Arc::new(SecondaryIndexes::default()),
             pk_gen: Default::default(),

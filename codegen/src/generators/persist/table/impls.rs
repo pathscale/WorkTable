@@ -323,7 +323,7 @@ impl PersistGenerator {
                 }
 
                 async fn load(engine: E) -> worktable::prelude::eyre::Result<Self> {
-                    Self::load_with(engine, LoadMode::Strict).await
+                    worktable::prelude::Box::pin(Self::load_with(engine, LoadMode::Strict)).await
                 }
 
                 async fn load_with(mut engine: E, mode: LoadMode) -> worktable::prelude::eyre::Result<Self> {
@@ -337,10 +337,10 @@ impl PersistGenerator {
                         .await?;
                     let table_path = engine.config().table_path().to_owned();
                     if !std::path::Path::new(&table_path).exists() {
-                        return Self::new(engine).await;
+                        return worktable::prelude::Box::pin(Self::new(engine)).await;
                     };
                     let table = load_persisted_state(&table_path, async {
-                        let space = #space_ident::parse_file(&table_path).await?;
+                        let space = worktable::prelude::Box::pin(#space_ident::parse_file(&table_path)).await?;
                         Ok::<_, worktable::prelude::eyre::Report>(space.into_worktable_with_mode(engine, &table_path, mode).await?)
                     }).await?;
                     Ok(table)
