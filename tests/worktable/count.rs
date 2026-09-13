@@ -19,7 +19,7 @@ worktable!(
         idx2: attr2 unique,
     },
     queries: {
-        update: {
+        update_partial: {
             ThreeAttrById(attr1, attr2) by id,
         },
         delete: {

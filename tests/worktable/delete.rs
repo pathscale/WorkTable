@@ -13,7 +13,7 @@ worktable!(
         val2_idx: val2,
     },
     queries: {
-        update: {
+        update_partial: {
             Val1ByToken(val1) by token,
         },
         delete: {

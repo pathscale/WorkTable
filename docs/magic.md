@@ -119,7 +119,7 @@ A **fixed, ordered prefix**, then a free-order section list.
 | 5, required with 4 | `partition_max_size:` | rows per partition, as an index width |
 | any order | `columns:` | the row and its primary key |
 | any order | `indexes:` | secondary indexes |
-| any order | `queries:` | generated `update` / `delete` / `in_place` |
+| any order | `queries:` | generated `update_partial` / `delete` / `update_partial_in_place` |
 | any order | `config:` | `page_size`, `row_derives` |
 
 The prefix is genuinely ordered: `parse_name` reads the first token and errors if
@@ -143,7 +143,7 @@ worktable!(
         another_idx: another,
     },
     queries: {
-        update: {
+        update_partial: {
             AnotherByExchange(another) by exchange,
             AnotherByTest(another) by test,
             AnotherById(another) by id,
@@ -206,28 +206,28 @@ Three kinds. CamelCase in the declaration, snake_case in the generated method.
 
 ```rust
 queries: {
-    update: {
+    update_partial: {
         AmountById(amount) by id,
     },
     delete: {
         ByName() by name,
     },
-    in_place: {
+    update_partial_in_place: {
         SomeValueById(some_value) by id,
     }
 }
 ```
 
-**`update`** generates `update_amount_by_id(AmountByIdQuery { amount }, id)`. The
+**`update_partial`** generates `update_partial_amount_by_id(AmountByIdQuery { amount }, id)`. The
 query struct is the name plus `Query`.
 
 **`delete`** generates `delete_by_name(name)`. Empty parentheses because a delete
 names no columns.
 
-**`in_place`** generates `update_some_value_by_id_in_place(id, |value| ...)`, which
+**`update_partial_in_place`** generates `update_partial_in_place_some_value_by_id(|value| ..., id)`, which
 mutates without selecting first. Its locking is internal, so it is safe from
 several threads without the caller holding anything — which is also why it is a
-*different concurrency point* from `update`. **Only `by {pk_field}` is
+*different concurrency point* from `update_partial`. **Only `by {pk_field}` is
 supported.**
 
 ## Selects, which are not declared
@@ -366,7 +366,7 @@ concurrency points and they want opposite things:
 | query fan-out | does not exist yet | independent chunks | 1.99x-2.84x on orderbook upsert/delete |
 
 The `queries:` sections already group by concurrency point: everything in
-`update:` goes through the same lock path, and `in_place:` is a different path by
+`update_partial:` goes through the same lock path, and `update_partial_in_place:` is a different path by
 design. So the annotation belongs on the section.
 
 ## Three positions, one keyword
@@ -374,7 +374,7 @@ design. So the annotation belongs on the section.
 | position | scope | cost |
 |---|---|---|
 | `runtime: nagoya(spread)` at the top level | the table's sync types and default pool | changes the generated type |
-| `update runtime fast_local:` on a section | that concurrency point | compile time, free |
+| `update_partial runtime fast_local:` on a section | that concurrency point | compile time, free |
 | `.runtime(wide)` on a builder | one call | runtime, opt-in |
 
 ## Named profiles
@@ -403,11 +403,11 @@ worktable!(
         symbol_idx: symbol using congee,
     },
     queries: {
-        update runtime fast_local: {                    // `runtime` = scheduler
+        update_partial runtime fast_local: {                    // `runtime` = scheduler
             Fill(qty) by id,
             Cancel(qty) by symbol,
         },
-        in_place runtime fast_local: {
+        update_partial_in_place runtime fast_local: {
             Bump(qty) by id,
         },
         delete runtime wide: {
@@ -524,7 +524,7 @@ runtime does this query use" and it is visible at the place you are reading.
 **The cost of that choice**, recorded so it is not a surprise: adding a section
 annotation becomes a breaking change for callers already using `.runtime()`. The
 window is narrow today — `.runtime()` exists only on select builders, and selects
-are not declared in `queries:`, so `update` / `delete` / `in_place` annotations
+are not declared in `queries:`, so `update_partial` / `delete` / `update_partial_in_place` annotations
 can never collide with it. It only bites if a `select` section annotation is added
 later.
 

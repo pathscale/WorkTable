@@ -81,7 +81,7 @@ fn single_row_in_place_contention(c: &mut Criterion) {
                     for _ in 0..level {
                         let table_clone = table.clone();
                         join_set.spawn(async move {
-                            black_box(table_clone.update_val_by_id_in_place(|val| *val += 1, pk).await)
+                            black_box(table_clone.update_partial_in_place_val_by_id(|val| *val += 1, pk).await)
                         });
                     }
                     while join_set.join_next().await.is_some() {}

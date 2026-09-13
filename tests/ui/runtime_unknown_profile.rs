@@ -22,7 +22,7 @@ worktable! {
         qty: u64,
     },
     queries: {
-        update runtime nope: {
+        update_partial runtime nope: {
             Fill(qty) by id,
         }
     },

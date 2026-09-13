@@ -17,7 +17,7 @@ worktable!(
         code_idx: code unique,
     },
     queries: {
-        update: {
+        update_partial: {
             AmountByCode(amount) by code,
         }
     }
@@ -37,7 +37,7 @@ async fn unique_keyed_fixed_size_update_on_unsized_row_works() {
         .unwrap();
 
     table
-        .update_amount_by_code(AmountByCodeQuery { amount: 55 }, 10)
+        .update_partial_amount_by_code(AmountByCodeQuery { amount: 55 }, 10)
         .await
         .unwrap();
 

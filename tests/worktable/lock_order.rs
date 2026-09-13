@@ -17,7 +17,7 @@ worktable!(
         group_b_idx: group_b,
     },
     queries: {
-        update: {
+        update_partial: {
             ValueByGroupA(value) by group_a,
             ValueByGroupB(value) by group_b,
         }
@@ -96,11 +96,11 @@ async fn multi_row_update_locks_in_primary_key_order_not_index_order() {
     let update = tokio::spawn(async move {
         if use_group_a {
             update_table
-                .update_value_by_group_a(ValueByGroupAQuery { value: 1 }, 1)
+                .update_partial_value_by_group_a(ValueByGroupAQuery { value: 1 }, 1)
                 .await
         } else {
             update_table
-                .update_value_by_group_b(ValueByGroupBQuery { value: 1 }, 1)
+                .update_partial_value_by_group_b(ValueByGroupBQuery { value: 1 }, 1)
                 .await
         }
     });

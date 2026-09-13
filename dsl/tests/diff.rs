@@ -329,7 +329,7 @@ fn queries_and_config_never_reach_the_data() {
         name: User, version: 2, persist: true,
         columns: { id: u64 primary_key autoincrement, email: String, age: u8 },
         indexes: { email_idx: email unique },
-        queries: { update: { Age(age) by id } },
+        queries: { update_partial: { Age(age) by id } },
         config: { row_derives: Clone }
         ",
     );

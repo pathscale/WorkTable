@@ -653,7 +653,7 @@ mod tests {
                 balance: f64,
             },
             queries: {
-                update: {
+                update_partial: {
                     Balance(balance) by id,
                 }
             }
@@ -662,7 +662,7 @@ mod tests {
         .to_string();
 
         let update = output
-            .split("pub async fn update_balance")
+            .split("pub async fn update_partial_balance")
             .nth(1)
             .expect("generated balance update");
         assert!(
@@ -690,7 +690,7 @@ mod tests {
                     secret: EncryptedSecret,
                 },
                 queries: {
-                    update: {
+                    update_partial: {
                         Secret(secret) by id,
                     }
                 }
@@ -699,7 +699,7 @@ mod tests {
             .to_string();
 
             let update = output
-                .split("pub async fn update_secret")
+                .split("pub async fn update_partial_secret")
                 .nth(1)
                 .expect("generated opaque-field update");
             assert!(
@@ -736,7 +736,7 @@ mod tests {
                     display_name: String optional,
                 },
                 queries: {
-                    update: {
+                    update_partial: {
                         DisplayName(display_name) by id,
                     }
                 }
@@ -745,7 +745,7 @@ mod tests {
             .to_string();
 
             let update = output
-                .split("pub async fn update_display_name")
+                .split("pub async fn update_partial_display_name")
                 .nth(1)
                 .expect("generated optional-string update");
             assert!(update.contains("data . update_in_place"));
@@ -768,7 +768,7 @@ mod tests {
                     secret_idx: secret unique using worktables_index,
                 },
                 queries: {
-                    update: {
+                    update_partial: {
                         Secret(secret) by id,
                     }
                 }
@@ -777,7 +777,7 @@ mod tests {
             .to_string();
 
             let update = output
-                .split("pub async fn update_secret")
+                .split("pub async fn update_partial_secret")
                 .nth(1)
                 .expect("generated indexed opaque-field update");
             assert!(update.contains("self . reinsert"));
@@ -1343,7 +1343,7 @@ mod position_tests {
             partition_max_size: u8,
             columns: { exchange_id: u8 primary_key, bid: f64, ask: f64 },
             queries: {
-                update: { TopPrice(bid, ask) by exchange_id, },
+                update_partial: { TopPrice(bid, ask) by exchange_id, },
                 delete: { Stale() by exchange_id, }
             }
         })
@@ -1353,7 +1353,10 @@ mod position_tests {
             expanded.contains("impl PriceDenseTable"),
             "the dense payload must be emitted: {expanded}"
         );
-        assert!(expanded.contains("fn update_top_price"), "missing the update query");
+        assert!(
+            expanded.contains("fn update_partial_top_price"),
+            "missing the update query"
+        );
         assert!(expanded.contains("fn delete_stale"), "missing the delete query");
     }
 
@@ -1368,7 +1371,7 @@ mod position_tests {
             columns: { exchange_id: u8 primary_key, venue: u32, bid: f64 },
             indexes: { venue_idx: venue },
             queries: {
-                update: { ByVenue(bid) by venue, }
+                update_partial: { ByVenue(bid) by venue, }
             }
         })
         .expect_err("a dense partition has no secondary index")
@@ -1392,7 +1395,7 @@ mod position_tests {
             partition_max_size: u8,
             columns: { exchange_id: u8 primary_key, bid: f64 },
             queries: {
-                update: { ReKey(exchange_id, bid) by exchange_id, }
+                update_partial: { ReKey(exchange_id, bid) by exchange_id, }
             }
         })
         .expect_err("changing a dense primary key would separate identity from position")
@@ -1404,23 +1407,26 @@ mod position_tests {
         );
     }
 
-    /// `in_place` is a synonym here, so it says so rather than generating a
+    /// `update_partial_in_place` is redundant here, so it says so rather than generating a
     /// second name for one method.
     #[test]
-    fn in_place_on_a_dense_partition_is_refused_as_a_synonym() {
+    fn update_partial_in_place_on_a_dense_partition_is_refused() {
         let error = expand(quote! {
             name: Price,
             partition_by: symbol_id: u16,
             partition_max_size: u8,
             columns: { exchange_id: u8 primary_key, bid: f64 },
             queries: {
-                in_place: { Bump(bid) by exchange_id, }
+                update_partial_in_place: { Bump(bid) by exchange_id, }
             }
         })
-        .expect_err("in_place has no meaning on a dense partition")
+        .expect_err("update_partial_in_place has no meaning on a dense partition")
         .to_string();
         assert!(error.contains("already in place"), "must say why: {error}");
-        assert!(error.contains("update Bump"), "must name the replacement: {error}");
+        assert!(
+            error.contains("update_partial Bump"),
+            "must name the replacement: {error}"
+        );
     }
 
     /// A dense partition cannot persist, and says so rather than pretending.
@@ -1552,14 +1558,14 @@ mod emitted_declarations {
                 tenant_idx: tenant,
             },
             queries: {
-                update: {
+                update_partial: {
                     Nickname(nickname) by id,
                     Email(email) by tenant,
                 }
                 delete: {
                     ById() by id,
                 }
-                in_place: {
+                update_partial_in_place: {
                     Balance(balance) by id,
                 }
             }
@@ -1641,7 +1647,7 @@ mod generator_determinism {
                 tenant_idx: tenant,
             },
             queries: {
-                update: {
+                update_partial: {
                     SetBalance(balance) by id,
                     MoveTenant(tenant) by email,
                 },
@@ -1708,7 +1714,7 @@ mod schema_const {
                 nickname: String optional,
             },
             indexes: { email_idx: email unique },
-            queries: { update: { Nickname(nickname) by id } }
+            queries: { update_partial: { Nickname(nickname) by id } }
         };
 
         let baked = baked_schema(expand(declaration.clone()).expect("expands"), "ACCOUNT_SCHEMA");
@@ -2010,7 +2016,7 @@ mod runtime_tests {
             runtime: tokio,
             columns: { id: u64 primary_key, value: u64 },
             queries: {
-                update: { Value(value) by id, },
+                update_partial: { Value(value) by id, },
                 delete: { ById() by id, },
             }
         });

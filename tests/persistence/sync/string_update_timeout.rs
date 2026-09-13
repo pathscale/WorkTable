@@ -26,7 +26,7 @@ worktable!(
         fk_app_public_id_idx: fk_app_pub_id,
     },
     queries: {
-        update: {
+        update_partial: {
             DisplayNameByPublicId(display_name) by public_id,
             UsernameByPublicId(username) by public_id,
             StatusByPublicId(status) by public_id,

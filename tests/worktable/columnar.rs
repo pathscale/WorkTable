@@ -40,10 +40,10 @@ worktable!(
         },
     },
     queries: {
-        update: {
+        update_partial: {
             TemperatureById(temperature) by id,
         },
-        in_place: {
+        update_partial_in_place: {
             TimestampById(timestamp) by id,
         }
     },
@@ -158,13 +158,13 @@ async fn columnar_fields_and_clustered_index_follow_mutations() {
     assert_eq!(table.columnar_project_temperature(&updated).unwrap()[0].1, 75);
 
     table
-        .update_temperature_by_id(TemperatureByIdQuery { temperature: 76 }, 1)
+        .update_partial_temperature_by_id(TemperatureByIdQuery { temperature: 76 }, 1)
         .await
         .unwrap();
     assert_eq!(table.columnar_project_temperature(&updated).unwrap()[0].1, 76);
 
     table
-        .update_timestamp_by_id_in_place(|value| *value = 40.into(), 1)
+        .update_partial_in_place_timestamp_by_id(|value| *value = 40.into(), 1)
         .await
         .unwrap();
     assert!(table.columnar_is_dirty());

@@ -28,7 +28,7 @@ macro_rules! persisted_multi_row_backend_case {
                     group_idx: group_id,
                 },
                 queries: {
-                    update: {
+                    update_partial: {
                         PayloadByGroup(payload) by group_id,
                     }
                 }
@@ -56,7 +56,7 @@ macro_rules! persisted_multi_row_backend_case {
 
                 let replacement = "new-payload".repeat(64);
                 table
-                    .update_payload_by_group(
+                    .update_partial_payload_by_group(
                         PayloadByGroupQuery {
                             payload: replacement.clone(),
                         },

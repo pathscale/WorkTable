@@ -7,7 +7,7 @@ Work lands on branch `fix/pr46-review-findings`.
 ## F1 — Mutation gate held across `.await` (was rated P1) — NOT REPRODUCED
 
 `LockMap::mutation_guard` (`src/lock/map.rs`) is a blocking spin/yield ticket
-lock. The generated `update`/`in_place`/`delete` paths keep the `MutationGuard`
+lock. The generated `update_partial`/`update_partial_in_place`/`delete` paths keep the `MutationGuard`
 inside `LockGuard` and hold it across `.await` (`update_with_guard(...).await`,
 `reinsert(...).await`). The concern: two keys colliding on the same 1-of-64
 stripe, guard-holder parked at its await while the other task spins.

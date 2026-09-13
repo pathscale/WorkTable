@@ -27,7 +27,7 @@ async fn update_by_pk_unique_indexes() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_unique_three_attr_by_id(
+        .update_partial_unique_three_attr_by_id(
             UniqueThreeAttrByIdQuery {
                 attr1: attr1_new.clone(),
                 attr2: attr2_new,
@@ -77,7 +77,7 @@ async fn update_by_pk_non_unique_indexes() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_three_attr_by_id(
+        .update_partial_three_attr_by_id(
             ThreeAttrByIdQuery {
                 attr1: attr1_new.clone(),
                 attr2: attr2_new,
@@ -132,7 +132,7 @@ async fn update_by_pk_with_reinsert_and_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_unique_three_attr_by_id(update, row1.id)
+            .update_partial_unique_three_attr_by_id(update, row1.id)
             .await
             .is_err()
     );
@@ -173,7 +173,7 @@ async fn update_by_pk_with_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_unique_three_attr_by_id(update, row1.id)
+            .update_partial_unique_three_attr_by_id(update, row1.id)
             .await
             .is_err()
     );

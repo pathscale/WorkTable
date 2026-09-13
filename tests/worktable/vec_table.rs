@@ -1655,7 +1655,7 @@ worktable!(
         amount_idx: amount unique using arctic,
     },
     queries: {
-        update: {
+        update_partial: {
             StateById(state) by id,
             StateByOwner(state) by owner,
             AmountById(amount) by id,
@@ -1664,7 +1664,7 @@ worktable!(
             ById() by id,
             ByOwner() by owner,
         },
-        in_place: {
+        update_partial_in_place: {
             Status(state) by id,
         },
     },
@@ -1695,13 +1695,13 @@ fn declared_queries_run_on_a_vec_table() {
     }
 
     // Keyed by the hash primary key: one row.
-    assert_eq!(table.update_state_by_id(StateByIdQuery { state: 7 }, &3), 1);
+    assert_eq!(table.update_partial_state_by_id(StateByIdQuery { state: 7 }, &3), 1);
     assert_eq!(table.select(&3).expect("present").state, 7);
     assert_eq!(table.select(&2).expect("present").state, 0, "only one row moved");
 
     // Keyed by a non-unique hash secondary: every row it names.
     assert_eq!(
-        table.update_state_by_owner(StateByOwnerQuery { state: 5 }, &1),
+        table.update_partial_state_by_owner(StateByOwnerQuery { state: 5 }, &1),
         3,
         "owner 1 holds ids 1, 3 and 5"
     );
@@ -1712,7 +1712,10 @@ fn declared_queries_run_on_a_vec_table() {
     }
     assert_eq!(table.select(&0).expect("present").amount, 100, "owner 0 untouched");
 
-    assert_eq!(table.update_amount_by_id(AmountByIdQuery { amount: 999 }, &1), 1);
+    assert_eq!(
+        table.update_partial_amount_by_id(AmountByIdQuery { amount: 999 }, &1),
+        1
+    );
     // The unique arctic secondary was repaired without stealing another row's key.
     assert!(
         table.select_by_amount(&101).is_none(),
@@ -1725,7 +1728,7 @@ fn declared_queries_run_on_a_vec_table() {
     );
 
     // in_place edits one column through a closure.
-    assert_eq!(table.update_status_in_place(|s| *s = 42, &0), 1);
+    assert_eq!(table.update_partial_in_place_status(|s| *s = 42, &0), 1);
     assert_eq!(table.select(&0).expect("present").state, 42);
 
     // Deletes, by the key and by a non-unique secondary.
@@ -1819,7 +1822,7 @@ fn vec_declared_query_cannot_steal_another_rows_unique_key() {
     let before = table.unload().unwrap();
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            table.update_amount_by_id(AmountByIdQuery { amount: 101 }, &0);
+            table.update_partial_amount_by_id(AmountByIdQuery { amount: 101 }, &0);
         }))
         .is_err()
     );

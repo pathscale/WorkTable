@@ -43,7 +43,7 @@ fn expected_flavor() -> String {
 const TOKIO_HAS_NO_FLAVORS: &str =
     "`tokio` has no flavors; write `runtime: tokio`, or select a flavored runtime with `runtime: nagoya(spread)`";
 
-const EXPECTED_PROFILE: &str = "expected a profile name after `runtime`, as in `update runtime fast_local:`; \
+const EXPECTED_PROFILE: &str = "expected a profile name after `runtime`, as in `update_partial runtime fast_local:`; \
      profiles are declared with `runtimes!`";
 
 impl Parser {
@@ -152,7 +152,7 @@ impl Parser {
     }
 
     /// The optional `runtime <profile>` between a query section's keyword and
-    /// its colon, as in `update runtime fast_local: { .. }`.
+    /// its colon, as in `update_partial runtime fast_local: { .. }`.
     ///
     /// The token after `runtime` is a profile name, never a backend literal.
     /// A section names a profile because a profile carries tuning as well as a
@@ -393,7 +393,7 @@ mod tests {
             "
             name: Last,
             columns: { id: u64 primary_key, qty: u64 },
-            queries: { update: { Fill(qty) by id } },
+            queries: { update_partial: { Fill(qty) by id } },
             runtime: tokio,
             ",
         );
@@ -439,15 +439,15 @@ mod tests {
             name: Annotated,
             columns: { id: u64 primary_key, qty: u64, symbol: u64 },
             queries: {
-                update runtime fast_local: { Fill(qty) by id },
+                update_partial runtime fast_local: { Fill(qty) by id },
                 delete runtime wide: { BySymbol() by symbol },
-                in_place: { Bump(qty) by id },
+                update_partial_in_place: { Bump(qty) by id },
             },
             ",
         );
-        assert_eq!(schema.queries.update_runtime.as_deref(), Some("fast_local"));
+        assert_eq!(schema.queries.update_partial_runtime.as_deref(), Some("fast_local"));
         assert_eq!(schema.queries.delete_runtime.as_deref(), Some("wide"));
-        assert_eq!(schema.queries.in_place_runtime, None);
+        assert_eq!(schema.queries.update_partial_in_place_runtime, None);
     }
 
     #[test]
@@ -456,13 +456,13 @@ mod tests {
             name: RoundTrip,
             columns: { id: u64 primary_key, qty: u64 },
             runtime: nagoya(spread),
-            queries: { update runtime wide: { Fill(qty) by id } },
+            queries: { update_partial runtime wide: { Fill(qty) by id } },
             ";
         let once = schema(source);
         let twice = schema(&once.to_dsl());
         assert_eq!(once, twice);
         assert_eq!(twice.runtime, RuntimeBackend::Nagoya(Flavor::Spread));
-        assert_eq!(twice.queries.update_runtime.as_deref(), Some("wide"));
+        assert_eq!(twice.queries.update_partial_runtime.as_deref(), Some("wide"));
     }
 
     #[test]

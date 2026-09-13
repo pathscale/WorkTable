@@ -15,7 +15,7 @@ const SEEDS: &[&str] = &[
     "worktable!(name: T, columns: { id: u64 primary_key });",
     "worktable!(name: T, persist: true, columns: { id: u64 primary_key autoincrement, v: String }, indexes: { v_idx: v unique });",
     "worktable!(name: T, columns: { id: u32 primary_key using arctic, v: i64 }, indexes: { v_idx: v });",
-    "worktable!(name: T, columns: { id: u64 primary_key }, queries: { update: { ById(v) by id } });",
+    "worktable!(name: T, columns: { id: u64 primary_key }, queries: { update_partial: { ById(v) by id } });",
     "worktable!(name: T, persist: false, columns: { id: u8 primary_key using congee }, config: { page_size: 4096 });",
 ];
 
@@ -159,7 +159,7 @@ fn check_reports_semantic_errors_rather_than_panicking() {
         ),
         (
             "a query over a column that does not exist",
-            "worktable!(name: T, columns: { id: u64 primary_key }, queries: { update: { ById(nope) by id } });",
+            "worktable!(name: T, columns: { id: u64 primary_key }, queries: { update_partial: { ById(nope) by id } });",
         ),
         (
             "a page size that is not a number",

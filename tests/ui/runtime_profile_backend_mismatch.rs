@@ -23,7 +23,7 @@ worktable! {
         qty: u64,
     },
     queries: {
-        update runtime tokio_max: {
+        update_partial runtime tokio_max: {
             Fill(qty) by id,
         }
     },

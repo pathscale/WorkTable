@@ -17,7 +17,7 @@ worktable! (
         test: SomeEnum
     },
     queries: {
-        update: {
+        update_partial: {
             Test(test) by id,
         }
     }

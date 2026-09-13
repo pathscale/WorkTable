@@ -83,11 +83,11 @@ impl WorktableNameGenerator {
         self.name.from_case(Case::Pascal).to_case(Case::Snake)
     }
 
-    pub fn get_update_query_lock_ident(snake_case_name: &String) -> Ident {
+    pub fn get_update_partial_query_lock_ident(snake_case_name: &String) -> Ident {
         Ident::new(format!("lock_update_{snake_case_name}").as_str(), Span::mixed_site())
     }
 
-    pub fn get_update_in_place_query_lock_ident(snake_case_name: &String) -> Ident {
+    pub fn get_update_partial_in_place_query_lock_ident(snake_case_name: &String) -> Ident {
         Ident::new(
             format!("lock_update_in_place_{snake_case_name}").as_str(),
             Span::mixed_site(),

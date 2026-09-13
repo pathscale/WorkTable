@@ -72,7 +72,7 @@ let books = OrderBookPartitions::new();
 
 // hot path: array index, no hashing, no allocation
 let book = books.partition(symbol_id).ok_or(...)?;
-book.update_top_price(feed.into(), exchange_id).await?;
+book.update_partial_top_price(feed.into(), exchange_id).await?;
 
 // across partitions: for sweeps and maintenance, not the hot path
 let stale = books.select_all().filter(|r| r.ts < cutoff).execute()?;

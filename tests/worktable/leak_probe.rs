@@ -16,7 +16,7 @@ worktable!(
         payload: String,
     },
     queries: {
-        update: {
+        update_partial: {
             Payload(payload) by id,
         }
     }
@@ -42,7 +42,7 @@ async fn update_churn_reclaims_under_concurrent_readers() {
         .unwrap();
     for i in 0..100u64 {
         table
-            .update_payload(
+            .update_partial_payload(
                 PayloadQuery {
                     payload: format!("{:04}", i % 10000),
                 },
@@ -72,7 +72,7 @@ async fn update_churn_reclaims_under_concurrent_readers() {
 
     for i in 0..5_000u64 {
         table
-            .update_payload(
+            .update_partial_payload(
                 PayloadQuery {
                     payload: format!("{:04}", i % 10000),
                 },
@@ -114,7 +114,7 @@ async fn update_churn_does_not_grow_storage_unbounded() {
     let pages_after_warmup = {
         for i in 0..100u64 {
             table
-                .update_payload(
+                .update_partial_payload(
                     PayloadQuery {
                         payload: format!("{:04}", i % 10000),
                     },
@@ -128,7 +128,7 @@ async fn update_churn_does_not_grow_storage_unbounded() {
 
     for i in 0..5_000u64 {
         table
-            .update_payload(
+            .update_partial_payload(
                 PayloadQuery {
                     payload: format!("{:04}", i % 10000),
                 },

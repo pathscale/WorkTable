@@ -52,7 +52,7 @@ worktable!(
         rest_ask_sizes: OrderBookRestDepth,
     },
     queries: {
-        update: {
+        update_partial: {
             TopPrice(best_bid_price, best_bid_size, best_ask_price, best_ask_size) by exchange_id,
             RestPrices(bids_size, rest_bid_prices, rest_bid_sizes,
                        asks_size, rest_ask_prices, rest_ask_sizes) by exchange_id,
@@ -138,7 +138,7 @@ worktable!(
         rest_ask_sizes: OrderBookRestDepth,
     },
     queries: {
-        update: {
+        update_partial: {
             TopPrice(best_bid_price, best_bid_size, best_ask_price, best_ask_size) by exchange_id,
             RestPrices(bids_size, rest_bid_prices, rest_bid_sizes,
                        asks_size, rest_ask_prices, rest_ask_sizes) by exchange_id,
@@ -225,16 +225,16 @@ concept. See section 7.
 ```rust
 // today: hashes the symbol string on every tick
 let book = manager.get_order_book(&feed.symbol).ok_or_else(|| eyre!("unknown symbol"))?;
-book.table.update_top_price(feed.into(), row_id).await?;
+book.table.update_partial_top_price(feed.into(), row_id).await?;
 
 // with partition_by: array index
 let book = books.partition(feed.symbol_id).ok_or_else(|| eyre!("unknown symbol"))?;
-book.update_top_price(feed.into(), row_id).await?;
+book.update_partial_top_price(feed.into(), row_id).await?;
 ```
 
 One indirection fewer, because there is no wrapper struct holding the key
 alongside the table, and 9.5 ns fewer, because the lookup stopped being a hash
-of a heap string. Everything else is identical: `update_top_price` is the
+of a heap string. Everything else is identical: `update_partial_top_price` is the
 generated query it always was, and it runs against a 23-row table.
 
 The feed handler resolves `symbol_id` once when the subscription is opened,

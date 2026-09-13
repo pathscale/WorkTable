@@ -255,7 +255,7 @@ worktable!(
         exchnage_idx: exchange,
     }
     queries: {
-        update: {
+        update_partial: {
             AnotherByExchange(another) by exchange,
             AnotherByTest(another) by test,
             AnotherById(another) by id,
@@ -436,7 +436,7 @@ There are some default query implementations that are available for all `WorkTab
 
 ```
 queries: {
-    update: {
+    update_partial: {
         AnotherByExchange(another) by exchange,
         AnotherByTest(another) by test,
         AnotherById(another) by id,
@@ -454,10 +454,10 @@ Default query declaration is `<QueryName>(<column_name>*) by <column_name>`. It 
 For each query `<QueryName>Query` and `<QueryName>By` structs are generated. They will be used by user to call the
 query.
 
-#### `update` query declaration
+#### `update_partial` query declaration
 
-`update` queries are used to update row's data partially. Default generated `update` allows only full update of the row.
-But if user's logic needs some simultaneous update of row parts from different code parts. `update` logic supports
+`update_partial` queries update only the declared fields. The generated `update(row)` method replaces the full row.
+When application logic updates disjoint parts of a row concurrently, `update_partial` supports
 smart lock logic that allows simultaneous update of not overlapping row fields.
 
 #### `select_all` query declaration

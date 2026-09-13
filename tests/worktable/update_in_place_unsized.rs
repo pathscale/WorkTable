@@ -47,7 +47,7 @@ macro_rules! unsized_in_place_suite {
                     balance: f64,
                 },
                 queries: {
-                    update: {
+                    update_partial: {
                         Payload(payload) by id,
                         Balance(balance) by id,
                     }
@@ -81,7 +81,7 @@ macro_rules! unsized_in_place_suite {
                 let before = link_of(&table, 1);
 
                 table
-                    .update_payload(
+                    .update_partial_payload(
                         PayloadQuery {
                             payload: "12345678".to_string(), // 8 bytes — same length
                         },
@@ -113,7 +113,7 @@ macro_rules! unsized_in_place_suite {
                     .await.unwrap();
 
                 table
-                    .update_payload(
+                    .update_partial_payload(
                         PayloadQuery {
                             payload: "xy".to_string(),
                         },
@@ -124,7 +124,7 @@ macro_rules! unsized_in_place_suite {
                 assert_eq!(table.select(1).unwrap().payload, "xy");
 
                 table
-                    .update_payload(
+                    .update_partial_payload(
                         PayloadQuery {
                             payload: "much longer payload".to_string(),
                         },
@@ -159,7 +159,7 @@ macro_rules! unsized_in_place_suite {
                     tokio::spawn(async move {
                         for i in 0..20_000u64 {
                             table
-                                .update_payload(
+                                .update_partial_payload(
                                     PayloadQuery {
                                         payload: format!("{:04}", i % 10000),
                                     },
@@ -220,7 +220,7 @@ macro_rules! unsized_in_place_suite {
                 let before = link_of(&table, 1);
 
                 table
-                    .update_balance(BalanceQuery { balance: 42.5 }, 1)
+                    .update_partial_balance(BalanceQuery { balance: 42.5 }, 1)
                     .await
                     .unwrap();
 
@@ -269,7 +269,7 @@ mod opaque_wrapper {
             secret: WrappedString,
         },
         queries: {
-            update: {
+            update_partial: {
                 Secret(secret) by id,
                 Nickname(nickname) by id,
             }
@@ -290,7 +290,7 @@ mod opaque_wrapper {
             .unwrap();
 
         table
-            .update_secret(
+            .update_partial_secret(
                 SecretQuery {
                     secret: WrappedString("replacement out-of-line secret!!".to_string()),
                 },
@@ -319,7 +319,7 @@ mod opaque_wrapper {
             .unwrap();
 
         table
-            .update_nickname(
+            .update_partial_nickname(
                 NicknameQuery {
                     nickname: Some("replacement out-of-line name".to_string()),
                 },

@@ -92,12 +92,12 @@ impl PersistGenerator {
 
         if let Some(queries) = &self.queries {
             let query_defs = queries
-                .updates
+                .update_partials
                 .keys()
                 .map(|v| {
                     let ident = Ident::new(format!("{v}Query").as_str(), Span::mixed_site());
                     let (rows, updates): (Vec<_>, Vec<_>) = queries
-                        .updates
+                        .update_partials
                         .get(v)
                         .expect("exists")
                         .columns
@@ -159,7 +159,7 @@ impl PersistGenerator {
                 .collect::<Result<Vec<_>, _>>()?;
 
             let by_defs = queries
-                .updates
+                .update_partials
                 .values()
                 .map(|op| {
                     let ident = Ident::new(format!("{}By", op.name).as_str(), Span::mixed_site());

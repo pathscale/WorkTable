@@ -833,7 +833,7 @@ fn the_declared_width_is_a_bound_at_run_time_too() {
 
 #[test]
 fn a_column_is_updated_without_cloning_the_row() {
-    // The method web3.trading's `update_top_price` wants: touch one field of a
+    // The method web3.trading's `update_partial_top_price` wants: touch one field of a
     // wide row rather than reading it out, editing it and writing it back.
     let ticks = TickPartitions::new();
     let book = ticks.partition_or_create(2).expect("a fresh partition");
@@ -984,7 +984,7 @@ fn an_empty_dense_partition_allocates_nothing() {
 // A dense partition carries `queries:`, keyed by position.
 //
 // This is what decides whether the shape is adoptable: web3.trading's
-// `update_top_price` and `update_full` go through declared update queries, and
+// `update_partial_top_price` and `update_full` go through declared update queries, and
 // a payload that could not carry them would be a payload they cannot use.
 worktable!(
     name: Quoted,
@@ -997,7 +997,7 @@ worktable!(
         seq: u64
     },
     queries: {
-        update: {
+        update_partial: {
             TopPrice(bid, ask) by exchange_id,
         },
         delete: {
@@ -1021,7 +1021,7 @@ fn a_dense_partition_carries_its_update_queries() {
     // The same method name and the same query struct the paged table generates,
     // so the call reads the same. What differs is that there is no `.await`.
     assert_eq!(
-        book.update_top_price(TopPriceQuery { bid: 9.0, ask: 10.0 }, &2),
+        book.update_partial_top_price(TopPriceQuery { bid: 9.0, ask: 10.0 }, &2),
         Some(())
     );
 
@@ -1030,7 +1030,7 @@ fn a_dense_partition_carries_its_update_queries() {
     assert_eq!(row.seq, 7, "a column the query does not name is untouched");
 
     assert_eq!(
-        book.update_top_price(TopPriceQuery { bid: 0.0, ask: 0.0 }, &3),
+        book.update_partial_top_price(TopPriceQuery { bid: 0.0, ask: 0.0 }, &3),
         None,
         "a key holding no row updates nothing"
     );

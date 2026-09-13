@@ -27,7 +27,7 @@ worktable!(
         untouched: u64,
     },
     queries: {
-        update: {
+        update_partial: {
             SecretById(secret) by id,
         }
     }
@@ -75,7 +75,7 @@ fn targeted_update_of_string_wrapper_survives_read_and_reload() {
             let link_before = link_of(&table, 7);
 
             table
-                .update_secret_by_id(
+                .update_partial_secret_by_id(
                     SecretByIdQuery {
                         secret: WrappedSecret("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
                     },
@@ -106,7 +106,7 @@ fn targeted_update_of_string_wrapper_survives_read_and_reload() {
             assert_eq!(row.untouched, 42);
 
             table
-                .update_secret_by_id(
+                .update_partial_secret_by_id(
                     SecretByIdQuery {
                         secret: WrappedSecret(
                             "a replacement with a deliberately different serialized length".to_string(),

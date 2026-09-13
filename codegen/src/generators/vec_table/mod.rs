@@ -1418,7 +1418,7 @@ fn gen_queries(
         }
     };
 
-    for (name, op) in &queries.updates {
+    for (name, op) in &queries.update_partials {
         let (by_type, unique) = resolve_by(&op.by)?;
         let query_ty = format_ident!("{}Query", name);
         let fields = &op.columns;
@@ -1440,12 +1440,12 @@ fn gen_queries(
         });
 
         // The declared name already carries the key — `AmountById` becomes
-        // `update_amount_by_id` — which is the paged table's convention and the
+        // `update_partial_amount_by_id` — which is the paged table's convention and the
         // whole point of generating these.
-        let method = format_ident!("update_{}", snake_of(name));
+        let method = format_ident!("update_partial_{}", snake_of(name));
         let pick = selected(&op.by, unique);
         let doc = format!(
-            "`update {name}` keyed by `{}`.\n\n\
+            "`update_partial {name}` keyed by `{}`.\n\n\
              Sets {} and repairs every index the change moved a row under.\n\n\
              The paged table's method of this name is `async` and returns \
              `Result<(), WorkTableError>`. This one is neither, so a call cannot \
@@ -1496,13 +1496,13 @@ fn gen_queries(
         });
     }
 
-    for (name, op) in &queries.in_place {
+    for (name, op) in &queries.update_partials_in_place {
         let (by_type, unique) = resolve_by(&op.by)?;
         if op.columns.len() != 1 {
             return Err(syn::Error::new(
                 name.span(),
-                "an `in_place` query edits exactly one column through a closure. \
-                 For several columns at once use an `update` query, which takes a \
+                "an `update_partial_in_place` query edits exactly one column through a closure. \
+                 For several columns at once use an `update_partial` query, which takes a \
                  struct of them.",
             ));
         }
@@ -1511,10 +1511,10 @@ fn gen_queries(
             .columns_map
             .get(column)
             .ok_or_else(|| syn::Error::new(column.span(), format!("no column `{column}`")))?;
-        let method = format_ident!("update_{}_in_place", snake_of(name));
+        let method = format_ident!("update_partial_in_place_{}", snake_of(name));
         let pick = selected(&op.by, unique);
         let doc = format!(
-            "`in_place {name}` keyed by `{}`.\n\n\
+            "`update_partial_in_place {name}` keyed by `{}`.\n\n\
              Hands a cloned candidate's `{column}` to the closure, then validates \
              unique keys before replacing the row. Returns how many rows it reached.",
             op.by

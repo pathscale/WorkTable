@@ -10,7 +10,7 @@ worktable! (
         test: Arr
     },
     queries: {
-        update: {
+        update_partial: {
             TestById(test) by id,
         }
     }
@@ -60,7 +60,7 @@ async fn update_query() {
     let row = TestRow { id: 1, test: [1; 20] };
     let pk = table.insert(row.clone()).await.unwrap();
     let q = TestByIdQuery { test: [2; 20] };
-    table.update_test_by_id(q.clone(), pk.clone()).await.unwrap();
+    table.update_partial_test_by_id(q.clone(), pk.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row.test, q.test);
@@ -76,7 +76,7 @@ worktable! (
         test: ArrI
     },
     queries: {
-        update: {
+        update_partial: {
             TestIById(test) by id,
         }
     }
@@ -126,7 +126,7 @@ async fn update_query_i() {
     let row = TestIRow { id: 1, test: [1; 20] };
     let pk = table.insert(row.clone()).await.unwrap();
     let q = TestIByIdQuery { test: [2; 20] };
-    table.update_test_i_by_id(q.clone(), pk.clone()).await.unwrap();
+    table.update_partial_test_i_by_id(q.clone(), pk.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row.test, q.test);

@@ -26,7 +26,7 @@ worktable! {
         weight_idx: weight using arctic,
     },
     queries: {
-        update: {
+        update_partial: {
             SourceById(source_hash) by id,
             WeightBySource(weight) by source_hash,
         },
@@ -93,7 +93,7 @@ async fn update_moves_a_row_between_non_unique_keys() {
     table.insert(row(&table, SOURCE_A, 2, 20)).await.unwrap();
 
     table
-        .update_source_by_id(SourceByIdQuery { source_hash: SOURCE_B }, pk.clone())
+        .update_partial_source_by_id(SourceByIdQuery { source_hash: SOURCE_B }, pk.clone())
         .await
         .unwrap();
 
@@ -106,7 +106,7 @@ async fn update_moves_a_row_between_non_unique_keys() {
 
     // Updating by the non-unique key touches every row under it.
     table
-        .update_weight_by_source(WeightBySourceQuery { weight: 777 }, SOURCE_A)
+        .update_partial_weight_by_source(WeightBySourceQuery { weight: 777 }, SOURCE_A)
         .await
         .unwrap();
     let rows = table.select_by_weight(777).execute().unwrap();

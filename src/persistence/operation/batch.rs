@@ -55,7 +55,7 @@ worktable! (
         pos_idx: pos unique,
     },
     queries: {
-        update: {
+        update_partial: {
             PosById(pos) by id,
         }
     }
@@ -261,7 +261,7 @@ where
                 .select_by_pos(old_pos)
                 .ok_or_else(|| eyre::eyre!("batch metadata position {old_pos} is missing during reindex"))?;
             self.info_wt
-                .update_pos_by_id(PosByIdQuery { pos: old_pos - 1 }, row.id)
+                .update_partial_pos_by_id(PosByIdQuery { pos: old_pos - 1 }, row.id)
                 .await?;
         }
         Ok(())
@@ -867,10 +867,10 @@ mod tests {
         // into fixed UUID positions used to produce A, update-B, B and discard
         // the update as superseded by B's older row image.
         let insert_b = event_insert(1, link, vec![2; 4], vec![1]);
-        let update_b = eventless_update(2, link, vec![3; 4]);
+        let update_partial_b = eventless_update(2, link, vec![3; 4]);
         let insert_a = event_insert(3, link, vec![1; 4], vec![0]);
 
-        let batch = latest_data_writes(&[insert_b, update_b, insert_a]);
+        let batch = latest_data_writes(&[insert_b, update_partial_b, insert_a]);
 
         assert_eq!(batch.get(&PageId::from(1u32)).unwrap(), &vec![(link, vec![3; 4])]);
     }

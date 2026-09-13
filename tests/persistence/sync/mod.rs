@@ -31,7 +31,7 @@ worktable! (
         non_unique_idx: non_unique
     },
     queries: {
-        update: {
+        update_partial: {
             AnotherById(another) by id,
             FieldByAnother(field) by another,
             AnotherByNonUnique(another) by non_unique
@@ -236,7 +236,7 @@ fn test_space_update_query_pk_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_another_by_id(AnotherByIdQuery { another: 13 }, row.id)
+                .update_partial_another_by_id(AnotherByIdQuery { another: 13 }, row.id)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -281,7 +281,7 @@ fn test_space_update_query_unique_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_field_by_another(FieldByAnotherQuery { field: 1.0 }, 42)
+                .update_partial_field_by_another(FieldByAnotherQuery { field: 1.0 }, 42)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -326,7 +326,7 @@ fn test_space_update_query_non_unique_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_another_by_non_unique(AnotherByNonUniqueQuery { another: 13 }, 10)
+                .update_partial_another_by_non_unique(AnotherByNonUniqueQuery { another: 13 }, 10)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
