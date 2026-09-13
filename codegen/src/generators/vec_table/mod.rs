@@ -1504,24 +1504,34 @@ fn gen_queries(
 
     for (name, op) in &queries.updates_in_place {
         let (by_type, unique) = resolve_by(&op.by)?;
-        if op.columns.len() != 1 {
-            return Err(syn::Error::new(
-                name.span(),
-                "an `update_in_place` query edits exactly one column through a closure. \
-                 For several columns at once use an `update` query, which takes a \
-                 struct of them.",
-            ));
-        }
-        let column = &op.columns[0];
-        let column_type = columns
-            .columns_map
-            .get(column)
-            .ok_or_else(|| syn::Error::new(column.span(), format!("no column `{column}`")))?;
+        let fields = &op.columns;
+        let field_types = fields
+            .iter()
+            .map(|field| {
+                columns
+                    .columns_map
+                    .get(field)
+                    .ok_or_else(|| syn::Error::new(field.span(), format!("no column `{field}`")))
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        let closure_arg = if field_types.len() == 1 {
+            let ty = field_types[0];
+            quote! { &mut #ty }
+        } else {
+            quote! { ( #(&mut #field_types),* ) }
+        };
+        let closure_fields = if fields.len() == 1 {
+            let field = &fields[0];
+            quote! { &mut row.#field }
+        } else {
+            quote! { ( #(&mut row.#fields),* ) }
+        };
+        let field_set = fields.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
         let method = format_ident!("__wt_update_in_place_{}", snake_of(name));
         let pick = selected(&op.by, unique);
         let doc = format!(
             "`update_in_place {name}` keyed by `{}`.\n\n\
-             Hands a cloned candidate's `{column}` to the closure, then validates \
+             Hands a cloned candidate's declared field set ({field_set}) to the closure, then validates \
              unique keys before replacing the row. Returns how many rows it reached.",
             op.by
         );
@@ -1529,13 +1539,13 @@ fn gen_queries(
             #[doc = #doc]
             fn #method(
                 &mut self,
-                mut edit: impl FnMut(&mut #column_type),
+                mut edit: impl FnMut(#closure_arg),
                 key: &#by_type,
             ) -> usize {
                 #pick
                 let mut touched = 0usize;
                 for found in keys {
-                    if self.update(&found, |row| edit(&mut row.#column)) {
+                    if self.update(&found, |row| edit(#closure_fields)) {
                         touched += 1;
                     }
                 }

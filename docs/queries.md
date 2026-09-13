@@ -52,7 +52,7 @@ set. Selector dispatch is sealed, statically typed, and allocation-free.
 
 ### `update_in_place` queries
 
-`update_in_place` queries allow you to update a field's value
+`update_in_place` queries allow you to update a declared field set
 without need to select it before query. It is useful for counters, as example, because with
 internal mutation queries locking logic user's don't need to add explicit locks over `WorkTable`
 object. So you can safely use `update_in_place` queries in multiple threads simultaneously.
@@ -66,12 +66,18 @@ For example:
 ```
 update_in_place: {
     SomeValueById(some_value) by id,
+    AmountAndSomeValueById(amount, some_value) by id,
 }
 ```
 
 It enables `update_in_place_by_id` for the generated
 `SomethingColumns::SOME_VALUE` selector. The method takes the lookup value, the
 selector, and a closure over the mutable archived field value.
+For a multi-column declaration the selector preserves the exact atomic field
+set and the closure receives a tuple, for example
+`update_in_place_by_id(id, SomethingColumns::AMOUNT_AND_SOME_VALUE,
+|(amount, some_value)| ...)`. Both fields are edited under one row lock and
+persisted as one mutation.
 
 ```rust
 #[tokio::main]

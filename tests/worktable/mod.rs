@@ -10,6 +10,7 @@ mod count;
 mod custom_pk;
 mod delete;
 mod delete_many;
+mod duplicate_pk_index_update;
 mod float;
 mod in_place;
 mod index;

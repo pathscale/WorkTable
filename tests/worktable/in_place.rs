@@ -24,6 +24,7 @@ worktable!(
         update_in_place: {
             ValById(val) by id,
             Val2ById(val2) by id,
+            ValAndVal2ById(val, val2) by id,
         }
         update: {
             AnotherById(another) by id,
@@ -31,6 +32,32 @@ worktable!(
         }
     }
 );
+
+#[tokio::test]
+async fn test_update_two_fields_atomically_by_id() -> eyre::Result<()> {
+    let table = TestWorkTable::default();
+    let pk = table
+        .insert(TestRow {
+            id: table.get_next_pk().0,
+            val: 3,
+            val1: 0,
+            val2: 5,
+            another: "another".to_string(),
+            something: 0,
+        })
+        .await?;
+
+    table
+        .update_in_place_by_id(pk.0, TestColumns::VAL_AND_VAL2, |(val, val2)| {
+            *val += 7;
+            *val2 += 11;
+        })
+        .await?;
+
+    let row = table.select(pk).unwrap();
+    assert_eq!((row.val, row.val2), (10, 16));
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_update_val_by_id() -> eyre::Result<()> {

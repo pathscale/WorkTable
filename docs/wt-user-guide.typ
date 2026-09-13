@@ -166,7 +166,7 @@ owns and whether an absent key is valid:
   [`upsert(row)`], [complete `Row`], [insert], [Insert or replace. The caller declares the complete row authoritative. A row selected earlier can overwrite newer fields if it is later passed here.],
   [`replace(row)`], [complete `Row`], [`NotFound`], [Replace every field of an existing row. It never creates a missing row, but the supplied row is still a complete authoritative snapshot.],
   [`update_by_<key>(key, Columns::FIELD_SET, value)`], [declared fields], [`NotFound`], [Change only the selector's declared fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
-  [`update_in_place_by_<pk>(key, Columns::FIELD, closure)`], [one mutable archived field], [`NotFound`], [Directly mutate a declared, unindexed field of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
+  [`update_in_place_by_<pk>(key, Columns::FIELD_SET, closure)`], [declared mutable archived fields], [`NotFound`], [Directly mutate a declared, unindexed field set of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
 )
 ]
 
@@ -189,6 +189,7 @@ worktable! (
         },
         update_in_place: {
             StateById(state) by id,     // only `by <primary key>` is supported
+            AmountAndStateById(amount, state) by id,
         },
     },
 );
@@ -201,6 +202,14 @@ column. A one-column update takes that column's Rust value directly:
 table.update_by_id(1, InvoiceColumns::AMOUNT, 900).await?;
 table.delete_by_id(1).await?;
 table.update_in_place_by_id(1, InvoiceColumns::STATE, |state| *state = 2.into()).await?;
+table.update_in_place_by_id(
+    1,
+    InvoiceColumns::AMOUNT_AND_STATE,
+    |(amount, state)| {
+        *amount = 925.into();
+        *state = 3.into();
+    },
+).await?;
 ```
 
 `InvoiceColumns::AMOUNT` is a generated zero-sized selector. Its sealed dispatch
@@ -221,9 +230,11 @@ other fields. The macro cannot inspect an external type such as `EncryptedSecret
 prove whether its archived form contains relative pointers, so unknown custom types take
 that conservative path.
 
-`update_in_place` mutates without selecting first and locks internally. Use it when the
-application can safely edit the archived representation directly, as with a scalar or a
-fixed `#[repr(u8)]` enum. Do not copy an archived string, vector or pointer-bearing wrapper
+`update_in_place` mutates one declared field set without selecting first and locks internally.
+A multi-column declaration passes a tuple of mutable archived fields to one closure, so the
+set changes under the same row lock and persistence operation. Use it when the application
+can safely edit the archived representation directly, as with scalars or fixed `#[repr(u8)]`
+enums. Do not copy an archived string, vector or pointer-bearing wrapper
 from another buffer into an `update_in_place` closure. Persisted in-place queries enqueue the
 changed slot bytes; they do not skip durability.
 
@@ -472,7 +483,9 @@ such as `StateById(state) by id` emits
 `ByOwner() by owner` emits `delete_by_owner(&owner) -> usize`. The return value counts
 affected rows. `update_in_place: { Status(state) by id }` emits
 `update_in_place_by_id(id, TicketColumns::STATE, |state| *state = 42) -> usize`
-and accepts one column.
+for one column. A declaration such as `StateAndRevisionById(state, revision) by id`
+uses `TicketColumns::STATE_AND_REVISION` and passes `|(state, revision)| ...` to
+one closure.
 These methods belong to the table, not mutable wrappers on the shared partition set.
 
 Vec edits validate a cloned candidate before replacing a row. A primary or unique

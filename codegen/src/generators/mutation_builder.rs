@@ -213,17 +213,28 @@ fn vec_updates_in_place(
         let trait_ident = format_ident!("{name}VecUpdateInPlaceBy{by_pascal}");
         let selector_pascal = selector_name(operation).from_case(Case::Snake).to_case(Case::Pascal);
         let selector = format_ident!("{name}{selector_pascal}Selector");
-        let column = &operation.columns[0];
-        let column_type = columns
-            .columns_map
-            .get(column)
-            .ok_or_else(|| syn::Error::new(column.span(), format!("no column `{column}`")))?;
+        let fields = &operation.columns;
+        let field_types = fields
+            .iter()
+            .map(|field| {
+                columns
+                    .columns_map
+                    .get(field)
+                    .ok_or_else(|| syn::Error::new(field.span(), format!("no column `{field}`")))
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        let closure_arg = if field_types.len() == 1 {
+            let ty = field_types[0];
+            quote! { &mut #ty }
+        } else {
+            quote! { ( #(&mut #field_types),* ) }
+        };
         let hidden = format_ident!(
             "__wt_update_in_place_{}",
             query_name.to_string().from_case(Case::Pascal).to_case(Case::Snake)
         );
         implementations.push(quote! {
-            impl<F> #trait_ident<F> for #selector where F: FnMut(&mut #column_type) {
+            impl<F> #trait_ident<F> for #selector where F: FnMut(#closure_arg) {
                 type Key = #by_type;
                 fn apply(self, table: &mut #table, key: &Self::Key, edit: F) -> usize {
                     table.#hidden(edit, key)
@@ -277,7 +288,8 @@ fn paged_updates(
             .columns_map
             .get(by)
             .ok_or_else(|| syn::Error::new(by.span(), format!("no column `{by}`")))?;
-        let key_type = if columns.primary_keys.contains(by) {
+        let key_type = if columns.primary_keys.contains(by) && !columns.indexes.values().any(|index| index.field == *by)
+        {
             let primary_key = format_ident!("{name}PrimaryKey");
             quote! { #primary_key }
         } else {
@@ -325,7 +337,8 @@ fn paged_updates(
             .columns_map
             .get(&by)
             .ok_or_else(|| syn::Error::new(by.span(), format!("no column `{by}`")))?;
-        let key_type = if columns.primary_keys.contains(&by) {
+        let key_type = if columns.primary_keys.contains(&by) && !columns.indexes.values().any(|index| index.field == by)
+        {
             let primary_key = format_ident!("{name}PrimaryKey");
             quote! { #primary_key }
         } else {
@@ -344,31 +357,32 @@ fn paged_updates(
         } else {
             quote! { &self }
         };
-        let method_impl = if columns.primary_keys.contains(&by) {
-            quote! {
-                impl #table {
-                    pub async fn #method<S, V, K>(#receiver, key: K, selector: S, value: V)
-                        -> core::result::Result<(), WorkTableError>
-                    where
-                        S: #trait_ident<V, Key = #key_type>,
-                        #key_type: From<K>,
-                    {
-                        selector.apply(self, key.into(), value).await
+        let method_impl =
+            if columns.primary_keys.contains(&by) && !columns.indexes.values().any(|index| index.field == by) {
+                quote! {
+                    impl #table {
+                        pub async fn #method<S, V, K>(#receiver, key: K, selector: S, value: V)
+                            -> core::result::Result<(), WorkTableError>
+                        where
+                            S: #trait_ident<V, Key = #key_type>,
+                            #key_type: From<K>,
+                        {
+                            selector.apply(self, key.into(), value).await
+                        }
                     }
                 }
-            }
-        } else {
-            quote! {
-                impl #table {
-                    pub async fn #method<S, V>(#receiver, key: #by_type, selector: S, value: V)
-                        -> core::result::Result<(), WorkTableError>
-                    where S: #trait_ident<V, Key = #key_type>
-                    {
-                        selector.apply(self, key, value).await
+            } else {
+                quote! {
+                    impl #table {
+                        pub async fn #method<S, V>(#receiver, key: #by_type, selector: S, value: V)
+                            -> core::result::Result<(), WorkTableError>
+                        where S: #trait_ident<V, Key = #key_type>
+                        {
+                            selector.apply(self, key, value).await
+                        }
                     }
                 }
-            }
-        };
+            };
         traits_and_methods.push(quote! {
             #[doc(hidden)]
             #[allow(private_bounds)]
@@ -397,19 +411,14 @@ fn paged_updates_in_place(
     let mut implementations = Vec::new();
 
     for (query_name, operation) in operations {
-        if operation.columns.len() != 1 {
-            return Err(syn::Error::new(
-                query_name.span(),
-                "an update_in_place query must declare exactly one column",
-            ));
-        }
         by_fields.insert(operation.by.clone());
         let by = &operation.by;
         let by_type = columns
             .columns_map
             .get(by)
             .ok_or_else(|| syn::Error::new(by.span(), format!("no column `{by}`")))?;
-        let key_type = if columns.primary_keys.contains(by) {
+        let key_type = if columns.primary_keys.contains(by) && !columns.indexes.values().any(|index| index.field == *by)
+        {
             let primary_key = format_ident!("{name}PrimaryKey");
             quote! { #primary_key }
         } else {
@@ -419,11 +428,25 @@ fn paged_updates_in_place(
         let trait_ident = format_ident!("{name}UpdateInPlaceBy{by_pascal}");
         let selector_pascal = selector_name(operation).from_case(Case::Snake).to_case(Case::Pascal);
         let selector = format_ident!("{name}{selector_pascal}Selector");
-        let column = &operation.columns[0];
-        let column_type = columns
-            .columns_map
-            .get(column)
-            .ok_or_else(|| syn::Error::new(column.span(), format!("no column `{column}`")))?;
+        let field_types = operation
+            .columns
+            .iter()
+            .map(|field| {
+                columns
+                    .columns_map
+                    .get(field)
+                    .ok_or_else(|| syn::Error::new(field.span(), format!("no column `{field}`")))
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        let closure_arg = if field_types.len() == 1 {
+            let ty = field_types[0];
+            quote! { &mut <#ty as worktable::prelude::rkyv::Archive>::Archived }
+        } else {
+            let archived = field_types.iter().map(|ty| {
+                quote! { &mut <#ty as worktable::prelude::rkyv::Archive>::Archived }
+            });
+            quote! { ( #(#archived),* ) }
+        };
         let hidden = format_ident!(
             "__wt_update_in_place_{}",
             query_name.to_string().from_case(Case::Pascal).to_case(Case::Snake)
@@ -440,7 +463,7 @@ fn paged_updates_in_place(
         };
         implementations.push(quote! {
             impl<F> #trait_ident<F> for #selector
-            where F: FnMut(&mut <#column_type as worktable::prelude::rkyv::Archive>::Archived) #send
+            where F: FnMut(#closure_arg) #send
             {
                 type Key = #key_type;
                 async fn apply(self, table: #table_ref, key: Self::Key, edit: F)
@@ -458,7 +481,8 @@ fn paged_updates_in_place(
             .columns_map
             .get(&by)
             .ok_or_else(|| syn::Error::new(by.span(), format!("no column `{by}`")))?;
-        let key_type = if columns.primary_keys.contains(&by) {
+        let key_type = if columns.primary_keys.contains(&by) && !columns.indexes.values().any(|index| index.field == by)
+        {
             let primary_key = format_ident!("{name}PrimaryKey");
             quote! { #primary_key }
         } else {
@@ -477,31 +501,32 @@ fn paged_updates_in_place(
         } else {
             quote! { &self }
         };
-        let method_impl = if columns.primary_keys.contains(&by) {
-            quote! {
-                impl #table {
-                    pub async fn #method<S, F, K>(#receiver, key: K, selector: S, edit: F)
-                        -> worktable::prelude::eyre::Result<()>
-                    where
-                        S: #trait_ident<F, Key = #key_type>,
-                        #key_type: From<K>,
-                    {
-                        selector.apply(self, key.into(), edit).await
+        let method_impl =
+            if columns.primary_keys.contains(&by) && !columns.indexes.values().any(|index| index.field == by) {
+                quote! {
+                    impl #table {
+                        pub async fn #method<S, F, K>(#receiver, key: K, selector: S, edit: F)
+                            -> worktable::prelude::eyre::Result<()>
+                        where
+                            S: #trait_ident<F, Key = #key_type>,
+                            #key_type: From<K>,
+                        {
+                            selector.apply(self, key.into(), edit).await
+                        }
                     }
                 }
-            }
-        } else {
-            quote! {
-                impl #table {
-                    pub async fn #method<S, F>(#receiver, key: #by_type, selector: S, edit: F)
-                        -> worktable::prelude::eyre::Result<()>
-                    where S: #trait_ident<F, Key = #key_type>
-                    {
-                        selector.apply(self, key, edit).await
+            } else {
+                quote! {
+                    impl #table {
+                        pub async fn #method<S, F>(#receiver, key: #by_type, selector: S, edit: F)
+                            -> worktable::prelude::eyre::Result<()>
+                        where S: #trait_ident<F, Key = #key_type>
+                        {
+                            selector.apply(self, key, edit).await
+                        }
                     }
                 }
-            }
-        };
+            };
         traits_and_methods.push(quote! {
             #[doc(hidden)]
             #[allow(private_bounds)]
