@@ -225,6 +225,24 @@ struct PageDirectory<T> {
 }
 
 impl<T> PageDirectory<T> {
+    unsafe fn initialize_at(target: *mut Self, pages: &[Arc<T>]) {
+        unsafe {
+            let roots = core::ptr::addr_of_mut!((*target).roots).cast::<AtomicPtr<PageDirectoryChunk<T>>>();
+            for index in 0..PAGE_DIRECTORY_ROOTS {
+                roots.add(index).write(AtomicPtr::new(core::ptr::null_mut()));
+            }
+            core::ptr::addr_of_mut!((*target).chunks).write(Mutex::new(Vec::new()));
+        }
+
+        // SAFETY: both fields used by `publish` are initialized above, the
+        // allocation is stable, and it is not observable until its owner is
+        // returned from construction.
+        let directory = unsafe { &*target };
+        for (index, page) in pages.iter().enumerate() {
+            directory.publish(index, page);
+        }
+    }
+
     fn new(pages: &[Arc<T>]) -> Self {
         let directory = Self {
             roots: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
@@ -426,6 +444,57 @@ where
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
+    unsafe fn initialize_arc_at(
+        target: *mut Self,
+        mut pages: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>,
+    ) {
+        if pages.is_empty() {
+            pages.push(Data::new_arc(1.into()));
+        }
+        let last_page_id = pages.len() as u32;
+
+        unsafe {
+            core::ptr::addr_of_mut!((*target).epoch).write(EpochDomain::new());
+            core::ptr::addr_of_mut!((*target).retired).write(Mutex::new(VecDeque::new()));
+            core::ptr::addr_of_mut!((*target).reclaimable).write(Arc::new(AtomicUsize::new(0)));
+            core::ptr::addr_of_mut!((*target).pending_retirements).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*target).queued_page_retirements).write(AtomicUsize::new(0));
+            PageDirectory::initialize_at(core::ptr::addr_of_mut!((*target).page_directory), &pages);
+            core::ptr::addr_of_mut!((*target).pages).write(PageList::from_pages(pages));
+            core::ptr::addr_of_mut!((*target).pages_write).write(Mutex::new(()));
+            core::ptr::addr_of_mut!((*target).empty_links).write(EmptyLinkRegistry::<DATA_LENGTH>::default());
+            core::ptr::addr_of_mut!((*target).empty_pages).write(Default::default());
+            core::ptr::addr_of_mut!((*target).row_count).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*target).last_page_id).write(AtomicU32::new(last_page_id));
+            core::ptr::addr_of_mut!((*target).current_page_id).write(AtomicU32::new(last_page_id));
+        }
+    }
+
+    /// Creates the page collection directly in its `Arc` allocation.
+    ///
+    /// The fixed page directory deliberately keeps 1,024 roots inline for a
+    /// pointer-only read path. Constructing `Self` on the stack before moving
+    /// it into an Arc needlessly reserves that full array in nested generated
+    /// table-load futures.
+    pub fn new_arc() -> Arc<Self> {
+        Self::from_data_arc(Vec::new())
+    }
+
+    /// Restores a page collection directly in its `Arc` allocation.
+    pub fn from_data_arc(pages: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>) -> Arc<Self> {
+        let mut collection = Arc::<Self>::new_uninit();
+        let target = Arc::get_mut(&mut collection)
+            .expect("a newly allocated Arc is uniquely owned")
+            .as_mut_ptr();
+
+        // SAFETY: the helper initializes every field exactly once and the Arc
+        // remains uniquely owned until initialization is complete.
+        unsafe {
+            Self::initialize_arc_at(target, pages);
+            collection.assume_init()
+        }
+    }
+
     fn page_ref(
         &self,
         page_id: PageId,
@@ -700,7 +769,7 @@ where
     }
 
     pub fn new() -> Self {
-        let page = Arc::new(Data::new(1.into()));
+        let page = Data::new_arc(1.into());
         let pages = vec![page];
         Self {
             epoch: EpochDomain::new(),
@@ -877,7 +946,7 @@ where
         let _write = self.pages_write.lock();
         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
             let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
-            let page = Arc::new(Data::new(index.into()));
+            let page = Data::new_arc(index.into());
             self.pages.push(page.clone());
             self.publish_page(&page);
             self.current_page_id.store(index, Ordering::Release);
@@ -910,7 +979,7 @@ where
 
         let _write = self.pages_write.lock();
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
-        let page = Arc::new(Data::new(index.into()));
+        let page = Data::new_arc(index.into());
         self.pages.push(page.clone());
         self.publish_page(&page);
 
@@ -1409,6 +1478,18 @@ where
         }
         self.empty_links = registry;
 
+        Ok(self)
+    }
+
+    pub fn with_empty_links_arc(mut self: Arc<Self>, links: Vec<Link>) -> Result<Arc<Self>, ExecutionError> {
+        let registry = EmptyLinkRegistry::default();
+        for link in links {
+            self.page_ref(link.page_id)?.reserve_restored_range(link)?;
+            registry.push(link);
+        }
+        Arc::get_mut(&mut self)
+            .expect("restored page collection is uniquely owned")
+            .empty_links = registry;
         Ok(self)
     }
 

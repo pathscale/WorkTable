@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::cell::UnsafeCell;
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -48,6 +48,29 @@ impl Default for CellLocks {
             states: core::array::from_fn(|_| CellState::new(0)),
             owners: core::array::from_fn(|_| CellOwner::new(0)),
             nested_reads: CellState::new(0),
+        }
+    }
+}
+
+impl CellLocks {
+    /// Initialize the lock table directly in its final allocation.
+    ///
+    /// Building both fixed-size atomic arrays as a return value makes the
+    /// compiler reserve another copy on the caller's stack. `Data` uses this
+    /// when it is created inside an `Arc`, where that copy is unnecessary.
+    unsafe fn initialize_at(target: *mut Self) {
+        unsafe {
+            let states = core::ptr::addr_of_mut!((*target).states).cast::<CellState>();
+            for index in 0..CELL_LOCK_SLOTS {
+                states.add(index).write(CellState::new(0));
+            }
+
+            let owners = core::ptr::addr_of_mut!((*target).owners).cast::<CellOwner>();
+            for index in 0..CELL_LOCK_SLOTS {
+                owners.add(index).write(CellOwner::new(0));
+            }
+
+            core::ptr::addr_of_mut!((*target).nested_reads).write(CellState::new(0));
         }
     }
 }
@@ -291,6 +314,66 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 unsafe impl<Row, const DATA_LENGTH: usize> Sync for Data<Row, DATA_LENGTH> {}
 
 impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
+    unsafe fn initialize_arc_at(target: *mut Self, id: PageId, free_offset: u32, source: Option<*const u8>) {
+        unsafe {
+            core::ptr::addr_of_mut!((*target).id).write(id);
+            core::ptr::addr_of_mut!((*target).free_offset).write(AtomicU32::new(free_offset));
+            core::ptr::addr_of_mut!((*target).access).write(parking_lot::RwLock::new(()));
+            CellLocks::initialize_at(core::ptr::addr_of_mut!((*target).cell_locks));
+            core::ptr::addr_of_mut!((*target).live_cells).write(AtomicU32::new(0));
+
+            let destination = core::ptr::addr_of_mut!((*target).inner_data).cast::<u8>();
+            if let Some(source) = source {
+                core::ptr::copy_nonoverlapping(source, destination, DATA_LENGTH);
+            } else {
+                core::ptr::write_bytes(destination, 0, DATA_LENGTH);
+            }
+
+            core::ptr::addr_of_mut!((*target)._phantom).write(PhantomData);
+        }
+    }
+
+    /// Creates a new page directly in its `Arc` allocation.
+    ///
+    /// A default page owns a roughly 16 KiB inline byte image. Initializing it
+    /// through `Arc::new(Data::new(...))` can copy that image through several
+    /// stack return slots, which compounds when a generated table constructs
+    /// several indexed components on a normal 2 MiB thread stack.
+    pub fn new_arc(id: PageId) -> Arc<Self> {
+        let mut page = Arc::<Self>::new_uninit();
+        let target = Arc::get_mut(&mut page)
+            .expect("a newly allocated Arc is uniquely owned")
+            .as_mut_ptr();
+
+        // SAFETY: every field is initialized exactly once in the allocation
+        // above. The byte image is an array of u8, for which all-zero is valid.
+        unsafe {
+            Self::initialize_arc_at(target, id, 0, None);
+            page.assume_init()
+        }
+    }
+
+    /// Restores a persisted page by reference without moving its inline byte
+    /// image through the caller's stack.
+    pub fn from_data_page_ref_arc(page: &GeneralPage<DataPage<DATA_LENGTH>>) -> Arc<Self> {
+        let mut restored = Arc::<Self>::new_uninit();
+        let target = Arc::get_mut(&mut restored)
+            .expect("a newly allocated Arc is uniquely owned")
+            .as_mut_ptr();
+
+        // SAFETY: the boxed page remains alive for the copy, and the helper
+        // initializes every field before the Arc is exposed.
+        unsafe {
+            Self::initialize_arc_at(
+                target,
+                page.header.page_id,
+                page.header.data_length,
+                Some(page.inner.data.as_ptr()),
+            );
+            restored.assume_init()
+        }
+    }
+
     fn validate_link(&self, link: Link) -> Result<(), ExecutionError> {
         let start = link.offset as usize;
         let end = start

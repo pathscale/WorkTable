@@ -48,7 +48,7 @@ impl Generator {
             pub struct #space_file_ident {
                 #primary_index
                 pub indexes: #index_persisted_ident,
-                pub data: Vec<GeneralPage<DataPage<#inner_const_name>>>,
+                pub data: Vec<Box<GeneralPage<DataPage<#inner_const_name>>>>,
                 pub data_info: GeneralPage<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>>,
             }
         }
@@ -239,22 +239,24 @@ impl Generator {
                 ) -> Result<#wt_ident, PersistenceLoadError> {
                     let mut page_id = 1;
                     let data = self.data.into_iter().map(|p| {
-                        let mut data = Data::from_data_page(p);
-                        data.set_page_id(page_id.into());
+                        let mut data = Data::from_data_page_ref_arc(&p);
+                        worktable::prelude::Arc::get_mut(&mut data)
+                            .expect("a newly restored page is uniquely owned")
+                            .set_page_id(page_id.into());
                         page_id += 1;
 
-                        worktable::prelude::Arc::new(data)
+                        data
                     })
                         .collect();
-                    let data = DataPages::from_data(data)
-                        .with_empty_links(self.data_info.inner.empty_links_list)
+                    let data = DataPages::from_data_arc(data)
+                        .with_empty_links_arc(self.data_info.inner.empty_links_list)
                         .map_err(|error| PersistenceLoadError::corrupt(path, error))?;
                     let indexes = #index_ident::from_persisted(self.indexes);
 
                     #primary_index_init
 
                     let table = WorkTable {
-                        data: worktable::prelude::Arc::new(data),
+                        data,
                         primary_index: worktable::prelude::Arc::new(primary_index),
                         indexes: worktable::prelude::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
@@ -309,22 +311,24 @@ impl Generator {
                 {
                     let mut page_id = 1;
                     let data = self.data.into_iter().map(|p| {
-                        let mut data = Data::from_data_page(p);
-                        data.set_page_id(page_id.into());
+                        let mut data = Data::from_data_page_ref_arc(&p);
+                        worktable::prelude::Arc::get_mut(&mut data)
+                            .expect("a newly restored page is uniquely owned")
+                            .set_page_id(page_id.into());
                         page_id += 1;
 
-                        worktable::prelude::Arc::new(data)
+                        data
                     })
                         .collect();
-                    let data = DataPages::from_data(data)
-                        .with_empty_links(self.data_info.inner.empty_links_list)
+                    let data = DataPages::from_data_arc(data)
+                        .with_empty_links_arc(self.data_info.inner.empty_links_list)
                         .map_err(|error| PersistenceLoadError::corrupt(path, error))?;
                     let indexes = #index_ident::from_persisted(self.indexes);
 
                     #primary_index_init
 
                     let table = WorkTable {
-                        data: worktable::prelude::Arc::new(data),
+                        data,
                         primary_index: worktable::prelude::Arc::new(primary_index),
                         indexes: worktable::prelude::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
@@ -416,7 +420,7 @@ impl Generator {
                     let count = file_length.div_ceil(#page_const_name as u64);
                     for page_id in 1..count {
                         let index = parse_data_page::<{ #page_const_name as u32}, { #inner_const_name as usize }, { #page_const_name as u32 }>(&mut data_file, page_id as u32).await?;
-                        data.push(index);
+                        data.push(Box::new(index));
                     }
                     (data, info)
                 };
