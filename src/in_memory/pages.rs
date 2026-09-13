@@ -212,7 +212,7 @@ impl<T> PageDirectoryChunk<T> {
     }
 }
 
-/// Non-owning, stable page pointers for the first 4,096 pages (64 MiB at the
+/// Non-owning, stable page pointers for the first 65,536 pages (1 GiB at the
 /// default page size). `DataPages::pages` owns every allocation; this directory
 /// exists solely to avoid shared ArcSwap snapshot accounting on point access.
 #[derive(Debug)]
