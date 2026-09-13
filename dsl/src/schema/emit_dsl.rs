@@ -93,9 +93,9 @@ impl Schema {
             let _ = writeln!(out, "queries: {{");
             write_query_block(
                 &mut out,
-                "update_partial",
-                self.queries.update_partial_runtime.as_deref(),
-                &self.queries.update_partials,
+                "update",
+                self.queries.update_runtime.as_deref(),
+                &self.queries.updates,
             );
             write_query_block(
                 &mut out,
@@ -105,9 +105,9 @@ impl Schema {
             );
             write_query_block(
                 &mut out,
-                "update_partial_in_place",
-                self.queries.update_partial_in_place_runtime.as_deref(),
-                &self.queries.update_partials_in_place,
+                "update_in_place",
+                self.queries.update_in_place_runtime.as_deref(),
+                &self.queries.updates_in_place,
             );
             let _ = writeln!(out, "}},");
         }

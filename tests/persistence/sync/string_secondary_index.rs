@@ -19,7 +19,7 @@ worktable! (
         non_unique_idx: non_unique
     },
     queries: {
-        update_partial: {
+        update: {
             AnotherById(another) by id,
             FieldByAnother(field) by another,
             AnotherByNonUnique(another) by non_unique
@@ -245,7 +245,7 @@ fn test_space_update_full_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update(TestSyncRow {
+                .replace(TestSyncRow {
                     another: "Some string to test updated".to_string(),
                     non_unique: 0,
                     field: 0.0,
@@ -302,11 +302,10 @@ fn test_space_update_query_pk_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_partial_another_by_id(
-                    AnotherByIdQuery {
-                        another: "Some string to test updated".to_string(),
-                    },
+                .update_by_id(
                     row.id,
+                    TestSyncColumns::ANOTHER,
+                    "Some string to test updated".to_string(),
                 )
                 .await
                 .unwrap();
@@ -355,7 +354,7 @@ fn test_space_update_query_unique_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_partial_field_by_another(FieldByAnotherQuery { field: 1.0 }, "Some string before".to_string())
+                .update_by_another("Some string before".to_string(), TestSyncColumns::FIELD, 1.0)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -400,12 +399,7 @@ fn test_space_update_query_non_unique_sync() {
             };
             table.insert(row.clone()).await.unwrap();
             table
-                .update_partial_another_by_non_unique(
-                    AnotherByNonUniqueQuery {
-                        another: "Some string to test updated".to_string(),
-                    },
-                    10,
-                )
+                .update_by_non_unique(10, TestSyncColumns::ANOTHER, "Some string to test updated".to_string())
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();

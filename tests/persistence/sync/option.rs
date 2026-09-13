@@ -18,7 +18,7 @@ worktable! (
         exchnage_idx: exchange,
     },
     queries: {
-        update_partial: {
+        update: {
             TestById(test) by id,
             TestByAnother(test) by another,
             TestByExchange(test) by exchange,
@@ -140,7 +140,7 @@ fn test_option_update_full_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update(TestOptionSyncRow {
+                .replace(TestOptionSyncRow {
                     id: row.id,
                     test: Some(100),
                     another: 1,
@@ -165,7 +165,7 @@ fn test_option_update_full_sync() {
 #[test]
 fn test_option_update_by_id_sync() {
     let config = DiskConfig::new_with_table_name(
-        "tests/data/option_sync/update_partial_by_id",
+        "tests/data/option_sync/update_by_id",
         TestOptionSyncWorkTable::name_snake_case(),
         TestOptionSyncWorkTable::version(),
     );
@@ -178,7 +178,7 @@ fn test_option_update_by_id_sync() {
         .unwrap();
 
     runtime.block_on(async {
-        remove_dir_if_exists("tests/data/option_sync/update_partial_by_id".to_string()).await;
+        remove_dir_if_exists("tests/data/option_sync/update_by_id".to_string()).await;
 
         let pk = {
             let engine = TestOptionSyncPersistenceEngine::new(config.clone()).await.unwrap();
@@ -192,7 +192,7 @@ fn test_option_update_by_id_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_test_by_id(TestByIdQuery { test: Some(42) }, row.id)
+                .update_by_id(row.id, TestOptionSyncColumns::TEST, Some(42))
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -239,7 +239,7 @@ fn test_option_update_none_to_some_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_test_by_id(TestByIdQuery { test: Some(55) }, row.id)
+                .update_by_id(row.id, TestOptionSyncColumns::TEST, Some(55))
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -286,7 +286,7 @@ fn test_option_update_some_to_none_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_test_by_id(TestByIdQuery { test: None }, row.id)
+                .update_by_id(row.id, TestOptionSyncColumns::TEST, None)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -333,7 +333,7 @@ fn test_option_update_by_another_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_test_by_another(TestByAnotherQuery { test: Some(77) }, 123)
+                .update_by_another(123, TestOptionSyncColumns::TEST, Some(77))
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -380,7 +380,7 @@ fn test_option_update_by_exchange_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_test_by_exchange(TestByExchangeQuery { test: Some(88) }, 456)
+                .update_by_exchange(456, TestOptionSyncColumns::TEST, Some(88))
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -436,7 +436,7 @@ fn test_option_multiple_rows_sync() {
             let pk2 = table.insert(row2).await.unwrap();
 
             table
-                .update_partial_test_by_id(TestByIdQuery { test: Some(30) }, pk1.clone())
+                .update_by_id(pk1.clone(), TestOptionSyncColumns::TEST, Some(30))
                 .await
                 .unwrap();
 
@@ -468,7 +468,7 @@ worktable! (
         exchnage_idx: exchange,
     },
     queries: {
-        update_partial: {
+        update: {
             IndexTestById(test) by id,
             IndexTestByAnother(test) by another,
             IndexTestByExchange(test) by exchange,
@@ -590,7 +590,7 @@ fn test_option_indexed_update_none_to_some_by_id_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_index_test_by_id(IndexTestByIdQuery { test: Some(55) }, row.id)
+                .update_by_id(row.id, TestOptionSyncIndexColumns::TEST, Some(55))
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -637,7 +637,7 @@ fn test_option_indexed_update_some_to_none_by_id_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_index_test_by_id(IndexTestByIdQuery { test: None }, row.id)
+                .update_by_id(row.id, TestOptionSyncIndexColumns::TEST, None)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -684,7 +684,7 @@ fn test_option_indexed_update_by_another_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update_partial_index_test_by_another(IndexTestByAnotherQuery { test: Some(77) }, 123)
+                .update_by_another(123, TestOptionSyncIndexColumns::TEST, Some(77))
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
@@ -748,12 +748,12 @@ fn test_option_indexed_multiple_rows_sync() {
             let pk3 = table.insert(row3).await.unwrap();
 
             table
-                .update_partial_index_test_by_id(IndexTestByIdQuery { test: Some(40) }, pk1.clone())
+                .update_by_id(pk1.clone(), TestOptionSyncIndexColumns::TEST, Some(40))
                 .await
                 .unwrap();
 
             table
-                .update_partial_index_test_by_id(IndexTestByIdQuery { test: Some(50) }, pk2.clone())
+                .update_by_id(pk2.clone(), TestOptionSyncIndexColumns::TEST, Some(50))
                 .await
                 .unwrap();
 
@@ -801,7 +801,7 @@ fn test_option_indexed_full_row_update_sync() {
             table.insert(row.clone()).await.unwrap();
 
             table
-                .update(TestOptionSyncIndexRow {
+                .replace(TestOptionSyncIndexRow {
                     id: row.id,
                     test: Some(99),
                     another: 100,

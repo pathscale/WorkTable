@@ -16,7 +16,7 @@ worktable!(
         payload: String,
     },
     queries: {
-        update_partial: {
+        update: {
             Payload(payload) by id,
         }
     }
@@ -42,12 +42,7 @@ async fn update_churn_reclaims_under_concurrent_readers() {
         .unwrap();
     for i in 0..100u64 {
         table
-            .update_partial_payload(
-                PayloadQuery {
-                    payload: format!("{:04}", i % 10000),
-                },
-                1,
-            )
+            .update_by_id(1, LeakProbeColumns::PAYLOAD, format!("{:04}", i % 10000))
             .await
             .unwrap();
     }
@@ -72,12 +67,7 @@ async fn update_churn_reclaims_under_concurrent_readers() {
 
     for i in 0..5_000u64 {
         table
-            .update_partial_payload(
-                PayloadQuery {
-                    payload: format!("{:04}", i % 10000),
-                },
-                1,
-            )
+            .update_by_id(1, LeakProbeColumns::PAYLOAD, format!("{:04}", i % 10000))
             .await
             .unwrap();
     }
@@ -114,12 +104,7 @@ async fn update_churn_does_not_grow_storage_unbounded() {
     let pages_after_warmup = {
         for i in 0..100u64 {
             table
-                .update_partial_payload(
-                    PayloadQuery {
-                        payload: format!("{:04}", i % 10000),
-                    },
-                    1,
-                )
+                .update_by_id(1, LeakProbeColumns::PAYLOAD, format!("{:04}", i % 10000))
                 .await
                 .unwrap();
         }
@@ -128,12 +113,7 @@ async fn update_churn_does_not_grow_storage_unbounded() {
 
     for i in 0..5_000u64 {
         table
-            .update_partial_payload(
-                PayloadQuery {
-                    payload: format!("{:04}", i % 10000),
-                },
-                1,
-            )
+            .update_by_id(1, LeakProbeColumns::PAYLOAD, format!("{:04}", i % 10000))
             .await
             .unwrap();
     }

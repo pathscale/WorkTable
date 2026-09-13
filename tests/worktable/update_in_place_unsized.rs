@@ -47,7 +47,7 @@ macro_rules! unsized_in_place_suite {
                     balance: f64,
                 },
                 queries: {
-                    update_partial: {
+                    update: {
                         Payload(payload) by id,
                         Balance(balance) by id,
                     }
@@ -81,11 +81,10 @@ macro_rules! unsized_in_place_suite {
                 let before = link_of(&table, 1);
 
                 table
-                    .update_partial_payload(
-                        PayloadQuery {
-                            payload: "12345678".to_string(), // 8 bytes — same length
-                        },
+                    .update_by_id(
                         1,
+                        UnsizedUpdateColumns::PAYLOAD,
+                        "12345678".to_string(), // 8 bytes — same length
                     )
                     .await
                     .unwrap();
@@ -113,23 +112,13 @@ macro_rules! unsized_in_place_suite {
                     .await.unwrap();
 
                 table
-                    .update_partial_payload(
-                        PayloadQuery {
-                            payload: "xy".to_string(),
-                        },
-                        1,
-                    )
+                    .update_by_id(1, UnsizedUpdateColumns::PAYLOAD, "xy".to_string())
                     .await
                     .unwrap();
                 assert_eq!(table.select(1).unwrap().payload, "xy");
 
                 table
-                    .update_partial_payload(
-                        PayloadQuery {
-                            payload: "much longer payload".to_string(),
-                        },
-                        1,
-                    )
+                    .update_by_id(1, UnsizedUpdateColumns::PAYLOAD, "much longer payload".to_string())
                     .await
                     .unwrap();
                 assert_eq!(table.select(1).unwrap().payload, "much longer payload");
@@ -159,12 +148,7 @@ macro_rules! unsized_in_place_suite {
                     tokio::spawn(async move {
                         for i in 0..20_000u64 {
                             table
-                                .update_partial_payload(
-                                    PayloadQuery {
-                                        payload: format!("{:04}", i % 10000),
-                                    },
-                                    1,
-                                )
+                                .update_by_id(1, UnsizedUpdateColumns::PAYLOAD, format!("{:04}", i % 10000))
                                 .await
                                 .unwrap();
                         }
@@ -220,7 +204,7 @@ macro_rules! unsized_in_place_suite {
                 let before = link_of(&table, 1);
 
                 table
-                    .update_partial_balance(BalanceQuery { balance: 42.5 }, 1)
+                    .update_by_id(1, UnsizedUpdateColumns::BALANCE, 42.5)
                     .await
                     .unwrap();
 
@@ -269,7 +253,7 @@ mod opaque_wrapper {
             secret: WrappedString,
         },
         queries: {
-            update_partial: {
+            update: {
                 Secret(secret) by id,
                 Nickname(nickname) by id,
             }
@@ -290,11 +274,10 @@ mod opaque_wrapper {
             .unwrap();
 
         table
-            .update_partial_secret(
-                SecretQuery {
-                    secret: WrappedString("replacement out-of-line secret!!".to_string()),
-                },
+            .update_by_id(
                 1,
+                OpaqueWrapperUpdateColumns::SECRET,
+                WrappedString("replacement out-of-line secret!!".to_string()),
             )
             .await
             .unwrap();
@@ -319,11 +302,10 @@ mod opaque_wrapper {
             .unwrap();
 
         table
-            .update_partial_nickname(
-                NicknameQuery {
-                    nickname: Some("replacement out-of-line name".to_string()),
-                },
+            .update_by_id(
                 1,
+                OpaqueWrapperUpdateColumns::NICKNAME,
+                Some("replacement out-of-line name".to_string()),
             )
             .await
             .unwrap();
@@ -346,7 +328,7 @@ mod opaque_wrapper {
             .unwrap();
 
         table
-            .update(OpaqueOnlyRow {
+            .replace(OpaqueOnlyRow {
                 id: 1,
                 secret: WrappedString("replacement out-of-line secret value".to_string()),
             })

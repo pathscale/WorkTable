@@ -1,14 +1,16 @@
 Change Log
 ==========
 
-## [1.9.0-beta1]
+## [1.10.0-beta1]
 
 ### Changed
 
-- Declared mutations now use `update_partial:` and
-  `update_partial_in_place:`. They generate `update_partial_<name>` and
-  `update_partial_in_place_<name>`, making their field-level semantics distinct
-  from the complete-row `update(row)` method.
+- Declared mutations now use `update:` and
+  `update_in_place:`. They generate typed selector calls such as
+  `update_by_id(id, InvoiceColumns::AMOUNT, value)` and
+  `update_in_place_by_id(id, InvoiceColumns::STATE, edit)`. Multi-column
+  declarations expose one selector for their exact atomic field set and take
+  the generated query struct. Full-row replacement is now `replace(row)`.
 
 ### Added
 
@@ -70,10 +72,8 @@ Change Log
 
 
 - **`queries:` on a `vec: true` table.** It was refused wholesale; it now
-  generates `update_partial_<name>`, `delete_<name>` and
-  `update_partial_in_place_<name>` under
-  the same names the paged table uses, so a declaration reads the same either
-  way.
+  generates typed `update_by_<key>` and `update_in_place_by_<key>` dispatch,
+  plus declared delete methods, under the same names the paged table uses.
 
   These are named wrappers rather than a new execution path: a declared update
   is `update(&pk, |row| ..)` with the columns filled in from a generated struct,
@@ -230,15 +230,15 @@ Change Log
   declares 65,536 rows into a partition that holds 256), and `persist: true`,
   which a dense partition has no engine to honour.
 
-  It carries `queries:`. An `update_partial` or `delete` query keyed by the primary key
-  generates the same method name against the same `<Name>Query` struct the
-  paged table generates, so a call reads identically; the signature does not,
+  It carries `queries:`. An `update` query keyed by the primary key uses the
+  same typed field-set selector as the paged table, and a multi-column selector
+  takes the same `<Name>Query` struct. The signature differs,
   deliberately, because there is no `.await` and no `WorkTableError`, and a
   call that moved between the shapes should fail to compile rather than
   quietly change what it guarantees. A query keyed by any other column is
   refused: a dense partition has no secondary index, and scanning it instead
   would be a keyed operation silently becoming a linear one.
-  `update_partial_in_place` is refused, because every update here is already in place.
+  `update_in_place` is refused, because every update here is already in place.
 
   Note that `memory_by_key` and `memory_total` **cannot see this saving**. They
   report `used_bytes`, which is rows plus indexes and excludes the fixed floor
@@ -1098,7 +1098,7 @@ rather than new surface.
 ### Fixed
 
 - Re-reading a table from file.
-- Index difference logic for `update_partial` queries.
+- Index difference logic for `update` queries.
 
 ## [0.5.1]
 

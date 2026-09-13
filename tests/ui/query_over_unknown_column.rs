@@ -11,7 +11,7 @@ worktable! {
         value: u64,
     },
     queries: {
-        update_partial: {
+        update: {
             MissingById(missing) by id,
         }
     },

@@ -37,12 +37,12 @@ fn config_does_not_have_to_be_written_last() {
         "name: Ordered,
          columns: { id: u64 primary_key, name: String },
          config: { page_size: 8192 },
-         queries: { update_partial: { Renamed(name) by id, } }",
+         queries: { update: { Renamed(name) by id, } }",
     )
     .expect("block order should not depend on which parser eats a comma");
 
     assert_eq!(schema.config.page_size, Some(8192));
-    assert_eq!(schema.queries.update_partials.len(), 1);
+    assert_eq!(schema.queries.updates.len(), 1);
 }
 
 /// The same asymmetry inside `queries`, where `delete` and `in_place` sat.
@@ -53,15 +53,15 @@ fn a_comma_after_delete_or_in_place_is_accepted() {
          columns: { id: u64 primary_key, name: String },
          queries: {
              delete: { ByName() by name, },
-             update_partial_in_place: { SetName(name) by id, },
-             update_partial: { Renamed(name) by id, }
+             update_in_place: { SetName(name) by id, },
+             update: { Renamed(name) by id, }
          }",
     )
     .expect("`delete` and `in_place` should not have to be written last either");
 
     assert_eq!(schema.queries.deletes.len(), 1);
-    assert_eq!(schema.queries.update_partials_in_place.len(), 1);
-    assert_eq!(schema.queries.update_partials.len(), 1);
+    assert_eq!(schema.queries.updates_in_place.len(), 1);
+    assert_eq!(schema.queries.updates.len(), 1);
 }
 
 /// Omitting the comma stays valid. The fix is permissive, not a new rule.

@@ -105,7 +105,7 @@ leaving the consequential choices inspectable.
 
 Start with the #link("wt-user-guide.pdf")[WorkTable user guide]: declarations,
 every storage shape, queries, callsites, runtimes, persistence and lifecycle
-examples. It describes 1.9.0-beta1; use the reviewed checkout until publication.
+examples. It describes 1.10.0-beta1; use the reviewed checkout until publication.
 
 #v(0.35cm)
 #text(size: 8pt, fill: rgb("#526873"))[

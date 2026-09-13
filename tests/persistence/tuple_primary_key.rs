@@ -72,7 +72,7 @@ async fn composite_primary_key_survives_mutations_and_reload() {
             value: 99,
             ..rows[1].clone()
         };
-        table.update(updated.clone()).await.unwrap();
+        table.replace(updated.clone()).await.unwrap();
         table.delete((7, 41)).await.unwrap();
         assert_eq!(table.select((7, 42)), Some(updated));
         assert!(table.select((7, 41)).is_none());

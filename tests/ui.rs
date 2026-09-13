@@ -35,4 +35,6 @@ fn compile_fail() {
     // Query rules.
     t.compile_fail("tests/ui/autoincrement_unsupported_key.rs");
     t.compile_fail("tests/ui/in_place_over_indexed_column.rs");
+    t.compile_fail("tests/ui/update_selector_wrong_value.rs");
+    t.compile_fail("tests/ui/update_selector_collision.rs");
 }

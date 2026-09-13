@@ -113,7 +113,7 @@ for table in database.catalog().system_tables() {
 
 ```toml
 [dependencies]
-worktable = { version = "^1.9.0-beta1", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "^1.10.0-beta1", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
@@ -255,7 +255,7 @@ worktable!(
         exchnage_idx: exchange,
     }
     queries: {
-        update_partial: {
+        update: {
             AnotherByExchange(another) by exchange,
             AnotherByTest(another) by test,
             AnotherById(another) by id,
@@ -426,7 +426,7 @@ There are some default query implementations that are available for all `WorkTab
   into grouped persistence operations, and durability follows the usual `wait_for_ops` contract. Autoincrement tables
   additionally get `reserve_pks(&self, count: usize) -> Range<RawPk>` to pre-assign contiguous keys to a batch;
 - `upsert(&self, row: <Name>Row) -> Result<(), WorkTableError>`;
-- `update(&self, row: <Name>Row) -> Result<(), WorkTableError>`;
+- `replace(&self, row: <Name>Row) -> Result<(), WorkTableError>`;
 - `delete(&self, pk: <Name>PrimaryKey) -> Result<(), WorkTableError>`;
 - `select_all<'a>(&'a self) -> SelectQueryBuilder<'a, <Name>Row, Self>`;
 
@@ -436,7 +436,7 @@ There are some default query implementations that are available for all `WorkTab
 
 ```
 queries: {
-    update_partial: {
+    update: {
         AnotherByExchange(another) by exchange,
         AnotherByTest(another) by test,
         AnotherById(another) by id,
@@ -454,10 +454,15 @@ Default query declaration is `<QueryName>(<column_name>*) by <column_name>`. It 
 For each query `<QueryName>Query` and `<QueryName>By` structs are generated. They will be used by user to call the
 query.
 
-#### `update_partial` query declaration
+#### `update` query declaration
 
-`update_partial` queries update only the declared fields. The generated `update(row)` method replaces the full row.
-When application logic updates disjoint parts of a row concurrently, `update_partial` supports
+`update` queries update only the declared fields through a typed, table-scoped
+column selector. For example,
+`table.update_by_id(id, TestColumns::ANOTHER, value).await?` changes only
+`another`. A multi-column declaration exposes one atomic selector such as
+`TestColumns::NAME_AND_AMOUNT` and takes its generated query struct. The
+generated `replace(row)` method replaces the full row.
+When application logic updates disjoint parts of a row concurrently, `update` supports
 smart lock logic that allows simultaneous update of not overlapping row fields.
 
 #### `select_all` query declaration

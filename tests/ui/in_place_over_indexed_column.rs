@@ -1,4 +1,4 @@
-// Rule: an `update_partial_in_place` query writes the archived column bytes and maintains no
+// Rule: an `update_in_place` query writes the archived column bytes and maintains no
 // index, so a column any index is built over cannot be mutated on that path.
 // The index would keep resolving the old value.
 use worktable::worktable;
@@ -14,7 +14,7 @@ worktable! {
         value_idx: value unique,
     },
     queries: {
-        update_partial_in_place: {
+        update_in_place: {
             ValueById(value) by id,
         }
     },

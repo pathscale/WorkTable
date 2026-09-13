@@ -14,26 +14,32 @@ struct UpdateStorage<'a> {
 
 impl InMemoryGenerator {
     pub fn gen_query_update_impl(&mut self) -> syn::Result<TokenStream> {
-        let custom_updates = if let Some(q) = &self.queries {
-            let profile = q.update_partial_runtime.clone();
-            let custom_updates = self.gen_custom_updates(q.update_partials.clone());
+        let (custom_updates, mutation_api) = if let Some(q) = &self.queries {
+            let profile = q.update_runtime.clone();
+            let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+            let mutation_api = crate::generators::mutation_builder::paged_mutation_api(
+                &self.name,
+                &name_generator.get_work_table_ident(),
+                &self.columns,
+                q,
+            )?;
+            let custom_updates = self.gen_custom_updates(q.updates.clone());
             let custom_updates = crate::generators::profile_dispatch::wrap(
                 custom_updates,
                 profile.as_ref(),
                 &WorktableNameGenerator::from_table_name(self.name.to_string()).get_row_type_ident(),
             )?;
 
-            quote! {
-                #custom_updates
-            }
+            (quote! { #custom_updates }, mutation_api)
         } else {
-            quote! {}
+            (quote! {}, quote! {})
         };
         let full_row_update = self.gen_full_row_update();
 
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let table_ident = name_generator.get_work_table_ident();
         Ok(quote! {
+            #mutation_api
             impl #table_ident {
                 #full_row_update
                 #custom_updates
@@ -72,7 +78,7 @@ impl InMemoryGenerator {
         let full_row_lock = self.gen_full_lock_for_update();
         let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let requires_rebuild = self.columns.columns_map.values().any(archived_field_requires_rebuild);
-        // A full-row `update(row)` replaces EVERY column, so it inherently
+        // A full-row `replace(row)` replaces EVERY column, so it inherently
         // rewrites every secondary index. The in-place fast path only applies
         // when no updated field is indexed (it emits no index diff), so a
         // full-row update on a table with any secondary index must reinsert.
@@ -155,7 +161,7 @@ impl InMemoryGenerator {
         };
 
         quote! {
-            pub async fn update(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
+            pub async fn replace(&self, row: #row_ident) -> core::result::Result<(), WorkTableError> {
                 let pk = row.get_primary_key();
                 let pending_lock = { #full_row_lock };
                 let guard = pending_lock.into_guard_with_mutation();
@@ -706,9 +712,9 @@ impl InMemoryGenerator {
             requires_rebuild,
         } = storage;
         let pk_ident = &self.pk.as_ref().unwrap().ident;
-        let method_ident = Ident::new(format!("update_partial_{snake_case_name}").as_str(), Span::mixed_site());
+        let method_ident = Ident::new(format!("__wt_update_{snake_case_name}").as_str(), Span::mixed_site());
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
-        let lock_ident = WorktableNameGenerator::get_update_partial_query_lock_ident(&snake_case_name);
+        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
             .iter()
@@ -750,7 +756,7 @@ impl InMemoryGenerator {
         };
 
         quote! {
-            pub async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
+            async fn #method_ident<Pk>(&self, row: #query_ident, pk: Pk) -> core::result::Result<(), WorkTableError>
             where #pk_ident: From<Pk>
             {
                 let pk: #pk_ident = pk.into();
@@ -788,7 +794,7 @@ impl InMemoryGenerator {
         } = storage;
         let by_field = &index.field;
         let index = &index.name;
-        let method_ident = Ident::new(format!("update_partial_{snake_case_name}").as_str(), Span::mixed_site());
+        let method_ident = Ident::new(format!("__wt_update_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
@@ -953,7 +959,7 @@ impl InMemoryGenerator {
         };
 
         quote! {
-            pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
+            async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
                 // This query may update many rows. Keep vacuum out across the
                 // snapshot, lock acquisition, and per-row mutation gaps
                 // without adding work to each row.
@@ -1051,11 +1057,11 @@ impl InMemoryGenerator {
                 .as_str(),
         );
         let index = &index.name;
-        let method_ident = Ident::new(format!("update_partial_{snake_case_name}").as_str(), Span::mixed_site());
+        let method_ident = Ident::new(format!("__wt_update_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
-        let lock_ident = WorktableNameGenerator::get_update_partial_query_lock_ident(&snake_case_name);
+        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
             .iter()
@@ -1126,7 +1132,7 @@ impl InMemoryGenerator {
         };
 
         quote! {
-            pub async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
+            async fn #method_ident(&self, row: #query_ident, by: #by_ident) -> core::result::Result<(), WorkTableError> {
                  let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                     .map_err(|_| WorkTableError::SerializeError)?;
 
@@ -1256,9 +1262,9 @@ mod tests {
             },
         );
         generator.queries = Some(Queries {
-            update_partials: updates,
+            updates: updates,
             deletes: IndexMap::new(),
-            update_partials_in_place: IndexMap::new(),
+            updates_in_place: IndexMap::new(),
             ..Default::default()
         });
         generator.gen_primary_key_def().unwrap();

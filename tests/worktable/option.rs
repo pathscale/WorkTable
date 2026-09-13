@@ -16,7 +16,7 @@ worktable! (
         exchnage_idx: exchange,
     },
     queries: {
-        update_partial: {
+        update: {
             TestById(test) by id,
             TestByAnother(test) by another,
             TestByExchange(test) by exchange,
@@ -40,7 +40,7 @@ async fn update() {
         another: 1,
         exchange: 1,
     };
-    table.update(new_row.clone()).await.unwrap();
+    table.replace(new_row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
     assert_eq!(selected_row, new_row);
 }
@@ -55,10 +55,7 @@ async fn update_by_another() {
         exchange: 1,
     };
     let pk = table.insert(row.clone()).await.unwrap();
-    table
-        .update_partial_test_by_another(TestByAnotherQuery { test: Some(1) }, 1)
-        .await
-        .unwrap();
+    table.update_by_another(1, TestColumns::TEST, Some(1)).await.unwrap();
     let selected_row = table.select(pk).unwrap();
     assert_eq!(selected_row.test, Some(1));
 }
@@ -73,10 +70,7 @@ async fn update_by_exchange() {
         exchange: 1,
     };
     let pk = table.insert(row.clone()).await.unwrap();
-    table
-        .update_partial_test_by_exchange(TestByExchangeQuery { test: Some(1) }, 1)
-        .await
-        .unwrap();
+    table.update_by_exchange(1, TestColumns::TEST, Some(1)).await.unwrap();
     let selected_row = table.select(pk).unwrap();
     assert_eq!(selected_row.test, Some(1));
 }
@@ -94,7 +88,7 @@ async fn update_none_to_some() {
     assert_eq!(table.select(pk.clone()).unwrap().test, None);
 
     table
-        .update_partial_test_by_id(TestByIdQuery { test: Some(42) }, pk.clone())
+        .update_by_id(pk.clone(), TestColumns::TEST, Some(42))
         .await
         .unwrap();
 
@@ -114,10 +108,7 @@ async fn update_some_to_none() {
     let pk = table.insert(row.clone()).await.unwrap();
     assert_eq!(table.select(pk.clone()).unwrap().test, Some(100));
 
-    table
-        .update_partial_test_by_id(TestByIdQuery { test: None }, pk.clone())
-        .await
-        .unwrap();
+    table.update_by_id(pk.clone(), TestColumns::TEST, None).await.unwrap();
 
     let selected_row = table.select(pk).unwrap();
     assert_eq!(selected_row.test, None);
@@ -144,7 +135,7 @@ async fn update_multiple_values() {
     let pk2 = table.insert(row2).await.unwrap();
 
     table
-        .update_partial_test_by_id(TestByIdQuery { test: Some(30) }, pk1.clone())
+        .update_by_id(pk1.clone(), TestColumns::TEST, Some(30))
         .await
         .unwrap();
 
@@ -165,7 +156,7 @@ worktable! (
         exchnage_idx: exchange,
     },
     queries: {
-        update_partial: {
+        update: {
             CustomTestById(test) by id,
             CustomTestByAnother(test) by another,
             CustomTestByExchange(test) by exchange,
@@ -190,7 +181,7 @@ async fn custom_update() {
         another: 1,
         exchange: 1,
     };
-    table.update(new_row.clone()).await.unwrap();
+    table.replace(new_row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
     assert_eq!(selected_row, new_row);
 }
@@ -207,7 +198,7 @@ async fn custom_update_by_another() {
     let pk = table.insert(row.clone()).await.unwrap();
     let test_uuid = Uuid::new_v4();
     table
-        .update_partial_custom_test_by_another(CustomTestByAnotherQuery { test: Some(test_uuid) }, 1)
+        .update_by_another(1, TestCustomColumns::TEST, Some(test_uuid))
         .await
         .unwrap();
     let selected_row = table.select(pk).unwrap();
@@ -226,7 +217,7 @@ async fn custom_update_by_exchange() {
     let pk = table.insert(row.clone()).await.unwrap();
     let test_uuid = Uuid::new_v4();
     table
-        .update_partial_custom_test_by_exchange(CustomTestByExchangeQuery { test: Some(test_uuid) }, 1)
+        .update_by_exchange(1, TestCustomColumns::TEST, Some(test_uuid))
         .await
         .unwrap();
     let selected_row = table.select(pk).unwrap();
@@ -247,7 +238,7 @@ async fn custom_update_none_to_some() {
 
     let test_uuid = Uuid::new_v4();
     table
-        .update_partial_custom_test_by_id(CustomTestByIdQuery { test: Some(test_uuid) }, pk.clone())
+        .update_by_id(pk.clone(), TestCustomColumns::TEST, Some(test_uuid))
         .await
         .unwrap();
 
@@ -269,7 +260,7 @@ async fn custom_update_some_to_none() {
     assert_eq!(table.select(pk.clone()).unwrap().test, Some(test_uuid));
 
     table
-        .update_partial_custom_test_by_id(CustomTestByIdQuery { test: None }, pk.clone())
+        .update_by_id(pk.clone(), TestCustomColumns::TEST, None)
         .await
         .unwrap();
 
@@ -301,7 +292,7 @@ async fn custom_update_multiple_uuids() {
 
     let uuid3 = Uuid::new_v4();
     table
-        .update_partial_custom_test_by_id(CustomTestByIdQuery { test: Some(uuid3) }, pk1.clone())
+        .update_by_id(pk1.clone(), TestCustomColumns::TEST, Some(uuid3))
         .await
         .unwrap();
 
@@ -323,7 +314,7 @@ worktable! (
         exchnage_idx: exchange,
     },
     queries: {
-        update_partial: {
+        update: {
             IndexTestById(test) by id,
             IndexTestByAnother(test) by another,
             IndexTestByExchange(test) by exchange,
@@ -462,7 +453,7 @@ async fn indexed_update_indexed_field() {
     // Update to a new UUID
     let uuid2 = Uuid::new_v4();
     table
-        .update_partial_index_test_by_id(IndexTestByIdQuery { test: Some(uuid2) }, pk.clone())
+        .update_by_id(pk.clone(), TestIndexColumns::TEST, Some(uuid2))
         .await
         .unwrap();
 
@@ -495,7 +486,7 @@ async fn indexed_update_from_some_to_none() {
 
     // Update to None
     table
-        .update_partial_index_test_by_id(IndexTestByIdQuery { test: None }, pk.clone())
+        .update_by_id(pk.clone(), TestIndexColumns::TEST, None)
         .await
         .unwrap();
 
@@ -528,7 +519,7 @@ async fn indexed_update_from_none_to_some() {
     // Update to Some UUID
     let test_uuid = Uuid::new_v4();
     table
-        .update_partial_index_test_by_id(IndexTestByIdQuery { test: Some(test_uuid) }, pk.clone())
+        .update_by_id(pk.clone(), TestIndexColumns::TEST, Some(test_uuid))
         .await
         .unwrap();
 
@@ -558,7 +549,7 @@ async fn indexed_update_via_another_index() {
 
     // Update via the unique 'another' index
     table
-        .update_partial_index_test_by_another(IndexTestByAnotherQuery { test: Some(uuid2) }, 999)
+        .update_by_another(999, TestIndexColumns::TEST, Some(uuid2))
         .await
         .unwrap();
 
@@ -594,7 +585,7 @@ async fn indexed_update_via_non_unique_index() {
 
     // Update both rows via the non-unique 'exchange' index
     table
-        .update_partial_index_test_by_exchange(IndexTestByExchangeQuery { test: Some(uuid2) }, 100)
+        .update_by_exchange(100, TestIndexColumns::TEST, Some(uuid2))
         .await
         .unwrap();
 

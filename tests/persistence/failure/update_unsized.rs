@@ -75,7 +75,9 @@ fn test_update_unsized_same_size() {
                 name: "xxx".to_string(),
                 unique_value: 99,
             };
-            let result = table.update_partial_name_and_value_by_category(query, 1).await;
+            let result = table
+                .update_by_category(1, NonUniqueUnsizedColumns::NAME_AND_UNIQUE_VALUE, query)
+                .await;
             assert!(result.is_err());
 
             let valid_row3 = NonUniqueUnsizedRow {
@@ -162,7 +164,9 @@ fn test_update_unsized_larger_all_success() {
                 unique_value: 20,
             };
 
-            let result = table.update_partial_name_and_value_by_category(query, 1).await;
+            let result = table
+                .update_by_category(1, NonUniqueUnsizedColumns::NAME_AND_UNIQUE_VALUE, query)
+                .await;
             assert!(result.is_ok());
 
             let valid_row3 = NonUniqueUnsizedRow {
@@ -273,7 +277,9 @@ fn test_update_unsized_larger_middle_fail() {
                 unique_value: 99,
             };
 
-            let result = table.update_partial_name_and_value_by_category(query, 1).await;
+            let result = table
+                .update_by_category(1, NonUniqueUnsizedColumns::NAME_AND_UNIQUE_VALUE, query)
+                .await;
             assert!(result.is_err());
 
             let valid_row3 = NonUniqueUnsizedRow {
@@ -376,7 +382,9 @@ fn test_update_unsized_larger_last_fail() {
                 unique_value: 99,
             };
 
-            let result = table.update_partial_name_and_value_by_category(query, 1).await;
+            let result = table
+                .update_by_category(1, NonUniqueUnsizedColumns::NAME_AND_UNIQUE_VALUE, query)
+                .await;
             assert!(result.is_err());
 
             let valid_row3 = NonUniqueUnsizedRow {

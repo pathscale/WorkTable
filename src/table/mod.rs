@@ -1171,16 +1171,14 @@ where
         (ops, Ok(pks))
     }
 
-    /// Reinserts provided row with updating indexes and saving it's data in new
-    /// place. Is used to not delete and insert because this situation causes
-    /// a possible gap when row doesn't exist.
+    /// Internal relocation primitive used by generated replacement code.
     ///
-    /// For reinsert it's ok that part of indexes will lead to old row and other
-    /// part is for new row. Goal is to make `PrimaryKey` of the row always
-    /// acceptable. As for reinsert `PrimaryKey` will be same for both old and
-    /// new [`Link`]'s, goal will be achieved.
-    ///
-    /// [`Link`]: data_bucket::Link
+    /// `row_old` must be the exact row currently stored at `row_new`'s primary
+    /// key, and the caller must participate in the table's mutation protocol.
+    /// This is not compare-and-replace: the method checks only primary-key
+    /// equality and uses the caller-supplied old row to repair secondary
+    /// indexes. Supplying a stale row can therefore leave those indexes wrong.
+    #[doc(hidden)]
     pub async fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
@@ -1262,6 +1260,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[doc(hidden)]
     pub fn reinsert_cdc<SecondaryEvents>(
         &self,
         row_old: Row,

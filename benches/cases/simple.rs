@@ -66,7 +66,7 @@ fn update(c: &mut Criterion) {
                 id: pk.into(),
                 value: fastrand::u64(..),
             };
-            black_box(table.update(row).await)
+            black_box(table.replace(row).await)
         })
     });
 }

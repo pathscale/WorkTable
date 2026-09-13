@@ -27,7 +27,7 @@ worktable!(
         untouched: u64,
     },
     queries: {
-        update_partial: {
+        update: {
             SecretById(secret) by id,
         }
     }
@@ -75,11 +75,10 @@ fn targeted_update_of_string_wrapper_survives_read_and_reload() {
             let link_before = link_of(&table, 7);
 
             table
-                .update_partial_secret_by_id(
-                    SecretByIdQuery {
-                        secret: WrappedSecret("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
-                    },
+                .update_by_id(
                     7,
+                    OpaqueUnsizedUpdateColumns::SECRET,
+                    WrappedSecret("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
                 )
                 .await
                 .unwrap();
@@ -106,13 +105,10 @@ fn targeted_update_of_string_wrapper_survives_read_and_reload() {
             assert_eq!(row.untouched, 42);
 
             table
-                .update_partial_secret_by_id(
-                    SecretByIdQuery {
-                        secret: WrappedSecret(
-                            "a replacement with a deliberately different serialized length".to_string(),
-                        ),
-                    },
+                .update_by_id(
                     7,
+                    OpaqueUnsizedUpdateColumns::SECRET,
+                    WrappedSecret("a replacement with a deliberately different serialized length".to_string()),
                 )
                 .await
                 .unwrap();
@@ -130,7 +126,7 @@ fn targeted_update_of_string_wrapper_survives_read_and_reload() {
             assert_eq!(row.untouched, 42);
 
             table
-                .update(OpaqueUnsizedUpdateRow {
+                .replace(OpaqueUnsizedUpdateRow {
                     id: 7,
                     secret: WrappedSecret("full-row replacement after targeted updates".to_string()),
                     untouched: 84,

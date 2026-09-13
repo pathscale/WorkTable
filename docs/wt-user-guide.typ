@@ -22,7 +22,7 @@
   #text(size: 11pt, style: "italic")[Absolutely not a database.]
   #v(0.6em)
   #text(size: 9.5pt)[A user's guide to the `worktable!` macro, its queries, its indexes and its
-  persistence tier. Written against 1.9.0-beta1.]
+  persistence tier. Written against 1.10.0-beta1.]
 ]
 #v(1.2em)
 
@@ -39,7 +39,7 @@ See #link(<persistence>)[Persistence].]
 = Getting started
 
 ```sh
-cargo add worktable@1.9.0-beta1
+cargo add worktable@1.10.0-beta1
 ```
 
 Until this beta is published, depend on the reviewed checkout with
@@ -164,10 +164,9 @@ owns and whether an absent key is valid:
   [*operation*], [*input*], [*key absent*], [*meaning*],
   [`insert(row)`], [complete `Row`], [insert], [Create a new row. An existing primary key returns `PrimaryAlreadyExists`; the caller does not authorize replacement.],
   [`upsert(row)`], [complete `Row`], [insert], [Insert or replace. The caller declares the complete row authoritative. A row selected earlier can overwrite newer fields if it is later passed here.],
-  [`update(row)`], [complete `Row`], [`NotFound`], [Replace every field of an existing row. It never creates a missing row, but the supplied row is still a complete authoritative snapshot.],
-  [`update_partial_<name>`\ `(Query, key)`], [declared fields], [`NotFound`], [Change only the named fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
-  [`update_partial_in_place_<name>`\ `(closure, key)`], [mutable archived fields], [`NotFound`], [Directly mutate declared, unindexed fields of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
-  [`reinsert(old, new)`], [two complete rows], [`NotFound` or mismatch], [Advanced explicit replacement that moves storage and repairs indexes. Ordinary application updates should use one of the methods above.],
+  [`replace(row)`], [complete `Row`], [`NotFound`], [Replace every field of an existing row. It never creates a missing row, but the supplied row is still a complete authoritative snapshot.],
+  [`update_by_<key>(key, Columns::FIELD_SET, value)`], [declared fields], [`NotFound`], [Change only the selector's declared fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
+  [`update_in_place_by_<pk>(key, Columns::FIELD, closure)`], [one mutable archived field], [`NotFound`], [Directly mutate a declared, unindexed field of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
 )
 ]
 
@@ -182,33 +181,38 @@ worktable! (
         state: u8,
     },
     queries: {
-        update_partial: {
+        update: {
             AmountById(amount) by id,   // <Name>(<columns>) by <key>
         },
         delete: {
             ById() by id,               // empty parens: names no columns
         },
-        update_partial_in_place: {
+        update_in_place: {
             StateById(state) by id,     // only `by <primary key>` is supported
         },
     },
 );
 ```
 
-CamelCase declared, snake_case generated:
+The lookup column names the method and the typed selector names the changed
+column. A one-column update takes that column's Rust value directly:
 
 ```rust
-table.update_partial_amount_by_id(AmountByIdQuery { amount: 900 }, 1).await?;  // name + "Query"
+table.update_by_id(1, InvoiceColumns::AMOUNT, 900).await?;
 table.delete_by_id(1).await?;
-table.update_partial_in_place_state_by_id(|state| *state = 2.into(), 1).await?;
+table.update_in_place_by_id(1, InvoiceColumns::STATE, |state| *state = 2.into()).await?;
 ```
 
-The generated suffix describes the declared operation. `StatusById(status) by id` emits
-`update_partial_status_by_id(StatusByIdQuery { status }, id)`; placing that declaration under
-`update_partial_in_place` emits `update_partial_in_place_status_by_id(|status| ..., id)`. `status` is the column
-name, not a storage type.
+`InvoiceColumns::AMOUNT` is a generated zero-sized selector. Its sealed dispatch
+implementation exists only for the declared `amount by id` combination and its
+value type is `u64`, so an undeclared selector/key combination or wrong value
+type fails to compile. The selector is monomorphized; it allocates nothing and
+uses no dynamic dispatch. A declaration over `name, amount` exposes the atomic
+selector `InvoiceColumns::NAME_AND_AMOUNT` and takes its generated query struct.
+Selector constants preserve source spelling in uppercase: `attr1` becomes
+`ATTR1`, while `some_field` becomes `SOME_FIELD`.
 
-A declared `update_partial` reads, changes and writes only its named fields. Normal declared
+A declared `update` reads, changes and writes only its named fields. Normal declared
 updates accept owned Rust values and are the safe default for strings, options and
 application-defined wrappers. An archived string contains a relative pointer, so
 WorkTable may reconstruct the complete row rather than move only that field's archived
@@ -217,10 +221,10 @@ other fields. The macro cannot inspect an external type such as `EncryptedSecret
 prove whether its archived form contains relative pointers, so unknown custom types take
 that conservative path.
 
-`update_partial_in_place` mutates without selecting first and locks internally. Use it when the
+`update_in_place` mutates without selecting first and locks internally. Use it when the
 application can safely edit the archived representation directly, as with a scalar or a
 fixed `#[repr(u8)]` enum. Do not copy an archived string, vector or pointer-bearing wrapper
-from another buffer into an `update_partial_in_place` closure. Persisted in-place queries enqueue the
+from another buffer into an `update_in_place` closure. Persisted in-place queries enqueue the
 changed slot bytes; they do not skip durability.
 
 == 6. Selects you do not declare
@@ -387,12 +391,13 @@ column, for a width the key cannot count to (`u16` beside a `u8` key declares 65
 into a partition that holds 256), and for `persist: true`, which it has no engine to
 honour.
 
-`queries:` works. An `update` or `delete` keyed by the primary key generates the same
-method name and takes the same `<Name>Query` struct as the paged table, so the call reads
-the same; it is not `async` and does not return `WorkTableError`, so a call cannot move
-between the shapes by accident. A query keyed by any other column is refused, because a
+`queries:` works. An `update` keyed by the primary key uses the same
+`update_by_<key>(key, Columns::FIELD_SET, value)` form as the paged table; a
+multi-column selector takes the same generated query struct. A delete keeps its
+declared method name. Dense calls are synchronous and return `Option`, so a call
+cannot move between the shapes by accident. A query keyed by any other column is refused, because a
 dense partition has no secondary index and scanning instead would turn a keyed operation
-into a linear one without saying so. `update_partial_in_place` is refused: every update
+into a linear one without saying so. `update_in_place` is refused: every update
 here is already in place.
 
 Note that `memory_by_key` and `memory_total` cannot see any of this. They report
@@ -463,10 +468,11 @@ error naming what to use instead, rather than being accepted and ignored.
 Declared `queries` are supported. They use equality on a primary or secondary index,
 including `fxhash`, and run synchronously through `&mut self`. An update declaration
 such as `StateById(state) by id` emits
-`update_partial_state_by_id(StateByIdQuery { state: 7 }, &id) -> usize`; a delete declaration
+`update_by_id(id, TicketColumns::STATE, 7) -> usize`; a delete declaration
 `ByOwner() by owner` emits `delete_by_owner(&owner) -> usize`. The return value counts
-affected rows. `update_partial_in_place: { Status(state) by id }` emits
-`update_partial_in_place_status(|state| *state = 42, &id) -> usize` and accepts one column.
+affected rows. `update_in_place: { Status(state) by id }` emits
+`update_in_place_by_id(id, TicketColumns::STATE, |state| *state = 42) -> usize`
+and accepts one column.
 These methods belong to the table, not mutable wrappers on the shared partition set.
 
 Vec edits validate a cloned candidate before replacing a row. A primary or unique
@@ -474,7 +480,7 @@ secondary-key collision panics with that row and its indexes unchanged; a panick
 edit closure also leaves the stored row unchanged. Replacing an existing row through
 `upsert` checks unique secondary keys first. Multi-row queries apply one row at a time
 and are not transactions: earlier successful edits remain if a later edit fails.
-Cloning owned fields is part of this mutation cost, including Vec `update_partial_in_place` queries.
+Cloning owned fields is part of this mutation cost, including Vec `update_in_place` queries.
 
 === Bytes and back: `unload` and `load`
 
@@ -612,14 +618,14 @@ worktable! {
     runtime: nagoya(shared_slot),
     columns: { id: u64 primary_key, total: u64 },
     queries: {
-        update_partial runtime scheduled: { TotalById(total) by id },
-        update_partial_in_place runtime scheduled: { TotalById(total) by id },
+        update runtime scheduled: { TotalById(total) by id },
+        update_in_place runtime scheduled: { TotalById(total) by id },
     }
 }
 let table = Arc::new(OrdersWorkTable::default());
 table.insert(OrdersRow { id: 1, total: 10 }).await?;
-table.update_partial_total_by_id(TotalByIdQuery { total: 20 }, 1u64).await?;
-table.update_partial_in_place_total_by_id(|total| *total = 21.into(), 1u64).await?;
+table.update_by_id(1, OrdersColumns::TOTAL, 20).await?;
+table.update_in_place_by_id(1, OrdersColumns::TOTAL, |total| *total = 21.into()).await?;
 let rows = table.select_all()
     .order_on(OrdersRowFields::Total, Order::Desc)
     .limit(100).runtime(wide).execute_async().await?;
@@ -702,9 +708,9 @@ worktable! (
         by_bucket: { cluster_by: [bucket] },
     },
     queries: {
-        update_partial: { ScoreById(score) by id },
+        update: { ScoreById(score) by id },
         delete: { ById() by id },
-        update_partial_in_place: { ScoreById(score) by id },
+        update_in_place: { ScoreById(score) by id },
     },
     config: {
         page_size: 4096,
@@ -948,7 +954,7 @@ more than halved randomized leaf lookup and was faster for four-client in-memory
 insertion. Select that tradeoff at the Cargo callsite:
 
 ```toml
-worktable = { version = "^1.9.0-beta1", default-features = false,
+worktable = { version = "^1.10.0-beta1", default-features = false,
   features = ["std", "vanilla-index", "wti-predictable-search"] }
 ```
 
@@ -980,9 +986,9 @@ Use `execute()` to materialize those builders. Unique secondary-index selects re
 was queued, not committed to stable storage. `delete_many(Vec<Key>).await` and
 `delete_range(range).await` return deleted keys and may report a `BatchDeleteError` with
 partial progress. Range deletion walks the keys present at that walk; it does not promise
-to delete concurrent future inserts into the range. `reinsert(old, new).await` is the
-explicit row-replacement operation; ordinary updates should use `upsert` or declared
-queries so secondary indexes stay synchronized.
+to delete concurrent future inserts into the range. Use `replace(row).await` when
+the complete row is authoritative, or a declared update when only selected
+columns are authoritative; both keep secondary indexes synchronized.
 
 With `autoincrement`, get a key from `get_next_pk()`, convert it into the row field, then
 insert. `reserve_pks(count)` reserves a disjoint range for a bulk producer. Reserved keys
