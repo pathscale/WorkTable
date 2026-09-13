@@ -151,7 +151,27 @@ let many = table.select_by_country(44).execute()?;        // Vec<Row>
 optional column must say `using worktables_index`; Arctic supports `String` keys,
 but does not support optional keys.
 
-== 5. Declared queries
+== 5. Mutations and declared queries
+
+These operations are deliberately different. Choose by how much of the row the caller
+owns and whether an absent key is valid:
+
+#text(size: 7.5pt)[
+#table(
+  columns: (1.4fr, 1.1fr, 0.9fr, 3fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 5pt,
+  [*operation*], [*input*], [*key absent*], [*meaning*],
+  [`insert(row)`], [complete `Row`], [insert], [Create a new row. An existing primary key returns `PrimaryAlreadyExists`; the caller does not authorize replacement.],
+  [`upsert(row)`], [complete `Row`], [insert], [Insert or replace. The caller declares the complete row authoritative. A row selected earlier can overwrite newer fields if it is later passed here.],
+  [`update(row)`], [complete `Row`], [`NotFound`], [Replace every field of an existing row. It never creates a missing row, but the supplied row is still a complete authoritative snapshot.],
+  [`update_<name>`\ `(Query, key)`], [declared fields], [`NotFound`], [Change only the named fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
+  [`update_<name>`\ `_in_place(closure, key)`], [mutable archived fields], [`NotFound`], [Directly mutate declared, unindexed fields of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
+  [`reinsert(old, new)`], [two complete rows], [`NotFound` or mismatch], [Advanced explicit replacement that moves storage and repairs indexes. Ordinary application updates should use one of the methods above.],
+)
+]
+
+Declare targeted updates, deletes and direct archived-field mutations with the table:
 
 ```rust
 worktable! (
@@ -183,8 +203,25 @@ table.delete_by_id(1).await?;
 table.update_state_by_id_in_place(|state| *state = 2.into(), 1).await?;
 ```
 
-`update` reads, changes and writes. `in_place` mutates without selecting first and locks
-internally, so it is safe from several threads without the caller holding anything.
+The generated suffix describes the declared operation. `StatusById(status) by id` emits
+`update_status_by_id(StatusByIdQuery { status }, id)`; placing that declaration under
+`in_place` emits `update_status_by_id_in_place(|status| ..., id)`. `status` is the column
+name, not a storage type.
+
+A declared `update` reads, changes and writes only its named fields. Normal declared
+updates accept owned Rust values and are the safe default for strings, options and
+application-defined wrappers. An archived string contains a relative pointer, so
+WorkTable may reconstruct the complete row rather than move only that field's archived
+bytes. It rereads under the full mutation lock first, preserving concurrent changes to
+other fields. The macro cannot inspect an external type such as `EncryptedSecret` and
+prove whether its archived form contains relative pointers, so unknown custom types take
+that conservative path.
+
+`in_place` mutates without selecting first and locks internally. Use it when the
+application can safely edit the archived representation directly, as with a scalar or a
+fixed `#[repr(u8)]` enum. Do not copy an archived string, vector or pointer-bearing wrapper
+from another buffer into an `in_place` closure. Persisted in-place queries enqueue the
+changed slot bytes; they do not skip durability.
 
 == 6. Selects you do not declare
 
