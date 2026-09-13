@@ -725,12 +725,16 @@ mod lifecycle_tests {
         failure: TestFailure,
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone)]
     enum TestFailure {
         None,
         Engine,
         IndexCorruption,
         Panic,
+        GatedPanic {
+            entered: Arc<std::sync::Barrier>,
+            release: Arc<std::sync::Barrier>,
+        },
     }
 
     impl PersistenceEngine<(), u64, TestEvents, TestIndex> for TestEngine {
@@ -753,7 +757,7 @@ mod lifecycle_tests {
             &mut self,
             _batch_op: BatchOperation<(), u64, TestEvents, TestIndex>,
         ) -> eyre::Result<()> {
-            match self.failure {
+            match &self.failure {
                 TestFailure::None => {}
                 TestFailure::Engine => return Err(eyre::eyre!("injected batch failure")),
                 TestFailure::IndexCorruption => {
@@ -762,6 +766,11 @@ mod lifecycle_tests {
                     );
                 }
                 TestFailure::Panic => panic!("injected persistence worker panic"),
+                TestFailure::GatedPanic { entered, release } => {
+                    entered.wait();
+                    release.wait();
+                    panic!("injected persistence worker panic");
+                }
             }
             self.batches.fetch_add(1, Ordering::Relaxed);
             self.events.lock().push("batch");
@@ -1256,6 +1265,55 @@ mod lifecycle_tests {
 
         let intake_error = task.apply_operation(insert_operation(2)).unwrap_err();
         assert!(Arc::ptr_eq(&wait_error, &intake_error));
+    }
+
+    /// A worker panic must not escape `Drop`.
+    ///
+    /// In particular, a destructor that resumes the worker's panic can abort
+    /// the process when the table is itself being dropped during unwinding.
+    /// Hold the worker inside the engine until `Drop` has entered `Closing`,
+    /// proving that the drop path is awaiting this still-busy worker when the
+    /// injected panic lands.
+    #[test]
+    fn busy_drop_contains_a_worker_panic() {
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::GatedPanic {
+                entered: entered.clone(),
+                release: release.clone(),
+            },
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        entered.wait();
+
+        let monitor = task.monitor();
+        let dropping =
+            std::thread::spawn(move || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(task))));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !matches!(monitor.lifecycle.state(), PersistenceState::Closing) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Drop did not begin joining the busy persistence worker"
+            );
+            std::thread::yield_now();
+        }
+        release.wait();
+
+        let drop_result = dropping.join().expect("drop thread itself must remain joinable");
+        assert!(drop_result.is_ok(), "a persistence worker panic escaped Drop");
+        match monitor.lifecycle.state() {
+            PersistenceState::Failed(error) => assert_eq!(
+                error.to_string(),
+                "persistence engine failed: persistence worker panicked"
+            ),
+            state => panic!("worker panic did not become terminal: {state:?}"),
+        }
     }
 
     /// A worker that stops publishes a terminal state instead of leaving its
@@ -1773,8 +1831,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
             }
         } else if let Some(handle) = self.engine_task_handle.take() {
             // The engine owns a dedicated one-worker runtime. Joining here
-            // cannot occupy the worker that must make this task progress.
-            let _ = nagoya::block_on(handle);
+            // cannot occupy the worker that must make this task progress. A
+            // join rethrows a worker panic, which must not escape a destructor
+            // (and would abort the process if this drop is already unwinding).
+            // `WorkerCompletionGuard` records that panic in the lifecycle.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| nagoya::block_on(handle)));
         }
     }
 }
