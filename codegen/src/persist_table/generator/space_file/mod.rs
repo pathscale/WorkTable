@@ -26,8 +26,13 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_persisted_ident = name_generator.get_persisted_index_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
-        let disk_capacity = name_generator.get_disk_page_capacity();
         let pk_type = name_generator.get_primary_key_type_ident();
+        let pk_tokens = quote! { #pk_type };
+        let disk_capacity = if self.attributes.pk_unsized {
+            name_generator.get_aligned_disk_page_capacity(&pk_tokens)
+        } else {
+            name_generator.get_disk_page_capacity()
+        };
         let space_file_ident = name_generator.get_space_file_ident();
         let primary_index = if self.attributes.pk_unsized {
             quote! {
@@ -132,8 +137,13 @@ impl Generator {
         let index_ident = name_generator.get_index_type_ident();
         let task_ident = name_generator.get_persistence_task_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
-        let node_capacity = name_generator.get_disk_page_capacity();
         let pk_type = name_generator.get_primary_key_type_ident();
+        let pk_tokens = quote! { #pk_type };
+        let node_capacity = if self.attributes.pk_unsized {
+            name_generator.get_aligned_disk_page_capacity(&pk_tokens)
+        } else {
+            name_generator.get_disk_page_capacity()
+        };
         let lock_type = name_generator.get_lock_type_ident();
         let table_name = name_generator.get_work_table_literal_name();
         let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
@@ -354,7 +364,12 @@ impl Generator {
         let pk_type = name_generator.get_primary_key_type_ident();
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
-        let disk_capacity = name_generator.get_disk_page_capacity();
+        let pk_tokens = quote! { #pk_type };
+        let disk_capacity = if self.attributes.pk_unsized {
+            name_generator.get_aligned_disk_page_capacity(&pk_tokens)
+        } else {
+            name_generator.get_disk_page_capacity()
+        };
         let persisted_index_name = name_generator.get_persisted_index_ident();
         let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);

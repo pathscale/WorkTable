@@ -66,6 +66,7 @@ where
         &self,
         aliases: &PageAliases<T>,
         event_page_key: &(T, Link),
+        event_value: Option<&(T, Link)>,
     ) -> Option<(PageId, Option<(T, Link)>)> {
         self.table_of_contents
             .get(event_page_key)
@@ -74,6 +75,16 @@ where
                 aliases
                     .resolve(event_page_key)
                     .map(|(page_id, current_key)| (page_id, Some(current_key.clone())))
+            })
+            .or_else(|| {
+                let event_value = event_value?;
+                // A maximum removed in the preceding persistence batch can
+                // leave this event's page identity stale. The affected value
+                // still selects the ordered page range. Structural events do
+                // not carry such a value and remain hard errors.
+                self.table_of_contents
+                    .page_containing(event_value)
+                    .map(|(current_key, page_id)| (page_id, Some(current_key)))
             })
     }
 
@@ -489,14 +500,16 @@ where
         let mut page_aliases = PageAliases::default();
         for ev in events {
             match &ev {
-                ChangeEvent::InsertAt { max_value, .. } | ChangeEvent::RemoveAt { max_value, .. } => {
+                ChangeEvent::InsertAt { max_value, value, .. } | ChangeEvent::RemoveAt { max_value, value, .. } => {
                     let event_page_key = (max_value.key.clone(), max_value.value);
+                    let event_value = (value.key.clone(), value.value);
                     // A direct TOC hit means the event key is the page's
                     // canonical pre-event identity. An alias hit carries the
                     // current canonical identity captured when the alias was
                     // installed. This lets us compare the actual post-apply
                     // identity without predicting DataBucket's mutation rules.
-                    let Some((page_index, aliased_page_key)) = self.resolve_batch_page(&page_aliases, &event_page_key)
+                    let Some((page_index, aliased_page_key)) =
+                        self.resolve_batch_page(&page_aliases, &event_page_key, Some(&event_value))
                     else {
                         return Err(eyre!(
                             "unsized index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
@@ -574,7 +587,8 @@ where
                 } => {
                     let event_page_key = (max_value.key.clone(), max_value.value);
 
-                    let Some((page_index, aliased_page_key)) = self.resolve_batch_page(&page_aliases, &event_page_key)
+                    let Some((page_index, aliased_page_key)) =
+                        self.resolve_batch_page(&page_aliases, &event_page_key, None)
                     else {
                         return Err(eyre!(
                             "unsized index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",

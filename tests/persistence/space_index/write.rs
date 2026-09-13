@@ -632,6 +632,79 @@ async fn batch_split_then_max_remove_then_historical_identity_insert_applies() {
     );
 }
 
+/// A page alias cannot be carried forever: persistence deliberately scopes
+/// aliases to one batch. The following batch must recover a stale maximum
+/// from the affected value's current ordered page range.
+#[tokio::test]
+async fn max_removed_at_batch_boundary_does_not_orphan_the_next_event() {
+    remove_file_if_exists("tests/data/space_index/cross_batch_max.wt.idx".to_string()).await;
+
+    let mut space_index = SpaceIndex::<u32, { INNER_PAGE_SIZE as u32 }, DEFAULT_PAGE_STRIDE>::new(
+        "tests/data/space_index/cross_batch_max.wt.idx",
+        0.into(),
+        1,
+    )
+    .await
+    .unwrap();
+
+    fn pair(key: u32) -> Pair<u32, Link> {
+        Pair {
+            key,
+            value: Link {
+                page_id: 0.into(),
+                offset: key,
+                length: 24,
+            },
+        }
+    }
+
+    space_index
+        .process_change_event_batch(vec![
+            ChangeEvent::CreateNode {
+                event_id: 0.into(),
+                max_value: pair(30),
+            },
+            ChangeEvent::InsertAt {
+                event_id: 0.into(),
+                max_value: pair(30),
+                value: pair(10),
+                index: 0,
+            },
+            ChangeEvent::InsertAt {
+                event_id: 0.into(),
+                max_value: pair(30),
+                value: pair(20),
+                index: 1,
+            },
+            ChangeEvent::RemoveAt {
+                event_id: 0.into(),
+                max_value: pair(30),
+                value: pair(30),
+                index: 2,
+            },
+        ])
+        .await
+        .unwrap();
+
+    // The source CDC stream was created while this page was still identified
+    // by 30, but the preceding persisted batch re-keyed it to 20.
+    space_index
+        .process_change_event_batch(vec![ChangeEvent::InsertAt {
+            event_id: 0.into(),
+            max_value: pair(30),
+            value: pair(25),
+            index: 2,
+        }])
+        .await
+        .unwrap();
+
+    let restored = space_index.parse_indexset().await.unwrap();
+    for key in [10u32, 20, 25] {
+        assert!(restored.contains_key(&key), "key {key} must survive cross-batch replay");
+    }
+    assert!(!restored.contains_key(&30));
+}
+
 /// End-to-end equivalence: one batch carrying a real CDC stream with node
 /// splits, maximum removals, and re-inserts must replay into exactly the
 /// source index. This is the sized twin of the unsized alias machinery's

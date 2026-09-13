@@ -32,7 +32,12 @@ impl Generator {
         let ident = name_generator.get_persistence_engine_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
-        let disk_capacity = name_generator.get_disk_page_capacity();
+        let key_type = quote! { #primary_key_type };
+        let disk_capacity = if self.attributes.pk_unsized {
+            name_generator.get_aligned_disk_page_capacity(&key_type)
+        } else {
+            name_generator.get_disk_page_capacity()
+        };
         let page_const_name = name_generator.get_page_size_const_ident();
         let const_name = name_generator.get_page_size_const_ident();
         let space_primary_index = name_generator.get_space_primary_index_ident();

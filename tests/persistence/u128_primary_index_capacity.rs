@@ -38,6 +38,26 @@ worktable!(
     },
 );
 
+worktable!(
+    name: StringThenU128KeyLayout,
+    persist: true,
+    columns: {
+        tenant: String primary_key using worktables_index,
+        id: u128 primary_key using worktables_index,
+        value: u64,
+    },
+);
+
+worktable!(
+    name: U128ThenStringKeyLayout,
+    persist: true,
+    columns: {
+        id: u128 primary_key using worktables_index,
+        tenant: String primary_key using worktables_index,
+        value: u64,
+    },
+);
+
 #[test]
 fn generated_key_size_measure_tracks_archived_alignment_and_dynamic_length() {
     use data_bucket::{IndexPage, IndexValue, Persistable};
@@ -64,6 +84,87 @@ fn generated_key_size_measure_tracks_archived_alignment_and_dynamic_length() {
         populated > empty,
         "dynamic key length was lost by the generated wrapper"
     );
+}
+
+#[tokio::test]
+async fn mixed_unsized_and_u128_key_orders_survive_persistence() {
+    let string_first_dir = "tests/data/string_then_u128_primary_index";
+    let u128_first_dir = "tests/data/u128_then_string_primary_index";
+    remove_dir_if_exists(string_first_dir.to_string()).await;
+    remove_dir_if_exists(u128_first_dir.to_string()).await;
+
+    let string_first_config = DiskConfig::new_with_table_name(
+        string_first_dir,
+        StringThenU128KeyLayoutWorkTable::name_snake_case(),
+        StringThenU128KeyLayoutWorkTable::version(),
+    );
+    {
+        let engine = StringThenU128KeyLayoutPersistenceEngine::new(string_first_config.clone())
+            .await
+            .unwrap();
+        let table = StringThenU128KeyLayoutWorkTable::load(engine).await.unwrap();
+        table
+            .insert(StringThenU128KeyLayoutRow {
+                tenant: "tenant-with-a-long-name".to_string(),
+                id: u128::MAX - 1,
+                value: 17,
+            })
+            .await
+            .unwrap();
+        table.close().await.unwrap();
+    }
+    {
+        let engine = StringThenU128KeyLayoutPersistenceEngine::new(string_first_config)
+            .await
+            .unwrap();
+        let table = StringThenU128KeyLayoutWorkTable::load(engine).await.unwrap();
+        assert_eq!(
+            table
+                .select(("tenant-with-a-long-name".to_string(), u128::MAX - 1))
+                .unwrap()
+                .value,
+            17
+        );
+        table.close().await.unwrap();
+    }
+
+    let u128_first_config = DiskConfig::new_with_table_name(
+        u128_first_dir,
+        U128ThenStringKeyLayoutWorkTable::name_snake_case(),
+        U128ThenStringKeyLayoutWorkTable::version(),
+    );
+    {
+        let engine = U128ThenStringKeyLayoutPersistenceEngine::new(u128_first_config.clone())
+            .await
+            .unwrap();
+        let table = U128ThenStringKeyLayoutWorkTable::load(engine).await.unwrap();
+        table
+            .insert(U128ThenStringKeyLayoutRow {
+                id: u128::MAX - 2,
+                tenant: "another-long-tenant-name".to_string(),
+                value: 23,
+            })
+            .await
+            .unwrap();
+        table.close().await.unwrap();
+    }
+    {
+        let engine = U128ThenStringKeyLayoutPersistenceEngine::new(u128_first_config)
+            .await
+            .unwrap();
+        let table = U128ThenStringKeyLayoutWorkTable::load(engine).await.unwrap();
+        assert_eq!(
+            table
+                .select((u128::MAX - 2, "another-long-tenant-name".to_string()))
+                .unwrap()
+                .value,
+            23
+        );
+        table.close().await.unwrap();
+    }
+
+    remove_dir_if_exists(string_first_dir.to_string()).await;
+    remove_dir_if_exists(u128_first_dir.to_string()).await;
 }
 
 /// The generated primary-key newtype must report its 16-byte archived
