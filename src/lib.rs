@@ -15,6 +15,7 @@ mod columnar;
 pub mod fsx;
 pub mod in_memory;
 mod index;
+pub mod linear_table;
 pub mod lock;
 mod mem_stat;
 #[cfg(feature = "std")]
@@ -47,6 +48,7 @@ pub use columnar::{
     ColumnSlotId64, ColumnarColumn, ColumnarRowRef, next_columnar_incarnation,
 };
 pub use index::*;
+pub use linear_table::{InsertError as LinearInsertError, LinearTable, VecTable};
 #[cfg(feature = "std")]
 pub use persistence::{
     LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError, UnloadFailure, UnloadReport,
@@ -218,6 +220,7 @@ pub mod prelude {
     };
     #[cfg(feature = "s3-support")]
     pub use crate::{DatabaseS3DiskConfig, DatabaseS3PersistenceEngine, S3Database};
+    pub use crate::{LinearInsertError, LinearTable, VecTable};
     /// The upstream IndexSet backend, when the `vanilla-index` feature selects it.
     #[cfg(feature = "vanilla-index")]
     pub use crate::{UpstreamIndexMap, UpstreamIndexPair};
