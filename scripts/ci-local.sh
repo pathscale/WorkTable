@@ -55,7 +55,7 @@ run cargo test --workspace --all-targets --features versioned-row-publication
 
 echo "=== build and test (all-features) ==="
 run cargo build --workspace --all-targets --all-features
-run cargo test --workspace --all-targets --all-features
+run env CARGO_PROFILE_TEST_DEBUG=0 cargo test --workspace --all-targets --all-features
 
 echo "=== cell-lock concurrency models ==="
 run env "RUSTFLAGS=--cfg wt_loom" CARGO_TARGET_DIR=target/cell-lock-loom cargo test --release --lib cell_lock_models
