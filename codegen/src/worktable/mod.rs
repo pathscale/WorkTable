@@ -662,7 +662,7 @@ mod tests {
         .to_string();
 
         let update = output
-            .split("pub async fn update_balance")
+            .split("async fn __wt_update_balance")
             .nth(1)
             .expect("generated balance update");
         assert!(
@@ -699,7 +699,7 @@ mod tests {
             .to_string();
 
             let update = output
-                .split("pub async fn update_secret")
+                .split("async fn __wt_update_secret")
                 .nth(1)
                 .expect("generated opaque-field update");
             assert!(
@@ -745,7 +745,7 @@ mod tests {
             .to_string();
 
             let update = output
-                .split("pub async fn update_display_name")
+                .split("async fn __wt_update_display_name")
                 .nth(1)
                 .expect("generated optional-string update");
             assert!(update.contains("data . update_in_place"));
@@ -777,7 +777,7 @@ mod tests {
             .to_string();
 
             let update = output
-                .split("pub async fn update_secret")
+                .split("async fn __wt_update_secret")
                 .nth(1)
                 .expect("generated indexed opaque-field update");
             assert!(update.contains("self . reinsert"));
@@ -1353,7 +1353,10 @@ mod position_tests {
             expanded.contains("impl PriceDenseTable"),
             "the dense payload must be emitted: {expanded}"
         );
-        assert!(expanded.contains("fn update_top_price"), "missing the update query");
+        assert!(
+            expanded.contains("fn __wt_update_top_price"),
+            "missing the update query"
+        );
         assert!(expanded.contains("fn delete_stale"), "missing the delete query");
     }
 
