@@ -10,6 +10,14 @@ Since 1.9 it also builds without `std`. A consumer with
 `select_all`; persistence, vacuum and the disk index are the parts that need an
 operating system, and they are gated out.
 
+For build-once lookup data, [`LinearTable`](crate::LinearTable) keeps duplicate
+keys in insertion order and exposes its rows as one contiguous slice. This is
+the integrated replacement for `worktable-vec::LinearTable`: callers can sort
+while building, freeze behind a shared reference, and use their own
+allocation-free binary search. Its optional snapshot operation uses the same
+self-contained Vec page codec as generated `vec: true` tables and remains
+available in `no_std + alloc` builds.
+
 Three things a declaration can now choose that it could not before:
 
 - **The index backend**, with `using`. The default is `arctic`, which takes
