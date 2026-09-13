@@ -44,14 +44,14 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
             let table = TestSyncWorkTable::load(engine).await.unwrap();
 
             let result = table
-                .update_another_by_id(AnotherByIdQuery { another: 9999 }, 9999)
+                .update_partial_another_by_id(AnotherByIdQuery { another: 9999 }, 9999)
                 .await;
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), WorkTableError::NotFound));
 
             for (i, pk) in pks.iter().enumerate() {
                 table
-                    .update_another_by_id(
+                    .update_partial_another_by_id(
                         AnotherByIdQuery {
                             another: i as u64 + 1000,
                         },
@@ -117,14 +117,14 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
             let table = TestSyncWorkTable::load(engine).await.unwrap();
 
             let result = table
-                .update_field_by_another(FieldByAnotherQuery { field: 9999.0 }, 9999)
+                .update_partial_field_by_another(FieldByAnotherQuery { field: 9999.0 }, 9999)
                 .await;
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), WorkTableError::NotFound));
 
             for (i, _pk) in pks.iter().enumerate() {
                 table
-                    .update_field_by_another(
+                    .update_partial_field_by_another(
                         FieldByAnotherQuery {
                             field: i as f64 + 1000.0,
                         },

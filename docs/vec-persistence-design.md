@@ -129,7 +129,7 @@ The restriction today is blunter than any of that: `queries:` is refused on
 `vec: true` for every backend, and the dense table accepts them only
 `by <primary key>` because it has no secondary index. Enabling them on
 `vec: true` is parity work rather than performance work — a generated
-`update_amount_by_id` would be a named wrapper over `update(&key, |row| ..)`,
+`update_partial_amount_by_id` would be a named wrapper over `update(&key, |row| ..)`,
 which already exists and already takes a closure.
 
 Mixed backends already work and are tested: a `fxhash` primary key with `arctic`

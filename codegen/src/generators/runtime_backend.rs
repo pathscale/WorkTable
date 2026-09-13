@@ -33,7 +33,7 @@ pub(crate) fn runtime_type(backend: RuntimeBackend) -> TokenStream {
 ///
 /// The chain is: a section's own annotation, then the table's `runtime:`, then
 /// the built-in default. The middle step is the one worth stating: a table that
-/// declares `runtime: tokio` and has an unannotated `update` section must give
+/// declares `runtime: tokio` and has an unannotated `update_partial` section must give
 /// that section tokio, not the built-in nagoya, or the table would silently run
 /// two runtimes.
 ///

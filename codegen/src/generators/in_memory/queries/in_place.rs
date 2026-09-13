@@ -11,8 +11,8 @@ impl InMemoryGenerator {
         let table_ident = name_generator.get_work_table_ident();
 
         let custom_in_place = if let Some(q) = &self.queries {
-            let profile = q.in_place_runtime.clone();
-            let custom_in_place = self.gen_in_place_queries(q.in_place.clone());
+            let profile = q.update_partial_in_place_runtime.clone();
+            let custom_in_place = self.gen_in_place_queries(q.update_partials_in_place.clone());
             let custom_in_place = crate::generators::profile_dispatch::wrap(
                 custom_in_place,
                 profile.as_ref(),
@@ -58,10 +58,10 @@ impl InMemoryGenerator {
     fn gen_primary_key_in_place(&self, snake_case_name: String, columns: &[Ident]) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
         let pk_type = name_generator.get_primary_key_type_ident();
-        let lock_ident = WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
+        let lock_ident = WorktableNameGenerator::get_update_partial_in_place_query_lock_ident(&snake_case_name);
 
         let method_ident = Ident::new(
-            format!("update_{snake_case_name}_in_place").as_str(),
+            format!("update_partial_in_place_{snake_case_name}").as_str(),
             Span::mixed_site(),
         );
 

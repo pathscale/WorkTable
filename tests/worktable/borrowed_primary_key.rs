@@ -8,10 +8,10 @@ worktable!(
         value: u64,
     },
     queries: {
-        update: {
+        update_partial: {
             BorrowedValueById(value) by id,
         }
-        in_place: {
+        update_partial_in_place: {
             BorrowedValueById(value) by id,
         }
     }
@@ -43,11 +43,11 @@ async fn string_primary_key_accepts_borrowed_forms() {
     assert_eq!(table.select(&generated), Some(row));
 
     table
-        .update_borrowed_value_by_id(BorrowedValueByIdQuery { value: 8 }, &id)
+        .update_partial_borrowed_value_by_id(BorrowedValueByIdQuery { value: 8 }, &id)
         .await
         .unwrap();
     table
-        .update_borrowed_value_by_id_in_place(|value| *value += 1, &id)
+        .update_partial_in_place_borrowed_value_by_id(|value| *value += 1, &id)
         .await
         .unwrap();
     assert_eq!(table.select(&id).unwrap().value, 9);

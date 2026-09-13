@@ -38,24 +38,24 @@ async fn run(mode: &'static str, tasks: usize) -> f64 {
                 match mode {
                     "disjoint" => {
                         if i % 2 == 0 {
-                            table.update_upd_b(UpdBQuery { b: n }, pk_val).await.unwrap();
+                            table.update_partial_upd_b(UpdBQuery { b: n }, pk_val).await.unwrap();
                         } else {
-                            table.update_upd_e(UpdEQuery { e: n }, pk_val).await.unwrap();
+                            table.update_partial_upd_e(UpdEQuery { e: n }, pk_val).await.unwrap();
                         }
                     }
                     "overlap" => {
-                        table.update_upd_be(UpdBEQuery { b: n, e: n }, pk_val).await.unwrap();
+                        table.update_partial_upd_be(UpdBEQuery { b: n, e: n }, pk_val).await.unwrap();
                     }
                     "mutex" => {
                         let _g = big_lock.lock().await;
                         if i % 2 == 0 {
-                            table.update_upd_b(UpdBQuery { b: n }, pk_val).await.unwrap();
+                            table.update_partial_upd_b(UpdBQuery { b: n }, pk_val).await.unwrap();
                         } else {
-                            table.update_upd_e(UpdEQuery { e: n }, pk_val).await.unwrap();
+                            table.update_partial_upd_e(UpdEQuery { e: n }, pk_val).await.unwrap();
                         }
                     }
                     "inplace" => {
-                        table.update_inc_b_in_place(|b| *b += 1, pk_val).await.unwrap();
+                        table.update_partial_in_place_inc_b(|b| *b += 1, pk_val).await.unwrap();
                     }
                     _ => unreachable!(),
                 }

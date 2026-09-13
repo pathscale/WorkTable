@@ -24,7 +24,7 @@ worktable! (
         another_idx: another,
     }
     queries: {
-        update: {
+        update_partial: {
             AnotherByExchange(another) by exchange,
             AnotherByTest(another) by test,
             AnotherById(another) by id,
@@ -238,7 +238,7 @@ async fn update_parallel() {
             let val = fastrand::u64(..);
             let id_to_update = fastrand::i64(1..=100);
             shared
-                .update_another_by_test(AnotherByTestQuery { another: val }, id_to_update)
+                .update_partial_another_by_test(AnotherByTestQuery { another: val }, id_to_update)
                 .await
                 .unwrap();
             {
@@ -253,7 +253,7 @@ async fn update_parallel() {
         let val = fastrand::u64(..);
         let id_to_update = fastrand::u64(0..=99);
         table
-            .update_another_by_id(AnotherByIdQuery { another: val }, id_to_update)
+            .update_partial_another_by_id(AnotherByIdQuery { another: val }, id_to_update)
             .await
             .unwrap();
         {
@@ -288,7 +288,7 @@ async fn secondary_update_follows_concurrent_row_relocation() {
     let writer = tokio::spawn(async move {
         writer_barrier.wait().await;
         for revision in 1..=2000 {
-            writer_table.update_exchange_by_id(ExchangeByIdQuery {
+            writer_table.update_partial_exchange_by_id(ExchangeByIdQuery {
                 exchange: format!("relocated-{revision}-{}", "x".repeat(revision % 64)),
             }, 0).await.unwrap();
             tokio::task::yield_now().await;
@@ -296,7 +296,7 @@ async fn secondary_update_follows_concurrent_row_relocation() {
     });
     barrier.wait().await;
     for revision in 1..=2000 {
-        table.update_another_by_test(AnotherByTestQuery { another: revision }, 1)
+        table.update_partial_another_by_test(AnotherByTestQuery { another: revision }, 1)
             .await.unwrap();
         tokio::task::yield_now().await;
     }
@@ -1152,7 +1152,7 @@ async fn test_update_by_non_unique() {
     let _ = table.insert(row2.clone()).await.unwrap();
 
     let row = AnotherByExchangeQuery { another: 3 };
-    table.update_another_by_exchange(row, "test".to_string()).await.unwrap();
+    table.update_partial_another_by_exchange(row, "test".to_string()).await.unwrap();
 
     let all = table.select_all().execute().unwrap();
 
@@ -1189,7 +1189,7 @@ async fn test_update_by_unique() {
     let _ = table.insert(row.clone()).await.unwrap();
 
     let row = AnotherByTestQuery { another: 3 };
-    table.update_another_by_test(row, 1).await.unwrap();
+    table.update_partial_another_by_test(row, 1).await.unwrap();
 
     let row = table.select_by_test(1).unwrap();
 
@@ -1216,7 +1216,7 @@ async fn test_update_by_pk() {
     let pk = table.insert(row.clone()).await.unwrap();
 
     let row = AnotherByIdQuery { another: 3 };
-    table.update_another_by_id(row, pk).await.unwrap();
+    table.update_partial_another_by_id(row, pk).await.unwrap();
 
     let row = table.select_by_test(1).unwrap();
 

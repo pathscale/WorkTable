@@ -3,6 +3,13 @@ Change Log
 
 ## [1.9.0-beta1]
 
+### Changed
+
+- Declared mutations now use `update_partial:` and
+  `update_partial_in_place:`. They generate `update_partial_<name>` and
+  `update_partial_in_place_<name>`, making their field-level semantics distinct
+  from the complete-row `update(row)` method.
+
 ### Added
 
 - The frozen `LinearTable` and `VecTable` API is now part of WorkTable itself,
@@ -63,7 +70,8 @@ Change Log
 
 
 - **`queries:` on a `vec: true` table.** It was refused wholesale; it now
-  generates `update_<name>`, `delete_<name>` and `update_<name>_in_place` under
+  generates `update_partial_<name>`, `delete_<name>` and
+  `update_partial_in_place_<name>` under
   the same names the paged table uses, so a declaration reads the same either
   way.
 
@@ -222,15 +230,15 @@ Change Log
   declares 65,536 rows into a partition that holds 256), and `persist: true`,
   which a dense partition has no engine to honour.
 
-  It carries `queries:`. An `update` or `delete` query keyed by the primary key
+  It carries `queries:`. An `update_partial` or `delete` query keyed by the primary key
   generates the same method name against the same `<Name>Query` struct the
   paged table generates, so a call reads identically; the signature does not,
   deliberately, because there is no `.await` and no `WorkTableError`, and a
   call that moved between the shapes should fail to compile rather than
   quietly change what it guarantees. A query keyed by any other column is
   refused: a dense partition has no secondary index, and scanning it instead
-  would be a keyed operation silently becoming a linear one. `in_place` is
-  refused as a synonym, because every update here is already in place.
+  would be a keyed operation silently becoming a linear one.
+  `update_partial_in_place` is refused, because every update here is already in place.
 
   Note that `memory_by_key` and `memory_total` **cannot see this saving**. They
   report `used_bytes`, which is rows plus indexes and excludes the fixed floor
@@ -1090,7 +1098,7 @@ rather than new surface.
 ### Fixed
 
 - Re-reading a table from file.
-- Index difference logic for `update` queries.
+- Index difference logic for `update_partial` queries.
 
 ## [0.5.1]
 

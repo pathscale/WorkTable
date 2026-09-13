@@ -25,7 +25,7 @@ async fn update_two_via_query_unique_indexes() {
 
     let _ = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_unique_two_attr_by_third(
+        .update_partial_unique_two_attr_by_third(
             UniqueTwoAttrByThirdQuery {
                 attr1: attr1_new.clone(),
                 attr2: attr2_new,
@@ -75,7 +75,7 @@ async fn update_with_reinsert_and_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_unique_two_attr_by_third(update, row1.attr3,)
+            .update_partial_unique_two_attr_by_third(update, row1.attr3,)
             .await
             .is_err()
     );
@@ -115,7 +115,7 @@ async fn update_with_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_unique_two_attr_by_third(update, row1.attr3)
+            .update_partial_unique_two_attr_by_third(update, row1.attr3)
             .await
             .is_err()
     );
@@ -150,7 +150,7 @@ async fn update_two_via_query_non_unique_indexes() {
 
     let _ = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_two_attr_by_third(
+        .update_partial_two_attr_by_third(
             TwoAttrByThirdQuery {
                 attr1: attr1_new,
                 attr2: attr2_new,

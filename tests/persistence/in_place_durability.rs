@@ -13,7 +13,7 @@ worktable!(
         note: String,
     },
     queries: {
-        in_place: {
+        update_partial_in_place: {
             CounterById(counter) by id,
         }
     }
@@ -57,7 +57,7 @@ fn in_place_update_survives_reload() {
                 .await
                 .unwrap();
             table
-                .update_counter_by_id_in_place(|counter| *counter = 42u64.into(), 1)
+                .update_partial_in_place_counter_by_id(|counter| *counter = 42u64.into(), 1)
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();

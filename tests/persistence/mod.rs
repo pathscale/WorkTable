@@ -46,7 +46,7 @@ worktable! (
         another_idx: another,
     },
     queries: {
-        update: {
+        update_partial: {
             AnotherById(another) by id,
         },
         delete: {

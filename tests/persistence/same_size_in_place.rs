@@ -13,7 +13,7 @@ worktable!(
         note: String,
     },
     queries: {
-        update: {
+        update_partial: {
             AmountById(amount) by id,
             NoteById(note) by id,
         }
@@ -59,7 +59,7 @@ fn same_size_updates_keep_the_row_link() {
 
             // Fixed-size column update: archived in-place swap, same slot.
             table
-                .update_amount_by_id(AmountByIdQuery { amount: 2 }, 1)
+                .update_partial_amount_by_id(AmountByIdQuery { amount: 2 }, 1)
                 .await
                 .unwrap();
             let link_after_amount = table.0.primary_index.pk_map.get_value(&pk).unwrap().0;
@@ -70,7 +70,7 @@ fn same_size_updates_keep_the_row_link() {
 
             // Same-length String update: same-size in-place path, same slot.
             table
-                .update_note_by_id(
+                .update_partial_note_by_id(
                     NoteByIdQuery {
                         note: "bbbb".to_string(),
                     },
@@ -86,7 +86,7 @@ fn same_size_updates_keep_the_row_link() {
 
             // A size-changing String update must still reinsert correctly.
             table
-                .update_note_by_id(
+                .update_partial_note_by_id(
                     NoteByIdQuery {
                         note: "a-considerably-longer-note".to_string(),
                     },

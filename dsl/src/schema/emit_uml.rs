@@ -54,9 +54,9 @@ impl Schema {
         }
 
         for (kind, operations) in [
-            ("update", &self.queries.updates),
+            ("update_partial", &self.queries.update_partials),
             ("delete", &self.queries.deletes),
-            ("in_place", &self.queries.in_place),
+            ("update_partial_in_place", &self.queries.update_partials_in_place),
         ] {
             for operation in operations {
                 let _ = writeln!(

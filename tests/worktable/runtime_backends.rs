@@ -11,7 +11,7 @@
 //! The body covers four things, and each one is here because leaving it out
 //! would let a broken backend pass:
 //!
-//! 1. `insert` / `select` / `update` / `delete` / `in_place`, so a backend that
+//! 1. `insert` / `select` / `update_partial` / `delete` / `update_partial_in_place`, so a backend that
 //!    compiles but cannot drive a mutation is caught.
 //! 2. A persisted table opened, written, closed and reloaded, so a backend
 //!    whose spawn or timer never reaches the persistence worker is caught.
@@ -92,7 +92,7 @@ macro_rules! runtime_backend_suite {
 
             // The in-memory table. Carries an indexed column so `update` and
             // `delete` have index maintenance to do, and a plain one so
-            // `in_place` has somewhere to write that no index watches.
+            // `update_partial_in_place` has somewhere to write that no index watches.
             worktable!(
                 name: RuntimeMatrix,
                 persist: false,
@@ -107,13 +107,13 @@ macro_rules! runtime_backend_suite {
                     bucket_idx: bucket,
                 },
                 queries: {
-                    update: {
+                    update_partial: {
                         BucketById(bucket) by id,
                     },
                     delete: {
                         ByBucket() by bucket,
                     },
-                    in_place: {
+                    update_partial_in_place: {
                         CounterById(counter) by id,
                     }
                 }
@@ -138,10 +138,10 @@ macro_rules! runtime_backend_suite {
                     bucket_idx: bucket,
                 },
                 queries: {
-                    update: {
+                    update_partial: {
                         PersistBucketById(bucket) by id,
                     },
-                    in_place: {
+                    update_partial_in_place: {
                         PersistCounterById(counter) by id,
                     }
                 }
@@ -241,7 +241,7 @@ macro_rules! runtime_backend_suite {
 
                 // update, which also has to move the row between index buckets
                 table
-                    .update_bucket_by_id(BucketByIdQuery { bucket: 3 }, ids[0])
+                    .update_partial_bucket_by_id(BucketByIdQuery { bucket: 3 }, ids[0])
                     .await
                     .unwrap();
                 assert_eq!(table.select(ids[0]).unwrap().bucket, 3);
@@ -255,7 +255,7 @@ macro_rules! runtime_backend_suite {
                 // republishing the row
                 for _ in 0..64 {
                     table
-                        .update_counter_by_id_in_place(|counter| *counter += 1u64, ids[1])
+                        .update_partial_in_place_counter_by_id(|counter| *counter += 1u64, ids[1])
                         .await
                         .unwrap();
                 }
@@ -351,11 +351,11 @@ macro_rules! runtime_backend_suite {
                         table.insert(row(id)).await.unwrap();
                     }
                     table
-                        .update_persist_bucket_by_id(PersistBucketByIdQuery { bucket: 3 }, 1)
+                        .update_partial_persist_bucket_by_id(PersistBucketByIdQuery { bucket: 3 }, 1)
                         .await
                         .unwrap();
                     table
-                        .update_persist_counter_by_id_in_place(|counter| *counter = 4_242u64.into(), 2)
+                        .update_partial_in_place_persist_counter_by_id(|counter| *counter = 4_242u64.into(), 2)
                         .await
                         .unwrap();
 

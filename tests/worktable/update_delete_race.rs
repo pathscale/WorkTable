@@ -12,7 +12,7 @@ worktable!(
         value: u64,
     },
     queries: {
-        update: {
+        update_partial: {
             NameById(name) by id,
         }
     }
@@ -45,7 +45,7 @@ async fn concurrent_update_and_delete_never_panics() {
                 } else {
                     "a-longer-replacement-name".to_string()
                 };
-                match table.update_name_by_id(NameByIdQuery { name }, 1).await {
+                match table.update_partial_name_by_id(NameByIdQuery { name }, 1).await {
                     Ok(()) => {}
                     // Deleted concurrently: legal, retried next iteration.
                     Err(WorkTableError::NotFound) => {}

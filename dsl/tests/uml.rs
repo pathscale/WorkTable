@@ -52,7 +52,7 @@ fn mermaid_draws_queries_as_operations() {
         name: Ledger,
         columns: { id: u64 primary_key, balance: f64, note: String },
         queries: {
-            update: { Balance(balance) by id }
+            update_partial: { Balance(balance) by id }
             delete: { ById() by id }
         }
         ",

@@ -32,10 +32,10 @@ fn queries_are_in_declaration_order() {
         "
         name: Sorted,
         columns: { id: u64 primary_key, a: u64, b: u64, c: u64 },
-        queries: { update: { Charlie(c) by id, Alpha(a) by id, Bravo(b) by id } }
+        queries: { update_partial: { Charlie(c) by id, Alpha(a) by id, Bravo(b) by id } }
         ",
     );
-    let names: Vec<&str> = schema.queries.updates.iter().map(|q| q.name.as_str()).collect();
+    let names: Vec<&str> = schema.queries.update_partials.iter().map(|q| q.name.as_str()).collect();
     assert_eq!(names, ["Charlie", "Alpha", "Bravo"]);
 }
 
@@ -113,7 +113,7 @@ fn a_schema_survives_a_trip_through_serde() {
             payload: String optional,
         },
         indexes: { payload_idx: payload unique },
-        queries: { update: { Payload(payload) by id } },
+        queries: { update_partial: { Payload(payload) by id } },
         config: { page_size: 16384, row_derives: Clone, Debug }
         ",
     );

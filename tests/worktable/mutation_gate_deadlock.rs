@@ -1,7 +1,7 @@
 //! Guard test for the synchronous mutation gate (`LockMap::mutation_guard`).
 //!
 //! The gate is a blocking spin/yield ticket lock, and the generated
-//! `update`/`in_place`/`delete` paths hold the resulting `MutationGuard` inside
+//! `update_partial`/`update_partial_in_place`/`delete` paths hold the resulting `MutationGuard` inside
 //! the `LockGuard` **across `.await`** (e.g. `update_with_guard(...).await`,
 //! `reinsert(...).await`). A review flagged this as a possible livelock/deadlock
 //! when two keys collide on the same 1-of-64 stripe on a constrained runtime.
@@ -30,7 +30,7 @@ worktable!(
         val: u64,
     },
     queries: {
-        update: {
+        update_partial: {
             Val(val) by id,
         }
     }
@@ -78,7 +78,7 @@ fn concurrent_same_stripe_updates_do_not_deadlock() {
             let table = table.clone();
             tokio::spawn(async move {
                 for i in 0..500u64 {
-                    table.update_val(ValQuery { val: i }, a).await.unwrap();
+                    table.update_partial_val(ValQuery { val: i }, a).await.unwrap();
                 }
             })
         };
@@ -86,7 +86,7 @@ fn concurrent_same_stripe_updates_do_not_deadlock() {
             let table = table.clone();
             tokio::spawn(async move {
                 for i in 0..500u64 {
-                    table.update_val(ValQuery { val: i }, b).await.unwrap();
+                    table.update_partial_val(ValQuery { val: i }, b).await.unwrap();
                 }
             })
         };
@@ -127,7 +127,7 @@ fn many_same_stripe_updates_do_not_starve_worker_pool() {
             let key = if worker % 2 == 0 { a } else { b };
             handles.push(tokio::spawn(async move {
                 for i in 0..300u64 {
-                    table.update_val(ValQuery { val: i }, key).await.unwrap();
+                    table.update_partial_val(ValQuery { val: i }, key).await.unwrap();
                 }
             }));
         }

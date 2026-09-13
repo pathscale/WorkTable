@@ -308,7 +308,7 @@ mod dispatch_agreement {
         },
         indexes: { qty_idx: qty },
         columnar_indexes: { host_order: { cluster_by: [host_id] } },
-        queries: { update: { Fill(qty) by id } },
+        queries: { update_partial: { Fill(qty) by id } },
         config: { page_size: 4096 },
         ";
 

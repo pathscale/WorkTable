@@ -12,7 +12,7 @@ worktable!(
         other: u64,
     },
     queries: {
-        update: {
+        update_partial: {
             ValueById(value) by id,
         }
     }
@@ -109,7 +109,7 @@ async fn cancelled_custom_update_releases_registered_lock() {
 
     let cancelled = tokio::time::timeout(
         Duration::from_millis(200),
-        table.update_value_by_id(ValueByIdQuery { value: 5 }, 3),
+        table.update_partial_value_by_id(ValueByIdQuery { value: 5 }, 3),
     )
     .await;
     assert!(
@@ -121,7 +121,7 @@ async fn cancelled_custom_update_releases_registered_lock() {
 
     tokio::time::timeout(
         Duration::from_secs(5),
-        table.update_value_by_id(ValueByIdQuery { value: 11 }, 3),
+        table.update_partial_value_by_id(ValueByIdQuery { value: 11 }, 3),
     )
     .await
     .expect("update after a cancelled predecessor must not hang")

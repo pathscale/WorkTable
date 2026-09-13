@@ -165,8 +165,8 @@ owns and whether an absent key is valid:
   [`insert(row)`], [complete `Row`], [insert], [Create a new row. An existing primary key returns `PrimaryAlreadyExists`; the caller does not authorize replacement.],
   [`upsert(row)`], [complete `Row`], [insert], [Insert or replace. The caller declares the complete row authoritative. A row selected earlier can overwrite newer fields if it is later passed here.],
   [`update(row)`], [complete `Row`], [`NotFound`], [Replace every field of an existing row. It never creates a missing row, but the supplied row is still a complete authoritative snapshot.],
-  [`update_<name>`\ `(Query, key)`], [declared fields], [`NotFound`], [Change only the named fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
-  [`update_<name>`\ `_in_place(closure, key)`], [mutable archived fields], [`NotFound`], [Directly mutate declared, unindexed fields of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
+  [`update_partial_<name>`\ `(Query, key)`], [declared fields], [`NotFound`], [Change only the named fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
+  [`update_partial_in_place_<name>`\ `(closure, key)`], [mutable archived fields], [`NotFound`], [Directly mutate declared, unindexed fields of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
   [`reinsert(old, new)`], [two complete rows], [`NotFound` or mismatch], [Advanced explicit replacement that moves storage and repairs indexes. Ordinary application updates should use one of the methods above.],
 )
 ]
@@ -182,13 +182,13 @@ worktable! (
         state: u8,
     },
     queries: {
-        update: {
+        update_partial: {
             AmountById(amount) by id,   // <Name>(<columns>) by <key>
         },
         delete: {
             ById() by id,               // empty parens: names no columns
         },
-        in_place: {
+        update_partial_in_place: {
             StateById(state) by id,     // only `by <primary key>` is supported
         },
     },
@@ -198,17 +198,17 @@ worktable! (
 CamelCase declared, snake_case generated:
 
 ```rust
-table.update_amount_by_id(AmountByIdQuery { amount: 900 }, 1).await?;  // name + "Query"
+table.update_partial_amount_by_id(AmountByIdQuery { amount: 900 }, 1).await?;  // name + "Query"
 table.delete_by_id(1).await?;
-table.update_state_by_id_in_place(|state| *state = 2.into(), 1).await?;
+table.update_partial_in_place_state_by_id(|state| *state = 2.into(), 1).await?;
 ```
 
 The generated suffix describes the declared operation. `StatusById(status) by id` emits
-`update_status_by_id(StatusByIdQuery { status }, id)`; placing that declaration under
-`in_place` emits `update_status_by_id_in_place(|status| ..., id)`. `status` is the column
+`update_partial_status_by_id(StatusByIdQuery { status }, id)`; placing that declaration under
+`update_partial_in_place` emits `update_partial_in_place_status_by_id(|status| ..., id)`. `status` is the column
 name, not a storage type.
 
-A declared `update` reads, changes and writes only its named fields. Normal declared
+A declared `update_partial` reads, changes and writes only its named fields. Normal declared
 updates accept owned Rust values and are the safe default for strings, options and
 application-defined wrappers. An archived string contains a relative pointer, so
 WorkTable may reconstruct the complete row rather than move only that field's archived
@@ -217,10 +217,10 @@ other fields. The macro cannot inspect an external type such as `EncryptedSecret
 prove whether its archived form contains relative pointers, so unknown custom types take
 that conservative path.
 
-`in_place` mutates without selecting first and locks internally. Use it when the
+`update_partial_in_place` mutates without selecting first and locks internally. Use it when the
 application can safely edit the archived representation directly, as with a scalar or a
 fixed `#[repr(u8)]` enum. Do not copy an archived string, vector or pointer-bearing wrapper
-from another buffer into an `in_place` closure. Persisted in-place queries enqueue the
+from another buffer into an `update_partial_in_place` closure. Persisted in-place queries enqueue the
 changed slot bytes; they do not skip durability.
 
 == 6. Selects you do not declare
@@ -392,7 +392,7 @@ method name and takes the same `<Name>Query` struct as the paged table, so the c
 the same; it is not `async` and does not return `WorkTableError`, so a call cannot move
 between the shapes by accident. A query keyed by any other column is refused, because a
 dense partition has no secondary index and scanning instead would turn a keyed operation
-into a linear one without saying so. `in_place` is refused as a synonym: every update
+into a linear one without saying so. `update_partial_in_place` is refused: every update
 here is already in place.
 
 Note that `memory_by_key` and `memory_total` cannot see any of this. They report
@@ -463,10 +463,10 @@ error naming what to use instead, rather than being accepted and ignored.
 Declared `queries` are supported. They use equality on a primary or secondary index,
 including `fxhash`, and run synchronously through `&mut self`. An update declaration
 such as `StateById(state) by id` emits
-`update_state_by_id(StateByIdQuery { state: 7 }, &id) -> usize`; a delete declaration
+`update_partial_state_by_id(StateByIdQuery { state: 7 }, &id) -> usize`; a delete declaration
 `ByOwner() by owner` emits `delete_by_owner(&owner) -> usize`. The return value counts
-affected rows. `in_place: { Status(state) by id }` emits
-`update_status_in_place(|state| *state = 42, &id) -> usize` and accepts one column.
+affected rows. `update_partial_in_place: { Status(state) by id }` emits
+`update_partial_in_place_status(|state| *state = 42, &id) -> usize` and accepts one column.
 These methods belong to the table, not mutable wrappers on the shared partition set.
 
 Vec edits validate a cloned candidate before replacing a row. A primary or unique
@@ -474,7 +474,7 @@ secondary-key collision panics with that row and its indexes unchanged; a panick
 edit closure also leaves the stored row unchanged. Replacing an existing row through
 `upsert` checks unique secondary keys first. Multi-row queries apply one row at a time
 and are not transactions: earlier successful edits remain if a later edit fails.
-Cloning owned fields is part of this mutation cost, including Vec `in_place` queries.
+Cloning owned fields is part of this mutation cost, including Vec `update_partial_in_place` queries.
 
 === Bytes and back: `unload` and `load`
 
@@ -612,14 +612,14 @@ worktable! {
     runtime: nagoya(shared_slot),
     columns: { id: u64 primary_key, total: u64 },
     queries: {
-        update runtime scheduled: { TotalById(total) by id },
-        in_place runtime scheduled: { TotalById(total) by id },
+        update_partial runtime scheduled: { TotalById(total) by id },
+        update_partial_in_place runtime scheduled: { TotalById(total) by id },
     }
 }
 let table = Arc::new(OrdersWorkTable::default());
 table.insert(OrdersRow { id: 1, total: 10 }).await?;
-table.update_total_by_id(TotalByIdQuery { total: 20 }, 1u64).await?;
-table.update_total_by_id_in_place(|total| *total = 21.into(), 1u64).await?;
+table.update_partial_total_by_id(TotalByIdQuery { total: 20 }, 1u64).await?;
+table.update_partial_in_place_total_by_id(|total| *total = 21.into(), 1u64).await?;
 let rows = table.select_all()
     .order_on(OrdersRowFields::Total, Order::Desc)
     .limit(100).runtime(wide).execute_async().await?;
@@ -702,9 +702,9 @@ worktable! (
         by_bucket: { cluster_by: [bucket] },
     },
     queries: {
-        update: { ScoreById(score) by id },
+        update_partial: { ScoreById(score) by id },
         delete: { ById() by id },
-        in_place: { ScoreById(score) by id },
+        update_partial_in_place: { ScoreById(score) by id },
     },
     config: {
         page_size: 4096,

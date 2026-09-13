@@ -14,7 +14,7 @@ worktable! (
         symbol_idx: symbol,
     },
     queries: {
-        update: { QuantityById(quantity) by id, }
+        update_partial: { QuantityById(quantity) by id, }
     }
 );
 
@@ -54,7 +54,7 @@ async fn main() -> eyre::Result<()> {
         }])
         .await?;
     table
-        .update_quantity_by_id(QuantityByIdQuery { quantity: 7 }, 100)
+        .update_partial_quantity_by_id(QuantityByIdQuery { quantity: 7 }, 100)
         .await?;
     assert_eq!(table.select(100).unwrap().quantity, 7);
     assert_eq!(table.select_all().limit(1).execute()?.len(), 1);

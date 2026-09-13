@@ -22,12 +22,12 @@ use worktable_dsl::model::{Columns, Operation, PartitionMaxSize};
 /// dense payload is emitted after them and `Queries` is not `Clone`.
 #[derive(Debug, Default)]
 pub struct DenseQueries {
-    /// `update <Name>(columns) by <column>`.
-    pub updates: Vec<(Ident, Operation)>,
+    /// `update_partial <Name>(columns) by <column>`.
+    pub update_partials: Vec<(Ident, Operation)>,
     /// `delete <Name>() by <column>`.
     pub deletes: Vec<(Ident, Operation)>,
-    /// `in_place <Name>(columns) by <column>`. Refused: see [`expand`].
-    pub in_place: Vec<(Ident, Operation)>,
+    /// `update_partial_in_place <Name>(columns) by <column>`. Refused: see [`expand`].
+    pub update_partials_in_place: Vec<(Ident, Operation)>,
 }
 
 impl DenseQueries {
@@ -40,14 +40,14 @@ impl DenseQueries {
             map.iter().map(|(name, op)| (name.clone(), op.clone())).collect()
         };
         Self {
-            updates: lift(&queries.updates),
+            update_partials: lift(&queries.update_partials),
             deletes: lift(&queries.deletes),
-            in_place: lift(&queries.in_place),
+            update_partials_in_place: lift(&queries.update_partials_in_place),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.updates.is_empty() && self.deletes.is_empty() && self.in_place.is_empty()
+        self.update_partials.is_empty() && self.deletes.is_empty() && self.update_partials_in_place.is_empty()
     }
 }
 
@@ -372,17 +372,17 @@ fn gen_queries(
         return Ok(Vec::new());
     }
 
-    // `in_place` exists on the paged table because a write there is async and
+    // `update_partial_in_place` exists on the paged table because a write there is async and
     // has to hold a column across a suspension point. Nothing here is async and
-    // `update` is already in place, so generating both would be two names for
+    // `update_partial` is already in place, so generating both would be two names for
     // one method.
-    if let Some((query, _)) = queries.in_place.first() {
+    if let Some((query, _)) = queries.update_partials_in_place.first() {
         return Err(Error::new(
             query.span(),
             format!(
-                "`in_place {query}` has no meaning on a dense partition: every update here is \
+                "`update_partial_in_place {query}` has no meaning on a dense partition: every update here is \
                  already in place, because there is no page to rewrite and no await to hold a \
-                 column across. Declare it as `update {query}`, or use `partition_max_size: u64` \
+                 column across. Declare it as `update_partial {query}`, or use `partition_max_size: u64` \
                  for the full table."
             ),
         ));
@@ -390,9 +390,9 @@ fn gen_queries(
 
     let mut out = Vec::new();
 
-    for (query, op) in &queries.updates {
-        by_must_be_the_key(pk, query, op, "update")?;
-        let method = format_ident!("update_{}", snake(query));
+    for (query, op) in &queries.update_partials {
+        by_must_be_the_key(pk, query, op, "update_partial")?;
+        let method = format_ident!("update_partial_{}", snake(query));
         let query_ty = format_ident!("{}Query", query);
         let fields = &op.columns;
         for column in fields {
@@ -403,7 +403,7 @@ fn gen_queries(
                 return Err(Error::new(
                     column.span(),
                     format!(
-                        "`update {query}` cannot update primary key `{pk}` in a dense partition: the key is \
+                        "`update_partial {query}` cannot update primary key `{pk}` in a dense partition: the key is \
                          the row's physical position. Remove `{pk}` from the update, or delete and insert the row \
                          at its new key."
                     ),
@@ -411,7 +411,7 @@ fn gen_queries(
             }
         }
         let doc = format!(
-            "`update {query}`, by position.\n\n\
+            "`update_partial {query}`, by position.\n\n\
              Edits {} in place on the row at `{pk}`, without cloning the row. \
              `None` means that key holds no row and nothing was written.\n\n\
              The paged table's method of this name is `async` and returns \

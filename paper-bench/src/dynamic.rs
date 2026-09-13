@@ -127,7 +127,7 @@ impl DynTable {
     }
 
     /// Field update through the catalog — the dynamic path a specialized
-    /// `update_upd_b` avoids: lock table, hash lookup, decode, dispatch,
+    /// `update_partial_upd_b` avoids: lock table, hash lookup, decode, dispatch,
     /// re-encode, write back.
     pub fn update_field(&self, pk: u64, col: &str, v: Value) -> Option<()> {
         let lock = {

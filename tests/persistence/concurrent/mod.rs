@@ -40,7 +40,7 @@ worktable! (
         value_idx: value unique,
     },
     queries: {
-        update: {
+        update_partial: {
             AnotherById(another) by id,
         },
         delete: {

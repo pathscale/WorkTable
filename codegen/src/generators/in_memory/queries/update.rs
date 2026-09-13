@@ -15,8 +15,8 @@ struct UpdateStorage<'a> {
 impl InMemoryGenerator {
     pub fn gen_query_update_impl(&mut self) -> syn::Result<TokenStream> {
         let custom_updates = if let Some(q) = &self.queries {
-            let profile = q.update_runtime.clone();
-            let custom_updates = self.gen_custom_updates(q.updates.clone());
+            let profile = q.update_partial_runtime.clone();
+            let custom_updates = self.gen_custom_updates(q.update_partials.clone());
             let custom_updates = crate::generators::profile_dispatch::wrap(
                 custom_updates,
                 profile.as_ref(),
@@ -706,9 +706,9 @@ impl InMemoryGenerator {
             requires_rebuild,
         } = storage;
         let pk_ident = &self.pk.as_ref().unwrap().ident;
-        let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
+        let method_ident = Ident::new(format!("update_partial_{snake_case_name}").as_str(), Span::mixed_site());
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
-        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
+        let lock_ident = WorktableNameGenerator::get_update_partial_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
             .iter()
@@ -788,7 +788,7 @@ impl InMemoryGenerator {
         } = storage;
         let by_field = &index.field;
         let index = &index.name;
-        let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
+        let method_ident = Ident::new(format!("update_partial_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
@@ -1051,11 +1051,11 @@ impl InMemoryGenerator {
                 .as_str(),
         );
         let index = &index.name;
-        let method_ident = Ident::new(format!("update_{snake_case_name}").as_str(), Span::mixed_site());
+        let method_ident = Ident::new(format!("update_partial_{snake_case_name}").as_str(), Span::mixed_site());
 
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
         let by_ident = Ident::new(format!("{name}By").as_str(), Span::mixed_site());
-        let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
+        let lock_ident = WorktableNameGenerator::get_update_partial_query_lock_ident(&snake_case_name);
 
         let row_updates = idents
             .iter()
@@ -1256,9 +1256,9 @@ mod tests {
             },
         );
         generator.queries = Some(Queries {
-            updates,
+            update_partials: updates,
             deletes: IndexMap::new(),
-            in_place: IndexMap::new(),
+            update_partials_in_place: IndexMap::new(),
             ..Default::default()
         });
         generator.gen_primary_key_def().unwrap();

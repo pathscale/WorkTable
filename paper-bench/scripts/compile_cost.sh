@@ -39,8 +39,8 @@ worktable!(
     },
     indexes: { a_idx_$i: a, },
     queries: {
-        update: { UpdA$i(a) by id, },
-        in_place: { IncB$i(b) by id, }
+        update_partial: { UpdA$i(a) by id, },
+        update_partial_in_place: { IncB$i(b) by id, }
     }
 );
 EOF

@@ -14,7 +14,7 @@ worktable!(
         value: String
     },
     queries: {
-        update: {
+        update_partial: {
             ValueById(value) by id,
         }
     }
@@ -66,13 +66,13 @@ async fn _rw_lock_hash_map_vs_wt() {
         for i in 0..100000u64 {
             let s: String = Alphanumeric.sample_string(&mut rand::rng(), 8);
             let q = ValueByIdQuery { value: s };
-            task_wt.update_value_by_id(q, (i % 50) * 2).await.unwrap();
+            task_wt.update_partial_value_by_id(q, (i % 50) * 2).await.unwrap();
         }
     });
     for i in 0..100000u64 {
         let s: String = Alphanumeric.sample_string(&mut rand::rng(), 8);
         let q = ValueByIdQuery { value: s };
-        wt.update_value_by_id(q, (i % 50) * 2 + 1).await.unwrap();
+        wt.update_partial_value_by_id(q, (i % 50) * 2 + 1).await.unwrap();
     }
     h.await.unwrap();
     println!("wt update in {} μs", wt_start.elapsed().as_micros());
