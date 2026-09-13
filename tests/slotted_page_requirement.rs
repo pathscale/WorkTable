@@ -194,3 +194,50 @@ async fn a_store_reopens_without_being_rebuilt() {
     reopened.close().await.expect("the table closes");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Dropping a busy table requests a close. That close must finish before the
+/// last owner disappears, or an immediate same-path reopen races a detached
+/// writer and sees either a partial table or torn page headers.
+#[tokio::test]
+async fn a_busy_drop_finishes_before_an_immediate_reopen() {
+    const ACCEPTED: u64 = 300;
+    let dir = "tests/data/slotted_page/busy_drop_reopen";
+    let _ = std::fs::remove_dir_all(dir);
+
+    let engine = SlottedRowPersistenceEngine::new(DiskConfig::new_with_table_name(
+        dir,
+        SlottedRowWorkTable::name_snake_case(),
+        SlottedRowWorkTable::version(),
+    ))
+    .await
+    .expect("an engine");
+    let table = SlottedRowWorkTable::load(engine).await.expect("a table");
+    for n in 0..ACCEPTED {
+        table
+            .insert(SlottedRowRow {
+                id: table.get_next_pk().into(),
+                blob: format!("accepted row {n}"),
+            })
+            .await
+            .expect("an accepted row");
+    }
+    drop(table);
+
+    let engine = SlottedRowPersistenceEngine::new(DiskConfig::new_with_table_name(
+        dir,
+        SlottedRowWorkTable::name_snake_case(),
+        SlottedRowWorkTable::version(),
+    ))
+    .await
+    .expect("the immediate reopen does not observe torn files");
+    let reopened = SlottedRowWorkTable::load(engine)
+        .await
+        .expect("the immediately reopened table");
+    assert_eq!(
+        reopened.select_all().execute().expect("a read").len(),
+        ACCEPTED as usize,
+        "every operation accepted before drop is durable when reopen begins"
+    );
+    reopened.close().await.expect("the reopened table closes");
+    let _ = std::fs::remove_dir_all(dir);
+}

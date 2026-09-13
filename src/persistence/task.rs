@@ -1725,7 +1725,7 @@ pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availa
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     for PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
-    /// Aborts the engine task so it cannot outlive the table it persists.
+    /// Stops the engine task before the table finishes dropping.
     /// Without this the detached task keeps running on the runtime after the
     /// table is dropped, and a re-opened table can read the same files while
     /// the old engine is still writing them.
@@ -1733,13 +1733,12 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     /// The abort only happens when the engine is provably idle (queue and
     /// analyzer empty, no operation in flight) — that is the normal state
     /// after `wait_for_ops`, and an idle task is parked at the queue pop, an
-    /// await point where cancellation is clean. Aborting a *busy* engine
-    /// would cancel persistence futures that are not cancellation-safe (a
-    /// data page could be left half-written while its index events are
-    /// abandoned), so a busy engine is left running and reported instead:
-    /// callers must drain with `wait_for_ops` before dropping. A proper
-    /// `close()` lifecycle (drain, join, surface terminal errors) is the
-    /// long-term replacement for this heuristic.
+    /// await point where cancellation is clean. Aborting a *busy* engine would
+    /// cancel persistence futures that are not cancellation-safe (a data page
+    /// could be left half-written while its index events are abandoned). Its
+    /// worker is private to this task, so a busy drop instead joins that worker
+    /// after requesting close. This keeps an immediate same-path reopen from
+    /// racing the last writes.
     fn drop(&mut self) {
         match self.engine_task_handle.as_ref() {
             None => return,
@@ -1772,10 +1771,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
             if let Some(handle) = self.engine_task_handle.take() {
                 handle.cancel();
             }
-        } else {
-            tracing::error!(
-                "PersistenceTask dropped with work in flight; the engine task keeps draining detached and                  then stops, but its errors can no longer be observed. Call close() (or wait_for_ops()                  before dropping) to guarantee a clean shutdown."
-            );
+        } else if let Some(handle) = self.engine_task_handle.take() {
+            // The engine owns a dedicated one-worker runtime. Joining here
+            // cannot occupy the worker that must make this task progress.
+            let _ = nagoya::block_on(handle);
         }
     }
 }
