@@ -581,6 +581,27 @@ async fn select_multiple_by_exchange() {
 }
 
 #[tokio::test]
+async fn select_ref_matches_select() {
+    let table = TestWorkTable::default();
+    let row = TestRow {
+        id: table.get_next_pk().into(),
+        test: 1,
+        another: 1,
+        exchange: "test".to_string(),
+    };
+    let _ = table.insert(row.clone()).await.unwrap();
+    let owned = table.select(row.id).unwrap();
+    let view = table.select_ref(row.id).unwrap();
+    assert_eq!(owned.another, view.another);
+    assert_eq!(owned.test, view.test);
+    let via_with = table
+        .select_with(row.id, |archived| archived.another)
+        .unwrap();
+    assert_eq!(owned.another, via_with);
+    assert!(table.select_ref(u64::MAX).is_none());
+}
+
+#[tokio::test]
 async fn select_by_test() {
     let table = TestWorkTable::default();
     let row = TestRow {

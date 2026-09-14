@@ -177,7 +177,7 @@ pub mod prelude {
     pub use hashbrown::{HashMap, HashSet};
 
     pub use crate::atomic_key_table::AtomicKeyTable;
-    pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, StorableRow};
+    pub use crate::in_memory::{ArchivedRowWrapper, Data, DataPages, Query, RowWrapper, SelectRef, StorableRow};
     pub use crate::lock::FullRowLock;
     pub use crate::lock::{Lock, RowLock};
     pub use crate::lock::{LockAcquirer, LockGuard, LockMap, PendingLock};

@@ -21,6 +21,10 @@ pub trait RowWrapper<Inner> {
 }
 
 pub trait ArchivedRowWrapper {
+    type Inner: ?Sized;
+
+    fn inner(&self) -> &Self::Inner;
+    fn is_ghosted(&self) -> bool;
     fn unghost(&mut self);
     fn set_in_vacuum_process(&mut self);
     fn delete(&mut self);

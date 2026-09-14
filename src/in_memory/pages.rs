@@ -5,6 +5,7 @@ use alloc::{boxed::Box, vec::Vec};
 use arc_swap::ArcSwap;
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use core::ops::Deref;
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
 use core::sync::atomic::{AtomicU64, Ordering};
 use data_bucket::page::PageId;
@@ -27,7 +28,7 @@ use crate::prelude::ArchivedRowWrapper;
 use crate::util::epoch::EpochDomain;
 use crate::{
     in_memory::{
-        DATA_INNER_LENGTH, Data, DataExecutionError,
+        ArchivedCopy, DATA_INNER_LENGTH, Data, DataExecutionError,
         row::{RowWrapper, StorableRow},
     },
     prelude::Link,
@@ -316,6 +317,47 @@ pub struct ReadGuard<'a> {
     marker: PhantomData<&'a ()>,
 }
 
+/// Point-read that does not deserialize.
+///
+/// Holds the epoch pin and a seqlock copy of the archived wrapper. Deref is
+/// the archived inner row, so a caller can read fields without building an
+/// owned row. Owned [`DataPages::select`] stays for callers that need a `Row`.
+///
+/// Not `Send`: the pin belongs to the acquiring thread.
+pub struct SelectRef<'a, Row: StorableRow> {
+    _pin: ReadGuard<'a>,
+    copy: ArchivedCopy,
+    _ty: PhantomData<Row>,
+}
+
+impl<'a, Row: StorableRow> SelectRef<'a, Row> {
+    pub(crate) fn new(pin: ReadGuard<'a>, copy: ArchivedCopy) -> Self {
+        Self {
+            _pin: pin,
+            copy,
+            _ty: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn archived(&self) -> &<<Row as StorableRow>::WrappedRow as rkyv::Archive>::Archived {
+        unsafe {
+            rkyv::access_unchecked::<<<Row as StorableRow>::WrappedRow as rkyv::Archive>::Archived>(
+                self.copy.as_bytes(),
+            )
+        }
+    }
+}
+
+impl<Row: StorableRow> Deref for SelectRef<'_, Row> {
+    type Target = <<<Row as StorableRow>::WrappedRow as rkyv::Archive>::Archived as ArchivedRowWrapper>::Inner;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.archived().inner()
+    }
+}
+
 /// One unit of retired state waiting out its grace period. Reclamation is
 /// *recycling*, not just freeing: links return to `empty_links` and pages
 /// return to `empty_pages`.
@@ -545,6 +587,60 @@ where
             .map_err(ExecutionError::DataPageError)?;
         let flags = Self::publication_flags(&wrapped);
         Ok((wrapped.get_inner(), flags))
+    }
+
+    /// Seqlock-copy a live (non-ghosted, non-deleted) archived row.
+    pub(crate) fn copy_non_ghosted(&self, link: Link) -> Result<ArchivedCopy, ExecutionError>
+    where
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+    {
+        let page = self.page_ref(link.page_id)?;
+        let copy = page
+            .copy_row_seqlock(link)
+            .map_err(ExecutionError::DataPageError)?;
+        let archived = unsafe {
+            rkyv::access_unchecked::<<<Row as StorableRow>::WrappedRow as Archive>::Archived>(
+                copy.as_bytes(),
+            )
+        };
+        if archived.is_ghosted() {
+            return Err(ExecutionError::Ghosted);
+        }
+        if archived.is_deleted() {
+            return Err(ExecutionError::Deleted);
+        }
+        Ok(copy)
+    }
+
+    /// Apply `f` to the archived inner row under seqlock, without memcpy.
+    pub(crate) fn with_non_ghosted<F, T>(&self, link: Link, mut f: F) -> Result<T, ExecutionError>
+    where
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        F: FnMut(
+            &<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner,
+        ) -> T,
+    {
+        let page = self.page_ref(link.page_id)?;
+        page.with_archived_seqlock(link, |wrapped| {
+            if wrapped.is_ghosted() {
+                Err(ExecutionError::Ghosted)
+            } else if wrapped.is_deleted() {
+                Err(ExecutionError::Deleted)
+            } else {
+                Ok(f(wrapped.inner()))
+            }
+        })
+        .map_err(ExecutionError::DataPageError)?
+    }
+
+    /// Point-read that yields a pin-guard plus archived inner row.
+    pub fn select_ref(&self, link: Link) -> Result<SelectRef<'_, Row>, ExecutionError>
+    where
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+    {
+        let pin = self.read_guard();
+        let copy = self.copy_non_ghosted(link)?;
+        Ok(SelectRef::new(pin, copy))
     }
 
     pub fn read_guard(&self) -> ReadGuard<'_> {
@@ -1624,6 +1720,16 @@ mod tests {
     where
         T: Archive,
     {
+        type Inner = T::Archived;
+
+        fn inner(&self) -> &Self::Inner {
+            &self.inner
+        }
+
+        fn is_ghosted(&self) -> bool {
+            self.is_ghosted
+        }
+
         fn unghost(&mut self) {
             self.is_ghosted = false
         }
@@ -1674,6 +1780,20 @@ mod tests {
         let res = pages.select(link).unwrap();
 
         assert_eq!(res, row)
+    }
+
+    #[test]
+    fn select_ref_after_unghost() {
+        let pages = DataPages::<TestRow>::new();
+        let row = TestRow { a: 10, b: 20 };
+        let link = pages.insert(row).unwrap();
+        assert!(pages.select_ref(link).is_err());
+        unsafe {
+            pages.with_mut_ref(link, |archived| archived.unghost()).unwrap();
+        }
+        let view = pages.select_ref(link).unwrap();
+        assert_eq!(view.a, 10);
+        assert_eq!(view.b, 20);
     }
 
     #[test]

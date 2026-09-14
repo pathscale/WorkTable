@@ -340,6 +340,21 @@ impl ReadOnlyGenerator {
             where #primary_key_type: From<Pk> {
                 self.0.select(pk.into())
             }
+
+            /// Pin-guard plus archived inner row. Does not deserialize.
+            pub fn select_ref<Pk>(&self, pk: Pk) -> Option<worktable::prelude::SelectRef<'_, #row_type>>
+            where #primary_key_type: From<Pk> {
+                self.0.select_ref(pk.into())
+            }
+
+            /// Apply `f` to the archived inner row. No cell memcpy; `f` must copy out.
+            pub fn select_with<Pk, F, T>(&self, pk: Pk, f: F) -> Option<T>
+            where
+                #primary_key_type: From<Pk>,
+                F: FnMut(&<#row_type as worktable::prelude::rkyv::Archive>::Archived) -> T,
+            {
+                self.0.select_with(pk.into(), f)
+            }
         }
     }
 

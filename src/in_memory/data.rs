@@ -2,6 +2,7 @@ use alloc::{sync::Arc, vec::Vec};
 use core::cell::UnsafeCell;
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 #[cfg(not(wt_loom))]
 use core::sync::atomic::{AtomicU32 as CellState, AtomicUsize as CellOwner};
@@ -299,6 +300,30 @@ pub const DATA_HEADER_LENGTH: usize = 4;
 
 /// Length of the inner [`Data`] page part.
 pub const DATA_INNER_LENGTH: usize = INNER_PAGE_SIZE - DATA_HEADER_LENGTH;
+
+const SEQLOCK_STACK: usize = 256;
+
+/// Seqlock snapshot of one archived cell.
+///
+/// Stack for rows that fit in 256 bytes (the shipping fixture). Larger rows
+/// take the cell read lock once and copy onto the heap.
+pub(crate) enum ArchivedCopy {
+    Stack {
+        buf: AlignedBytes<SEQLOCK_STACK>,
+        len: u16,
+    },
+    Heap(AlignedVec),
+}
+
+impl ArchivedCopy {
+    #[inline]
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Stack { buf, len } => &buf.0[..*len as usize],
+            Self::Heap(bytes) => bytes.as_slice(),
+        }
+    }
+}
 
 #[derive(Archive, Clone, Copy, Debug, Deserialize, Serialize)]
 #[repr(C, align(16))]
@@ -641,27 +666,59 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Row: Archive,
         <Row as Archive>::Archived: Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>,
     {
+        let copy = self.copy_row_seqlock(link)?;
+        let archived =
+            unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(copy.as_bytes()) };
+        rkyv::deserialize::<_, rkyv::rancor::Error>(archived).map_err(|_| ExecutionError::DeserializeError)
+    }
+
+    /// Seqlock-copy archived bytes without deserializing them.
+    pub(crate) fn copy_row_seqlock(&self, link: Link) -> Result<ArchivedCopy, ExecutionError> {
         self.validate_link(link)?;
-        const STACK: usize = 256;
+        let len = link.length as usize;
+        if len > SEQLOCK_STACK {
+            let _guard = self.cell_locks.read(link)?;
+            let inner = unsafe { &*self.inner_data.get() };
+            let start = link.offset as usize;
+            let mut heap = AlignedVec::with_capacity(len);
+            heap.extend_from_slice(&inner[start..start + len]);
+            return Ok(ArchivedCopy::Heap(heap));
+        }
         loop {
             let stamp = self.cell_locks.load_stable(link)?;
             let inner = unsafe { &*self.inner_data.get() };
             let start = link.offset as usize;
-            let end = start + link.length as usize;
-            let len = end - start;
-            if len > STACK {
-                let _guard = self.cell_locks.read(link)?;
-                return self.get_row(link);
-            }
-            let mut buf = [0u8; STACK];
-            buf[..len].copy_from_slice(&inner[start..end]);
+            let mut storage = MaybeUninit::<AlignedBytes<SEQLOCK_STACK>>::uninit();
+            let buf = unsafe { &mut *storage.as_mut_ptr() };
+            buf.0[..len].copy_from_slice(&inner[start..start + len]);
             if !self.cell_locks.still_stable(link, stamp) {
                 continue;
             }
-            let archived =
-                unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(&buf[..len]) };
-            return rkyv::deserialize::<_, rkyv::rancor::Error>(archived)
-                .map_err(|_| ExecutionError::DeserializeError);
+            return Ok(ArchivedCopy::Stack {
+                buf: unsafe { storage.assume_init() },
+                len: len as u16,
+            });
+        }
+    }
+
+    /// Run `f` on the archived cell under seqlock, without memcpy.
+    ///
+    /// `f` must copy out what it needs and must not stash a reference into the
+    /// page. A concurrent writer can tear the bytes `f` reads; `f` must not
+    /// follow pointers or otherwise trap. Retry discards a torn result.
+    pub(crate) fn with_archived_seqlock<F, T>(&self, link: Link, mut f: F) -> Result<T, ExecutionError>
+    where
+        Row: Archive,
+        F: FnMut(&<Row as Archive>::Archived) -> T,
+    {
+        self.validate_link(link)?;
+        loop {
+            let stamp = self.cell_locks.load_stable(link)?;
+            let archived = self.get_row_ref(link)?;
+            let result = f(archived);
+            if self.cell_locks.still_stable(link, stamp) {
+                return Ok(result);
+            }
         }
     }
 
