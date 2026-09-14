@@ -37,4 +37,7 @@ fn compile_fail() {
     t.compile_fail("tests/ui/in_place_over_indexed_column.rs");
     t.compile_fail("tests/ui/update_selector_wrong_value.rs");
     t.compile_fail("tests/ui/update_selector_collision.rs");
+
+    // Read-path safety rules.
+    t.compile_fail("tests/ui/select_with_needs_inline_archived.rs");
 }

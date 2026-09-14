@@ -9,4 +9,4 @@ pub use empty_link_registry::EmptyLinkRegistry;
 pub use pages::{
     DataPages, ExecutionError as PagesExecutionError, ReadGuard as DataPagesReadGuard, SelectRef,
 };
-pub use row::{ArchivedRowWrapper, PublicationSafe, Query, RowWrapper, StorableRow};
+pub use row::{ArchivedRowWrapper, InlineArchived, PublicationSafe, Query, RowWrapper, StorableRow};

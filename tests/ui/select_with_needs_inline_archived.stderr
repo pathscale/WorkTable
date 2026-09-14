@@ -1,0 +1,31 @@
+error[E0599]: no method named `select_with` found for struct `HasStringWorkTable` in the current scope
+  --> tests/ui/select_with_needs_inline_archived.rs:21:19
+   |
+10 | / worktable! {
+11 | |     name: HasString,
+12 | |     persist: false,
+13 | |     columns: {
+...  |
+16 | |     },
+17 | | }
+   | |_- method `select_with` not found for this struct
+...
+21 |       let _ = table.select_with(1u64, |archived| archived.id);
+   |                     ^^^^^^^^^^^
+   |
+help: there is a method `select` with a similar name, but with different arguments
+  --> tests/ui/select_with_needs_inline_archived.rs:10:1
+   |
+10 | / worktable! {
+11 | |     name: HasString,
+12 | |     persist: false,
+13 | |     columns: {
+...  |
+16 | |     },
+17 | | }
+   | |_^
+   = note: this error originates in the macro `worktable` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: one of the expressions' fields has a method of the same name
+   |
+21 |     let _ = table.0.select_with(1u64, |archived| archived.id);
+   |                   ++

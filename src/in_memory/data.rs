@@ -26,7 +26,7 @@ use rkyv::{
     with::{AtomicLoad, Relaxed, Skip, Unsafe},
 };
 
-use crate::in_memory::ArchivedRowWrapper;
+use crate::in_memory::{ArchivedRowWrapper, InlineArchived};
 use crate::prelude::Link;
 
 #[cfg(all(not(wt_loom), not(any(unix, windows))))]
@@ -761,24 +761,28 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     /// follow pointers or otherwise trap. Retry discards a torn result.
     pub(crate) fn with_archived_seqlock<F, T>(&self, link: Link, mut f: F) -> Result<T, ExecutionError>
     where
-        Row: Archive,
+        Row: Archive + InlineArchived,
         F: FnMut(&<Row as Archive>::Archived) -> T,
     {
-        // Run `f` on a validated private copy, not on the live page.
+        // Read in place, with no copy. `Row: InlineArchived` is what makes
+        // that sound: every archived field is a fixed-size scalar inline in
+        // the cell, so a concurrent writer can tear a value the closure reads
+        // but cannot hand it a pointer that refers anywhere else. The retry
+        // below discards anything computed from a torn read.
         //
-        // Reading in place and checking stability afterwards lets `f` observe
-        // a cell mid-write. A torn `u64` would be harmless because the retry
-        // discards the result, but `f` receives `&Archived`, and rkyv archived
-        // types carry relative pointers: a torn pointer dereferenced inside
-        // `f` (an archived `String` or `Vec` field) is undefined behaviour
-        // before `still_stable` ever runs. The shipping test row has a
-        // `String` column, so this is reachable, not theoretical.
-        //
-        // `copy_row_seqlock` already validates the copy before returning it,
-        // so the closure only ever sees bytes from one write generation.
-        let copy = self.copy_row_seqlock(link)?;
-        let archived = unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(copy.as_bytes()) };
-        Ok(f(archived))
+        // Without that bound this would be undefined behaviour, not a wrong
+        // number: `f` receives `&Archived`, and an archived `String` or `Vec`
+        // field is a relative pointer, which the closure would dereference
+        // before `still_stable` ever runs.
+        self.validate_link(link)?;
+        loop {
+            let stamp = self.cell_locks.load_stable(link)?;
+            let archived = self.get_row_ref(link)?;
+            let result = f(archived);
+            if self.cell_locks.still_stable(link, stamp) {
+                return Ok(result);
+            }
+        }
     }
 
     /// Validates persisted bytes before deserializing them.
