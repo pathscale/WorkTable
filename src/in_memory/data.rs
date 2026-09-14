@@ -46,6 +46,15 @@ const CELL_WRITER: u32 = 1 << 31;
 #[derive(Debug)]
 struct PaddedCellState {
     value: CellState,
+    /// Monotonic write counter, advanced once per completed write.
+    ///
+    /// `value` alone cannot carry the seqlock stamp: a writer releases by
+    /// storing `0`, which is exactly what an idle cell reads, so a write that
+    /// begins and ends inside one reader's window leaves no trace in it. The
+    /// reader would then keep bytes copied out of the middle of that write and
+    /// hand them to `rkyv::access_unchecked`. The counter shares this cache
+    /// line, which the padding above already reserved.
+    version: CellState,
 }
 
 #[derive(Debug)]
@@ -60,6 +69,7 @@ impl Default for CellLocks {
         Self {
             states: core::array::from_fn(|_| PaddedCellState {
                 value: CellState::new(0),
+                version: CellState::new(0),
             }),
             owners: core::array::from_fn(|_| CellOwner::new(0)),
             nested_reads: CellState::new(0),
@@ -79,6 +89,7 @@ impl CellLocks {
             for index in 0..CELL_LOCK_SLOTS {
                 states.add(index).write(PaddedCellState {
                     value: CellState::new(0),
+                    version: CellState::new(0),
                 });
             }
 
@@ -158,11 +169,15 @@ impl CellLocks {
     fn load_stable(&self, link: Link) -> Result<u32, ExecutionError> {
         let index = Self::start(link);
         let state = &self.states[index].value;
+        let version = &self.states[index].version;
         let mut spins = 0;
         loop {
             let current = state.load(Ordering::Acquire);
             if current & CELL_WRITER == 0 {
-                return Ok(current);
+                // Read the counter AFTER observing no writer. A writer that
+                // starts later bumps it on release, so `still_stable` sees the
+                // move even though the state word returns to `0`.
+                return Ok(version.load(Ordering::Acquire));
             }
             if self.owners[index].load(Ordering::Acquire) == current_owner() {
                 let writer_key = current & CELL_READER_MASK;
@@ -171,7 +186,10 @@ impl CellLocks {
                     return Err(ExecutionError::CellLockReentry);
                 }
                 if writer_key != 0 {
-                    return Ok(current);
+                    // This task is the writer. It sees its own uncommitted
+                    // bytes by definition; the counter is the stamp it will
+                    // compare against and its own release has not run yet.
+                    return Ok(version.load(Ordering::Acquire));
                 }
             }
             Self::wait(&mut spins);
@@ -179,12 +197,36 @@ impl CellLocks {
     }
 
     fn still_stable(&self, link: Link, stamp: u32) -> bool {
-        if stamp & CELL_WRITER != 0 {
-            return true;
-        }
         let index = Self::start(link);
-        let current = self.states[index].value.load(Ordering::Acquire);
-        current == stamp && current & CELL_WRITER == 0
+        let state = &self.states[index];
+        // Two ways the snapshot dies: a writer is in the critical section now,
+        // or one completed since [`Self::load_stable`]. The version alone
+        // catches the second; checking it alone would let a torn copy through
+        // while a writer is still mid-update.
+        //
+        // The exception is this task's own write on a DIFFERENT row of the
+        // same stripe, which `load_stable` already admits: it is reading rows
+        // the writer is not touching, and it can never make progress by
+        // retrying because only it can clear that bit. Rejecting it here
+        // spins forever (`in_place_callback_can_select_a_colliding_row_
+        // without_deadlock`).
+        let current = state.value.load(Ordering::Acquire);
+        if current & CELL_WRITER != 0 && !self.writer_is_self_on_other_row(index, link, current) {
+            return false;
+        }
+        state.version.load(Ordering::Acquire) == stamp
+    }
+
+    /// Is the in-flight writer this same task, working on a different row?
+    ///
+    /// Mirrors the reentry arm of [`Self::load_stable`]. A same-row match is
+    /// `CellLockReentry` there and never reaches a stability check.
+    fn writer_is_self_on_other_row(&self, index: usize, link: Link, current: u32) -> bool {
+        if self.owners[index].load(Ordering::Acquire) != current_owner() {
+            return false;
+        }
+        let writer_key = current & CELL_READER_MASK;
+        writer_key != 0 && Some(writer_key) != link.offset.checked_add(1)
     }
 
     fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
@@ -252,6 +294,7 @@ impl CellLocks {
         Ok(CellWriteGuard {
             state,
             owner,
+            version: &self.states[index].version,
             _not_send: PhantomData,
         })
     }
@@ -261,6 +304,10 @@ impl CellLocks {
             owner.store(0, Ordering::Relaxed);
         }
         for state in &self.states {
+            // Reset replaces page contents, so it counts as a write for
+            // snapshot readers: bump before clearing, or an in-flight
+            // `copy_row_seqlock` would accept bytes from across the reset.
+            state.version.fetch_add(1, Ordering::Release);
             state.value.store(0, Ordering::Release);
         }
         self.nested_reads.store(0, Ordering::Relaxed);
@@ -284,6 +331,7 @@ impl Drop for CellReadGuard<'_> {
 pub(crate) struct CellWriteGuard<'a> {
     state: &'a CellState,
     owner: &'a CellOwner,
+    version: &'a CellState,
     _not_send: PhantomData<*mut ()>,
 }
 
@@ -291,6 +339,11 @@ impl Drop for CellWriteGuard<'_> {
     #[inline]
     fn drop(&mut self) {
         self.owner.store(0, Ordering::Relaxed);
+        // Advance the seqlock counter before clearing the writer bit. A
+        // snapshot reader that already copied these bytes compares the counter
+        // and retries; ordering the bump first means it can never observe the
+        // cell idle at the pre-write version.
+        self.version.fetch_add(1, Ordering::Release);
         self.state.store(0, Ordering::Release);
     }
 }
@@ -906,6 +959,37 @@ mod tests {
     struct TestRow {
         a: u64,
         b: u64,
+    }
+
+    /// A writer that begins AND completes between `load_stable` and
+    /// `still_stable` must not be invisible.
+    ///
+    /// `CellWriteGuard::drop` stores `0` and `load_stable` returns `0` for an
+    /// idle cell, so the stamp an uncontended reader captures is the same value
+    /// the cell returns to after any number of completed writes. Without a
+    /// counter that moves on release, `still_stable` cannot distinguish "no
+    /// write happened" from "a whole write happened", and the reader keeps a
+    /// buffer it memcpy'd out of the middle of that write.
+    #[test]
+    fn a_completed_write_between_snapshot_and_check_is_detected() {
+        let locks = super::CellLocks::default();
+        let link = Link {
+            page_id: 1.into(),
+            offset: 7,
+            length: 16,
+        };
+
+        let stamp = locks.load_stable(link).expect("idle cell snapshots");
+
+        // The whole write happens inside the reader's window.
+        {
+            let _write = locks.write(link).expect("uncontended writer");
+        }
+
+        assert!(
+            !locks.still_stable(link, stamp),
+            "a completed write inside the read window must invalidate the snapshot"
+        );
     }
 
     #[test]
