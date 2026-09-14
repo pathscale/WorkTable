@@ -620,7 +620,10 @@ where
     }
 
     async fn full_row_lock(&self, pk: &PrimaryKey) -> Arc<Lock> {
-        let lock_id = self.lock_manager.next_id();
+        // Striped by the key, as the generated paths are: vacuum takes this
+        // once per candidate row while foreground writers are running, so the
+        // table-wide counter would be a shared line it contends for.
+        let lock_id = self.lock_manager.next_id_for(pk);
         // One atomic acquire, no check-then-act: see LockMap::get_or_insert_with.
         let lock = self.lock_manager.get_or_insert_with(pk.clone(), LockType::new);
         let mut lock_guard = lock.write().await;
