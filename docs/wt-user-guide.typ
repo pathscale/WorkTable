@@ -187,14 +187,14 @@ Base `b1b9546` uses historical `update(row)` / generated query structs. Final
 wrappers take the conservative complete-row `update` path, not in-place.
 
 #table(
-  columns: (1.6fr, 1.1fr, 1.1fr, 0.9fr),
+  columns: (1.45fr, 0.95fr, 0.95fr, 0.95fr, 0.85fr),
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 4pt,
-  [*operation*], [*base ns/op*], [*final ns/op*], [*final / in-place*],
-  [`upsert`], [76175], [74430], [9.83x],
-  [`replace`], [71118], [69518], [9.18x],
-  [`update`], [11907], [11561], [1.53x],
-  [`update_in_place`], [7340], [7571], [1.00x],
+  [*operation*], [*base ns/op*], [*final ns/op*], [*final updates/s*], [*vs in-place*],
+  [`upsert`], [76175], [74430], [13435], [9.83x],
+  [`replace`], [71118], [69518], [14385], [9.18x],
+  [`update`], [11907], [11561], [86500], [1.53x],
+  [`update_in_place`], [7340], [7571], [132082], [1.00x],
 )
 
 #let bar(label, ns, max-ns) = {
@@ -218,6 +218,61 @@ wrappers take the conservative complete-row `update` path, not in-place.
 #bar("update", 11561, 74430)
 #v(0.1em)
 #bar("update_in_place", 7571, 74430)
+]
+]
+
+#text(size: 7.5pt)[
+#block(
+  fill: rgb("#f7f7f4"),
+  inset: 8pt,
+  radius: 2pt,
+  width: 100%,
+  breakable: false,
+)[
+*Same shipping row, extended campaign, 5 samples, `d4b8aac`.* Indexes on
+that table: unique `payment_id` and `app_id` are WTI; non-unique `symbol` and
+`endpoint_address` are Arctic. There is no `update_range` primitive.
+`range_ids` is consecutive private keys the caller already holds;
+`range_scan` is `range_on` then update each. Workers are disjoint keys.
+`using fxhash` is refused on a persisted table.
+
+#table(
+  columns: (0.7fr, 1.5fr, 1.1fr, 1.2fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*workers*], [*mutation*], [*median ns/op*], [*updates/s*],
+  [1], [`replace`], [49675], [20131],
+  [8], [`replace`], [40652], [24599],
+  [12], [`replace`], [42820], [23353],
+  [1], [`update_in_place`], [6652], [150335],
+  [8], [`update_in_place`], [5747], [174017],
+  [12], [`update_in_place`], [6094], [164086],
+)
+
+Eight workers peak. Twelve performance cores do not beat eight.
+
+#table(
+  columns: (1.6fr, 1.2fr, 1.2fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*range (256 keys)*], [*ns/row*], [*updates/s*],
+  [`range_ids`], [6264], [159634],
+  [`range_scan`], [58262], [17164],
+)
+
+#table(
+  columns: (1.1fr, 1.3fr, 1.1fr, 1.2fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*backend*], [*mutation*], [*ns/op*], [*updates/s*],
+  [WTI persist], [`replace`], [5636], [177444],
+  [Arctic persist], [`replace`], [3923], [254934],
+  [Congee persist], [`replace`], [3938], [253928],
+  [FxHash `vec`], [`upsert`], [56], [17733214],
+)
+
+FxHash is in-memory only. Arctic/Congee persisted `replace` on a unique
+`u64` secondary sit together; WTI `replace` is slower on that fixture.
 ]
 ]
 
