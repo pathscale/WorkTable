@@ -2,7 +2,9 @@ use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
-use crate::common::name_generator::{archived_field_is_inline_scalar, WorktableNameGenerator, is_float, is_unsized_vec};
+use crate::common::name_generator::{
+    WorktableNameGenerator, archived_field_is_inline_scalar, is_float, is_unsized_vec,
+};
 use crate::generators::read_only::ReadOnlyGenerator;
 
 impl ReadOnlyGenerator {

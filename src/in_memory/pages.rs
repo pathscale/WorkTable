@@ -23,8 +23,8 @@ use rkyv::{
     util::AlignedVec,
 };
 
-use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::in_memory::InlineArchived;
+use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::prelude::ArchivedRowWrapper;
 use crate::util::epoch::EpochDomain;
 use crate::{
@@ -583,9 +583,7 @@ where
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let page = self.page_ref(link.page_id)?;
-        let wrapped = page
-            .get_row_seqlock(link)
-            .map_err(ExecutionError::DataPageError)?;
+        let wrapped = page.get_row_seqlock(link).map_err(ExecutionError::DataPageError)?;
         let flags = Self::publication_flags(&wrapped);
         Ok((wrapped.get_inner(), flags))
     }
@@ -596,13 +594,9 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
     {
         let page = self.page_ref(link.page_id)?;
-        let copy = page
-            .copy_row_seqlock(link)
-            .map_err(ExecutionError::DataPageError)?;
+        let copy = page.copy_row_seqlock(link).map_err(ExecutionError::DataPageError)?;
         let archived = unsafe {
-            rkyv::access_unchecked::<<<Row as StorableRow>::WrappedRow as Archive>::Archived>(
-                copy.as_bytes(),
-            )
+            rkyv::access_unchecked::<<<Row as StorableRow>::WrappedRow as Archive>::Archived>(copy.as_bytes())
         };
         if archived.is_ghosted() {
             return Err(ExecutionError::Ghosted);
@@ -618,9 +612,7 @@ where
     where
         <Row as StorableRow>::WrappedRow: InlineArchived,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
-        F: FnMut(
-            &<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner,
-        ) -> T,
+        F: FnMut(&<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner) -> T,
     {
         let page = self.page_ref(link.page_id)?;
         page.with_archived_seqlock(link, |wrapped| {

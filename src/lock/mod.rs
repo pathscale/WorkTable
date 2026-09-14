@@ -128,7 +128,7 @@ where
     fn drop(&mut self) {
         self.lock.unlock();
         // SAFETY: see the field note; the map outlives this guard.
-            unsafe { (*self.lock_map).remove_with_lock_check(&self.primary_key) };
+        unsafe { (*self.lock_map).remove_with_lock_check(&self.primary_key) };
     }
 }
 

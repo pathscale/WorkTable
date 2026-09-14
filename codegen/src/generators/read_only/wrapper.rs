@@ -1,4 +1,4 @@
-use crate::common::name_generator::{archived_field_is_inline_scalar, WorktableNameGenerator};
+use crate::common::name_generator::{WorktableNameGenerator, archived_field_is_inline_scalar};
 use crate::generators::read_only::ReadOnlyGenerator;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -43,7 +43,6 @@ impl ReadOnlyGenerator {
             unsafe impl worktable::prelude::InlineArchived for #wrapper_ident {}
         }
     }
-
 
     fn gen_wrapper_type(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());

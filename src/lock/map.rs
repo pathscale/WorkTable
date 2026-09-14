@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::Debug;
@@ -100,6 +101,9 @@ unsafe impl Sync for MutationGuard {}
 pub struct BulkMutationGuard {
     active: Arc<AtomicUsize>,
 }
+
+/// One shard of the row-lock map.
+type LockShard<LockType, PrimaryKey> = RwLock<HashMap<PrimaryKey, LockEntry<LockType>>>;
 
 #[derive(Debug)]
 struct LockEntry<LockType> {
@@ -255,10 +259,10 @@ impl Drop for BulkMutationGuard {
 /// counts answer to different costs.
 #[derive(Debug)]
 pub struct LockMap<LockType, PrimaryKey> {
-    map: Box<[RwLock<HashMap<PrimaryKey, LockEntry<LockType>>>; MAP_SHARD_COUNT]>,
+    map: Box<[LockShard<LockType, PrimaryKey>; MAP_SHARD_COUNT]>,
     /// Table-wide label counter, for the cold callers that have no key in hand
     /// (vacuum, and the raw `FullRowLock` helper). Locked operations must use
-    /// `next_ids` instead: see the note there.
+    /// [`Self::next_id_for`] instead: see the note on `mutation_stripes`.
     next_id: AtomicU16,
     /// Per-shard label counters, one to a cache line.
     ///
@@ -298,10 +302,7 @@ impl<LockType, PrimaryKey> LockMap<LockType, PrimaryKey>
 where
     PrimaryKey: Hash + Eq + Debug + Clone,
 {
-    fn shard(
-        &self,
-        key: &PrimaryKey,
-    ) -> &RwLock<HashMap<PrimaryKey, LockEntry<LockType>>> {
+    fn shard(&self, key: &PrimaryKey) -> &LockShard<LockType, PrimaryKey> {
         &self.map[Self::shard_of(key)]
     }
 
@@ -420,10 +421,8 @@ where
         Self::remove_if_unused(&mut set, key);
     }
 
-    fn remove_if_unused(
-        set: &mut HashMap<PrimaryKey, LockEntry<LockType>>,
-        key: &PrimaryKey,
-    ) where
+    fn remove_if_unused(set: &mut HashMap<PrimaryKey, LockEntry<LockType>>, key: &PrimaryKey)
+    where
         LockType: RowLock,
     {
         let should_remove = set.get(key).is_some_and(|entry| {
