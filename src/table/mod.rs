@@ -293,8 +293,7 @@ where
             match self.data.with_non_ghosted(link, &mut f) {
                 Ok(value) => return Some(value),
                 Err(_) => {
-                    let current_link: Option<Link> =
-                        self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
+                    let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
                     if current_link == Some(link) {
                         return None;
                     }

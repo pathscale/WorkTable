@@ -360,11 +360,14 @@ const SEQLOCK_STACK: usize = 256;
 ///
 /// Stack for rows that fit in 256 bytes (the shipping fixture). Larger rows
 /// take the cell read lock once and copy onto the heap.
+// The variants differ in size by design and `clippy::large_enum_variant`'s fix
+// is the defect: boxing `Stack` puts the small-row snapshot on the heap, which
+// is the allocation this type exists to avoid. The enum is a local of the
+// select path and is never stored in a collection, so the size difference
+// costs one stack frame, not memory per row.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ArchivedCopy {
-    Stack {
-        buf: AlignedBytes<SEQLOCK_STACK>,
-        len: u16,
-    },
+    Stack { buf: AlignedBytes<SEQLOCK_STACK>, len: u16 },
     Heap(AlignedVec),
 }
 
@@ -720,8 +723,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         <Row as Archive>::Archived: Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>,
     {
         let copy = self.copy_row_seqlock(link)?;
-        let archived =
-            unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(copy.as_bytes()) };
+        let archived = unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(copy.as_bytes()) };
         rkyv::deserialize::<_, rkyv::rancor::Error>(archived).map_err(|_| ExecutionError::DeserializeError)
     }
 
@@ -1438,11 +1440,30 @@ mod tests {
 #[cfg(all(test, wt_loom))]
 mod cell_lock_models {
     use super::{CellLocks, Link};
+    use alloc::boxed::Box;
     use loom::{cell::UnsafeCell, sync::Arc, thread};
 
     struct Protected {
-        locks: CellLocks,
+        locks: Box<CellLocks>,
         value: UnsafeCell<(u64, u64)>,
+    }
+
+    /// A lock table built straight into its heap allocation.
+    ///
+    /// `CellLocks::default()` returns the two 256-slot atomic arrays by value,
+    /// so the caller reserves a copy on its own stack. That is affordable on a
+    /// real thread and is not on a loom coroutine, whose stack is small and
+    /// whose atomics each carry tracking state: both models overflowed it
+    /// before reaching their first assertion. `CellLocks::initialize_at`
+    /// exists for exactly this and is what `Data` uses in production.
+    fn cell_locks() -> Box<CellLocks> {
+        let mut locks = Box::<CellLocks>::new_uninit();
+        // SAFETY: `initialize_at` writes every field of `CellLocks`, so the
+        // allocation is fully initialized when it returns.
+        unsafe {
+            CellLocks::initialize_at(locks.as_mut_ptr());
+            locks.assume_init()
+        }
     }
 
     // Every access to value below holds the same row's read or write guard.
@@ -1455,7 +1476,7 @@ mod cell_lock_models {
         model.max_branches = 10_000;
         model.check(|| {
             let protected = Arc::new(Protected {
-                locks: CellLocks::default(),
+                locks: cell_locks(),
                 value: UnsafeCell::new((0, 0)),
             });
             let first = Link {
@@ -1499,7 +1520,7 @@ mod cell_lock_models {
         model.max_branches = 10_000;
         model.check(|| {
             let protected = Arc::new(Protected {
-                locks: CellLocks::default(),
+                locks: cell_locks(),
                 value: UnsafeCell::new((0, 0)),
             });
             let link = Link {

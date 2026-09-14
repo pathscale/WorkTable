@@ -1,4 +1,4 @@
-use crate::common::name_generator::{archived_field_is_inline_scalar, WorktableNameGenerator};
+use crate::common::name_generator::{WorktableNameGenerator, archived_field_is_inline_scalar};
 use crate::generators::in_memory::InMemoryGenerator;
 use proc_macro2::TokenStream;
 use quote::quote;

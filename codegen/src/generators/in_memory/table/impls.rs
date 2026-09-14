@@ -3,7 +3,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 use crate::common::model::GeneratorType;
-use crate::common::name_generator::{archived_field_is_inline_scalar, WorktableNameGenerator};
+use crate::common::name_generator::{WorktableNameGenerator, archived_field_is_inline_scalar};
 use crate::generators::in_memory::InMemoryGenerator;
 
 impl InMemoryGenerator {
