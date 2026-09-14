@@ -579,7 +579,10 @@ where
         to: PageId,
     ) -> eyre::Result<CandidateMove> {
         let lock = self.full_row_lock(&pk).await;
-        let _guard = LockGuard::new_with_mutation(lock, Arc::as_ptr(&self.lock_manager), pk.clone());
+        // SAFETY: the guard is a local of this call, which holds
+        // `self.lock_manager` for its whole body.
+        let _guard =
+            unsafe { LockGuard::new_with_mutation(lock, Arc::as_ptr(&self.lock_manager), pk.clone()) };
 
         let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
         if current_link != Some(from_link) {

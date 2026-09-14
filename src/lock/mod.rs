@@ -92,13 +92,18 @@ where
 
     /// Creates a row guard that also serializes the mutation phase with the
     /// synchronous insert path for the same primary key.
-    pub fn new_with_mutation(
+    ///
+    /// # Safety
+    ///
+    /// `lock_map` must point to a live map that outlives the returned guard.
+    /// It is dereferenced here to take the mutation gate, and again when the
+    /// guard drops; see the field note on `lock_map`.
+    pub unsafe fn new_with_mutation(
         lock: Arc<Lock>,
         lock_map: *const LockMap<LockType, PrimaryKey>,
         primary_key: PrimaryKey,
     ) -> Self {
-        // SAFETY: the caller holds the map alive for this operation; see the
-        // field note on `lock_map`.
+        // SAFETY: guaranteed by this function's own contract.
         let mutation_guard = unsafe { (*lock_map).mutation_guard(&primary_key) };
         Self {
             lock,
@@ -199,7 +204,9 @@ where
             .lock
             .take()
             .expect("pending lock is intact until conversion or drop");
-        LockGuard::new_with_mutation(lock, self.lock_map, self.primary_key.clone())
+        // SAFETY: a pending lock is a local of the operation that took it, and
+        // that operation holds the map's `Arc` for its whole call.
+        unsafe { LockGuard::new_with_mutation(lock, self.lock_map, self.primary_key.clone()) }
     }
 }
 

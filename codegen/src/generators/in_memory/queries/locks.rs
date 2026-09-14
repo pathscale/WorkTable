@@ -115,7 +115,9 @@ impl InMemoryGenerator {
         let lock_ident = name_generator.get_lock_type_ident();
 
         quote! {
-            let lock_id = self.0.lock_manager.next_id();
+            // Striped by the key: a table-wide label counter is one shared
+            // cache line per locked operation. See LockMap::next_ids.
+            let lock_id = self.0.lock_manager.next_id_for(&pk);
             // Same atomic acquire as the per-column path: see LockMap::get_or_insert_with.
             let lock = self
                 .0
@@ -130,7 +132,13 @@ impl InMemoryGenerator {
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
             let pending_lock = PendingLock::new(op_lock, &self.0.lock_manager, pk.clone());
-            worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            // No predecessor is the common case on disjoint keys: the row had no
+            // entry, so every column slot was empty. Registering a waker on each
+            // of nothing, boxing the joined slice and suspending the operation to
+            // poll it once is all overhead there.
+            if !locks.is_empty() {
+                worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            }
             pending_lock
         }
     }
@@ -140,7 +148,9 @@ impl InMemoryGenerator {
         let lock_ident = name_generator.get_lock_type_ident();
 
         quote! {
-            let lock_id = self.0.lock_manager.next_id();
+            // Striped by the key: a table-wide label counter is one shared
+            // cache line per locked operation. See LockMap::next_ids.
+            let lock_id = self.0.lock_manager.next_id_for(&pk);
             // One atomic acquire, no check-then-act. Splitting this into `get`
             // then `insert` let two tasks both miss, both build a lock and both
             // enter the row: the loser merged into the winner's lock, but the
@@ -159,7 +169,13 @@ impl InMemoryGenerator {
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
             let pending_lock = PendingLock::new(op_lock, &self.0.lock_manager, pk.clone());
-            worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            // No predecessor is the common case on disjoint keys: the row had no
+            // entry, so every column slot was empty. Registering a waker on each
+            // of nothing, boxing the joined slice and suspending the operation to
+            // poll it once is all overhead there.
+            if !locks.is_empty() {
+                worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
+            }
             pending_lock
         }
     }
