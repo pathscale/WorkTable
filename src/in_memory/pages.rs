@@ -24,6 +24,7 @@ use rkyv::{
 };
 
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
+use crate::in_memory::InlineArchived;
 use crate::prelude::ArchivedRowWrapper;
 use crate::util::epoch::EpochDomain;
 use crate::{
@@ -615,6 +616,7 @@ where
     /// Apply `f` to the archived inner row under seqlock, without memcpy.
     pub(crate) fn with_non_ghosted<F, T>(&self, link: Link, mut f: F) -> Result<T, ExecutionError>
     where
+        <Row as StorableRow>::WrappedRow: InlineArchived,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         F: FnMut(
             &<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner,

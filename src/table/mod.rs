@@ -4,7 +4,7 @@ pub mod system_info;
 #[cfg(feature = "std")]
 pub mod vacuum;
 
-use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, SelectRef, StorableRow};
+use crate::in_memory::{ArchivedRowWrapper, DataPages, InlineArchived, RowWrapper, SelectRef, StorableRow};
 #[cfg(feature = "std")]
 use crate::persistence::PersistenceLoadError;
 use crate::persistence::operation::new_operation_uuid;
@@ -283,6 +283,7 @@ where
     pub fn select_with<F, T>(&self, pk: PrimaryKey, mut f: F) -> Option<T>
     where
         LockType: 'static,
+        <Row as StorableRow>::WrappedRow: InlineArchived,
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
         F: FnMut(&<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner) -> T,
     {

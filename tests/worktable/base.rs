@@ -594,11 +594,36 @@ async fn select_ref_matches_select() {
     let view = table.select_ref(row.id).unwrap();
     assert_eq!(owned.another, view.another);
     assert_eq!(owned.test, view.test);
-    let via_with = table
-        .select_with(row.id, |archived| archived.another)
-        .unwrap();
-    assert_eq!(owned.another, via_with);
     assert!(table.select_ref(u64::MAX).is_none());
+}
+
+worktable! {
+    name: InlineOnly,
+    columns: {
+        id: u64 primary_key,
+        value: u64,
+    },
+}
+
+/// `select_with` exists only where the archived row holds no relative
+/// pointers, and it agrees with the owned `select` there.
+///
+/// It reads the cell in place with no copy, so a concurrent writer can tear a
+/// value the closure sees. That is recoverable for an inline scalar, because
+/// the seqlock retry discards it, and is undefined behaviour for a pointer.
+/// `TestWorkTable` above has a `String` column and deliberately has no
+/// `select_with`; see the `select_with_needs_inline_archived` compile-fail
+/// case.
+#[tokio::test]
+async fn select_with_matches_select_on_inline_rows() {
+    let table = InlineOnlyWorkTable::default();
+    let row = InlineOnlyRow { id: 1, value: 42 };
+    let _ = table.insert(row.clone()).await.unwrap();
+
+    let owned = table.select(row.id).unwrap();
+    let via_with = table.select_with(row.id, |archived| archived.value).unwrap();
+    assert_eq!(owned.value, u64::from(via_with));
+    assert!(table.select_with(u64::MAX, |archived| archived.value).is_none());
 }
 
 #[tokio::test]

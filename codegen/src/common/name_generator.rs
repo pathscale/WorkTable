@@ -60,6 +60,56 @@ pub fn archived_field_requires_rebuild(ty: &TokenStream) -> bool {
         .unwrap_or(true)
 }
 
+/// Whether this column's archived form is a fixed-size scalar sitting inline
+/// in the cell, with no relative pointer.
+///
+/// This is the safety condition for the zero-copy `select_with` path: a
+/// concurrent writer can tear an inline scalar the reader's closure observes,
+/// and the seqlock retry throws that away, but a torn *pointer* dereferenced
+/// inside the closure is undefined behaviour.
+///
+/// Distinct from [`archived_field_requires_rebuild`], which answers a
+/// different question and treats `String` as fine because the variable-size
+/// path handles it. Here `String` is precisely what must be excluded.
+///
+/// Opaque user types are refused, because the macro cannot inspect a user
+/// type's `Archive::Archived` layout. That is conservative in the safe
+/// direction: an unrecognised column costs the table its zero-copy path, it
+/// does not grant one unsoundly.
+pub fn archived_field_is_inline_scalar(ty: &TokenStream) -> bool {
+    fn type_is_inline(ty: &Type) -> bool {
+        let Type::Path(type_path) = ty else {
+            return false;
+        };
+        let Some(segment) = type_path.path.segments.last() else {
+            return false;
+        };
+
+        match segment.ident.to_string().as_str() {
+            "bool" | "char" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
+            | "i128" | "isize" | "f32" | "f64" => true,
+            // An archived `Option<T>` of an inline `T` stays inline: rkyv
+            // encodes the niche or a discriminant beside the payload.
+            "Option" => match &segment.arguments {
+                PathArguments::AngleBracketed(arguments) => arguments
+                    .args
+                    .iter()
+                    .find_map(|argument| match argument {
+                        GenericArgument::Type(inner) => Some(type_is_inline(inner)),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    syn::parse2::<Type>(ty.clone())
+        .map(|ty| type_is_inline(&ty))
+        .unwrap_or(false)
+}
+
 pub struct WorktableNameGenerator {
     pub(crate) name: String,
 }

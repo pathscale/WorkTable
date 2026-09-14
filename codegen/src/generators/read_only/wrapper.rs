@@ -1,4 +1,4 @@
-use crate::common::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::{archived_field_is_inline_scalar, WorktableNameGenerator};
 use crate::generators::read_only::ReadOnlyGenerator;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -9,14 +9,41 @@ impl ReadOnlyGenerator {
         let impl_ = self.gen_wrapper_impl();
         let storable_impl = self.get_wrapper_storable_impl();
         let archived_wrapper_impl = self.get_archived_wrapper_impl();
+        let inline_archived_impl = self.get_inline_archived_impl();
 
         quote! {
             #type_
             #impl_
             #storable_impl
             #archived_wrapper_impl
+            #inline_archived_impl
         }
     }
+
+    /// Emit `InlineArchived` only when every column is an inline scalar.
+    ///
+    /// Gates the zero-copy `select_with` path; see the in-memory generator's
+    /// copy of this for the reasoning.
+    fn get_inline_archived_impl(&self) -> TokenStream {
+        let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
+        let wrapper_ident = name_generator.get_wrapper_type_ident();
+
+        let all_inline = self
+            .columns
+            .columns_map
+            .values()
+            .all(|ty| archived_field_is_inline_scalar(&quote! { #ty }));
+        if !all_inline {
+            return quote! {};
+        }
+
+        quote! {
+            // SAFETY: every column is a fixed-size scalar, so the archived
+            // wrapper holds no relative pointers.
+            unsafe impl worktable::prelude::InlineArchived for #wrapper_ident {}
+        }
+    }
+
 
     fn gen_wrapper_type(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
