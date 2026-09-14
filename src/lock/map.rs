@@ -12,6 +12,11 @@ use parking_lot::RwLock;
 use crate::lock::RowLock;
 
 const MUTATION_STRIPE_COUNT: usize = 64;
+/// Same count as mutation stripes so a key's row-lock shard and mutation
+/// stripe are one hash. One global `RwLock<HashMap>` serialized every
+/// acquire and drop; 8 disjoint writers then burned ~6 cores for 1.27×
+/// replace. Per-shard maps let those writers proceed independently.
+const MAP_SHARD_COUNT: usize = MUTATION_STRIPE_COUNT;
 
 #[derive(Debug, Default)]
 struct MutationStripe {
@@ -120,15 +125,22 @@ impl Drop for BulkMutationGuard {
 ///
 /// # Sync/async lock boundary
 ///
-/// The `parking_lot` map guard is never returned and never crosses an
+/// The `parking_lot` shard guard is never returned and never crosses an
 /// `.await`. Acquisition clones a tracked `Arc<nagoya::sync::RwLock<_>>` before
-/// releasing the map guard. Cleanup may synchronously take the short-lived map
-/// write guard, but only probes the per-row lock with `try_read`; it never waits
-/// on a Tokio lock while holding the map. This one-way boundary prevents a
-/// map-lock/per-row-lock cycle during cancellation and `Drop`.
+/// releasing the shard guard. Cleanup may synchronously take the short-lived
+/// shard write guard, but only probes the per-row lock with `try_read`; it never
+/// waits on a Tokio lock while holding the shard. This one-way boundary prevents
+/// a map-lock/per-row-lock cycle during cancellation and `Drop`.
+///
+/// # Sharding
+///
+/// The map is `MAP_SHARD_COUNT` independent `RwLock<HashMap>`s, keyed by the
+/// same hash as mutation stripes. A single table-wide map lock made every
+/// `get_or_insert_with` miss and every `LockAcquirer` drop exclusive against
+/// every other row.
 #[derive(Debug)]
 pub struct LockMap<LockType, PrimaryKey> {
-    map: RwLock<HashMap<PrimaryKey, LockEntry<LockType>>>,
+    map: Box<[RwLock<HashMap<PrimaryKey, LockEntry<LockType>>>; MAP_SHARD_COUNT]>,
     next_id: AtomicU16,
     mutation_stripes: Arc<[MutationStripe; MUTATION_STRIPE_COUNT]>,
     bulk_mutations: Arc<AtomicUsize>,
@@ -137,7 +149,7 @@ pub struct LockMap<LockType, PrimaryKey> {
 impl<LockType, PrimaryKey> Default for LockMap<LockType, PrimaryKey> {
     fn default() -> Self {
         Self {
-            map: RwLock::new(HashMap::new()),
+            map: Box::new(core::array::from_fn(|_| RwLock::new(HashMap::new()))),
             next_id: AtomicU16::default(),
             mutation_stripes: Arc::new(core::array::from_fn(|_| MutationStripe::default())),
             bulk_mutations: Arc::default(),
@@ -149,6 +161,18 @@ impl<LockType, PrimaryKey> LockMap<LockType, PrimaryKey>
 where
     PrimaryKey: Hash + Eq + Debug + Clone,
 {
+    fn shard(
+        &self,
+        key: &PrimaryKey,
+    ) -> &RwLock<HashMap<PrimaryKey, LockEntry<LockType>>> {
+        &self.map[Self::stripe_of(key)]
+    }
+
+    #[cfg(test)]
+    fn contains_key(&self, key: &PrimaryKey) -> bool {
+        self.shard(key).read().contains_key(key)
+    }
+
     /// Inserts a raw lock entry.
     ///
     /// A returned or externally retained `Arc` pins cleanup through
@@ -160,7 +184,7 @@ where
         key: PrimaryKey,
         lock: Arc<nagoya::sync::RwLock<LockType>>,
     ) -> Option<Arc<nagoya::sync::RwLock<LockType>>> {
-        self.map
+        self.shard(&key)
             .write()
             .insert(
                 key,
@@ -175,7 +199,7 @@ where
     /// Returns an untracked raw lock clone, which keeps the map entry alive
     /// until that clone is dropped.
     pub fn get(&self, key: &PrimaryKey) -> Option<Arc<nagoya::sync::RwLock<LockType>>> {
-        self.map.read().get(key).map(|entry| entry.lock.clone())
+        self.shard(key).read().get(key).map(|entry| entry.lock.clone())
     }
 
     /// Returns the lock for `key`, inserting one built by `f` if absent.
@@ -197,7 +221,7 @@ where
         // under the guard, so `remove_with_lock_check` (which needs the write
         // lock) either runs before we looked or sees our extra strong reference
         // and keeps the entry.
-        if let Some(entry) = self.map.read().get(&key) {
+        if let Some(entry) = self.shard(&key).read().get(&key) {
             entry.acquirers.fetch_add(1, Ordering::AcqRel);
             return LockAcquirer {
                 lock: Some(entry.lock.clone()),
@@ -206,7 +230,7 @@ where
                 primary_key: key,
             };
         }
-        let mut map = self.map.write();
+        let mut map = self.shard(&key).write();
         // Re-check: another task can insert between the read and write guards.
         let entry = map.entry(key.clone()).or_insert_with(|| LockEntry {
             lock: Arc::new(nagoya::sync::RwLock::new(f())),
@@ -222,14 +246,14 @@ where
     }
 
     pub fn remove(&mut self, key: &PrimaryKey) {
-        self.map.write().remove(key);
+        self.shard(key).write().remove(key);
     }
 
     pub fn remove_with_lock_check(&self, key: &PrimaryKey)
     where
         LockType: RowLock,
     {
-        let mut set = self.map.write();
+        let mut set = self.shard(key).write();
         let should_remove = set.get(key).is_some_and(|entry| {
             let Some(guard) = entry.lock.try_read() else {
                 return false;
@@ -442,10 +466,10 @@ mod tests {
         let acquirer = lock_map.get_or_insert_with(31, FullRowLock::new);
 
         lock_map.remove_with_lock_check(&31);
-        assert!(lock_map.map.read().contains_key(&31));
+        assert!(lock_map.contains_key(&31));
 
         drop(acquirer);
-        assert!(!lock_map.map.read().contains_key(&31));
+        assert!(!lock_map.contains_key(&31));
     }
 
     /// Cloning the acquisition handle represents two tasks between lookup and
@@ -458,10 +482,10 @@ mod tests {
         let second = first.clone();
 
         drop(first);
-        assert!(lock_map.map.read().contains_key(&33));
+        assert!(lock_map.contains_key(&33));
 
         drop(second);
-        assert!(!lock_map.map.read().contains_key(&33));
+        assert!(!lock_map.contains_key(&33));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -477,10 +501,33 @@ mod tests {
 
         waiting_task.abort();
         assert!(waiting_task.await.unwrap_err().is_cancelled());
-        assert!(lock_map.map.read().contains_key(&41));
+        assert!(lock_map.contains_key(&41));
 
         drop(owner_guard);
         drop(owner);
-        assert!(!lock_map.map.read().contains_key(&41));
+        assert!(!lock_map.contains_key(&41));
+    }
+
+    /// Disjoint keys must not share a map write lock. Eight threads each
+    /// acquiring and dropping a private key 10_000 times used to serialize on
+    /// one `RwLock<HashMap>`; they must complete without deadlock.
+    #[test]
+    fn disjoint_keys_do_not_share_a_map_write_lock() {
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let mut handles = Vec::new();
+        for worker in 0..8u64 {
+            let map = lock_map.clone();
+            handles.push(std::thread::spawn(move || {
+                for step in 0..10_000u64 {
+                    let key = worker << 32 | step;
+                    let acquirer = map.get_or_insert_with(key, FullRowLock::new);
+                    drop(acquirer);
+                    assert!(!map.contains_key(&key));
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 }
