@@ -86,10 +86,21 @@ impl ReadOnlyGenerator {
 
     fn get_archived_wrapper_impl(&self) -> TokenStream {
         let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
-        let row_ident = name_generator.get_archived_wrapper_type_ident();
+        let archived_ident = name_generator.get_archived_wrapper_type_ident();
+        let row_ident = name_generator.get_row_type_ident();
 
         quote! {
-            impl ArchivedRowWrapper for #row_ident {
+            impl ArchivedRowWrapper for #archived_ident {
+                type Inner = <#row_ident as worktable::prelude::rkyv::Archive>::Archived;
+
+                fn inner(&self) -> &Self::Inner {
+                    &self.inner
+                }
+
+                fn is_ghosted(&self) -> bool {
+                    self.is_ghosted
+                }
+
                 fn unghost(&mut self) {
                     self.is_ghosted = false;
                 }

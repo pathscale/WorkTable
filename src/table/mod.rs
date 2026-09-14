@@ -4,7 +4,7 @@ pub mod system_info;
 #[cfg(feature = "std")]
 pub mod vacuum;
 
-use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
+use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, SelectRef, StorableRow};
 #[cfg(feature = "std")]
 use crate::persistence::PersistenceLoadError;
 use crate::persistence::operation::new_operation_uuid;
@@ -246,6 +246,60 @@ where
                 return None;
             }
             core::hint::spin_loop();
+        }
+        None
+    }
+
+    /// Point-read that yields a pin-guard plus archived inner row.
+    ///
+    /// Skips rkyv deserialize. The guard must outlive any use of the archived
+    /// fields. Owned [`Self::select`] stays for callers that need a `Row`.
+    /// Returning the guard copies the archived cell; [`Self::select_with`]
+    /// keeps that copy on the stack when the caller only needs a field.
+    pub fn select_ref(&self, pk: PrimaryKey) -> Option<SelectRef<'_, Row>>
+    where
+        LockType: 'static,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+    {
+        let pin = self.data.read_guard();
+        for _ in 0..64 {
+            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
+            if let Ok(copy) = self.data.copy_non_ghosted(link) {
+                return Some(SelectRef::new(pin, copy));
+            }
+
+            let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
+            if current_link == Some(link) {
+                return None;
+            }
+            core::hint::spin_loop();
+        }
+        None
+    }
+
+    /// Point-read that applies `f` to the archived inner row and returns `f`'s
+    /// result. No memcpy of the cell; `f` must copy out and not stash a
+    /// reference into the page.
+    pub fn select_with<F, T>(&self, pk: PrimaryKey, mut f: F) -> Option<T>
+    where
+        LockType: 'static,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        F: FnMut(&<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner) -> T,
+    {
+        let _pin = self.data.read_guard();
+        for _ in 0..64 {
+            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
+            match self.data.with_non_ghosted(link, &mut f) {
+                Ok(value) => return Some(value),
+                Err(_) => {
+                    let current_link: Option<Link> =
+                        self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
+                    if current_link == Some(link) {
+                        return None;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         }
         None
     }
