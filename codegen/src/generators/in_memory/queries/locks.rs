@@ -86,7 +86,13 @@ impl InMemoryGenerator {
                 let col = Ident::new(format!("{col}_lock").as_str(), Span::mixed_site());
                 quote! {
                     if let Some(lock) = &self.#col {
-                        set.insert(lock.clone());
+                        // Dedup by pointer: columns can share one lock, and the
+                        // caller must not wait on the same lock twice. Linear
+                        // over a handful of entries, which is cheaper than
+                        // seeding a hasher per operation.
+                        if !set.iter().any(|existing| worktable::prelude::Arc::ptr_eq(existing, lock)) {
+                            set.push(lock.clone());
+                        }
                     }
                     self.#col = Some(new_lock.clone());
                 }
@@ -95,8 +101,8 @@ impl InMemoryGenerator {
 
         quote! {
             #[allow(clippy::mutable_key_type)]
-            pub fn #ident(&mut self, id: u16) -> (worktable::prelude::HashSet<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
-                let mut set = worktable::prelude::HashSet::new();
+            pub fn #ident(&mut self, id: u16) -> (Vec<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
+                let mut set = Vec::new();
                 let new_lock = worktable::prelude::Arc::new(Lock::new(id));
                 #(#inner)*
                 (set, new_lock)
