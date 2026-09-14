@@ -1,7 +1,6 @@
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::hash::Hash;
-use hashbrown::HashSet;
 
 use crate::lock::{Lock, LockGuard, LockMap, LockWait};
 
@@ -16,12 +15,18 @@ pub trait RowLock {
     fn with_lock(id: u16) -> (Self, Arc<Lock>)
     where
         Self: Sized;
-    /// Locks full [`RowLock`].
-    #[allow(clippy::mutable_key_type)]
-    fn lock(&mut self, id: u16) -> (HashSet<Arc<Lock>>, Arc<Lock>);
+    /// Locks full [`RowLock`], returning the predecessors to wait on.
+    ///
+    /// A `Vec`, not a `HashSet`. The collection holds one entry per column this
+    /// lock type covers, deduplicated by pointer, which in every shipping
+    /// schema is a handful. Building a `hashbrown::HashSet` for that seeded a
+    /// fresh `foldhash` hasher on every operation, which was about a tenth of
+    /// the profile on the in-place update path, to hash at most a few `Arc`
+    /// pointers. Linear dedup over a short `Vec` is cheaper and the caller only
+    /// iterates the result.
+    fn lock(&mut self, id: u16) -> (Vec<Arc<Lock>>, Arc<Lock>);
     /// Merges two [`RowLock`]'s.
-    #[allow(clippy::mutable_key_type)]
-    fn merge(&mut self, other: &mut Self) -> HashSet<Arc<Lock>>
+    fn merge(&mut self, other: &mut Self) -> Vec<Arc<Lock>>
     where
         Self: Sized;
 }
@@ -81,20 +86,19 @@ impl RowLock for FullRowLock {
         (FullRowLock { l: l.clone() }, l)
     }
 
-    fn lock(&mut self, id: u16) -> (HashSet<Arc<Lock>>, Arc<Lock>) {
-        let mut set = HashSet::new();
+    fn lock(&mut self, id: u16) -> (Vec<Arc<Lock>>, Arc<Lock>) {
         let l = Arc::new(Lock::new(id));
-        set.insert(self.l.clone());
+        let set = vec![self.l.clone()];
         self.l = l.clone();
 
         (set, l)
     }
 
-    fn merge(&mut self, other: &mut Self) -> HashSet<Arc<Lock>>
+    fn merge(&mut self, other: &mut Self) -> Vec<Arc<Lock>>
     where
         Self: Sized,
     {
-        let set = HashSet::from_iter([self.l.clone()]);
+        let set = vec![self.l.clone()];
         self.l = other.l.clone();
         set
     }
