@@ -35,9 +35,21 @@ const CELL_LOCK_SLOTS: usize = 256;
 const CELL_READER_MASK: u32 = (1_u32 << 31) - 1;
 const CELL_WRITER: u32 = 1 << 31;
 
+/// One stripe's reader/writer count, alone on a cache line.
+///
+/// Packed `[AtomicU32; 256]` put 16 stripes on one 64-byte line. Shared
+/// `select` then bounced that line across cores and stalled at ~2.4× while a
+/// private table (its own `CellLocks`) and `vec: true` both scaled ~7×.
+/// Owners stay packed: the uncontended read path never loads them.
+#[repr(align(64))]
+#[derive(Debug)]
+struct PaddedCellState {
+    value: CellState,
+}
+
 #[derive(Debug)]
 struct CellLocks {
-    states: [CellState; CELL_LOCK_SLOTS],
+    states: [PaddedCellState; CELL_LOCK_SLOTS],
     owners: [CellOwner; CELL_LOCK_SLOTS],
     nested_reads: CellState,
 }
@@ -45,7 +57,9 @@ struct CellLocks {
 impl Default for CellLocks {
     fn default() -> Self {
         Self {
-            states: core::array::from_fn(|_| CellState::new(0)),
+            states: core::array::from_fn(|_| PaddedCellState {
+                value: CellState::new(0),
+            }),
             owners: core::array::from_fn(|_| CellOwner::new(0)),
             nested_reads: CellState::new(0),
         }
@@ -60,9 +74,11 @@ impl CellLocks {
     /// when it is created inside an `Arc`, where that copy is unnecessary.
     unsafe fn initialize_at(target: *mut Self) {
         unsafe {
-            let states = core::ptr::addr_of_mut!((*target).states).cast::<CellState>();
+            let states = core::ptr::addr_of_mut!((*target).states).cast::<PaddedCellState>();
             for index in 0..CELL_LOCK_SLOTS {
-                states.add(index).write(CellState::new(0));
+                states.add(index).write(PaddedCellState {
+                    value: CellState::new(0),
+                });
             }
 
             let owners = core::ptr::addr_of_mut!((*target).owners).cast::<CellOwner>();
@@ -133,9 +149,46 @@ impl CellLocks {
         }
     }
 
+    /// Snapshot the stripe if no writer is in the critical section.
+    ///
+    /// Readers do not CAS. Shared `select` was bouncing packed stripe atomics
+    /// and stalled at ~2.4×; `vec: true` and a private paged table both scale
+    /// ~7×. The caller copies bytes, then [`Self::still_stable`].
+    fn load_stable(&self, link: Link) -> Result<u32, ExecutionError> {
+        let index = Self::start(link);
+        let state = &self.states[index].value;
+        let mut spins = 0;
+        loop {
+            let current = state.load(Ordering::Acquire);
+            if current & CELL_WRITER == 0 {
+                return Ok(current);
+            }
+            if self.owners[index].load(Ordering::Acquire) == current_owner() {
+                let writer_key = current & CELL_READER_MASK;
+                let requested_key = link.offset.checked_add(1).ok_or(ExecutionError::InvalidLink)?;
+                if writer_key == requested_key {
+                    return Err(ExecutionError::CellLockReentry);
+                }
+                if writer_key != 0 {
+                    return Ok(current);
+                }
+            }
+            Self::wait(&mut spins);
+        }
+    }
+
+    fn still_stable(&self, link: Link, stamp: u32) -> bool {
+        if stamp & CELL_WRITER != 0 {
+            return true;
+        }
+        let index = Self::start(link);
+        let current = self.states[index].value.load(Ordering::Acquire);
+        current == stamp && current & CELL_WRITER == 0
+    }
+
     fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
         let index = Self::start(link);
-        let state = &self.states[index];
+        let state = &self.states[index].value;
         let mut spins = 0;
         loop {
             let current = state.load(Ordering::Acquire);
@@ -171,7 +224,7 @@ impl CellLocks {
 
     fn write(&self, link: Link) -> Result<CellWriteGuard<'_>, ExecutionError> {
         let index = Self::start(link);
-        let state = &self.states[index];
+        let state = &self.states[index].value;
         let owner = &self.owners[index];
         let mut spins = 0;
         loop {
@@ -207,7 +260,7 @@ impl CellLocks {
             owner.store(0, Ordering::Relaxed);
         }
         for state in &self.states {
-            state.store(0, Ordering::Release);
+            state.value.store(0, Ordering::Release);
         }
         self.nested_reads.store(0, Ordering::Relaxed);
     }
@@ -576,6 +629,40 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
     {
         let row = self.get_row_ref(link)?;
         rkyv::deserialize::<_, rkyv::rancor::Error>(row).map_err(|_| ExecutionError::DeserializeError)
+    }
+
+    /// Point-read without a reader CAS on the cell stripe.
+    ///
+    /// Copies archived bytes, then checks the stripe still has no writer.
+    /// Deserialize runs only on that private copy. Rows larger than the stack
+    /// buffer keep the locking path.
+    pub fn get_row_seqlock(&self, link: Link) -> Result<Row, ExecutionError>
+    where
+        Row: Archive,
+        <Row as Archive>::Archived: Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        self.validate_link(link)?;
+        const STACK: usize = 256;
+        loop {
+            let stamp = self.cell_locks.load_stable(link)?;
+            let inner = unsafe { &*self.inner_data.get() };
+            let start = link.offset as usize;
+            let end = start + link.length as usize;
+            let len = end - start;
+            if len > STACK {
+                let _guard = self.cell_locks.read(link)?;
+                return self.get_row(link);
+            }
+            let mut buf = [0u8; STACK];
+            buf[..len].copy_from_slice(&inner[start..end]);
+            if !self.cell_locks.still_stable(link, stamp) {
+                continue;
+            }
+            let archived =
+                unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(&buf[..len]) };
+            return rkyv::deserialize::<_, rkyv::rancor::Error>(archived)
+                .map_err(|_| ExecutionError::DeserializeError);
+        }
     }
 
     /// Validates persisted bytes before deserializing them.

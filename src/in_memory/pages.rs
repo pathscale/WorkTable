@@ -540,8 +540,9 @@ where
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let page = self.page_ref(link.page_id)?;
-        let _cell_guard = page.read_cell(link).map_err(ExecutionError::DataPageError)?;
-        let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
+        let wrapped = page
+            .get_row_seqlock(link)
+            .map_err(ExecutionError::DataPageError)?;
         let flags = Self::publication_flags(&wrapped);
         Ok((wrapped.get_inner(), flags))
     }
