@@ -764,15 +764,21 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         Row: Archive,
         F: FnMut(&<Row as Archive>::Archived) -> T,
     {
-        self.validate_link(link)?;
-        loop {
-            let stamp = self.cell_locks.load_stable(link)?;
-            let archived = self.get_row_ref(link)?;
-            let result = f(archived);
-            if self.cell_locks.still_stable(link, stamp) {
-                return Ok(result);
-            }
-        }
+        // Run `f` on a validated private copy, not on the live page.
+        //
+        // Reading in place and checking stability afterwards lets `f` observe
+        // a cell mid-write. A torn `u64` would be harmless because the retry
+        // discards the result, but `f` receives `&Archived`, and rkyv archived
+        // types carry relative pointers: a torn pointer dereferenced inside
+        // `f` (an archived `String` or `Vec` field) is undefined behaviour
+        // before `still_stable` ever runs. The shipping test row has a
+        // `String` column, so this is reachable, not theoretical.
+        //
+        // `copy_row_seqlock` already validates the copy before returning it,
+        // so the closure only ever sees bytes from one write generation.
+        let copy = self.copy_row_seqlock(link)?;
+        let archived = unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(copy.as_bytes()) };
+        Ok(f(archived))
     }
 
     /// Validates persisted bytes before deserializing them.
