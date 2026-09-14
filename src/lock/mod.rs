@@ -226,16 +226,24 @@ where
 
 #[derive(Debug)]
 pub struct Lock {
-    // A wrapping diagnostic label, not dependency identity. The existing
-    // locked allocation stays unique and stable for this lock lifetime.
+    // A wrapping diagnostic label, not dependency identity. The lock's own
+    // allocation is what stays unique and stable for its lifetime.
     id: u16,
-    locked: Arc<AtomicBool>,
+    /// Inline, not an `Arc<AtomicBool>`.
+    ///
+    /// It was separately allocated so a [`LockWait`] could outlive the lock it
+    /// waits on. A wait can hold an `Arc<Lock>` instead and keep the whole lock
+    /// alive, which costs one pointer in a rarely-built future and saves an
+    /// allocation and a free on **every** locked operation, built or not.
+    /// Freeing was 30% of the profile on the in-place update path once the
+    /// map's exclusive acquisitions were out of the way.
+    locked: AtomicBool,
     wakers: Mutex<Vec<Arc<AtomicWaker>>>,
 }
 
 impl PartialEq for Lock {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.locked, &other.locked)
+        core::ptr::eq(self, other)
     }
 }
 
@@ -243,7 +251,7 @@ impl Eq for Lock {}
 
 impl Hash for Lock {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&Arc::as_ptr(&self.locked), state)
+        Hash::hash(&(self as *const Self), state)
     }
 }
 
@@ -257,7 +265,7 @@ impl Lock {
     pub fn new(id: u16) -> Self {
         Self {
             id,
-            locked: Arc::new(AtomicBool::from(true)),
+            locked: AtomicBool::new(true),
             wakers: Mutex::new(vec![]),
         }
     }
@@ -270,7 +278,7 @@ impl Lock {
     pub fn new_released(id: u16) -> Self {
         Self {
             id,
-            locked: Arc::new(AtomicBool::new(false)),
+            locked: AtomicBool::new(false),
             wakers: Mutex::new(vec![]),
         }
     }
@@ -296,12 +304,14 @@ impl Lock {
         self.locked.load(Ordering::Acquire)
     }
 
-    pub fn wait(&self) -> LockWait {
+    /// Takes `&Arc<Self>` because the returned wait keeps the lock alive: the
+    /// flag it polls lives in the lock now rather than in its own allocation.
+    pub fn wait(self: &Arc<Self>) -> LockWait {
         let mut guard = self.wakers.lock();
         let waker = Arc::new(AtomicWaker::new());
         guard.push(waker.clone());
         LockWait {
-            locked: self.locked.clone(),
+            lock: Arc::clone(self),
             waker,
         }
     }
@@ -309,7 +319,7 @@ impl Lock {
 
 #[derive(Debug)]
 pub struct LockWait {
-    locked: Arc<AtomicBool>,
+    lock: Arc<Lock>,
     waker: Arc<AtomicWaker>,
 }
 
@@ -318,21 +328,21 @@ impl Future for LockWait {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Fast path: already unlocked
-        if !self.locked.load(Ordering::Acquire) {
+        if !self.lock.locked.load(Ordering::Acquire) {
             return Poll::Ready(());
         }
 
         // Spin phase: try up to MAX_SPINS before going async
         for _ in 0..MAX_SPINS {
             core::hint::spin_loop();
-            if !self.locked.load(Ordering::Acquire) {
+            if !self.lock.locked.load(Ordering::Acquire) {
                 return Poll::Ready(());
             }
         }
 
         // Async phase: register waker and wait
         self.waker.register(cx.waker());
-        if self.locked.load(Ordering::Acquire) {
+        if self.lock.locked.load(Ordering::Acquire) {
             Poll::Pending
         } else {
             Poll::Ready(())
