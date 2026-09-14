@@ -48,7 +48,7 @@ impl FullRowLock {
     /// dropped.
     pub fn guard<PrimaryKey: Clone + Hash + Eq + Debug>(
         self,
-        lock_map: Arc<LockMap<Self, PrimaryKey>>,
+        lock_map: &Arc<LockMap<Self, PrimaryKey>>,
         primary_key: PrimaryKey,
     ) -> LockGuard<Self, PrimaryKey> {
         LockGuard::new(self.l, lock_map, primary_key)

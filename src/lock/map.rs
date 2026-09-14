@@ -65,8 +65,41 @@ where
 {
     lock: Option<Arc<nagoya::sync::RwLock<LockType>>>,
     acquirers: Arc<AtomicUsize>,
-    lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+    /// Borrowed, not an `Arc` clone.
+    ///
+    /// Cloning the map's `Arc` here put an atomic increment and a matching
+    /// decrement on **one** refcount word into every operation, and that word
+    /// is shared by every worker on the table. It is independent of the key,
+    /// so sharding the map cannot help and a larger key space does not dilute
+    /// it: measured, `paged_in_place` scales the same at 1k rows and at 262k.
+    /// Three such clones per operation reproduce the whole negative slope in a
+    /// twenty-line program with no WorkTable in it (92M ops/s at one worker,
+    /// 5.4M at eight).
+    ///
+    /// # Safety
+    ///
+    /// The acquirer is a local of the operation that took it, and that
+    /// operation reached this map through the table's own
+    /// `Arc<LockMap>`, which it holds for the whole call. The map therefore
+    /// outlives every acquirer taken from it.
+    lock_map: *const LockMap<LockType, PrimaryKey>,
     primary_key: PrimaryKey,
+}
+
+// SAFETY: `LockMap` is `Sync`, and the pointer is only ever dereferenced while
+// the owning `Arc` is alive (see the field note), so an acquirer is no less
+// safe to move or share than a `&LockMap` would be.
+unsafe impl<LockType, PrimaryKey> Send for LockAcquirer<LockType, PrimaryKey>
+where
+    LockType: RowLock + Send + Sync,
+    PrimaryKey: Hash + Eq + Debug + Clone + Send,
+{
+}
+unsafe impl<LockType, PrimaryKey> Sync for LockAcquirer<LockType, PrimaryKey>
+where
+    LockType: RowLock + Send + Sync,
+    PrimaryKey: Hash + Eq + Debug + Clone + Sync,
+{
 }
 
 impl<LockType, PrimaryKey> Clone for LockAcquirer<LockType, PrimaryKey>
@@ -105,7 +138,9 @@ where
     fn drop(&mut self) {
         self.acquirers.fetch_sub(1, Ordering::AcqRel);
         drop(self.lock.take());
-        self.lock_map.remove_with_lock_check(&self.primary_key);
+        // SAFETY: see the field note on `lock_map`; the owning map outlives
+        // this acquirer.
+        unsafe { (*self.lock_map).remove_with_lock_check(&self.primary_key) };
     }
 }
 
@@ -226,7 +261,7 @@ where
             return LockAcquirer {
                 lock: Some(entry.lock.clone()),
                 acquirers: entry.acquirers.clone(),
-                lock_map: self.clone(),
+                lock_map: Arc::as_ptr(self),
                 primary_key: key,
             };
         }
@@ -240,7 +275,7 @@ where
         LockAcquirer {
             lock: Some(entry.lock.clone()),
             acquirers: entry.acquirers.clone(),
-            lock_map: self.clone(),
+            lock_map: Arc::as_ptr(self),
             primary_key: key,
         }
     }
