@@ -494,3 +494,67 @@ macro_rules! backend_suite {
 backend_suite!(wti, worktables_index, "wti");
 backend_suite!(arctic, arctic, "arctic");
 backend_suite!(congee, congee, "congee");
+
+/// Concurrent in-place updates of ONE key must not lose a write.
+///
+/// `update_in_place` takes an uncontended fast path that claims the row with a
+/// flag instead of registering an operation and awaiting its predecessor. That
+/// path is only correct while it is genuinely uncontended, so the interesting
+/// case is the one it must refuse: every writer aimed at the same key, where
+/// all but one have to fall back to the chained protocol.
+///
+/// The row is an increment counter, so a lost claim is a lost increment and the
+/// final value says exactly how many writes survived.
+mod same_key_in_place {
+    use worktable::prelude::*;
+    use worktable::worktable;
+
+    worktable! {
+        name: Counter,
+        columns: {
+            id: u64 primary_key,
+            hits: u64,
+        },
+        queries: {
+            update_in_place: {
+                HitsById(hits) by id,
+            },
+        },
+    }
+
+    #[test]
+    fn concurrent_in_place_on_one_key_loses_nothing() {
+        let writers = super::params::env_u64("WT_CONC_WRITERS", 8) as usize;
+        let per_writer = super::params::env_u64("WT_CONC_PER_WRITER", 500);
+
+        let table = std::sync::Arc::new(CounterWorkTable::default());
+        nagoya::block_on(table.insert(CounterRow { id: 1, hits: 0 })).expect("seed");
+
+        std::thread::scope(|scope| {
+            for _ in 0..writers {
+                let table = table.clone();
+                scope.spawn(move || {
+                    nagoya::block_on(async {
+                        for _ in 0..per_writer {
+                            table
+                                .update_in_place_by_id(1u64, CounterColumns::HITS, |hits| {
+                                    let current: u64 = (*hits).into();
+                                    *hits = current.wrapping_add(1).into();
+                                })
+                                .await
+                                .expect("in-place");
+                        }
+                    });
+                });
+            }
+        });
+
+        let hits: u64 = table.select(1u64).expect("row present").hits;
+        assert_eq!(
+            hits,
+            writers as u64 * per_writer,
+            "{writers} writers x {per_writer} increments lost writes: the fast path \
+             claimed a row another writer already held"
+        );
+    }
+}
