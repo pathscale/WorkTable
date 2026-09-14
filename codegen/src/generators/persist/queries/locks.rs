@@ -129,7 +129,7 @@ impl PersistGenerator {
             // predecessor wait below: a future dropped at that await (tokio
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
-            let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
+            let pending_lock = PendingLock::new(op_lock, &self.0.lock_manager, pk.clone());
             worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
             pending_lock
         }
@@ -158,7 +158,7 @@ impl PersistGenerator {
             // predecessor wait below: a future dropped at that await (tokio
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
-            let pending_lock = PendingLock::new(op_lock, self.0.lock_manager.clone(), pk.clone());
+            let pending_lock = PendingLock::new(op_lock, &self.0.lock_manager, pk.clone());
             worktable::prelude::join_all(locks.iter().map(|l| l.wait()).collect::<Vec<_>>()).await;
             pending_lock
         }

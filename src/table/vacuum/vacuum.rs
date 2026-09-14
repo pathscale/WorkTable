@@ -579,7 +579,7 @@ where
         to: PageId,
     ) -> eyre::Result<CandidateMove> {
         let lock = self.full_row_lock(&pk).await;
-        let _guard = LockGuard::new_with_mutation(lock, self.lock_manager.clone(), pk.clone());
+        let _guard = LockGuard::new_with_mutation(lock, Arc::as_ptr(&self.lock_manager), pk.clone());
 
         let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
         if current_link != Some(from_link) {
