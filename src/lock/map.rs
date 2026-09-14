@@ -583,6 +583,45 @@ mod tests {
     use super::*;
     use crate::lock::FullRowLock;
 
+    /// Shards and stripes are reduced from one hash by different moduli, and
+    /// nothing in the type system keeps them apart: both are a `usize` index.
+    ///
+    /// Indexing the map with `stripe_of` compiles, stays within bounds, and is
+    /// silently wrong - it caps the reachable shard count at the stripe count.
+    /// That went unnoticed through a whole shard-count sweep, which read as
+    /// "the shard count does not matter" because shards above 64 were never
+    /// addressed.
+    ///
+    /// This drives `shard()` itself rather than the reduction functions: an
+    /// earlier version of this test asserted only that `shard_of` and
+    /// `stripe_of` have the right ranges, which is true no matter which one
+    /// `shard()` calls, and it passed with the defect injected.
+    #[test]
+    fn every_shard_of_the_map_is_reachable() {
+        const {
+            assert!(
+                MAP_SHARD_COUNT > MUTATION_STRIPE_COUNT,
+                "the defect this guards against is only possible in this direction"
+            )
+        };
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        let base = lock_map.map.as_ptr();
+        let mut reached = alloc::collections::BTreeSet::new();
+        for key in 0..(MAP_SHARD_COUNT as u64 * 64) {
+            // Identify the shard by address, so this measures where `shard()`
+            // actually lands rather than what a helper returns.
+            let index = (core::ptr::from_ref(lock_map.shard(&key)) as usize - base as usize)
+                / core::mem::size_of::<LockShard<FullRowLock, u64>>();
+            reached.insert(index);
+        }
+        assert_eq!(
+            reached.len(),
+            MAP_SHARD_COUNT,
+            "only {} of {MAP_SHARD_COUNT} shards are addressable; a shard index              reduced by the stripe count caps it at {MUTATION_STRIPE_COUNT}",
+            reached.len()
+        );
+    }
+
     /// A batch over more keys than stripes necessarily maps several keys to
     /// one stripe; acquisition must dedupe instead of deadlocking on the
     /// second ticket for the same stripe, and everything must be released on
