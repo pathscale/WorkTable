@@ -236,20 +236,27 @@ that table: unique `payment_id` and `app_id` are WTI; non-unique `symbol` and
 `range_scan` is `range_on` then update each. Workers are disjoint keys.
 `using fxhash` is refused on a persisted table.
 
+The first 8-worker numbers were taken under `taskpolicy -b`. Eight tokio
+tasks did overlap (`overlap_max=8`) but Darwin background QoS held the
+process at ~1.3 cores, so the table looked like "concurrency does almost
+nothing". Inherit policy, same JoinSet:
+
 #table(
-  columns: (0.7fr, 1.5fr, 1.1fr, 1.2fr),
+  columns: (0.7fr, 1.5fr, 1.0fr, 1.1fr, 0.8fr),
   stroke: 0.4pt + rgb("#cccccc"),
   inset: 4pt,
-  [*workers*], [*mutation*], [*median ns/op*], [*updates/s*],
-  [1], [`replace`], [49675], [20131],
-  [8], [`replace`], [40652], [24599],
-  [12], [`replace`], [42820], [23353],
-  [1], [`update_in_place`], [6652], [150335],
-  [8], [`update_in_place`], [5747], [174017],
-  [12], [`update_in_place`], [6094], [164086],
+  [*workers*], [*mutation*], [*updates/s*], [*cores*], [*vs 1*],
+  [1], [`replace`], [139920], [2.00], [1.00x],
+  [8], [`replace`], [177017], [6.14], [1.27x],
+  [12], [`replace`], [159189], [7.50], [1.14x],
+  [1], [`update_in_place`], [714567], [1.95], [1.00x],
+  [8], [`update_in_place`], [552544], [6.74], [0.77x],
+  [12], [`update_in_place`], [490803], [9.03], [0.69x],
 )
 
-Eight workers peak. Twelve performance cores do not beat eight.
+Eight workers burn six cores for 27% more replace/s. In-place gets *worse*.
+On a unique `u64` secondary, 1-thread Congee/WTI/Arctic replace are within a
+few percent; at 8 workers all three lose ~22% (Congee least-bad, not Arctic).
 
 #table(
   columns: (1.6fr, 1.2fr, 1.2fr),
