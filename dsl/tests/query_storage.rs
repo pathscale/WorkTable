@@ -4,8 +4,8 @@ use worktable_dsl::check::check;
 fn paged_mutation_shapes_fail_before_emission() {
     for query in [
         "update: { Change(value) by value }",
-        "in_place: { Change(value) by value }",
-        "in_place: { Change(id) by id }",
+        "update_in_place: { Change(value) by value }",
+        "update_in_place: { Change(id) by id }",
     ] {
         let checked = check(&format!(
             "name: T, columns: {{ id: u64 primary_key, value: u64 }}, queries: {{ {query} }}"

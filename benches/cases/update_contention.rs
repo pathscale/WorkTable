@@ -41,7 +41,7 @@ fn single_row_update_contention(c: &mut Criterion) {
                                 another: format!("upd_{}", fastrand::u64(..)),
                                 something: fastrand::u64(..),
                             };
-                            black_box(table_clone.update(row).await)
+                            black_box(table_clone.replace(row).await)
                         });
                     }
                     while join_set.join_next().await.is_some() {}
@@ -81,7 +81,11 @@ fn single_row_in_place_contention(c: &mut Criterion) {
                     for _ in 0..level {
                         let table_clone = table.clone();
                         join_set.spawn(async move {
-                            black_box(table_clone.update_val_by_id_in_place(|val| *val += 1, pk).await)
+                            black_box(
+                                table_clone
+                                    .update_in_place_by_id(pk, FullFeaturedColumns::VAL, |val| *val += 1)
+                                    .await,
+                            )
                         });
                     }
                     while join_set.join_next().await.is_some() {}

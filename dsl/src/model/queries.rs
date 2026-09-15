@@ -7,7 +7,7 @@ use crate::model::Operation;
 pub struct Queries {
     pub updates: IndexMap<Ident, Operation>,
     pub deletes: IndexMap<Ident, Operation>,
-    pub in_place: IndexMap<Ident, Operation>,
+    pub updates_in_place: IndexMap<Ident, Operation>,
     /// The profile named by `update runtime <profile>:`, when the section was
     /// annotated. `None` is not a default: it means the section falls back to
     /// the table's `runtime`, and the table's own default only after that.
@@ -19,6 +19,7 @@ pub struct Queries {
     pub update_runtime: Option<Ident>,
     /// The profile named by `delete runtime <profile>:`. See `update_runtime`.
     pub delete_runtime: Option<Ident>,
-    /// The profile named by `in_place runtime <profile>:`. See `update_runtime`.
-    pub in_place_runtime: Option<Ident>,
+    /// The profile named by `update_in_place runtime <profile>:`. See
+    /// `update_runtime`.
+    pub update_in_place_runtime: Option<Ident>,
 }

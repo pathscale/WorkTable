@@ -58,7 +58,7 @@ async fn overlapping_multi_row_updates_do_not_deadlock() {
                     "a-much-longer-name-value".to_string()
                 };
                 table
-                    .update_name_by_group_a(NameByGroupAQuery { name }, 1)
+                    .update_by_group_a(1, MultiRowDeadlockColumns::NAME, name)
                     .await
                     .unwrap();
             }
@@ -74,7 +74,7 @@ async fn overlapping_multi_row_updates_do_not_deadlock() {
                     "b-much-longer-name-value".to_string()
                 };
                 table
-                    .update_name_by_group_b(NameByGroupBQuery { name }, 1)
+                    .update_by_group_b(1, MultiRowDeadlockColumns::NAME, name)
                     .await
                     .unwrap();
             }

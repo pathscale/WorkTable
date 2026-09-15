@@ -1649,6 +1649,7 @@ worktable!(
         owner: u64,
         state: u8,
         amount: u64,
+        revision: u64,
     },
     indexes: {
         owner_idx: owner using fxhash,
@@ -1664,8 +1665,9 @@ worktable!(
             ById() by id,
             ByOwner() by owner,
         },
-        in_place: {
+        update_in_place: {
             Status(state) by id,
+            StateAndRevisionById(state, revision) by id,
         },
     },
 );
@@ -1690,18 +1692,19 @@ fn declared_queries_run_on_a_vec_table() {
                 owner: id % 2,
                 state: 0,
                 amount: 100 + id,
+                revision: 0,
             })
             .expect("fresh");
     }
 
     // Keyed by the hash primary key: one row.
-    assert_eq!(table.update_state_by_id(StateByIdQuery { state: 7 }, &3), 1);
+    assert_eq!(table.update_by_id(3, TicketColumns::STATE, 7), 1);
     assert_eq!(table.select(&3).expect("present").state, 7);
     assert_eq!(table.select(&2).expect("present").state, 0, "only one row moved");
 
     // Keyed by a non-unique hash secondary: every row it names.
     assert_eq!(
-        table.update_state_by_owner(StateByOwnerQuery { state: 5 }, &1),
+        table.update_by_owner(1, TicketColumns::STATE, 5),
         3,
         "owner 1 holds ids 1, 3 and 5"
     );
@@ -1712,7 +1715,7 @@ fn declared_queries_run_on_a_vec_table() {
     }
     assert_eq!(table.select(&0).expect("present").amount, 100, "owner 0 untouched");
 
-    assert_eq!(table.update_amount_by_id(AmountByIdQuery { amount: 999 }, &1), 1);
+    assert_eq!(table.update_by_id(1, TicketColumns::AMOUNT, 999), 1);
     // The unique arctic secondary was repaired without stealing another row's key.
     assert!(
         table.select_by_amount(&101).is_none(),
@@ -1725,8 +1728,20 @@ fn declared_queries_run_on_a_vec_table() {
     );
 
     // in_place edits one column through a closure.
-    assert_eq!(table.update_status_in_place(|s| *s = 42, &0), 1);
+    assert_eq!(table.update_in_place_by_id(0, TicketColumns::STATE, |s| *s = 42), 1);
     assert_eq!(table.select(&0).expect("present").state, 42);
+    assert_eq!(
+        table.update_in_place_by_id(2, TicketColumns::STATE_AND_REVISION, |(state, revision)| {
+            *state = 8;
+            *revision = 1;
+        }),
+        1
+    );
+    assert_eq!(
+        (table.select(&2).unwrap().state, table.select(&2).unwrap().revision),
+        (8, 1)
+    );
+    assert_eq!(table.select_by_amount(&102).unwrap().id, 2);
 
     // Deletes, by the key and by a non-unique secondary.
     assert_eq!(table.delete_by_id(&0), 1);
@@ -1813,13 +1828,14 @@ fn vec_declared_query_cannot_steal_another_rows_unique_key() {
                 owner: id,
                 state: 0,
                 amount: 100 + id,
+                revision: 0,
             })
             .unwrap();
     }
     let before = table.unload().unwrap();
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            table.update_amount_by_id(AmountByIdQuery { amount: 101 }, &0);
+            table.update_by_id(0, TicketColumns::AMOUNT, 101);
         }))
         .is_err()
     );

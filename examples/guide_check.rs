@@ -53,9 +53,7 @@ async fn main() -> eyre::Result<()> {
             quantity: 5,
         }])
         .await?;
-    table
-        .update_quantity_by_id(QuantityByIdQuery { quantity: 7 }, 100)
-        .await?;
+    table.update_by_id(100, OrderColumns::QUANTITY, 7).await?;
     assert_eq!(table.select(100).unwrap().quantity, 7);
     assert_eq!(table.select_all().limit(1).execute()?.len(), 1);
     assert_eq!(table.row_count(), 2);

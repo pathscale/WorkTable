@@ -5,6 +5,7 @@ use alloc::{boxed::Box, vec::Vec};
 use arc_swap::ArcSwap;
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use core::ops::Deref;
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize};
 use core::sync::atomic::{AtomicU64, Ordering};
 use data_bucket::page::PageId;
@@ -22,12 +23,13 @@ use rkyv::{
     util::AlignedVec,
 };
 
+use crate::in_memory::InlineArchived;
 use crate::in_memory::empty_link_registry::EmptyLinkRegistry;
 use crate::prelude::ArchivedRowWrapper;
 use crate::util::epoch::EpochDomain;
 use crate::{
     in_memory::{
-        DATA_INNER_LENGTH, Data, DataExecutionError,
+        ArchivedCopy, DATA_INNER_LENGTH, Data, DataExecutionError,
         row::{RowWrapper, StorableRow},
     },
     prelude::Link,
@@ -212,7 +214,7 @@ impl<T> PageDirectoryChunk<T> {
     }
 }
 
-/// Non-owning, stable page pointers for the first 4,096 pages (64 MiB at the
+/// Non-owning, stable page pointers for the first 65,536 pages (1 GiB at the
 /// default page size). `DataPages::pages` owns every allocation; this directory
 /// exists solely to avoid shared ArcSwap snapshot accounting on point access.
 #[derive(Debug)]
@@ -225,6 +227,24 @@ struct PageDirectory<T> {
 }
 
 impl<T> PageDirectory<T> {
+    unsafe fn initialize_at(target: *mut Self, pages: &[Arc<T>]) {
+        unsafe {
+            let roots = core::ptr::addr_of_mut!((*target).roots).cast::<AtomicPtr<PageDirectoryChunk<T>>>();
+            for index in 0..PAGE_DIRECTORY_ROOTS {
+                roots.add(index).write(AtomicPtr::new(core::ptr::null_mut()));
+            }
+            core::ptr::addr_of_mut!((*target).chunks).write(Mutex::new(Vec::new()));
+        }
+
+        // SAFETY: both fields used by `publish` are initialized above, the
+        // allocation is stable, and it is not observable until its owner is
+        // returned from construction.
+        let directory = unsafe { &*target };
+        for (index, page) in pages.iter().enumerate() {
+            directory.publish(index, page);
+        }
+    }
+
     fn new(pages: &[Arc<T>]) -> Self {
         let directory = Self {
             roots: core::array::from_fn(|_| AtomicPtr::new(core::ptr::null_mut())),
@@ -296,6 +316,47 @@ impl<T> PageDirectory<T> {
 pub struct ReadGuard<'a> {
     _guard: crate::util::epoch::Guard<'a>,
     marker: PhantomData<&'a ()>,
+}
+
+/// Point-read that does not deserialize.
+///
+/// Holds the epoch pin and a seqlock copy of the archived wrapper. Deref is
+/// the archived inner row, so a caller can read fields without building an
+/// owned row. Owned [`DataPages::select`] stays for callers that need a `Row`.
+///
+/// Not `Send`: the pin belongs to the acquiring thread.
+pub struct SelectRef<'a, Row: StorableRow> {
+    _pin: ReadGuard<'a>,
+    copy: ArchivedCopy,
+    _ty: PhantomData<Row>,
+}
+
+impl<'a, Row: StorableRow> SelectRef<'a, Row> {
+    pub(crate) fn new(pin: ReadGuard<'a>, copy: ArchivedCopy) -> Self {
+        Self {
+            _pin: pin,
+            copy,
+            _ty: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn archived(&self) -> &<<Row as StorableRow>::WrappedRow as rkyv::Archive>::Archived {
+        unsafe {
+            rkyv::access_unchecked::<<<Row as StorableRow>::WrappedRow as rkyv::Archive>::Archived>(
+                self.copy.as_bytes(),
+            )
+        }
+    }
+}
+
+impl<Row: StorableRow> Deref for SelectRef<'_, Row> {
+    type Target = <<<Row as StorableRow>::WrappedRow as rkyv::Archive>::Archived as ArchivedRowWrapper>::Inner;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.archived().inner()
+    }
 }
 
 /// One unit of retired state waiting out its grace period. Reclamation is
@@ -426,6 +487,57 @@ where
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
+    unsafe fn initialize_arc_at(
+        target: *mut Self,
+        mut pages: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>,
+    ) {
+        if pages.is_empty() {
+            pages.push(Data::new_arc(1.into()));
+        }
+        let last_page_id = pages.len() as u32;
+
+        unsafe {
+            core::ptr::addr_of_mut!((*target).epoch).write(EpochDomain::new());
+            core::ptr::addr_of_mut!((*target).retired).write(Mutex::new(VecDeque::new()));
+            core::ptr::addr_of_mut!((*target).reclaimable).write(Arc::new(AtomicUsize::new(0)));
+            core::ptr::addr_of_mut!((*target).pending_retirements).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*target).queued_page_retirements).write(AtomicUsize::new(0));
+            PageDirectory::initialize_at(core::ptr::addr_of_mut!((*target).page_directory), &pages);
+            core::ptr::addr_of_mut!((*target).pages).write(PageList::from_pages(pages));
+            core::ptr::addr_of_mut!((*target).pages_write).write(Mutex::new(()));
+            core::ptr::addr_of_mut!((*target).empty_links).write(EmptyLinkRegistry::<DATA_LENGTH>::default());
+            core::ptr::addr_of_mut!((*target).empty_pages).write(Default::default());
+            core::ptr::addr_of_mut!((*target).row_count).write(AtomicU64::new(0));
+            core::ptr::addr_of_mut!((*target).last_page_id).write(AtomicU32::new(last_page_id));
+            core::ptr::addr_of_mut!((*target).current_page_id).write(AtomicU32::new(last_page_id));
+        }
+    }
+
+    /// Creates the page collection directly in its `Arc` allocation.
+    ///
+    /// The fixed page directory deliberately keeps 1,024 roots inline for a
+    /// pointer-only read path. Constructing `Self` on the stack before moving
+    /// it into an Arc needlessly reserves that full array in nested generated
+    /// table-load futures.
+    pub fn new_arc() -> Arc<Self> {
+        Self::from_data_arc(Vec::new())
+    }
+
+    /// Restores a page collection directly in its `Arc` allocation.
+    pub fn from_data_arc(pages: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>) -> Arc<Self> {
+        let mut collection = Arc::<Self>::new_uninit();
+        let target = Arc::get_mut(&mut collection)
+            .expect("a newly allocated Arc is uniquely owned")
+            .as_mut_ptr();
+
+        // SAFETY: the helper initializes every field exactly once and the Arc
+        // remains uniquely owned until initialization is complete.
+        unsafe {
+            Self::initialize_arc_at(target, pages);
+            collection.assume_init()
+        }
+    }
+
     fn page_ref(
         &self,
         page_id: PageId,
@@ -471,10 +583,58 @@ where
             Portable + Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let page = self.page_ref(link.page_id)?;
-        let _cell_guard = page.read_cell(link).map_err(ExecutionError::DataPageError)?;
-        let wrapped = page.get_row(link).map_err(ExecutionError::DataPageError)?;
+        let wrapped = page.get_row_seqlock(link).map_err(ExecutionError::DataPageError)?;
         let flags = Self::publication_flags(&wrapped);
         Ok((wrapped.get_inner(), flags))
+    }
+
+    /// Seqlock-copy a live (non-ghosted, non-deleted) archived row.
+    pub(crate) fn copy_non_ghosted(&self, link: Link) -> Result<ArchivedCopy, ExecutionError>
+    where
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+    {
+        let page = self.page_ref(link.page_id)?;
+        let copy = page.copy_row_seqlock(link).map_err(ExecutionError::DataPageError)?;
+        let archived = unsafe {
+            rkyv::access_unchecked::<<<Row as StorableRow>::WrappedRow as Archive>::Archived>(copy.as_bytes())
+        };
+        if archived.is_ghosted() {
+            return Err(ExecutionError::Ghosted);
+        }
+        if archived.is_deleted() {
+            return Err(ExecutionError::Deleted);
+        }
+        Ok(copy)
+    }
+
+    /// Apply `f` to the archived inner row under seqlock, without memcpy.
+    pub(crate) fn with_non_ghosted<F, T>(&self, link: Link, mut f: F) -> Result<T, ExecutionError>
+    where
+        <Row as StorableRow>::WrappedRow: InlineArchived,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        F: FnMut(&<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner) -> T,
+    {
+        let page = self.page_ref(link.page_id)?;
+        page.with_archived_seqlock(link, |wrapped| {
+            if wrapped.is_ghosted() {
+                Err(ExecutionError::Ghosted)
+            } else if wrapped.is_deleted() {
+                Err(ExecutionError::Deleted)
+            } else {
+                Ok(f(wrapped.inner()))
+            }
+        })
+        .map_err(ExecutionError::DataPageError)?
+    }
+
+    /// Point-read that yields a pin-guard plus archived inner row.
+    pub fn select_ref(&self, link: Link) -> Result<SelectRef<'_, Row>, ExecutionError>
+    where
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+    {
+        let pin = self.read_guard();
+        let copy = self.copy_non_ghosted(link)?;
+        Ok(SelectRef::new(pin, copy))
     }
 
     pub fn read_guard(&self) -> ReadGuard<'_> {
@@ -700,7 +860,7 @@ where
     }
 
     pub fn new() -> Self {
-        let page = Arc::new(Data::new(1.into()));
+        let page = Data::new_arc(1.into());
         let pages = vec![page];
         Self {
             epoch: EpochDomain::new(),
@@ -877,7 +1037,7 @@ where
         let _write = self.pages_write.lock();
         if tried_page == page_id_mapper(self.current_page_id.load(Ordering::Acquire) as usize) {
             let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
-            let page = Arc::new(Data::new(index.into()));
+            let page = Data::new_arc(index.into());
             self.pages.push(page.clone());
             self.publish_page(&page);
             self.current_page_id.store(index, Ordering::Release);
@@ -910,7 +1070,7 @@ where
 
         let _write = self.pages_write.lock();
         let index = self.last_page_id.fetch_add(1, Ordering::AcqRel) + 1;
-        let page = Arc::new(Data::new(index.into()));
+        let page = Data::new_arc(index.into());
         self.pages.push(page.clone());
         self.publish_page(&page);
 
@@ -1065,13 +1225,12 @@ where
     /// the current slot (so it fits exactly).
     ///
     /// # Persistence
-    /// This path emits **no** persistence CDC. It is only sound for tables that
-    /// are not persisted (or on a persistence sink that reconstructs state from
-    /// the page image on reload). Do NOT route a persisted-table update through
-    /// this method: the row would change in memory and republish but no change
-    /// event would reach disk, silently losing durability until reload. The
-    /// generated persisted update path deliberately keeps the reinsert path for
-    /// this reason.
+    /// This storage primitive emits **no** persistence CDC. A persisted caller
+    /// must read the replacement bytes from this slot and enqueue its durable
+    /// update before returning success. Omitting that operation changes memory
+    /// without changing disk, so a cold reload restores the old row. Generated
+    /// persisted updates follow that contract; memory-only callers need no
+    /// additional operation.
     ///
     /// Serialization and the exact-length check finish before any page byte is
     /// changed. The exact cell guard excludes readers of this cell during the
@@ -1412,6 +1571,18 @@ where
         Ok(self)
     }
 
+    pub fn with_empty_links_arc(mut self: Arc<Self>, links: Vec<Link>) -> Result<Arc<Self>, ExecutionError> {
+        let registry = EmptyLinkRegistry::default();
+        for link in links {
+            self.page_ref(link.page_id)?.reserve_restored_range(link)?;
+            registry.push(link);
+        }
+        Arc::get_mut(&mut self)
+            .expect("restored page collection is uniquely owned")
+            .empty_links = registry;
+        Ok(self)
+    }
+
     pub fn current_page_id(&self) -> PageId {
         self.current_page_id.load(Ordering::Acquire).into()
     }
@@ -1543,6 +1714,16 @@ mod tests {
     where
         T: Archive,
     {
+        type Inner = T::Archived;
+
+        fn inner(&self) -> &Self::Inner {
+            &self.inner
+        }
+
+        fn is_ghosted(&self) -> bool {
+            self.is_ghosted
+        }
+
         fn unghost(&mut self) {
             self.is_ghosted = false
         }
@@ -1593,6 +1774,20 @@ mod tests {
         let res = pages.select(link).unwrap();
 
         assert_eq!(res, row)
+    }
+
+    #[test]
+    fn select_ref_after_unghost() {
+        let pages = DataPages::<TestRow>::new();
+        let row = TestRow { a: 10, b: 20 };
+        let link = pages.insert(row).unwrap();
+        assert!(pages.select_ref(link).is_err());
+        unsafe {
+            pages.with_mut_ref(link, |archived| archived.unghost()).unwrap();
+        }
+        let view = pages.select_ref(link).unwrap();
+        assert_eq!(view.a, 10);
+        assert_eq!(view.b, 20);
     }
 
     #[test]

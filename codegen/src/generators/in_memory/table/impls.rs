@@ -3,7 +3,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 use crate::common::model::GeneratorType;
-use crate::common::name_generator::WorktableNameGenerator;
+use crate::common::name_generator::{WorktableNameGenerator, archived_field_is_inline_scalar};
 use crate::generators::in_memory::InMemoryGenerator;
 
 impl InMemoryGenerator {
@@ -75,11 +75,44 @@ impl InMemoryGenerator {
         let row_type = name_generator.get_row_type_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
 
+        // `select_with` reads the cell in place with no copy, which is only
+        // sound when the archived row holds no relative pointers. Emit it only
+        // for those tables; one with a `String` column simply has no
+        // `select_with`, so a caller gets "no method named `select_with`"
+        // instead of a silent copy or a torn pointer.
+        let select_with_fn = if self
+            .columns
+            .columns_map
+            .values()
+            .all(|ty| archived_field_is_inline_scalar(&quote! { #ty }))
+        {
+            quote! {
+                /// Apply `f` to the archived inner row. No cell memcpy; `f` must copy out.
+                pub fn select_with<Pk, F, T>(&self, pk: Pk, f: F) -> Option<T>
+                where
+                    #primary_key_type: From<Pk>,
+                    F: FnMut(&<#row_type as worktable::prelude::rkyv::Archive>::Archived) -> T,
+                {
+                    self.0.select_with(pk.into(), f)
+                }
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             pub fn select<Pk>(&self, pk: Pk) -> Option<#row_type>
             where #primary_key_type: From<Pk> {
                 self.0.select(pk.into())
             }
+
+            /// Pin-guard plus archived inner row. Does not deserialize.
+            pub fn select_ref<Pk>(&self, pk: Pk) -> Option<worktable::prelude::SelectRef<'_, #row_type>>
+            where #primary_key_type: From<Pk> {
+                self.0.select_ref(pk.into())
+            }
+
+            #select_with_fn
         }
     }
 
@@ -226,7 +259,7 @@ impl InMemoryGenerator {
         let primary_key_type = name_generator.get_primary_key_type_ident();
 
         quote! {
-            pub async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
+            async fn reinsert(&self, row_old: #row_type, row_new: #row_type) -> core::result::Result<#primary_key_type, WorkTableError> {
                 self.0.reinsert(row_old, row_new).await
             }
         }

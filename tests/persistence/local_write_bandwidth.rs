@@ -145,7 +145,7 @@ fn local_write_bandwidth() {
             // Spread across the whole table rather than a contiguous run.
             let id = (n * (ROWS / UPDATES)) % ROWS;
             table
-                .update(WriteBandwidthRow {
+                .replace(WriteBandwidthRow {
                     id,
                     payload: replacement.clone(),
                 })

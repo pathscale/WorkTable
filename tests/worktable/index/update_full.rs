@@ -23,7 +23,7 @@ async fn update_by_full_row_unique_indexes() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update(Test3UniqueRow {
+        .replace(Test3UniqueRow {
             attr1: attr1_new.clone(),
             id: pk.clone().into(),
             val: row.val,
@@ -72,7 +72,7 @@ async fn update_by_full_row_non_unique_indexes() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update(Test3NonUniqueRow {
+        .replace(Test3NonUniqueRow {
             attr1: attr1_new.clone(),
             id: pk.clone().into(),
             val: row.val,
@@ -122,7 +122,7 @@ async fn update_by_full_row_unique_with_string_update() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update(Test3UniqueRow {
+        .replace(Test3UniqueRow {
             attr1: attr1_new.clone(),
             id: pk.clone().into(),
             val: row.val,
@@ -171,7 +171,7 @@ async fn update_by_full_row_non_unique_with_string_update() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update(Test3NonUniqueRow {
+        .replace(Test3NonUniqueRow {
             attr1: attr1_new.clone(),
             id: pk.clone().into(),
             val: row.val,
@@ -222,7 +222,7 @@ async fn update_by_full_row_with_reinsert_and_primary_key_violation() {
     let mut update = row1.clone();
     update.id = row2.id;
     update.attr1 = "TEST_______________________1".to_string();
-    assert!(test_table.update(update).await.is_err());
+    assert!(test_table.replace(update).await.is_err());
 
     assert_eq!(test_table.select(row1.id).unwrap(), row1);
     assert_eq!(test_table.select_by_attr1(row1.attr1.clone()).unwrap(), row1);
@@ -257,7 +257,7 @@ async fn update_by_full_row_with_reinsert_and_secondary_unique_violation() {
     test_table.insert(row2.clone()).await.unwrap();
     let mut update = row1.clone();
     update.attr1 = row2.attr1.clone();
-    assert!(test_table.update(update).await.is_err());
+    assert!(test_table.replace(update).await.is_err());
 
     assert_eq!(test_table.select(row1.id).unwrap(), row1);
     assert_eq!(test_table.select_by_attr1(row1.attr1.clone()).unwrap(), row1);
@@ -292,7 +292,7 @@ async fn update_by_full_row_with_secondary_unique_violation() {
     test_table.insert(row2.clone()).await.unwrap();
     let mut update = row1.clone();
     update.attr2 = row2.attr2;
-    assert!(test_table.update(update).await.is_err());
+    assert!(test_table.replace(update).await.is_err());
 
     assert_eq!(test_table.select(row1.id).unwrap(), row1);
     assert_eq!(test_table.select_by_attr1(row1.attr1.clone()).unwrap(), row1);

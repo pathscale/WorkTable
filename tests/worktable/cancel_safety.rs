@@ -55,7 +55,7 @@ async fn cancelled_full_row_update_releases_registered_lock() {
     // blocker; the timeout cancels it at exactly that await.
     let cancelled = tokio::time::timeout(
         Duration::from_millis(200),
-        table.update(CancelSafetyRow {
+        table.replace(CancelSafetyRow {
             id: 1,
             value: 7,
             other: 7,
@@ -73,7 +73,7 @@ async fn cancelled_full_row_update_releases_registered_lock() {
     // failure instead of a hang.
     tokio::time::timeout(
         Duration::from_secs(5),
-        table.update(CancelSafetyRow {
+        table.replace(CancelSafetyRow {
             id: 1,
             value: 9,
             other: 9,
@@ -109,7 +109,7 @@ async fn cancelled_custom_update_releases_registered_lock() {
 
     let cancelled = tokio::time::timeout(
         Duration::from_millis(200),
-        table.update_value_by_id(ValueByIdQuery { value: 5 }, 3),
+        table.update_by_id(3, CancelSafetyColumns::VALUE, 5),
     )
     .await;
     assert!(
@@ -121,7 +121,7 @@ async fn cancelled_custom_update_releases_registered_lock() {
 
     tokio::time::timeout(
         Duration::from_secs(5),
-        table.update_value_by_id(ValueByIdQuery { value: 11 }, 3),
+        table.update_by_id(3, CancelSafetyColumns::VALUE, 11),
     )
     .await
     .expect("update after a cancelled predecessor must not hang")

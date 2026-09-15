@@ -1,7 +1,7 @@
 use crate::remove_dir_if_exists;
 use worktable::prelude::*;
 
-use super::{AnotherByIdQuery, FieldByAnotherQuery, TestSyncPersistenceEngine, TestSyncRow, TestSyncWorkTable};
+use super::{TestSyncColumns, TestSyncPersistenceEngine, TestSyncRow, TestSyncWorkTable};
 
 #[test]
 fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
@@ -43,20 +43,13 @@ fn test_failed_update_by_pk_doesnt_corrupt_persistence() {
             let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
 
-            let result = table
-                .update_another_by_id(AnotherByIdQuery { another: 9999 }, 9999)
-                .await;
+            let result = table.update_by_id(9999, TestSyncColumns::ANOTHER, 9999).await;
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), WorkTableError::NotFound));
 
             for (i, pk) in pks.iter().enumerate() {
                 table
-                    .update_another_by_id(
-                        AnotherByIdQuery {
-                            another: i as u64 + 1000,
-                        },
-                        *pk,
-                    )
+                    .update_by_id(*pk, TestSyncColumns::ANOTHER, i as u64 + 1000)
                     .await
                     .unwrap();
             }
@@ -116,20 +109,13 @@ fn test_failed_update_by_unique_index_doesnt_corrupt_persistence() {
             let engine = TestSyncPersistenceEngine::new(config.clone()).await.unwrap();
             let table = TestSyncWorkTable::load(engine).await.unwrap();
 
-            let result = table
-                .update_field_by_another(FieldByAnotherQuery { field: 9999.0 }, 9999)
-                .await;
+            let result = table.update_by_another(9999, TestSyncColumns::FIELD, 9999.0).await;
             assert!(result.is_err());
             assert!(matches!(result.unwrap_err(), WorkTableError::NotFound));
 
             for (i, _pk) in pks.iter().enumerate() {
                 table
-                    .update_field_by_another(
-                        FieldByAnotherQuery {
-                            field: i as f64 + 1000.0,
-                        },
-                        i as u64,
-                    )
+                    .update_by_another(i as u64, TestSyncColumns::FIELD, i as f64 + 1000.0)
                     .await
                     .unwrap();
             }

@@ -26,8 +26,13 @@ impl Generator {
         let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
         let index_persisted_ident = name_generator.get_persisted_index_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
-        let disk_capacity = name_generator.get_disk_page_capacity();
         let pk_type = name_generator.get_primary_key_type_ident();
+        let pk_tokens = quote! { #pk_type };
+        let disk_capacity = if self.attributes.pk_unsized {
+            name_generator.get_aligned_disk_page_capacity(&pk_tokens)
+        } else {
+            name_generator.get_disk_page_capacity()
+        };
         let space_file_ident = name_generator.get_space_file_ident();
         let primary_index = if self.attributes.pk_unsized {
             quote! {
@@ -48,7 +53,7 @@ impl Generator {
             pub struct #space_file_ident {
                 #primary_index
                 pub indexes: #index_persisted_ident,
-                pub data: Vec<GeneralPage<DataPage<#inner_const_name>>>,
+                pub data: Vec<Box<GeneralPage<DataPage<#inner_const_name>>>>,
                 pub data_info: GeneralPage<SpaceInfoPage<<<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State>>,
             }
         }
@@ -132,8 +137,13 @@ impl Generator {
         let index_ident = name_generator.get_index_type_ident();
         let task_ident = name_generator.get_persistence_task_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
-        let node_capacity = name_generator.get_disk_page_capacity();
         let pk_type = name_generator.get_primary_key_type_ident();
+        let pk_tokens = quote! { #pk_type };
+        let node_capacity = if self.attributes.pk_unsized {
+            name_generator.get_aligned_disk_page_capacity(&pk_tokens)
+        } else {
+            name_generator.get_disk_page_capacity()
+        };
         let lock_type = name_generator.get_lock_type_ident();
         let table_name = name_generator.get_work_table_literal_name();
         let secondary_index_events = name_generator.get_space_secondary_index_events_ident();
@@ -239,22 +249,24 @@ impl Generator {
                 ) -> Result<#wt_ident, PersistenceLoadError> {
                     let mut page_id = 1;
                     let data = self.data.into_iter().map(|p| {
-                        let mut data = Data::from_data_page(p);
-                        data.set_page_id(page_id.into());
+                        let mut data = Data::from_data_page_ref_arc(&p);
+                        worktable::prelude::Arc::get_mut(&mut data)
+                            .expect("a newly restored page is uniquely owned")
+                            .set_page_id(page_id.into());
                         page_id += 1;
 
-                        worktable::prelude::Arc::new(data)
+                        data
                     })
                         .collect();
-                    let data = DataPages::from_data(data)
-                        .with_empty_links(self.data_info.inner.empty_links_list)
+                    let data = DataPages::from_data_arc(data)
+                        .with_empty_links_arc(self.data_info.inner.empty_links_list)
                         .map_err(|error| PersistenceLoadError::corrupt(path, error))?;
                     let indexes = #index_ident::from_persisted(self.indexes);
 
                     #primary_index_init
 
                     let table = WorkTable {
-                        data: worktable::prelude::Arc::new(data),
+                        data,
                         primary_index: worktable::prelude::Arc::new(primary_index),
                         indexes: worktable::prelude::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
@@ -309,22 +321,24 @@ impl Generator {
                 {
                     let mut page_id = 1;
                     let data = self.data.into_iter().map(|p| {
-                        let mut data = Data::from_data_page(p);
-                        data.set_page_id(page_id.into());
+                        let mut data = Data::from_data_page_ref_arc(&p);
+                        worktable::prelude::Arc::get_mut(&mut data)
+                            .expect("a newly restored page is uniquely owned")
+                            .set_page_id(page_id.into());
                         page_id += 1;
 
-                        worktable::prelude::Arc::new(data)
+                        data
                     })
                         .collect();
-                    let data = DataPages::from_data(data)
-                        .with_empty_links(self.data_info.inner.empty_links_list)
+                    let data = DataPages::from_data_arc(data)
+                        .with_empty_links_arc(self.data_info.inner.empty_links_list)
                         .map_err(|error| PersistenceLoadError::corrupt(path, error))?;
                     let indexes = #index_ident::from_persisted(self.indexes);
 
                     #primary_index_init
 
                     let table = WorkTable {
-                        data: worktable::prelude::Arc::new(data),
+                        data,
                         primary_index: worktable::prelude::Arc::new(primary_index),
                         indexes: worktable::prelude::Arc::new(indexes),
                         pk_gen: PrimaryKeyGeneratorState::from_state(self.data_info.inner.pk_gen_state),
@@ -350,7 +364,12 @@ impl Generator {
         let pk_type = name_generator.get_primary_key_type_ident();
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
-        let disk_capacity = name_generator.get_disk_page_capacity();
+        let pk_tokens = quote! { #pk_type };
+        let disk_capacity = if self.attributes.pk_unsized {
+            name_generator.get_aligned_disk_page_capacity(&pk_tokens)
+        } else {
+            name_generator.get_disk_page_capacity()
+        };
         let persisted_index_name = name_generator.get_persisted_index_ident();
         let version_const_name = name_generator.get_version_const_ident();
         let index_extension = Literal::string(WT_INDEX_EXTENSION);
@@ -416,7 +435,7 @@ impl Generator {
                     let count = file_length.div_ceil(#page_const_name as u64);
                     for page_id in 1..count {
                         let index = parse_data_page::<{ #page_const_name as u32}, { #inner_const_name as usize }, { #page_const_name as u32 }>(&mut data_file, page_id as u32).await?;
-                        data.push(index);
+                        data.push(Box::new(index));
                     }
                     (data, info)
                 };

@@ -105,9 +105,9 @@ impl Schema {
             );
             write_query_block(
                 &mut out,
-                "in_place",
-                self.queries.in_place_runtime.as_deref(),
-                &self.queries.in_place,
+                "update_in_place",
+                self.queries.update_in_place_runtime.as_deref(),
+                &self.queries.updates_in_place,
             );
             let _ = writeln!(out, "}},");
         }

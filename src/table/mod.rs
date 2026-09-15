@@ -4,7 +4,7 @@ pub mod system_info;
 #[cfg(feature = "std")]
 pub mod vacuum;
 
-use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
+use crate::in_memory::{ArchivedRowWrapper, DataPages, InlineArchived, RowWrapper, SelectRef, StorableRow};
 #[cfg(feature = "std")]
 use crate::persistence::PersistenceLoadError;
 use crate::persistence::operation::new_operation_uuid;
@@ -109,7 +109,7 @@ where
 {
     fn default() -> Self {
         Self {
-            data: Arc::new(DataPages::new()),
+            data: DataPages::new_arc(),
             primary_index: Arc::new(PrimaryIndex::<PrimaryKey, DATA_LENGTH, PkMap>::default()),
             indexes: Arc::new(SecondaryIndexes::default()),
             pk_gen: Default::default(),
@@ -246,6 +246,60 @@ where
                 return None;
             }
             core::hint::spin_loop();
+        }
+        None
+    }
+
+    /// Point-read that yields a pin-guard plus archived inner row.
+    ///
+    /// Skips rkyv deserialize. The guard must outlive any use of the archived
+    /// fields. Owned [`Self::select`] stays for callers that need a `Row`.
+    /// Returning the guard copies the archived cell; [`Self::select_with`]
+    /// keeps that copy on the stack when the caller only needs a field.
+    pub fn select_ref(&self, pk: PrimaryKey) -> Option<SelectRef<'_, Row>>
+    where
+        LockType: 'static,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+    {
+        let pin = self.data.read_guard();
+        for _ in 0..64 {
+            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
+            if let Ok(copy) = self.data.copy_non_ghosted(link) {
+                return Some(SelectRef::new(pin, copy));
+            }
+
+            let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
+            if current_link == Some(link) {
+                return None;
+            }
+            core::hint::spin_loop();
+        }
+        None
+    }
+
+    /// Point-read that applies `f` to the archived inner row and returns `f`'s
+    /// result. No memcpy of the cell; `f` must copy out and not stash a
+    /// reference into the page.
+    pub fn select_with<F, T>(&self, pk: PrimaryKey, mut f: F) -> Option<T>
+    where
+        LockType: 'static,
+        <Row as StorableRow>::WrappedRow: InlineArchived,
+        <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
+        F: FnMut(&<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner) -> T,
+    {
+        let _pin = self.data.read_guard();
+        for _ in 0..64 {
+            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
+            match self.data.with_non_ghosted(link, &mut f) {
+                Ok(value) => return Some(value),
+                Err(_) => {
+                    let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
+                    if current_link == Some(link) {
+                        return None;
+                    }
+                    core::hint::spin_loop();
+                }
+            }
         }
         None
     }
@@ -1171,16 +1225,14 @@ where
         (ops, Ok(pks))
     }
 
-    /// Reinserts provided row with updating indexes and saving it's data in new
-    /// place. Is used to not delete and insert because this situation causes
-    /// a possible gap when row doesn't exist.
+    /// Internal relocation primitive used by generated replacement code.
     ///
-    /// For reinsert it's ok that part of indexes will lead to old row and other
-    /// part is for new row. Goal is to make `PrimaryKey` of the row always
-    /// acceptable. As for reinsert `PrimaryKey` will be same for both old and
-    /// new [`Link`]'s, goal will be achieved.
-    ///
-    /// [`Link`]: data_bucket::Link
+    /// `row_old` must be the exact row currently stored at `row_new`'s primary
+    /// key, and the caller must participate in the table's mutation protocol.
+    /// This is not compare-and-replace: the method checks only primary-key
+    /// equality and uses the caller-supplied old row to repair secondary
+    /// indexes. Supplying a stale row can therefore leave those indexes wrong.
+    #[doc(hidden)]
     pub async fn reinsert(&self, row_old: Row, row_new: Row) -> Result<PrimaryKey, WorkTableError>
     where
         Row: Archive
@@ -1262,6 +1314,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[doc(hidden)]
     pub fn reinsert_cdc<SecondaryEvents>(
         &self,
         row_old: Row,

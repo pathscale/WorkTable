@@ -662,7 +662,7 @@ mod tests {
         .to_string();
 
         let update = output
-            .split("pub async fn update_balance")
+            .split("async fn __wt_update_balance")
             .nth(1)
             .expect("generated balance update");
         assert!(
@@ -677,6 +677,113 @@ mod tests {
             !update.contains("Uuid :: now_v7"),
             "non-persistent updates must not generate an unused operation id"
         );
+    }
+
+    #[test]
+    fn opaque_archived_update_rebuilds_for_memory_and_persistence() {
+        for persist in [false, true] {
+            let output = expand(quote! {
+                name: OpaqueArchivedUpdate,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    secret: EncryptedSecret,
+                },
+                queries: {
+                    update: {
+                        Secret(secret) by id,
+                    }
+                }
+            })
+            .unwrap()
+            .to_string();
+
+            let update = output
+                .split("async fn __wt_update_secret")
+                .nth(1)
+                .expect("generated opaque-field update");
+            assert!(
+                update.contains("data . update_in_place"),
+                "opaque fields must be serialized as part of the complete row"
+            );
+            assert!(
+                update.contains("self . reinsert"),
+                "a changed serialized length must fall back to reinsert"
+            );
+            assert!(
+                !update.contains("swap (& mut archived . inner . secret"),
+                "moving an opaque archived field can retain pointers into the temporary query buffer"
+            );
+
+            let full_update = output
+                .split("async fn update_with_guard")
+                .nth(1)
+                .expect("generated full-row update");
+            assert!(full_update.contains("data . update_in_place"));
+            assert!(full_update.contains("self . reinsert"));
+            assert!(!full_update.contains("swap (& mut archived . inner . secret"));
+        }
+    }
+
+    #[test]
+    fn optional_string_update_rebuilds_for_memory_and_persistence() {
+        for persist in [false, true] {
+            let output = expand(quote! {
+                name: OptionalStringUpdate,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    display_name: String optional,
+                },
+                queries: {
+                    update: {
+                        DisplayName(display_name) by id,
+                    }
+                }
+            })
+            .unwrap()
+            .to_string();
+
+            let update = output
+                .split("async fn __wt_update_display_name")
+                .nth(1)
+                .expect("generated optional-string update");
+            assert!(update.contains("data . update_in_place"));
+            assert!(update.contains("self . reinsert"));
+            assert!(!update.contains("swap (& mut archived . inner . display_name"));
+        }
+    }
+
+    #[test]
+    fn indexed_opaque_update_uses_index_maintaining_reinsert() {
+        for persist in [false, true] {
+            let output = expand(quote! {
+                name: IndexedOpaqueUpdate,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    secret: EncryptedSecret,
+                },
+                indexes: {
+                    secret_idx: secret unique using worktables_index,
+                },
+                queries: {
+                    update: {
+                        Secret(secret) by id,
+                    }
+                }
+            })
+            .unwrap()
+            .to_string();
+
+            let update = output
+                .split("async fn __wt_update_secret")
+                .nth(1)
+                .expect("generated indexed opaque-field update");
+            assert!(update.contains("self . reinsert"));
+            assert!(!update.contains("data . update_in_place"));
+            assert!(!update.contains("swap (& mut archived . inner . secret"));
+        }
     }
 
     #[cfg(feature = "logical-index-persistence")]
@@ -1246,7 +1353,10 @@ mod position_tests {
             expanded.contains("impl PriceDenseTable"),
             "the dense payload must be emitted: {expanded}"
         );
-        assert!(expanded.contains("fn update_top_price"), "missing the update query");
+        assert!(
+            expanded.contains("fn __wt_update_top_price"),
+            "missing the update query"
+        );
         assert!(expanded.contains("fn delete_stale"), "missing the delete query");
     }
 
@@ -1297,20 +1407,20 @@ mod position_tests {
         );
     }
 
-    /// `in_place` is a synonym here, so it says so rather than generating a
+    /// `update_in_place` is redundant here, so it says so rather than generating a
     /// second name for one method.
     #[test]
-    fn in_place_on_a_dense_partition_is_refused_as_a_synonym() {
+    fn update_in_place_on_a_dense_partition_is_refused() {
         let error = expand(quote! {
             name: Price,
             partition_by: symbol_id: u16,
             partition_max_size: u8,
             columns: { exchange_id: u8 primary_key, bid: f64 },
             queries: {
-                in_place: { Bump(bid) by exchange_id, }
+                update_in_place: { Bump(bid) by exchange_id, }
             }
         })
-        .expect_err("in_place has no meaning on a dense partition")
+        .expect_err("update_in_place has no meaning on a dense partition")
         .to_string();
         assert!(error.contains("already in place"), "must say why: {error}");
         assert!(error.contains("update Bump"), "must name the replacement: {error}");
@@ -1452,7 +1562,7 @@ mod emitted_declarations {
                 delete: {
                     ById() by id,
                 }
-                in_place: {
+                update_in_place: {
                     Balance(balance) by id,
                 }
             }

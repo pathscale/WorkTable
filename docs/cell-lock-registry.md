@@ -80,3 +80,41 @@ The corrected stripe implementation must pass the companion performance
 suite's same-source lock comparison before release. The report records both
 executable hashes and the exact WorkTable revision so results cannot be mixed
 with an older scheduler or dependency graph.
+
+## Point reads without a reader CAS
+
+A point read does not take the stripe's reader count. It snapshots the stripe,
+copies or reads the archived cell, and then checks the stripe again; if a writer
+arrived in between, it retries. Incrementing the reader count instead made every
+concurrent reader write to the same atomic, and shared `select` scaled 2.4x
+across eight workers while the same read on a private table scaled 7.4x. Stripe
+states are padded to a cache line each for the same reason: sixteen of them
+previously shared one line, so unrelated rows bounced it between cores.
+
+The snapshot is a monotonic counter, not the stripe's reader/writer word. A
+writer releases by storing zero, which is exactly what an idle stripe reads, so
+a write that began and finished inside one reader's window would otherwise be
+invisible and the reader would keep bytes copied from the middle of it. The
+counter advances once per completed write, before the writer bit clears.
+
+Two read shapes follow from that check.
+
+`select` and `select_ref` copy the cell into private memory and validate the
+copy, so they work for any row. `select_with` instead runs the caller's closure
+directly on the page, with no copy, and validates afterwards. That is faster,
+about 1.8x at one worker, and it means the closure can observe a value a writer
+is currently changing.
+
+For a fixed-size scalar that is recoverable: the closure reads a torn number and
+the retry throws away whatever it computed. For a relative pointer, which is
+what an archived `String` or `Vec` field is, it is not: the closure would
+dereference the torn pointer before the check runs. So `select_with` is
+generated only for tables whose columns are all inline scalars, gated on the
+`InlineArchived` marker the macro emits for exactly those. A table with a
+`String` column has no `select_with` at all, and a call to it is a compile
+error naming the missing method rather than a silent copy or a torn read. Those
+tables use the owned `select`.
+
+The macro refuses opaque user types here, because it cannot inspect a user
+type's `Archive::Archived` layout. That costs such a table the zero-copy path;
+it never grants one unsoundly.

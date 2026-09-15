@@ -593,7 +593,7 @@ fn test_toc_not_updated_when_index_value_same_but_link_changes() {
             let table = StringReReadWorkTable::load(engine).await.unwrap();
 
             table
-                .update(StringReReadRow {
+                .replace(StringReReadRow {
                     first: "same_first".to_string(),
                     id: pk1.into(),
                     third: "third_updated".to_string(),
@@ -749,7 +749,7 @@ fn test_unique_index_same_value_link_changes() {
 
             // Update: same second value, other fields change
             table
-                .update(StringReReadRow {
+                .replace(StringReReadRow {
                     first: "first_updated".to_string(),
                     id: pk1.into(),
                     third: "third_updated".to_string(),

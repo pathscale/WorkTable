@@ -11,7 +11,7 @@ worktable!(
         update: {
             BorrowedValueById(value) by id,
         }
-        in_place: {
+        update_in_place: {
             BorrowedValueById(value) by id,
         }
     }
@@ -43,11 +43,11 @@ async fn string_primary_key_accepts_borrowed_forms() {
     assert_eq!(table.select(&generated), Some(row));
 
     table
-        .update_borrowed_value_by_id(BorrowedValueByIdQuery { value: 8 }, &id)
+        .update_by_id(&id, BorrowedStringKeyColumns::VALUE, 8)
         .await
         .unwrap();
     table
-        .update_borrowed_value_by_id_in_place(|value| *value += 1, &id)
+        .update_in_place_by_id(&id, BorrowedStringKeyColumns::VALUE, |value| *value += 1)
         .await
         .unwrap();
     assert_eq!(table.select(&id).unwrap().value, 9);

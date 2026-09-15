@@ -1,6 +1,46 @@
 Change Log
 ==========
 
+## [1.10.0-beta1]
+
+### Changed
+
+- Declared mutations now use `update:` and
+  `update_in_place:`. They generate typed selector calls such as
+  `update_by_id(id, InvoiceColumns::AMOUNT, value)` and
+  `update_in_place_by_id(id, InvoiceColumns::STATE, edit)`. Multi-column
+  declarations expose one selector for their exact atomic field set and take
+  the generated query struct. Multi-column `update_in_place` declarations pass
+  a tuple of mutable archived fields to one closure, preserving the declared
+  atomic field set. Full-row replacement is now `replace(row)`.
+
+### Added
+
+- The frozen `LinearTable` and `VecTable` API is now part of WorkTable itself,
+  replacing the retired `worktable-vec` compatibility crate. PathDB's indexed
+  lookup compiles to instruction-for-instruction identical AArch64 code before
+  and after the move.
+
+### Fixed
+
+- Generated fixed-size primary-key wrappers now report their actual archived
+  alignment. A `u128` primary key previously under-budgeted each persisted WTI
+  entry, producing an 18,518-byte index archive for a 16,356-byte default inner
+  page; the corrected 16-byte alignment selects a capacity whose archive fits.
+
+- Dropping a persisted table with queued writes now joins its private writer
+  before the final handle disappears. An immediate same-path reopen can no
+  longer race detached writes and observe a partial store or torn index header.
+
+- Generated persisted-table startup now constructs its page storage directly
+  in the final `Arc` allocation and pins nested load futures before awaiting
+  them. This removes roughly 16 KiB page and directory temporaries from normal
+  thread stacks. In AgentCode's eight-table empty-store startup, the generated
+  load future shrank from 17,832 bytes to 2,392 bytes and the restart path no
+  longer overflows Tokio's default 2 MiB worker stack. Existing-page reads and
+  mutations are unchanged; fresh construction and page-growing inserts use the
+  new final-allocation initializer.
+
 ## [1.9.0-alpha1]
 
 
@@ -39,9 +79,8 @@ Change Log
 
 
 - **`queries:` on a `vec: true` table.** It was refused wholesale; it now
-  generates `update_<name>`, `delete_<name>` and `update_<name>_in_place` under
-  the same names the paged table uses, so a declaration reads the same either
-  way.
+  generates typed `update_by_<key>` and `update_in_place_by_<key>` dispatch,
+  plus declared delete methods, under the same names the paged table uses.
 
   These are named wrappers rather than a new execution path: a declared update
   is `update(&pk, |row| ..)` with the columns filled in from a generated struct,
@@ -198,15 +237,15 @@ Change Log
   declares 65,536 rows into a partition that holds 256), and `persist: true`,
   which a dense partition has no engine to honour.
 
-  It carries `queries:`. An `update` or `delete` query keyed by the primary key
-  generates the same method name against the same `<Name>Query` struct the
-  paged table generates, so a call reads identically; the signature does not,
+  It carries `queries:`. An `update` query keyed by the primary key uses the
+  same typed field-set selector as the paged table, and a multi-column selector
+  takes the same `<Name>Query` struct. The signature differs,
   deliberately, because there is no `.await` and no `WorkTableError`, and a
   call that moved between the shapes should fail to compile rather than
   quietly change what it guarantees. A query keyed by any other column is
   refused: a dense partition has no secondary index, and scanning it instead
-  would be a keyed operation silently becoming a linear one. `in_place` is
-  refused as a synonym, because every update here is already in place.
+  would be a keyed operation silently becoming a linear one.
+  `update_in_place` is refused, because every update here is already in place.
 
   Note that `memory_by_key` and `memory_total` **cannot see this saving**. They
   report `used_bytes`, which is rows plus indexes and excludes the fixed floor

@@ -225,11 +225,11 @@ concept. See section 7.
 ```rust
 // today: hashes the symbol string on every tick
 let book = manager.get_order_book(&feed.symbol).ok_or_else(|| eyre!("unknown symbol"))?;
-book.table.update_top_price(feed.into(), row_id).await?;
+book.table.update_by_exchange_id(row_id, OrderBookColumns::BEST_BID_PRICE_AND_BEST_BID_SIZE_AND_BEST_ASK_PRICE_AND_BEST_ASK_SIZE, feed.into()).await?;
 
 // with partition_by: array index
 let book = books.partition(feed.symbol_id).ok_or_else(|| eyre!("unknown symbol"))?;
-book.update_top_price(feed.into(), row_id).await?;
+book.update_by_exchange_id(row_id, OrderBookColumns::BEST_BID_PRICE_AND_BEST_BID_SIZE_AND_BEST_ASK_PRICE_AND_BEST_ASK_SIZE, feed.into()).await?;
 ```
 
 One indirection fewer, because there is no wrapper struct holding the key

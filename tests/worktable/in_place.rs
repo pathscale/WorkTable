@@ -21,9 +21,10 @@ worktable!(
         something: u64,
     },
     queries: {
-        in_place: {
+        update_in_place: {
             ValById(val) by id,
             Val2ById(val2) by id,
+            ValAndVal2ById(val, val2) by id,
         }
         update: {
             AnotherById(another) by id,
@@ -31,6 +32,32 @@ worktable!(
         }
     }
 );
+
+#[tokio::test]
+async fn test_update_two_fields_atomically_by_id() -> eyre::Result<()> {
+    let table = TestWorkTable::default();
+    let pk = table
+        .insert(TestRow {
+            id: table.get_next_pk().0,
+            val: 3,
+            val1: 0,
+            val2: 5,
+            another: "another".to_string(),
+            something: 0,
+        })
+        .await?;
+
+    table
+        .update_in_place_by_id(pk.0, TestColumns::VAL_AND_VAL2, |(val, val2)| {
+            *val += 7;
+            *val2 += 11;
+        })
+        .await?;
+
+    let row = table.select(pk).unwrap();
+    assert_eq!((row.val, row.val2), (10, 16));
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_update_val_by_id() -> eyre::Result<()> {
@@ -45,7 +72,7 @@ async fn test_update_val_by_id() -> eyre::Result<()> {
     };
     let pk = table.insert(row).await?;
     for _ in 0..10000 {
-        table.update_val_by_id_in_place(|val| *val += 1, pk.0).await?
+        table.update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1).await?
     }
     let row = table.select(pk).unwrap();
     assert_eq!(row.val, 10000);
@@ -65,7 +92,7 @@ async fn test_update_val2_by_id() -> eyre::Result<()> {
     };
     let pk = table.insert(row).await?;
     for _ in 0..100 {
-        table.update_val_2_by_id_in_place(|val| *val += 1, pk.0).await?
+        table.update_in_place_by_id(pk.0, TestColumns::VAL2, |val| *val += 1).await?
     }
     let row = table.select(pk).unwrap();
     assert_eq!(row.val2, 100);
@@ -88,13 +115,13 @@ async fn test_update_val_by_id_two_thread() -> eyre::Result<()> {
     let h = tokio::spawn(async move {
         for _ in 0..10_000 {
             shared_table
-                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1)
                 .await
                 .unwrap()
         }
     });
     for _ in 0..10_000 {
-        table.update_val_by_id_in_place(|val| *val += 1, pk.0).await?
+        table.update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1).await?
     }
     h.await?;
     let row = table.select(pk).unwrap();
@@ -118,7 +145,7 @@ async fn test_update_val_and_val2_by_id_four_thread() -> eyre::Result<()> {
     let h1 = tokio::spawn(async move {
         for _ in 0..10_000 {
             shared_table
-                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1)
                 .await
                 .unwrap()
         }
@@ -127,7 +154,7 @@ async fn test_update_val_and_val2_by_id_four_thread() -> eyre::Result<()> {
     let h2 = tokio::spawn(async move {
         for _ in 0..10_000 {
             shared_table
-                .update_val_2_by_id_in_place(|val| *val += 1, pk.0)
+                .update_in_place_by_id(pk.0, TestColumns::VAL2, |val| *val += 1)
                 .await
                 .unwrap()
         }
@@ -136,13 +163,13 @@ async fn test_update_val_and_val2_by_id_four_thread() -> eyre::Result<()> {
     let h3 = tokio::spawn(async move {
         for _ in 0..10_000 {
             shared_table
-                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1)
                 .await
                 .unwrap()
         }
     });
     for _ in 0..10_000 {
-        table.update_val_2_by_id_in_place(|val| *val += 1, pk.0).await?
+        table.update_in_place_by_id(pk.0, TestColumns::VAL2, |val| *val += 1).await?
     }
     h1.await?;
     h2.await?;
@@ -169,7 +196,7 @@ async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
     let h1 = tokio::spawn(async move {
         for _ in 0..10_000 {
             shared_table
-                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1)
                 .await
                 .unwrap()
         }
@@ -178,7 +205,7 @@ async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
     let h2 = tokio::spawn(async move {
         for _ in 0..10_000 {
             shared_table
-                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1)
                 .await
                 .unwrap()
         }
@@ -187,13 +214,13 @@ async fn test_update_val_by_id_four_thread() -> eyre::Result<()> {
     let h3 = tokio::spawn(async move {
         for _ in 0..10_000 {
             shared_table
-                .update_val_by_id_in_place(|val| *val += 1, pk.0)
+                .update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1)
                 .await
                 .unwrap()
         }
     });
     for _ in 0..10_000 {
-        table.update_val_by_id_in_place(|val| *val += 1, pk.0).await?
+        table.update_in_place_by_id(pk.0, TestColumns::VAL, |val| *val += 1).await?
     }
     h1.await?;
     h2.await?;
@@ -227,7 +254,7 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
             let val = fastrand::i64(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_val_by_id_in_place(|v| *v = val.into(), id_to_update)
+                .update_in_place_by_id(id_to_update, TestColumns::VAL, |v| *v = val.into())
                 .await
                 .unwrap();
             {
@@ -243,7 +270,7 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
             let val = fastrand::i16(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_val_2_by_id_in_place(|v| *v = val.into(), id_to_update)
+                .update_in_place_by_id(id_to_update, TestColumns::VAL2, |v| *v = val.into())
                 .await
                 .unwrap();
             {
@@ -257,7 +284,7 @@ async fn test_update_in_place_and_update_sized_multithread() -> eyre::Result<()>
         let val = fastrand::u64(..);
         let id_to_update = fastrand::u64(0..=99);
         table
-            .update_something_by_id(SomethingByIdQuery { something: val }, id_to_update)
+            .update_by_id(id_to_update, TestColumns::SOMETHING, val)
             .await?;
         {
             let mut guard = i_state.lock();
@@ -306,7 +333,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
             let val = fastrand::i64(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_val_by_id_in_place(|v| *v = val.into(), id_to_update)
+                .update_in_place_by_id(id_to_update, TestColumns::VAL, |v| *v = val.into())
                 .await
                 .unwrap();
             {
@@ -322,7 +349,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
             let val = fastrand::i16(..);
             let id_to_update = fastrand::u64(0..=99);
             shared
-                .update_val_2_by_id_in_place(|v| *v = val.into(), id_to_update)
+                .update_in_place_by_id(id_to_update, TestColumns::VAL2, |v| *v = val.into())
                 .await
                 .unwrap();
             {
@@ -336,12 +363,7 @@ async fn test_update_in_place_and_update_unsized_multithread() -> eyre::Result<(
         let val = fastrand::u64(..);
         let id_to_update = fastrand::u64(0..=99);
         table
-            .update_another_by_id(
-                AnotherByIdQuery {
-                    another: format!("another_{val}"),
-                },
-                id_to_update,
-            )
+            .update_by_id(id_to_update, TestColumns::ANOTHER, format!("another_{val}"))
             .await?;
         {
             let mut guard = i_state.lock();

@@ -95,13 +95,9 @@ async fn multi_row_update_locks_in_primary_key_order_not_index_order() {
     let update_table = table.clone();
     let update = tokio::spawn(async move {
         if use_group_a {
-            update_table
-                .update_value_by_group_a(ValueByGroupAQuery { value: 1 }, 1)
-                .await
+            update_table.update_by_group_a(1, LockOrderColumns::VALUE, 1).await
         } else {
-            update_table
-                .update_value_by_group_b(ValueByGroupBQuery { value: 1 }, 1)
-                .await
+            update_table.update_by_group_b(1, LockOrderColumns::VALUE, 1).await
         }
     });
 

@@ -28,7 +28,7 @@ worktable!(
             UpdE(e) by id,
             UpdBE(b, e) by id,
         },
-        in_place: {
+        update_in_place: {
             IncB(b) by id,
         }
     }

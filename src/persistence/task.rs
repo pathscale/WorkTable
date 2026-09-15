@@ -725,12 +725,16 @@ mod lifecycle_tests {
         failure: TestFailure,
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone)]
     enum TestFailure {
         None,
         Engine,
         IndexCorruption,
         Panic,
+        GatedPanic {
+            entered: Arc<std::sync::Barrier>,
+            release: Arc<std::sync::Barrier>,
+        },
     }
 
     impl PersistenceEngine<(), u64, TestEvents, TestIndex> for TestEngine {
@@ -753,7 +757,7 @@ mod lifecycle_tests {
             &mut self,
             _batch_op: BatchOperation<(), u64, TestEvents, TestIndex>,
         ) -> eyre::Result<()> {
-            match self.failure {
+            match &self.failure {
                 TestFailure::None => {}
                 TestFailure::Engine => return Err(eyre::eyre!("injected batch failure")),
                 TestFailure::IndexCorruption => {
@@ -762,6 +766,11 @@ mod lifecycle_tests {
                     );
                 }
                 TestFailure::Panic => panic!("injected persistence worker panic"),
+                TestFailure::GatedPanic { entered, release } => {
+                    entered.wait();
+                    release.wait();
+                    panic!("injected persistence worker panic");
+                }
             }
             self.batches.fetch_add(1, Ordering::Relaxed);
             self.events.lock().push("batch");
@@ -1258,6 +1267,55 @@ mod lifecycle_tests {
         assert!(Arc::ptr_eq(&wait_error, &intake_error));
     }
 
+    /// A worker panic must not escape `Drop`.
+    ///
+    /// In particular, a destructor that resumes the worker's panic can abort
+    /// the process when the table is itself being dropped during unwinding.
+    /// Hold the worker inside the engine until `Drop` has entered `Closing`,
+    /// proving that the drop path is awaiting this still-busy worker when the
+    /// injected panic lands.
+    #[test]
+    fn busy_drop_contains_a_worker_panic() {
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: Arc::new(AtomicUsize::new(0)),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::GatedPanic {
+                entered: entered.clone(),
+                release: release.clone(),
+            },
+        });
+
+        task.apply_operation(insert_operation(1)).unwrap();
+        entered.wait();
+
+        let monitor = task.monitor();
+        let dropping =
+            std::thread::spawn(move || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(task))));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !matches!(monitor.lifecycle.state(), PersistenceState::Closing) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Drop did not begin joining the busy persistence worker"
+            );
+            std::thread::yield_now();
+        }
+        release.wait();
+
+        let drop_result = dropping.join().expect("drop thread itself must remain joinable");
+        assert!(drop_result.is_ok(), "a persistence worker panic escaped Drop");
+        match monitor.lifecycle.state() {
+            PersistenceState::Failed(error) => assert_eq!(
+                error.to_string(),
+                "persistence engine failed: persistence worker panicked"
+            ),
+            state => panic!("worker panic did not become terminal: {state:?}"),
+        }
+    }
+
     /// A worker that stops publishes a terminal state instead of leaving its
     /// waiters parked, and refuses operations afterwards.
     ///
@@ -1725,7 +1783,7 @@ pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availa
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     for PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
-    /// Aborts the engine task so it cannot outlive the table it persists.
+    /// Stops the engine task before the table finishes dropping.
     /// Without this the detached task keeps running on the runtime after the
     /// table is dropped, and a re-opened table can read the same files while
     /// the old engine is still writing them.
@@ -1733,13 +1791,12 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     /// The abort only happens when the engine is provably idle (queue and
     /// analyzer empty, no operation in flight) — that is the normal state
     /// after `wait_for_ops`, and an idle task is parked at the queue pop, an
-    /// await point where cancellation is clean. Aborting a *busy* engine
-    /// would cancel persistence futures that are not cancellation-safe (a
-    /// data page could be left half-written while its index events are
-    /// abandoned), so a busy engine is left running and reported instead:
-    /// callers must drain with `wait_for_ops` before dropping. A proper
-    /// `close()` lifecycle (drain, join, surface terminal errors) is the
-    /// long-term replacement for this heuristic.
+    /// await point where cancellation is clean. Aborting a *busy* engine would
+    /// cancel persistence futures that are not cancellation-safe (a data page
+    /// could be left half-written while its index events are abandoned). Its
+    /// worker is private to this task, so a busy drop instead joins that worker
+    /// after requesting close. This keeps an immediate same-path reopen from
+    /// racing the last writes.
     fn drop(&mut self) {
         match self.engine_task_handle.as_ref() {
             None => return,
@@ -1772,10 +1829,13 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
             if let Some(handle) = self.engine_task_handle.take() {
                 handle.cancel();
             }
-        } else {
-            tracing::error!(
-                "PersistenceTask dropped with work in flight; the engine task keeps draining detached and                  then stops, but its errors can no longer be observed. Call close() (or wait_for_ops()                  before dropping) to guarantee a clean shutdown."
-            );
+        } else if let Some(handle) = self.engine_task_handle.take() {
+            // The engine owns a dedicated one-worker runtime. Joining here
+            // cannot occupy the worker that must make this task progress. A
+            // join rethrows a worker panic, which must not escape a destructor
+            // (and would abort the process if this drop is already unwinding).
+            // `WorkerCompletionGuard` records that panic in the lifecycle.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| nagoya::block_on(handle)));
         }
     }
 }

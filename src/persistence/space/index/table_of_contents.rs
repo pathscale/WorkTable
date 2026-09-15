@@ -74,6 +74,27 @@ where
         None
     }
 
+    /// Finds the page whose ordered range contains `value` and returns its
+    /// current maximum identity. CDC events name the maximum observed when the
+    /// event was created; that identity can become stale at a persistence
+    /// batch boundary after a preceding max removal re-keyed the page.
+    pub(crate) fn page_containing(&self, value: &T) -> Option<(T, PageId)>
+    where
+        T: Clone,
+    {
+        let mut ceiling: Option<(&T, &PageId)> = None;
+        let mut last: Option<(&T, &PageId)> = None;
+        for (maximum, page_id) in self.iter() {
+            if last.is_none_or(|(current, _)| maximum > current) {
+                last = Some((maximum, page_id));
+            }
+            if maximum >= value && ceiling.is_none_or(|(current, _)| maximum < current) {
+                ceiling = Some((maximum, page_id));
+            }
+        }
+        ceiling.or(last).map(|(maximum, page_id)| (maximum.clone(), *page_id))
+    }
+
     fn get_current_page_mut(&mut self) -> &mut GeneralPage<TableOfContentsPage<T>> {
         &mut self.pages[self.current_page]
     }
@@ -363,6 +384,20 @@ mod tests {
         assert!(!toc.try_update_key(&8, 9).unwrap());
         assert_eq!(toc.get(&7), Some(2.into()));
         assert_eq!(toc.get(&9), None);
+    }
+
+    #[test]
+    fn page_containing_uses_the_smallest_ceiling_and_the_tail_for_larger_values() {
+        let mut toc = IndexTableOfContents::<u8, 128, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        toc.insert(40, 4.into());
+        toc.insert(10, 1.into());
+        toc.insert(25, 2.into());
+
+        assert_eq!(toc.page_containing(&0), Some((10, 1.into())));
+        assert_eq!(toc.page_containing(&10), Some((10, 1.into())));
+        assert_eq!(toc.page_containing(&11), Some((25, 2.into())));
+        assert_eq!(toc.page_containing(&40), Some((40, 4.into())));
+        assert_eq!(toc.page_containing(&41), Some((40, 4.into())));
     }
 
     #[test]

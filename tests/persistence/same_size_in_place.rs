@@ -58,10 +58,7 @@ fn same_size_updates_keep_the_row_link() {
             let link_before = table.0.primary_index.pk_map.get_value(&pk).unwrap().0;
 
             // Fixed-size column update: archived in-place swap, same slot.
-            table
-                .update_amount_by_id(AmountByIdQuery { amount: 2 }, 1)
-                .await
-                .unwrap();
+            table.update_by_id(1, SameSizeInPlaceColumns::AMOUNT, 2).await.unwrap();
             let link_after_amount = table.0.primary_index.pk_map.get_value(&pk).unwrap().0;
             assert_eq!(
                 link_before, link_after_amount,
@@ -70,12 +67,7 @@ fn same_size_updates_keep_the_row_link() {
 
             // Same-length String update: same-size in-place path, same slot.
             table
-                .update_note_by_id(
-                    NoteByIdQuery {
-                        note: "bbbb".to_string(),
-                    },
-                    1,
-                )
+                .update_by_id(1, SameSizeInPlaceColumns::NOTE, "bbbb".to_string())
                 .await
                 .unwrap();
             let link_after_note = table.0.primary_index.pk_map.get_value(&pk).unwrap().0;
@@ -86,11 +78,10 @@ fn same_size_updates_keep_the_row_link() {
 
             // A size-changing String update must still reinsert correctly.
             table
-                .update_note_by_id(
-                    NoteByIdQuery {
-                        note: "a-considerably-longer-note".to_string(),
-                    },
+                .update_by_id(
                     1,
+                    SameSizeInPlaceColumns::NOTE,
+                    "a-considerably-longer-note".to_string(),
                 )
                 .await
                 .unwrap();

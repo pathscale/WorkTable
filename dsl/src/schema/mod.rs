@@ -200,22 +200,22 @@ pub struct QueriesSpec {
     pub updates: Vec<OperationSpec>,
     /// `delete:` operations.
     pub deletes: Vec<OperationSpec>,
-    /// `in_place:` operations.
-    pub in_place: Vec<OperationSpec>,
+    /// `update_in_place:` operations.
+    pub updates_in_place: Vec<OperationSpec>,
     /// The profile named by `update runtime <profile>:`, if written. Unresolved:
     /// see [`crate::model::Queries::update_runtime`].
     pub update_runtime: Option<String>,
     /// The profile named by `delete runtime <profile>:`, if written.
     pub delete_runtime: Option<String>,
-    /// The profile named by `in_place runtime <profile>:`, if written.
-    pub in_place_runtime: Option<String>,
+    /// The profile named by `update_in_place runtime <profile>:`, if written.
+    pub update_in_place_runtime: Option<String>,
 }
 
 impl QueriesSpec {
     /// Whether any query was declared. An empty block and an absent one are
     /// the same thing to the macro, so the emitter writes neither.
     pub fn is_empty(&self) -> bool {
-        self.updates.is_empty() && self.deletes.is_empty() && self.in_place.is_empty()
+        self.updates.is_empty() && self.deletes.is_empty() && self.updates_in_place.is_empty()
     }
 }
 
@@ -498,10 +498,10 @@ fn queries_from_model(queries: Queries) -> QueriesSpec {
     QueriesSpec {
         update_runtime: queries.update_runtime.map(|profile| profile.to_string()),
         delete_runtime: queries.delete_runtime.map(|profile| profile.to_string()),
-        in_place_runtime: queries.in_place_runtime.map(|profile| profile.to_string()),
+        update_in_place_runtime: queries.update_in_place_runtime.map(|profile| profile.to_string()),
         updates: convert(queries.updates),
         deletes: convert(queries.deletes),
-        in_place: convert(queries.in_place),
+        updates_in_place: convert(queries.updates_in_place),
     }
 }
 

@@ -83,7 +83,7 @@ fn test_string_update_doesnt_block_persistence() {
             let engine = UserPersistenceEngine::new(config.clone()).await.unwrap();
             let table = UserWorkTable::load(engine).await.unwrap();
 
-            table.update(row.clone()).await.unwrap();
+            table.replace(row.clone()).await.unwrap();
 
             let wait_result = timeout(Duration::from_secs(4), table.wait_for_ops())
                 .await

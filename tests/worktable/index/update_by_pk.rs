@@ -1,8 +1,8 @@
 use worktable::prelude::SelectQueryExecutor;
 
 use crate::worktable::index::{
-    Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueRow, Test3UniqueWorkTable, ThreeAttrByIdQuery,
-    UniqueThreeAttrByIdQuery,
+    Test3NonUniqueColumns, Test3NonUniqueRow, Test3NonUniqueWorkTable, Test3UniqueColumns, Test3UniqueRow,
+    Test3UniqueWorkTable, ThreeAttrByIdQuery, UniqueThreeAttrByIdQuery,
 };
 
 #[tokio::test]
@@ -27,13 +27,14 @@ async fn update_by_pk_unique_indexes() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_unique_three_attr_by_id(
+        .update_by_id(
+            pk.clone(),
+            Test3UniqueColumns::ATTR1_AND_ATTR2_AND_ATTR3,
             UniqueThreeAttrByIdQuery {
                 attr1: attr1_new.clone(),
                 attr2: attr2_new,
                 attr3: attr3_new,
             },
-            pk.clone(),
         )
         .await
         .unwrap();
@@ -77,13 +78,14 @@ async fn update_by_pk_non_unique_indexes() {
 
     let pk = test_table.insert(row.clone()).await.unwrap();
     test_table
-        .update_three_attr_by_id(
+        .update_by_id(
+            pk.clone(),
+            Test3NonUniqueColumns::ATTR1_AND_ATTR2_AND_ATTR3,
             ThreeAttrByIdQuery {
                 attr1: attr1_new.clone(),
                 attr2: attr2_new,
                 attr3: attr3_new,
             },
-            pk.clone(),
         )
         .await
         .unwrap();
@@ -132,7 +134,7 @@ async fn update_by_pk_with_reinsert_and_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_unique_three_attr_by_id(update, row1.id)
+            .update_by_id(row1.id, Test3UniqueColumns::ATTR1_AND_ATTR2_AND_ATTR3, update)
             .await
             .is_err()
     );
@@ -173,7 +175,7 @@ async fn update_by_pk_with_secondary_unique_violation() {
     };
     assert!(
         test_table
-            .update_unique_three_attr_by_id(update, row1.id)
+            .update_by_id(row1.id, Test3UniqueColumns::ATTR1_AND_ATTR2_AND_ATTR3, update)
             .await
             .is_err()
     );

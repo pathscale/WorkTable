@@ -273,7 +273,7 @@ fn test_duplicate_key_secondary_index_survives_reload() {
                 if model.by_score.values().any(|ids| ids.contains(&id)) {
                     let new_score = (id % KEYS) + 1_000;
                     table
-                        .update_score_by_id(ScoreByIdQuery { score: new_score }, id)
+                        .update_by_id(id, DuplicateKeyReloadColumns::SCORE, new_score)
                         .await
                         .unwrap();
                     model.move_score(id, new_score);
@@ -461,7 +461,7 @@ fn test_duplicate_key_mutations_without_reload() {
             if model.by_score.values().any(|ids| ids.contains(&id)) {
                 let new_score = (id % KEYS) + 1_000;
                 table
-                    .update_score_by_id(ScoreByIdQuery { score: new_score }, id)
+                    .update_by_id(id, DuplicateKeyReloadColumns::SCORE, new_score)
                     .await
                     .unwrap();
                 model.move_score(id, new_score);

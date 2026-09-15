@@ -81,11 +81,10 @@ macro_rules! unsized_in_place_suite {
                 let before = link_of(&table, 1);
 
                 table
-                    .update_payload(
-                        PayloadQuery {
-                            payload: "12345678".to_string(), // 8 bytes — same length
-                        },
+                    .update_by_id(
                         1,
+                        UnsizedUpdateColumns::PAYLOAD,
+                        "12345678".to_string(), // 8 bytes — same length
                     )
                     .await
                     .unwrap();
@@ -113,23 +112,13 @@ macro_rules! unsized_in_place_suite {
                     .await.unwrap();
 
                 table
-                    .update_payload(
-                        PayloadQuery {
-                            payload: "xy".to_string(),
-                        },
-                        1,
-                    )
+                    .update_by_id(1, UnsizedUpdateColumns::PAYLOAD, "xy".to_string())
                     .await
                     .unwrap();
                 assert_eq!(table.select(1).unwrap().payload, "xy");
 
                 table
-                    .update_payload(
-                        PayloadQuery {
-                            payload: "much longer payload".to_string(),
-                        },
-                        1,
-                    )
+                    .update_by_id(1, UnsizedUpdateColumns::PAYLOAD, "much longer payload".to_string())
                     .await
                     .unwrap();
                 assert_eq!(table.select(1).unwrap().payload, "much longer payload");
@@ -159,12 +148,7 @@ macro_rules! unsized_in_place_suite {
                     tokio::spawn(async move {
                         for i in 0..20_000u64 {
                             table
-                                .update_payload(
-                                    PayloadQuery {
-                                        payload: format!("{:04}", i % 10000),
-                                    },
-                                    1,
-                                )
+                                .update_by_id(1, UnsizedUpdateColumns::PAYLOAD, format!("{:04}", i % 10000))
                                 .await
                                 .unwrap();
                         }
@@ -220,7 +204,7 @@ macro_rules! unsized_in_place_suite {
                 let before = link_of(&table, 1);
 
                 table
-                    .update_balance(BalanceQuery { balance: 42.5 }, 1)
+                    .update_by_id(1, UnsizedUpdateColumns::BALANCE, 42.5)
                     .await
                     .unwrap();
 
@@ -240,3 +224,120 @@ macro_rules! unsized_in_place_suite {
 unsized_in_place_suite!(wti, worktables_index);
 unsized_in_place_suite!(congee, congee);
 unsized_in_place_suite!(arctic, arctic);
+
+mod opaque_wrapper {
+    use rkyv::{Archive, Deserialize, Serialize};
+    use worktable::prelude::*;
+    use worktable::worktable;
+
+    #[derive(Archive, Clone, Debug, Deserialize, Serialize, PartialEq, PartialOrd, MemStat)]
+    #[rkyv(compare(PartialEq), derive(Debug))]
+    struct WrappedString(String);
+
+    worktable!(
+        name: OpaqueOnly,
+        persist: false,
+        columns: {
+            id: u64 primary_key,
+            secret: WrappedString,
+        },
+    );
+
+    worktable!(
+        name: OpaqueWrapperUpdate,
+        persist: false,
+        columns: {
+            id: u64 primary_key,
+            padding: String,
+            nickname: String optional,
+            secret: WrappedString,
+        },
+        queries: {
+            update: {
+                Secret(secret) by id,
+                Nickname(nickname) by id,
+            }
+        }
+    );
+
+    #[tokio::test]
+    async fn custom_archived_string_wrapper_is_rebased_into_row_storage() {
+        let table = OpaqueWrapperUpdateWorkTable::default();
+        table
+            .insert(OpaqueWrapperUpdateRow {
+                id: 1,
+                padding: "keeps the table on variable-size storage".to_string(),
+                nickname: None,
+                secret: WrappedString("original out-of-line secret value".to_string()),
+            })
+            .await
+            .unwrap();
+
+        table
+            .update_by_id(
+                1,
+                OpaqueWrapperUpdateColumns::SECRET,
+                WrappedString("replacement out-of-line secret!!".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            table.select(1).unwrap().secret,
+            WrappedString("replacement out-of-line secret!!".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn optional_string_update_is_rebased_into_row_storage() {
+        let table = OpaqueWrapperUpdateWorkTable::default();
+        table
+            .insert(OpaqueWrapperUpdateRow {
+                id: 1,
+                padding: "keeps the table on variable-size storage".to_string(),
+                nickname: Some("original out-of-line nickname".to_string()),
+                secret: WrappedString("unchanged out-of-line secret".to_string()),
+            })
+            .await
+            .unwrap();
+
+        table
+            .update_by_id(
+                1,
+                OpaqueWrapperUpdateColumns::NICKNAME,
+                Some("replacement out-of-line name".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            table.select(1).unwrap().nickname,
+            Some("replacement out-of-line name".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn full_row_update_rebases_an_opaque_only_table() {
+        let table = OpaqueOnlyWorkTable::default();
+        table
+            .insert(OpaqueOnlyRow {
+                id: 1,
+                secret: WrappedString("original out-of-line secret value".to_string()),
+            })
+            .await
+            .unwrap();
+
+        table
+            .replace(OpaqueOnlyRow {
+                id: 1,
+                secret: WrappedString("replacement out-of-line secret value".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            table.select(1).unwrap().secret,
+            WrappedString("replacement out-of-line secret value".to_string())
+        );
+    }
+}

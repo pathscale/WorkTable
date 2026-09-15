@@ -26,8 +26,8 @@ pub struct DenseQueries {
     pub updates: Vec<(Ident, Operation)>,
     /// `delete <Name>() by <column>`.
     pub deletes: Vec<(Ident, Operation)>,
-    /// `in_place <Name>(columns) by <column>`. Refused: see [`expand`].
-    pub in_place: Vec<(Ident, Operation)>,
+    /// `update_in_place <Name>(columns) by <column>`. Refused: see [`expand`].
+    pub updates_in_place: Vec<(Ident, Operation)>,
 }
 
 impl DenseQueries {
@@ -42,12 +42,12 @@ impl DenseQueries {
         Self {
             updates: lift(&queries.updates),
             deletes: lift(&queries.deletes),
-            in_place: lift(&queries.in_place),
+            updates_in_place: lift(&queries.updates_in_place),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.updates.is_empty() && self.deletes.is_empty() && self.in_place.is_empty()
+        self.updates.is_empty() && self.deletes.is_empty() && self.updates_in_place.is_empty()
     }
 }
 
@@ -199,7 +199,7 @@ pub fn expand(
         })
         .collect::<Vec<_>>();
 
-    let query_methods = gen_queries(name, columns, &pk, &pk_type, queries)?;
+    let (query_dispatch, query_methods) = gen_queries(name, columns, &pk, &pk_type, queries)?;
 
     let table_doc = format!(
         "One partition of [`{name}Partitions`], addressed by position.\n\n\
@@ -213,6 +213,8 @@ pub fn expand(
     );
 
     Ok(quote! {
+        #query_dispatch
+
         #[doc = #table_doc]
         #[derive(Debug)]
         pub struct #table {
@@ -285,7 +287,7 @@ pub fn expand(
             ///
             /// `None` means the key held nothing, and nothing was written: this
             /// updates, it does not insert. `upsert` is the one that does both.
-            pub fn update(
+            pub fn replace(
                 &self,
                 row: #row_ident,
             ) -> Result<Option<#row_ident>, worktable::partition::DenseError> {
@@ -352,12 +354,12 @@ pub fn expand(
     })
 }
 
-/// Generate one method per `queries:` entry.
+/// Generate storage methods and typed-selector dispatch for `queries:` entries.
 ///
-/// The method names and the `<Name>Query` argument structs are the paged
-/// table's: a partitioned declaration still generates the full table beside the
-/// dense payload, so the query structs already exist and a caller keeps the
-/// same call. What differs is the signature, deliberately, the same way every
+/// A partitioned declaration still generates the full table beside the dense
+/// payload, so the selector markers and multi-field query structs already
+/// exist and a caller keeps the same call. What differs is the result,
+/// deliberately, the same way every
 /// other pair of shapes in this crate differs: there is no `.await` and no
 /// `WorkTableError`, so moving a call between them fails to compile rather than
 /// quietly changing what it guarantees.
@@ -367,20 +369,20 @@ fn gen_queries(
     pk: &Ident,
     pk_type: &TokenStream,
     queries: &DenseQueries,
-) -> syn::Result<Vec<TokenStream>> {
+) -> syn::Result<(TokenStream, Vec<TokenStream>)> {
     if queries.is_empty() {
-        return Ok(Vec::new());
+        return Ok((quote! {}, Vec::new()));
     }
 
-    // `in_place` exists on the paged table because a write there is async and
+    // `update_in_place` exists on the paged table because a write there is async and
     // has to hold a column across a suspension point. Nothing here is async and
     // `update` is already in place, so generating both would be two names for
     // one method.
-    if let Some((query, _)) = queries.in_place.first() {
+    if let Some((query, _)) = queries.updates_in_place.first() {
         return Err(Error::new(
             query.span(),
             format!(
-                "`in_place {query}` has no meaning on a dense partition: every update here is \
+                "`update_in_place {query}` has no meaning on a dense partition: every update here is \
                  already in place, because there is no page to rewrite and no await to hold a \
                  column across. Declare it as `update {query}`, or use `partition_max_size: u64` \
                  for the full table."
@@ -389,10 +391,12 @@ fn gen_queries(
     }
 
     let mut out = Vec::new();
+    let mut update_impls = Vec::new();
+    let table = type_ident(name);
 
     for (query, op) in &queries.updates {
         by_must_be_the_key(pk, query, op, "update")?;
-        let method = format_ident!("update_{}", snake(query));
+        let method = format_ident!("__wt_update_{}", snake(query));
         let query_ty = format_ident!("{}Query", query);
         let fields = &op.columns;
         for column in fields {
@@ -421,14 +425,71 @@ fn gen_queries(
         );
         out.push(quote! {
             #[doc = #doc]
-            pub fn #method(&self, row: #query_ty, #pk: &#pk_type) -> Option<()> {
+            fn #method(&self, row: #query_ty, #pk: &#pk_type) -> Option<()> {
                 let at = Self::at(#pk)?;
                 self.inner.update(at, |target| {
                     #(target.#fields = row.#fields;)*
                 })
             }
         });
+
+        let selector = fields.iter().map(ToString::to_string).collect::<Vec<_>>().join("_and_");
+        let selector_pascal = {
+            use convert_case::{Case, Casing as _};
+            selector.from_case(Case::Snake).to_case(Case::Pascal)
+        };
+        let selector_type = format_ident!("{name}{selector_pascal}Selector");
+        let trait_ident = format_ident!("{name}DenseUpdateBy{}", {
+            use convert_case::{Case, Casing as _};
+            pk.to_string().from_case(Case::Snake).to_case(Case::Pascal)
+        });
+        let (value_type, value) = if fields.len() == 1 {
+            let field = &fields[0];
+            let ty = columns
+                .columns_map
+                .get(field)
+                .ok_or_else(|| Error::new(field.span(), format!("no column `{field}`")))?;
+            (quote! { #ty }, quote! { #query_ty { #field: value } })
+        } else {
+            (quote! { #query_ty }, quote! { value })
+        };
+        update_impls.push(quote! {
+            impl #trait_ident<#value_type> for #selector_type {
+                fn apply(self, table: &#table, key: &#pk_type, value: #value_type) -> Option<()> {
+                    table.#method(#value, key)
+                }
+            }
+        });
     }
+
+    let update_dispatch = if update_impls.is_empty() {
+        quote! {}
+    } else {
+        let sealed = format_ident!("__{}_mutation", {
+            use convert_case::{Case, Casing as _};
+            name.to_string().from_case(Case::Pascal).to_case(Case::Snake)
+        });
+        let trait_ident = format_ident!("{name}DenseUpdateBy{}", {
+            use convert_case::{Case, Casing as _};
+            pk.to_string().from_case(Case::Snake).to_case(Case::Pascal)
+        });
+        let method = format_ident!("update_by_{pk}");
+        out.push(quote! {
+            pub fn #method<S, V>(&self, key: #pk_type, selector: S, value: V) -> Option<()>
+            where S: #trait_ident<V>
+            {
+                selector.apply(self, &key, value)
+            }
+        });
+        quote! {
+            #[doc(hidden)]
+            #[allow(private_bounds)]
+            pub trait #trait_ident<V>: #sealed::Sealed {
+                fn apply(self, table: &#table, key: &#pk_type, value: V) -> Option<()>;
+            }
+            #(#update_impls)*
+        }
+    };
 
     for (query, op) in &queries.deletes {
         by_must_be_the_key(pk, query, op, "delete")?;
@@ -447,7 +508,7 @@ fn gen_queries(
         });
     }
 
-    Ok(out)
+    Ok((update_dispatch, out))
 }
 
 /// A dense partition has no secondary index, so a query can only be keyed by

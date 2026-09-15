@@ -53,14 +53,14 @@ fn a_comma_after_delete_or_in_place_is_accepted() {
          columns: { id: u64 primary_key, name: String },
          queries: {
              delete: { ByName() by name, },
-             in_place: { SetName(name) by id, },
+             update_in_place: { SetName(name) by id, },
              update: { Renamed(name) by id, }
          }",
     )
     .expect("`delete` and `in_place` should not have to be written last either");
 
     assert_eq!(schema.queries.deletes.len(), 1);
-    assert_eq!(schema.queries.in_place.len(), 1);
+    assert_eq!(schema.queries.updates_in_place.len(), 1);
     assert_eq!(schema.queries.updates.len(), 1);
 }
 

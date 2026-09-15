@@ -45,7 +45,7 @@ async fn concurrent_update_and_delete_never_panics() {
                 } else {
                     "a-longer-replacement-name".to_string()
                 };
-                match table.update_name_by_id(NameByIdQuery { name }, 1).await {
+                match table.update_by_id(1, UpdateDeleteRaceColumns::NAME, name).await {
                     Ok(()) => {}
                     // Deleted concurrently: legal, retried next iteration.
                     Err(WorkTableError::NotFound) => {}

@@ -43,7 +43,7 @@ worktable!(
         update: {
             TemperatureById(temperature) by id,
         },
-        in_place: {
+        update_in_place: {
             TimestampById(timestamp) by id,
         }
     },
@@ -142,7 +142,7 @@ async fn columnar_fields_and_clustered_index_follow_mutations() {
     assert_eq!(projected.iter().map(|(_, value)| *value).collect::<Vec<_>>(), [1, 2]);
 
     table
-        .update(ColumnarMetricsRow {
+        .replace(ColumnarMetricsRow {
             id: 1,
             host_id: 3,
             timestamp: 30,
@@ -158,13 +158,13 @@ async fn columnar_fields_and_clustered_index_follow_mutations() {
     assert_eq!(table.columnar_project_temperature(&updated).unwrap()[0].1, 75);
 
     table
-        .update_temperature_by_id(TemperatureByIdQuery { temperature: 76 }, 1)
+        .update_by_id(1, ColumnarMetricsColumns::TEMPERATURE, 76)
         .await
         .unwrap();
     assert_eq!(table.columnar_project_temperature(&updated).unwrap()[0].1, 76);
 
     table
-        .update_timestamp_by_id_in_place(|value| *value = 40.into(), 1)
+        .update_in_place_by_id(1, ColumnarMetricsColumns::TIMESTAMP, |value| *value = 40.into())
         .await
         .unwrap();
     assert!(table.columnar_is_dirty());
@@ -198,7 +198,7 @@ async fn concurrent_reinsert_and_columnar_refresh_preserve_row_identity() {
         tokio::spawn(async move {
             for value in 1..=200 {
                 table
-                    .update(ColumnarMetricsRow {
+                    .replace(ColumnarMetricsRow {
                         id: 7,
                         host_id: 1,
                         timestamp: value,
@@ -308,7 +308,7 @@ async fn columnar_side_indexes_compose_with_congee_and_arctic_using_backends() {
                 [10, 20]
             );
 
-            table.update($row { id: 1, value: 5 }).await.unwrap();
+            table.replace($row { id: 1, value: 5 }).await.unwrap();
             assert_eq!(table.columnar_select_value_order(20).unwrap(), []);
             assert_eq!(table.columnar_select_value_order(5).unwrap().len(), 1);
 

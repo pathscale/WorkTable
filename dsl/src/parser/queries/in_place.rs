@@ -6,17 +6,17 @@ use crate::Parser;
 use crate::model::Operation;
 
 impl Parser {
-    /// The `in_place` block, and the profile it was annotated with. See
+    /// The `update_in_place` block, and the profile it was annotated with. See
     /// [`Parser::parse_updates`] for why the annotation rides beside the
     /// operations.
-    pub fn parse_in_place(&mut self) -> syn::Result<(Option<Ident>, IndexMap<Ident, Operation>)> {
+    pub fn parse_updates_in_place(&mut self) -> syn::Result<(Option<Ident>, IndexMap<Ident, Operation>)> {
         let ident = self.input_iter.next().ok_or(syn::Error::new(
             self.input.span(),
-            "Expected `in_place` field in declaration",
+            "Expected `update_in_place` field in declaration",
         ))?;
         if let TokenTree::Ident(ident) = ident {
-            if ident.to_string().as_str() != "in_place" {
-                return Err(syn::Error::new(ident.span(), "Expected `in_place` field"));
+            if ident.to_string().as_str() != "update_in_place" {
+                return Err(syn::Error::new(ident.span(), "Expected `update_in_place` field"));
             }
         } else {
             return Err(syn::Error::new(ident.span(), "Expected field name identifier."));
@@ -34,7 +34,7 @@ impl Parser {
             let mut parser = Parser::new(ops.stream());
             let operations = parser.parse_operations()?;
             // Symmetry with `parse_updates`: consume a comma after the block,
-            // so a `in_place` block is not required to be written last.
+            // so an `update_in_place` block is not required to be written last.
             self.try_parse_comma()?;
             Ok((runtime, operations))
         } else {
@@ -53,12 +53,12 @@ mod tests {
     #[test]
     fn test_update() {
         let tokens = quote! {
-            in_place: {
+            update_in_place: {
                 TestQuery(id) by name,
             }
         };
         let mut parser = Parser::new(tokens);
-        let (_, ops) = parser.parse_in_place().unwrap();
+        let (_, ops) = parser.parse_updates_in_place().unwrap();
 
         assert_eq!(ops.len(), 1);
         let op = ops.get(&Ident::new("TestQuery", Span::mixed_site())).unwrap();

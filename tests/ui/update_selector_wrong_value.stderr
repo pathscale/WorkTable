@@ -1,0 +1,26 @@
+error[E0308]: mismatched types
+  --> tests/ui/update_selector_wrong_value.rs:17:65
+   |
+17 |     let _ = table.update_by_id(1, SelectorTypesColumns::AMOUNT, "not a u64");
+   |                   ------------                                  ^^^^^^^^^^^ expected `u64`, found `&str`
+   |                   |
+   |                   arguments to this method are incorrect
+   |
+help: the return type of this call is `&'static str` due to the type of the argument passed
+  --> tests/ui/update_selector_wrong_value.rs:17:13
+   |
+17 |     let _ = table.update_by_id(1, SelectorTypesColumns::AMOUNT, "not a u64");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------^
+   |                                                                 |
+   |                                                                 this argument influences the return type of `update_by_id`
+note: method defined here
+  --> tests/ui/update_selector_wrong_value.rs:4:1
+   |
+ 4 | / worktable!(
+ 5 | |     name: SelectorTypes,
+ 6 | |     columns: {
+ 7 | |         id: u64 primary_key,
+...  |
+13 | | );
+   | |_^
+   = note: this error originates in the macro `worktable` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -57,7 +57,7 @@ fn main() {
             rt.block_on(async {
                 for _ in 0..n {
                     let pk = rng.below(rows);
-                    table.update_upd_b(UpdBQuery { b: pk }, pk).await.unwrap();
+                    table.update_by_id(pk, BenchColumns::B, pk).await.unwrap();
                 }
             });
             n
@@ -74,7 +74,7 @@ fn main() {
             rt.block_on(async {
                 for _ in 0..n {
                     let pk = rng.below(rows);
-                    table.update_upd_a(UpdAQuery { a: pk }, pk).await.unwrap();
+                    table.update_by_id(pk, BenchColumns::A, pk).await.unwrap();
                 }
             });
             n
@@ -91,7 +91,7 @@ fn main() {
             rt.block_on(async {
                 for _ in 0..n {
                     let pk = rng.below(rows);
-                    table.update_inc_b_in_place(|b| *b += 1, pk).await.unwrap();
+                    table.update_in_place_by_id(pk, BenchColumns::B, |b| *b += 1).await.unwrap();
                 }
             });
             n

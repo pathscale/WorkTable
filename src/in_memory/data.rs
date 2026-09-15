@@ -1,7 +1,8 @@
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::cell::UnsafeCell;
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 #[cfg(not(wt_loom))]
 use core::sync::atomic::{AtomicU32 as CellState, AtomicUsize as CellOwner};
@@ -25,7 +26,7 @@ use rkyv::{
     with::{AtomicLoad, Relaxed, Skip, Unsafe},
 };
 
-use crate::in_memory::ArchivedRowWrapper;
+use crate::in_memory::{ArchivedRowWrapper, InlineArchived};
 use crate::prelude::Link;
 
 #[cfg(all(not(wt_loom), not(any(unix, windows))))]
@@ -35,9 +36,30 @@ const CELL_LOCK_SLOTS: usize = 256;
 const CELL_READER_MASK: u32 = (1_u32 << 31) - 1;
 const CELL_WRITER: u32 = 1 << 31;
 
+/// One stripe's reader/writer count, alone on a cache line.
+///
+/// Packed `[AtomicU32; 256]` put 16 stripes on one 64-byte line. Shared
+/// `select` then bounced that line across cores and stalled at ~2.4× while a
+/// private table (its own `CellLocks`) and `vec: true` both scaled ~7×.
+/// Owners stay packed: the uncontended read path never loads them.
+#[repr(align(64))]
+#[derive(Debug)]
+struct PaddedCellState {
+    value: CellState,
+    /// Monotonic write counter, advanced once per completed write.
+    ///
+    /// `value` alone cannot carry the seqlock stamp: a writer releases by
+    /// storing `0`, which is exactly what an idle cell reads, so a write that
+    /// begins and ends inside one reader's window leaves no trace in it. The
+    /// reader would then keep bytes copied out of the middle of that write and
+    /// hand them to `rkyv::access_unchecked`. The counter shares this cache
+    /// line, which the padding above already reserved.
+    version: CellState,
+}
+
 #[derive(Debug)]
 struct CellLocks {
-    states: [CellState; CELL_LOCK_SLOTS],
+    states: [PaddedCellState; CELL_LOCK_SLOTS],
     owners: [CellOwner; CELL_LOCK_SLOTS],
     nested_reads: CellState,
 }
@@ -45,9 +67,38 @@ struct CellLocks {
 impl Default for CellLocks {
     fn default() -> Self {
         Self {
-            states: core::array::from_fn(|_| CellState::new(0)),
+            states: core::array::from_fn(|_| PaddedCellState {
+                value: CellState::new(0),
+                version: CellState::new(0),
+            }),
             owners: core::array::from_fn(|_| CellOwner::new(0)),
             nested_reads: CellState::new(0),
+        }
+    }
+}
+
+impl CellLocks {
+    /// Initialize the lock table directly in its final allocation.
+    ///
+    /// Building both fixed-size atomic arrays as a return value makes the
+    /// compiler reserve another copy on the caller's stack. `Data` uses this
+    /// when it is created inside an `Arc`, where that copy is unnecessary.
+    unsafe fn initialize_at(target: *mut Self) {
+        unsafe {
+            let states = core::ptr::addr_of_mut!((*target).states).cast::<PaddedCellState>();
+            for index in 0..CELL_LOCK_SLOTS {
+                states.add(index).write(PaddedCellState {
+                    value: CellState::new(0),
+                    version: CellState::new(0),
+                });
+            }
+
+            let owners = core::ptr::addr_of_mut!((*target).owners).cast::<CellOwner>();
+            for index in 0..CELL_LOCK_SLOTS {
+                owners.add(index).write(CellOwner::new(0));
+            }
+
+            core::ptr::addr_of_mut!((*target).nested_reads).write(CellState::new(0));
         }
     }
 }
@@ -110,9 +161,77 @@ impl CellLocks {
         }
     }
 
-    fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
+    /// Snapshot the stripe if no writer is in the critical section.
+    ///
+    /// Readers do not CAS. Shared `select` was bouncing packed stripe atomics
+    /// and stalled at ~2.4×; `vec: true` and a private paged table both scale
+    /// ~7×. The caller copies bytes, then [`Self::still_stable`].
+    fn load_stable(&self, link: Link) -> Result<u32, ExecutionError> {
+        let index = Self::start(link);
+        let state = &self.states[index].value;
+        let version = &self.states[index].version;
+        let mut spins = 0;
+        loop {
+            let current = state.load(Ordering::Acquire);
+            if current & CELL_WRITER == 0 {
+                // Read the counter AFTER observing no writer. A writer that
+                // starts later bumps it on release, so `still_stable` sees the
+                // move even though the state word returns to `0`.
+                return Ok(version.load(Ordering::Acquire));
+            }
+            if self.owners[index].load(Ordering::Acquire) == current_owner() {
+                let writer_key = current & CELL_READER_MASK;
+                let requested_key = link.offset.checked_add(1).ok_or(ExecutionError::InvalidLink)?;
+                if writer_key == requested_key {
+                    return Err(ExecutionError::CellLockReentry);
+                }
+                if writer_key != 0 {
+                    // This task is the writer. It sees its own uncommitted
+                    // bytes by definition; the counter is the stamp it will
+                    // compare against and its own release has not run yet.
+                    return Ok(version.load(Ordering::Acquire));
+                }
+            }
+            Self::wait(&mut spins);
+        }
+    }
+
+    fn still_stable(&self, link: Link, stamp: u32) -> bool {
         let index = Self::start(link);
         let state = &self.states[index];
+        // Two ways the snapshot dies: a writer is in the critical section now,
+        // or one completed since [`Self::load_stable`]. The version alone
+        // catches the second; checking it alone would let a torn copy through
+        // while a writer is still mid-update.
+        //
+        // The exception is this task's own write on a DIFFERENT row of the
+        // same stripe, which `load_stable` already admits: it is reading rows
+        // the writer is not touching, and it can never make progress by
+        // retrying because only it can clear that bit. Rejecting it here
+        // spins forever (`in_place_callback_can_select_a_colliding_row_
+        // without_deadlock`).
+        let current = state.value.load(Ordering::Acquire);
+        if current & CELL_WRITER != 0 && !self.writer_is_self_on_other_row(index, link, current) {
+            return false;
+        }
+        state.version.load(Ordering::Acquire) == stamp
+    }
+
+    /// Is the in-flight writer this same task, working on a different row?
+    ///
+    /// Mirrors the reentry arm of [`Self::load_stable`]. A same-row match is
+    /// `CellLockReentry` there and never reaches a stability check.
+    fn writer_is_self_on_other_row(&self, index: usize, link: Link, current: u32) -> bool {
+        if self.owners[index].load(Ordering::Acquire) != current_owner() {
+            return false;
+        }
+        let writer_key = current & CELL_READER_MASK;
+        writer_key != 0 && Some(writer_key) != link.offset.checked_add(1)
+    }
+
+    fn read(&self, link: Link) -> Result<CellReadGuard<'_>, ExecutionError> {
+        let index = Self::start(link);
+        let state = &self.states[index].value;
         let mut spins = 0;
         loop {
             let current = state.load(Ordering::Acquire);
@@ -148,7 +267,7 @@ impl CellLocks {
 
     fn write(&self, link: Link) -> Result<CellWriteGuard<'_>, ExecutionError> {
         let index = Self::start(link);
-        let state = &self.states[index];
+        let state = &self.states[index].value;
         let owner = &self.owners[index];
         let mut spins = 0;
         loop {
@@ -175,6 +294,7 @@ impl CellLocks {
         Ok(CellWriteGuard {
             state,
             owner,
+            version: &self.states[index].version,
             _not_send: PhantomData,
         })
     }
@@ -184,7 +304,11 @@ impl CellLocks {
             owner.store(0, Ordering::Relaxed);
         }
         for state in &self.states {
-            state.store(0, Ordering::Release);
+            // Reset replaces page contents, so it counts as a write for
+            // snapshot readers: bump before clearing, or an in-flight
+            // `copy_row_seqlock` would accept bytes from across the reset.
+            state.version.fetch_add(1, Ordering::Release);
+            state.value.store(0, Ordering::Release);
         }
         self.nested_reads.store(0, Ordering::Relaxed);
     }
@@ -207,6 +331,7 @@ impl Drop for CellReadGuard<'_> {
 pub(crate) struct CellWriteGuard<'a> {
     state: &'a CellState,
     owner: &'a CellOwner,
+    version: &'a CellState,
     _not_send: PhantomData<*mut ()>,
 }
 
@@ -214,6 +339,11 @@ impl Drop for CellWriteGuard<'_> {
     #[inline]
     fn drop(&mut self) {
         self.owner.store(0, Ordering::Relaxed);
+        // Advance the seqlock counter before clearing the writer bit. A
+        // snapshot reader that already copied these bytes compares the counter
+        // and retries; ordering the bump first means it can never observe the
+        // cell idle at the pre-write version.
+        self.version.fetch_add(1, Ordering::Release);
         self.state.store(0, Ordering::Release);
     }
 }
@@ -223,6 +353,33 @@ pub const DATA_HEADER_LENGTH: usize = 4;
 
 /// Length of the inner [`Data`] page part.
 pub const DATA_INNER_LENGTH: usize = INNER_PAGE_SIZE - DATA_HEADER_LENGTH;
+
+const SEQLOCK_STACK: usize = 256;
+
+/// Seqlock snapshot of one archived cell.
+///
+/// Stack for rows that fit in 256 bytes (the shipping fixture). Larger rows
+/// take the cell read lock once and copy onto the heap.
+// The variants differ in size by design and `clippy::large_enum_variant`'s fix
+// is the defect: boxing `Stack` puts the small-row snapshot on the heap, which
+// is the allocation this type exists to avoid. The enum is a local of the
+// select path and is never stored in a collection, so the size difference
+// costs one stack frame, not memory per row.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum ArchivedCopy {
+    Stack { buf: AlignedBytes<SEQLOCK_STACK>, len: u16 },
+    Heap(AlignedVec),
+}
+
+impl ArchivedCopy {
+    #[inline]
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Stack { buf, len } => &buf.0[..*len as usize],
+            Self::Heap(bytes) => bytes.as_slice(),
+        }
+    }
+}
 
 #[derive(Archive, Clone, Copy, Debug, Deserialize, Serialize)]
 #[repr(C, align(16))]
@@ -291,6 +448,66 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 unsafe impl<Row, const DATA_LENGTH: usize> Sync for Data<Row, DATA_LENGTH> {}
 
 impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
+    unsafe fn initialize_arc_at(target: *mut Self, id: PageId, free_offset: u32, source: Option<*const u8>) {
+        unsafe {
+            core::ptr::addr_of_mut!((*target).id).write(id);
+            core::ptr::addr_of_mut!((*target).free_offset).write(AtomicU32::new(free_offset));
+            core::ptr::addr_of_mut!((*target).access).write(parking_lot::RwLock::new(()));
+            CellLocks::initialize_at(core::ptr::addr_of_mut!((*target).cell_locks));
+            core::ptr::addr_of_mut!((*target).live_cells).write(AtomicU32::new(0));
+
+            let destination = core::ptr::addr_of_mut!((*target).inner_data).cast::<u8>();
+            if let Some(source) = source {
+                core::ptr::copy_nonoverlapping(source, destination, DATA_LENGTH);
+            } else {
+                core::ptr::write_bytes(destination, 0, DATA_LENGTH);
+            }
+
+            core::ptr::addr_of_mut!((*target)._phantom).write(PhantomData);
+        }
+    }
+
+    /// Creates a new page directly in its `Arc` allocation.
+    ///
+    /// A default page owns a roughly 16 KiB inline byte image. Initializing it
+    /// through `Arc::new(Data::new(...))` can copy that image through several
+    /// stack return slots, which compounds when a generated table constructs
+    /// several indexed components on a normal 2 MiB thread stack.
+    pub fn new_arc(id: PageId) -> Arc<Self> {
+        let mut page = Arc::<Self>::new_uninit();
+        let target = Arc::get_mut(&mut page)
+            .expect("a newly allocated Arc is uniquely owned")
+            .as_mut_ptr();
+
+        // SAFETY: every field is initialized exactly once in the allocation
+        // above. The byte image is an array of u8, for which all-zero is valid.
+        unsafe {
+            Self::initialize_arc_at(target, id, 0, None);
+            page.assume_init()
+        }
+    }
+
+    /// Restores a persisted page by reference without moving its inline byte
+    /// image through the caller's stack.
+    pub fn from_data_page_ref_arc(page: &GeneralPage<DataPage<DATA_LENGTH>>) -> Arc<Self> {
+        let mut restored = Arc::<Self>::new_uninit();
+        let target = Arc::get_mut(&mut restored)
+            .expect("a newly allocated Arc is uniquely owned")
+            .as_mut_ptr();
+
+        // SAFETY: the boxed page remains alive for the copy, and the helper
+        // initializes every field before the Arc is exposed.
+        unsafe {
+            Self::initialize_arc_at(
+                target,
+                page.header.page_id,
+                page.header.data_length,
+                Some(page.inner.data.as_ptr()),
+            );
+            restored.assume_init()
+        }
+    }
+
     fn validate_link(&self, link: Link) -> Result<(), ExecutionError> {
         let start = link.offset as usize;
         let end = start
@@ -495,6 +712,81 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         rkyv::deserialize::<_, rkyv::rancor::Error>(row).map_err(|_| ExecutionError::DeserializeError)
     }
 
+    /// Point-read without a reader CAS on the cell stripe.
+    ///
+    /// Copies archived bytes, then checks the stripe still has no writer.
+    /// Deserialize runs only on that private copy. Rows larger than the stack
+    /// buffer keep the locking path.
+    pub fn get_row_seqlock(&self, link: Link) -> Result<Row, ExecutionError>
+    where
+        Row: Archive,
+        <Row as Archive>::Archived: Deserialize<Row, HighDeserializer<rkyv::rancor::Error>>,
+    {
+        let copy = self.copy_row_seqlock(link)?;
+        let archived = unsafe { rkyv::access_unchecked::<<Row as Archive>::Archived>(copy.as_bytes()) };
+        rkyv::deserialize::<_, rkyv::rancor::Error>(archived).map_err(|_| ExecutionError::DeserializeError)
+    }
+
+    /// Seqlock-copy archived bytes without deserializing them.
+    pub(crate) fn copy_row_seqlock(&self, link: Link) -> Result<ArchivedCopy, ExecutionError> {
+        self.validate_link(link)?;
+        let len = link.length as usize;
+        if len > SEQLOCK_STACK {
+            let _guard = self.cell_locks.read(link)?;
+            let inner = unsafe { &*self.inner_data.get() };
+            let start = link.offset as usize;
+            let mut heap = AlignedVec::with_capacity(len);
+            heap.extend_from_slice(&inner[start..start + len]);
+            return Ok(ArchivedCopy::Heap(heap));
+        }
+        loop {
+            let stamp = self.cell_locks.load_stable(link)?;
+            let inner = unsafe { &*self.inner_data.get() };
+            let start = link.offset as usize;
+            let mut storage = MaybeUninit::<AlignedBytes<SEQLOCK_STACK>>::uninit();
+            let buf = unsafe { &mut *storage.as_mut_ptr() };
+            buf.0[..len].copy_from_slice(&inner[start..start + len]);
+            if !self.cell_locks.still_stable(link, stamp) {
+                continue;
+            }
+            return Ok(ArchivedCopy::Stack {
+                buf: unsafe { storage.assume_init() },
+                len: len as u16,
+            });
+        }
+    }
+
+    /// Run `f` on the archived cell under seqlock, without memcpy.
+    ///
+    /// `f` must copy out what it needs and must not stash a reference into the
+    /// page. A concurrent writer can tear the bytes `f` reads; `f` must not
+    /// follow pointers or otherwise trap. Retry discards a torn result.
+    pub(crate) fn with_archived_seqlock<F, T>(&self, link: Link, mut f: F) -> Result<T, ExecutionError>
+    where
+        Row: Archive + InlineArchived,
+        F: FnMut(&<Row as Archive>::Archived) -> T,
+    {
+        // Read in place, with no copy. `Row: InlineArchived` is what makes
+        // that sound: every archived field is a fixed-size scalar inline in
+        // the cell, so a concurrent writer can tear a value the closure reads
+        // but cannot hand it a pointer that refers anywhere else. The retry
+        // below discards anything computed from a torn read.
+        //
+        // Without that bound this would be undefined behaviour, not a wrong
+        // number: `f` receives `&Archived`, and an archived `String` or `Vec`
+        // field is a relative pointer, which the closure would dereference
+        // before `still_stable` ever runs.
+        self.validate_link(link)?;
+        loop {
+            let stamp = self.cell_locks.load_stable(link)?;
+            let archived = self.get_row_ref(link)?;
+            let result = f(archived);
+            if self.cell_locks.still_stable(link, stamp) {
+                return Ok(result);
+            }
+        }
+    }
+
     /// Validates persisted bytes before deserializing them.
     ///
     /// The regular in-memory path only reads bytes written by WorkTable in the
@@ -679,6 +971,37 @@ mod tests {
     struct TestRow {
         a: u64,
         b: u64,
+    }
+
+    /// A writer that begins AND completes between `load_stable` and
+    /// `still_stable` must not be invisible.
+    ///
+    /// `CellWriteGuard::drop` stores `0` and `load_stable` returns `0` for an
+    /// idle cell, so the stamp an uncontended reader captures is the same value
+    /// the cell returns to after any number of completed writes. Without a
+    /// counter that moves on release, `still_stable` cannot distinguish "no
+    /// write happened" from "a whole write happened", and the reader keeps a
+    /// buffer it memcpy'd out of the middle of that write.
+    #[test]
+    fn a_completed_write_between_snapshot_and_check_is_detected() {
+        let locks = super::CellLocks::default();
+        let link = Link {
+            page_id: 1.into(),
+            offset: 7,
+            length: 16,
+        };
+
+        let stamp = locks.load_stable(link).expect("idle cell snapshots");
+
+        // The whole write happens inside the reader's window.
+        {
+            let _write = locks.write(link).expect("uncontended writer");
+        }
+
+        assert!(
+            !locks.still_stable(link, stamp),
+            "a completed write inside the read window must invalidate the snapshot"
+        );
     }
 
     #[test]
@@ -1117,11 +1440,30 @@ mod tests {
 #[cfg(all(test, wt_loom))]
 mod cell_lock_models {
     use super::{CellLocks, Link};
+    use alloc::boxed::Box;
     use loom::{cell::UnsafeCell, sync::Arc, thread};
 
     struct Protected {
-        locks: CellLocks,
+        locks: Box<CellLocks>,
         value: UnsafeCell<(u64, u64)>,
+    }
+
+    /// A lock table built straight into its heap allocation.
+    ///
+    /// `CellLocks::default()` returns the two 256-slot atomic arrays by value,
+    /// so the caller reserves a copy on its own stack. That is affordable on a
+    /// real thread and is not on a loom coroutine, whose stack is small and
+    /// whose atomics each carry tracking state: both models overflowed it
+    /// before reaching their first assertion. `CellLocks::initialize_at`
+    /// exists for exactly this and is what `Data` uses in production.
+    fn cell_locks() -> Box<CellLocks> {
+        let mut locks = Box::<CellLocks>::new_uninit();
+        // SAFETY: `initialize_at` writes every field of `CellLocks`, so the
+        // allocation is fully initialized when it returns.
+        unsafe {
+            CellLocks::initialize_at(locks.as_mut_ptr());
+            locks.assume_init()
+        }
     }
 
     // Every access to value below holds the same row's read or write guard.
@@ -1134,7 +1476,7 @@ mod cell_lock_models {
         model.max_branches = 10_000;
         model.check(|| {
             let protected = Arc::new(Protected {
-                locks: CellLocks::default(),
+                locks: cell_locks(),
                 value: UnsafeCell::new((0, 0)),
             });
             let first = Link {
@@ -1178,7 +1520,7 @@ mod cell_lock_models {
         model.max_branches = 10_000;
         model.check(|| {
             let protected = Arc::new(Protected {
-                locks: CellLocks::default(),
+                locks: cell_locks(),
                 value: UnsafeCell::new((0, 0)),
             });
             let link = Link {

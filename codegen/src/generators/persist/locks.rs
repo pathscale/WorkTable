@@ -144,8 +144,10 @@ impl PersistGenerator {
             .map(|i| {
                 let col = Ident::new(format!("{i}_lock").as_str(), Span::mixed_site());
                 quote! {
-                    if let Some(lock) = &self.#col {
-                        set.insert(lock.clone());
+                    if let Some(existing_lock) = &self.#col {
+                        if !set.iter().any(|entry| worktable::prelude::Arc::ptr_eq(entry, existing_lock)) {
+                            set.push(existing_lock.clone());
+                        }
                     }
                     self.#col = Some(lock.clone());
                 }
@@ -153,9 +155,8 @@ impl PersistGenerator {
             .collect();
 
         quote! {
-            #[allow(clippy::mutable_key_type)]
-             fn lock(&mut self, id: u16) -> (worktable::prelude::HashSet<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
-                let mut set = worktable::prelude::HashSet::new();
+             fn lock(&mut self, id: u16) -> (Vec<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
+                let mut set: Vec<worktable::prelude::Arc<Lock>> = Vec::new();
                 let lock = worktable::prelude::Arc::new(Lock::new(id));
                 #(#rows)*
 
@@ -175,8 +176,8 @@ impl PersistGenerator {
                     if let Some(#col) = &other.#col {
                         if self.#col.is_none() {
                             self.#col = Some(#col.clone());
-                        } else {
-                            set.insert(#col.clone());
+                        } else if !set.iter().any(|existing| worktable::prelude::Arc::ptr_eq(existing, #col)) {
+                            set.push(#col.clone());
                         }
                     }
                     other.#col = self.#col.clone();
@@ -185,9 +186,8 @@ impl PersistGenerator {
             .collect();
 
         quote! {
-            #[allow(clippy::mutable_key_type)]
-            fn merge(&mut self, other: &mut Self) -> worktable::prelude::HashSet<worktable::prelude::Arc<Lock>> {
-                let mut set = worktable::prelude::HashSet::new();
+            fn merge(&mut self, other: &mut Self) -> Vec<worktable::prelude::Arc<Lock>> {
+                let mut set: Vec<worktable::prelude::Arc<Lock>> = Vec::new();
                 #(#rows)*
                 set
             }

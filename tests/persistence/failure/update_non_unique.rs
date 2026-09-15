@@ -72,7 +72,9 @@ fn test_update_non_unique_middle_fail() {
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             let query = UniqueValueByCategoryQuery { unique_value: 99 };
-            let result = table.update_unique_value_by_category(query, 1).await;
+            let result = table
+                .update_by_category(1, MixedIdxColumns::UNIQUE_VALUE, (query).unique_value)
+                .await;
             assert!(result.is_err());
 
             let valid_row3 = MixedIdxRow {
@@ -180,7 +182,9 @@ fn test_update_non_unique_last_fail() {
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             let query = UniqueValueByCategoryQuery { unique_value: 99 };
-            let result = table.update_unique_value_by_category(query, 1).await;
+            let result = table
+                .update_by_category(1, MixedIdxColumns::UNIQUE_VALUE, (query).unique_value)
+                .await;
             assert!(result.is_err());
 
             let valid_row3 = MixedIdxRow {

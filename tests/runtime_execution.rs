@@ -12,7 +12,7 @@ worktable! {
     queries: {
         update runtime scheduled: { ValueById(value) by id },
         delete runtime scheduled: { ByGroup() by group },
-        in_place runtime scheduled: { ValueById(value) by id },
+        update_in_place runtime scheduled: { ValueById(value) by id },
     }
 }
 
@@ -47,19 +47,13 @@ fn generated_profiles_dispatch_mutations_and_owned_selects() {
                 .await
                 .unwrap();
         }
-        table
-            .update_value_by_id(ValueByIdQuery { value: 100 }, 9u64)
-            .await
-            .unwrap();
+        table.update_by_id(9, ScheduledColumns::VALUE, 100).await.unwrap();
         let caller = std::thread::current().id();
         table
-            .update_value_by_id_in_place(
-                move |value| {
-                    assert_ne!(std::thread::current().id(), caller);
-                    *value = 101.into();
-                },
-                9u64,
-            )
+            .update_in_place_by_id(9, ScheduledColumns::VALUE, move |value| {
+                assert_ne!(std::thread::current().id(), caller);
+                *value = 101.into();
+            })
             .await
             .unwrap();
         assert_eq!(table.select(9u64).unwrap().value, 101);
@@ -102,10 +96,7 @@ fn nested_dispatch_progresses_on_one_worker() {
                 })
                 .await
                 .unwrap();
-            table
-                .update_value_by_id(ValueByIdQuery { value: 4 }, 1u64)
-                .await
-                .unwrap();
+            table.update_by_id(1, ScheduledColumns::VALUE, 4).await.unwrap();
             table.select_all().runtime(scheduled).execute_async().await.unwrap()[0].value
         })
         .await
@@ -179,10 +170,7 @@ fn scheduled_mutation_is_persisted_and_reopened() {
             let engine = ScheduledDiskPersistenceEngine::new(config.clone()).await.unwrap();
             let table = Arc::new(ScheduledDiskWorkTable::load(engine).await.unwrap());
             table.insert(ScheduledDiskRow { id: 1, value: 2 }).await.unwrap();
-            table
-                .update_disk_value_by_id(DiskValueByIdQuery { value: 99 }, 1u64)
-                .await
-                .unwrap();
+            table.update_by_id(1, ScheduledDiskColumns::VALUE, 99).await.unwrap();
             assert_eq!(
                 table.select_all().runtime(scheduled).execute_async().await.unwrap()[0].value,
                 99
@@ -205,7 +193,7 @@ mod tokio_execution {
         name: TokioScheduled,
         runtime: tokio,
         columns: { id: u64 primary_key, value: u64 },
-        queries: { in_place runtime on_tokio: { TokioValueById(value) by id } }
+        queries: { update_in_place runtime on_tokio: { TokioValueById(value) by id } }
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn tokio_profiles_dispatch_on_the_entered_runtime() {
@@ -213,13 +201,10 @@ mod tokio_execution {
         let table = Arc::new(TokioScheduledWorkTable::default());
         table.insert(TokioScheduledRow { id: 1, value: 0 }).await.unwrap();
         table
-            .update_tokio_value_by_id_in_place(
-                move |value| {
-                    assert_ne!(std::thread::current().id(), caller);
-                    *value = 8.into();
-                },
-                1u64,
-            )
+            .update_in_place_by_id(1, TokioScheduledColumns::VALUE, move |value| {
+                assert_ne!(std::thread::current().id(), caller);
+                *value = 8.into();
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -270,7 +255,7 @@ runtimes! { on_spread: nagoya(spread), }
 worktable! {
     name: Tunable,
     columns: { id: u64 primary_key, value: u64 },
-    queries: { in_place runtime on_spread: { TunedValue(value) by id } }
+    queries: { update_in_place runtime on_spread: { TunedValue(value) by id } }
 }
 #[test]
 fn callsites_can_tune_nagoya_without_changing_the_table_default() {
@@ -279,13 +264,10 @@ fn callsites_can_tune_nagoya_without_changing_the_table_default() {
         table.insert(TunableRow { id: 1, value: 2 }).await.unwrap();
         let caller = std::thread::current().id();
         table
-            .update_tuned_value_in_place(
-                move |value| {
-                    assert_ne!(std::thread::current().id(), caller);
-                    *value = 3.into();
-                },
-                1u64,
-            )
+            .update_in_place_by_id(1, TunableColumns::VALUE, move |value| {
+                assert_ne!(std::thread::current().id(), caller);
+                *value = 3.into();
+            })
             .await
             .unwrap();
         assert_eq!(

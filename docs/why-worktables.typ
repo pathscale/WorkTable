@@ -92,7 +92,7 @@ as well as memory; memory reclamation does not imply file truncation.
 Persistence is opt-in for the paged shape, with local disk and an S3-backed
 tier. Its completion boundaries are explicit. A successful mutation is
 accepted and queued; orderly `close().await` drains and joins the engine.
-The current alpha does not promise transaction journaling or fsync durability.
+The current beta does not promise transaction journaling or fsync durability.
 That makes it a fit for application-owned working state whose recovery
 contract is designed deliberately.
 
@@ -105,7 +105,7 @@ leaving the consequential choices inspectable.
 
 Start with the #link("wt-user-guide.pdf")[WorkTable user guide]: declarations,
 every storage shape, queries, callsites, runtimes, persistence and lifecycle
-examples. It describes 1.9.0-alpha1; use the reviewed checkout until publication.
+examples. It describes 1.10.0-beta1; use the reviewed checkout until publication.
 
 #v(0.35cm)
 #text(size: 8pt, fill: rgb("#526873"))[

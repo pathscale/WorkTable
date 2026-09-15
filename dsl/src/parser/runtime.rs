@@ -441,13 +441,13 @@ mod tests {
             queries: {
                 update runtime fast_local: { Fill(qty) by id },
                 delete runtime wide: { BySymbol() by symbol },
-                in_place: { Bump(qty) by id },
+                update_in_place: { Bump(qty) by id },
             },
             ",
         );
         assert_eq!(schema.queries.update_runtime.as_deref(), Some("fast_local"));
         assert_eq!(schema.queries.delete_runtime.as_deref(), Some("wide"));
-        assert_eq!(schema.queries.in_place_runtime, None);
+        assert_eq!(schema.queries.update_in_place_runtime, None);
     }
 
     #[test]

@@ -205,7 +205,7 @@ async fn updates_are_scoped_to_one_partition() {
     a.insert(row(7, 100.0)).await.unwrap();
     b.insert(row(7, 200.0)).await.unwrap();
 
-    a.update(PriceRow {
+    a.replace(PriceRow {
         exchange_id: 7,
         bid: 999.0,
         ask: 1000.0,
@@ -1021,7 +1021,7 @@ fn a_dense_partition_carries_its_update_queries() {
     // The same method name and the same query struct the paged table generates,
     // so the call reads the same. What differs is that there is no `.await`.
     assert_eq!(
-        book.update_top_price(TopPriceQuery { bid: 9.0, ask: 10.0 }, &2),
+        book.update_by_exchange_id(2, QuotedColumns::BID_AND_ASK, TopPriceQuery { bid: 9.0, ask: 10.0 }),
         Some(())
     );
 
@@ -1030,7 +1030,7 @@ fn a_dense_partition_carries_its_update_queries() {
     assert_eq!(row.seq, 7, "a column the query does not name is untouched");
 
     assert_eq!(
-        book.update_top_price(TopPriceQuery { bid: 0.0, ask: 0.0 }, &3),
+        book.update_by_exchange_id(3, QuotedColumns::BID_AND_ASK, TopPriceQuery { bid: 0.0, ask: 0.0 }),
         None,
         "a key holding no row updates nothing"
     );

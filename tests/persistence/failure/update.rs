@@ -64,7 +64,7 @@ fn test_update_unique_secondary_conflict() {
                 unique_b: 500,
             };
 
-            let result = table.update(updated_row).await;
+            let result = table.replace(updated_row).await;
             assert!(result.is_err());
 
             let valid_row3 = TwoUniqueIdxRow {
@@ -148,7 +148,7 @@ fn test_update_pk_based_success() {
                 unique_b: 250,
             };
 
-            let result = table.update(updated_row).await;
+            let result = table.replace(updated_row).await;
             assert!(result.is_ok());
 
             let valid_row3 = TwoUniqueIdxRow {

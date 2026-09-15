@@ -31,7 +31,15 @@ const MAX_SPINS: u32 = 12;
 /// (preventing memory leaks).
 pub struct LockGuard<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
     lock: Arc<Lock>,
-    lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+    /// Borrowed, not an `Arc` clone: see [`LockAcquirer`]'s field of the same
+    /// name. Per-operation refcount traffic on the map is the shared-write
+    /// bottleneck, and it is independent of the key.
+    ///
+    /// # Safety
+    ///
+    /// Every guard is created inside one operation on a table that holds the
+    /// map's `Arc` for the duration of that call, so the map outlives it.
+    lock_map: *const LockMap<LockType, PrimaryKey>,
     primary_key: PrimaryKey,
     /// Present for single-row operations. Multi-row queries acquire one
     /// mutation stripe only while processing each row, after all row locks are
@@ -41,6 +49,16 @@ pub struct LockGuard<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
     _not_sync: PhantomData<Cell<()>>,
 }
 
+// SAFETY: `LockMap` is `Sync` and the borrowed pointer is live for the guard's
+// whole lifetime (see the field note), so a guard is as safe to send as the
+// `&LockMap` it stands in for. The type stays `!Sync` via `_not_sync`.
+unsafe impl<LockType, PrimaryKey> Send for LockGuard<LockType, PrimaryKey>
+where
+    LockType: RowLock + Send + Sync,
+    PrimaryKey: Hash + Eq + Debug + Clone + Send,
+{
+}
+
 impl<LockType, PrimaryKey> LockGuard<LockType, PrimaryKey>
 where
     LockType: RowLock,
@@ -48,7 +66,21 @@ where
 {
     /// Creates a new [`LockGuard`] that will clean up the [`Lock`] entry from
     /// the [`LockMap`] on [`Drop`].
-    pub fn new(lock: Arc<Lock>, lock_map: Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
+    pub fn new(lock: Arc<Lock>, lock_map: &Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
+        Self::from_raw(lock, Arc::as_ptr(lock_map), primary_key)
+    }
+
+    /// As [`Self::new`], for a caller that already holds the borrowed map
+    /// pointer (a [`PendingLock`] being converted).
+    ///
+    /// # Safety
+    ///
+    /// `lock_map` must outlive the guard; see the field note.
+    pub(crate) fn from_raw(
+        lock: Arc<Lock>,
+        lock_map: *const LockMap<LockType, PrimaryKey>,
+        primary_key: PrimaryKey,
+    ) -> Self {
         Self {
             lock,
             lock_map,
@@ -60,12 +92,19 @@ where
 
     /// Creates a row guard that also serializes the mutation phase with the
     /// synchronous insert path for the same primary key.
-    pub fn new_with_mutation(
+    ///
+    /// # Safety
+    ///
+    /// `lock_map` must point to a live map that outlives the returned guard.
+    /// It is dereferenced here to take the mutation gate, and again when the
+    /// guard drops; see the field note on `lock_map`.
+    pub unsafe fn new_with_mutation(
         lock: Arc<Lock>,
-        lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+        lock_map: *const LockMap<LockType, PrimaryKey>,
         primary_key: PrimaryKey,
     ) -> Self {
-        let mutation_guard = lock_map.mutation_guard(&primary_key);
+        // SAFETY: guaranteed by this function's own contract.
+        let mutation_guard = unsafe { (*lock_map).mutation_guard(&primary_key) };
         Self {
             lock,
             lock_map,
@@ -88,7 +127,8 @@ where
 {
     fn drop(&mut self) {
         self.lock.unlock();
-        self.lock_map.remove_with_lock_check(&self.primary_key);
+        // SAFETY: see the field note; the map outlives this guard.
+        unsafe { (*self.lock_map).remove_with_lock_check(&self.primary_key) };
     }
 }
 
@@ -107,8 +147,25 @@ where
 /// cleanup and hands ownership over.
 pub struct PendingLock<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
     lock: Option<Arc<Lock>>,
-    lock_map: Arc<LockMap<LockType, PrimaryKey>>,
+    /// Borrowed, not an `Arc` clone: see [`LockAcquirer`]'s field of the same
+    /// name. Per-operation refcount traffic on the map is the shared-write
+    /// bottleneck, and it is independent of the key.
+    ///
+    /// # Safety
+    ///
+    /// Every guard is created inside one operation on a table that holds the
+    /// map's `Arc` for the duration of that call, so the map outlives it.
+    lock_map: *const LockMap<LockType, PrimaryKey>,
     primary_key: PrimaryKey,
+}
+
+// SAFETY: `LockMap` is `Sync` and the pointer is live for the guard's whole
+// lifetime (see the field note), so this is as safe to move as a `&LockMap`.
+unsafe impl<LockType, PrimaryKey> Send for PendingLock<LockType, PrimaryKey>
+where
+    LockType: RowLock + Send + Sync,
+    PrimaryKey: Hash + Eq + Debug + Clone + Send,
+{
 }
 
 impl<LockType, PrimaryKey> PendingLock<LockType, PrimaryKey>
@@ -118,10 +175,10 @@ where
 {
     /// Takes ownership of a freshly registered operation lock. Must be called
     /// synchronously after registration, before the predecessor wait.
-    pub fn new(lock: Arc<Lock>, lock_map: Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
+    pub fn new(lock: Arc<Lock>, lock_map: &Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
         Self {
             lock: Some(lock),
-            lock_map,
+            lock_map: Arc::as_ptr(lock_map),
             primary_key,
         }
     }
@@ -132,7 +189,7 @@ where
             .lock
             .take()
             .expect("pending lock is intact until conversion or drop");
-        LockGuard::new(lock, self.lock_map.clone(), self.primary_key.clone())
+        LockGuard::from_raw(lock, self.lock_map, self.primary_key.clone())
     }
 
     /// Defuses the cancellation cleanup and converts into a [`LockGuard`]
@@ -147,7 +204,9 @@ where
             .lock
             .take()
             .expect("pending lock is intact until conversion or drop");
-        LockGuard::new_with_mutation(lock, self.lock_map.clone(), self.primary_key.clone())
+        // SAFETY: a pending lock is a local of the operation that took it, and
+        // that operation holds the map's `Arc` for its whole call.
+        unsafe { LockGuard::new_with_mutation(lock, self.lock_map, self.primary_key.clone()) }
     }
 }
 
@@ -159,23 +218,32 @@ where
     fn drop(&mut self) {
         if let Some(lock) = self.lock.take() {
             lock.unlock();
-            self.lock_map.remove_with_lock_check(&self.primary_key);
+            // SAFETY: see the field note; the map outlives this guard.
+            unsafe { (*self.lock_map).remove_with_lock_check(&self.primary_key) };
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Lock {
-    // A wrapping diagnostic label, not dependency identity. The existing
-    // locked allocation stays unique and stable for this lock lifetime.
+    // A wrapping diagnostic label, not dependency identity. The lock's own
+    // allocation is what stays unique and stable for its lifetime.
     id: u16,
-    locked: Arc<AtomicBool>,
+    /// Inline, not an `Arc<AtomicBool>`.
+    ///
+    /// It was separately allocated so a [`LockWait`] could outlive the lock it
+    /// waits on. A wait can hold an `Arc<Lock>` instead and keep the whole lock
+    /// alive, which costs one pointer in a rarely-built future and saves an
+    /// allocation and a free on **every** locked operation, built or not.
+    /// Freeing was 30% of the profile on the in-place update path once the
+    /// map's exclusive acquisitions were out of the way.
+    locked: AtomicBool,
     wakers: Mutex<Vec<Arc<AtomicWaker>>>,
 }
 
 impl PartialEq for Lock {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.locked, &other.locked)
+        core::ptr::eq(self, other)
     }
 }
 
@@ -183,7 +251,7 @@ impl Eq for Lock {}
 
 impl Hash for Lock {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Hash::hash(&Arc::as_ptr(&self.locked), state)
+        Hash::hash(&(self as *const Self), state)
     }
 }
 
@@ -197,7 +265,7 @@ impl Lock {
     pub fn new(id: u16) -> Self {
         Self {
             id,
-            locked: Arc::new(AtomicBool::from(true)),
+            locked: AtomicBool::new(true),
             wakers: Mutex::new(vec![]),
         }
     }
@@ -210,7 +278,7 @@ impl Lock {
     pub fn new_released(id: u16) -> Self {
         Self {
             id,
-            locked: Arc::new(AtomicBool::new(false)),
+            locked: AtomicBool::new(false),
             wakers: Mutex::new(vec![]),
         }
     }
@@ -236,12 +304,14 @@ impl Lock {
         self.locked.load(Ordering::Acquire)
     }
 
-    pub fn wait(&self) -> LockWait {
+    /// Takes `&Arc<Self>` because the returned wait keeps the lock alive: the
+    /// flag it polls lives in the lock now rather than in its own allocation.
+    pub fn wait(self: &Arc<Self>) -> LockWait {
         let mut guard = self.wakers.lock();
         let waker = Arc::new(AtomicWaker::new());
         guard.push(waker.clone());
         LockWait {
-            locked: self.locked.clone(),
+            lock: Arc::clone(self),
             waker,
         }
     }
@@ -249,7 +319,7 @@ impl Lock {
 
 #[derive(Debug)]
 pub struct LockWait {
-    locked: Arc<AtomicBool>,
+    lock: Arc<Lock>,
     waker: Arc<AtomicWaker>,
 }
 
@@ -258,21 +328,21 @@ impl Future for LockWait {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Fast path: already unlocked
-        if !self.locked.load(Ordering::Acquire) {
+        if !self.lock.locked.load(Ordering::Acquire) {
             return Poll::Ready(());
         }
 
         // Spin phase: try up to MAX_SPINS before going async
         for _ in 0..MAX_SPINS {
             core::hint::spin_loop();
-            if !self.locked.load(Ordering::Acquire) {
+            if !self.lock.locked.load(Ordering::Acquire) {
                 return Poll::Ready(());
             }
         }
 
         // Async phase: register waker and wait
         self.waker.register(cx.waker());
-        if self.locked.load(Ordering::Acquire) {
+        if self.lock.locked.load(Ordering::Acquire) {
             Poll::Pending
         } else {
             Poll::Ready(())
@@ -307,7 +377,7 @@ mod tests {
         assert!(lock.is_locked());
 
         {
-            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), lock_map.clone(), pk);
+            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk);
             assert!(lock.is_locked());
         }
 
@@ -321,7 +391,7 @@ mod tests {
         let pk = 1u64;
         assert!(lock.is_locked());
 
-        let guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), lock_map.clone(), pk);
+        let guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk);
         assert!(lock.is_locked());
 
         guard.unlock();
@@ -337,7 +407,7 @@ mod tests {
         assert!(lock.is_locked());
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), lock_map.clone(), pk);
+            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk);
             panic!("test panic");
         }));
 
@@ -358,9 +428,9 @@ mod tests {
         assert!(lock3.is_locked());
 
         {
-            let _guard1 = LockGuard::<FullRowLock, u64>::new(lock1.clone(), lock_map.clone(), 1u64);
-            let _guard2 = LockGuard::<FullRowLock, u64>::new(lock2.clone(), lock_map.clone(), 2u64);
-            let _guard3 = LockGuard::<FullRowLock, u64>::new(lock3.clone(), lock_map.clone(), 3u64);
+            let _guard1 = LockGuard::<FullRowLock, u64>::new(lock1.clone(), &lock_map, 1u64);
+            let _guard2 = LockGuard::<FullRowLock, u64>::new(lock2.clone(), &lock_map, 2u64);
+            let _guard3 = LockGuard::<FullRowLock, u64>::new(lock3.clone(), &lock_map, 3u64);
 
             assert!(lock1.is_locked());
             assert!(lock2.is_locked());
@@ -397,7 +467,7 @@ mod tests {
 
         // Create a guard and drop it
         {
-            let _guard = LockGuard::new(lock, lock_map.clone(), pk);
+            let _guard = LockGuard::new(lock, &lock_map, pk);
         }
 
         // Verify the lock entry was removed from the map

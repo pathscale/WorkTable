@@ -8,6 +8,7 @@ macro_rules! persisted_multi_row_backend_case {
         $module:ident,
         $name:ident,
         $table:ident,
+        $columns:ident,
         $row:ident,
         $engine:ident,
         $backend:ident,
@@ -56,12 +57,7 @@ macro_rules! persisted_multi_row_backend_case {
 
                 let replacement = "new-payload".repeat(64);
                 table
-                    .update_payload_by_group(
-                        PayloadByGroupQuery {
-                            payload: replacement.clone(),
-                        },
-                        7,
-                    )
+                    .update_by_group_id(7, $columns::PAYLOAD, replacement.clone())
                     .await
                     .unwrap();
                 table.wait_for_ops().await.unwrap();
@@ -84,6 +80,7 @@ persisted_multi_row_backend_case!(
     wti,
     MultiRowWti,
     MultiRowWtiWorkTable,
+    MultiRowWtiColumns,
     MultiRowWtiRow,
     MultiRowWtiPersistenceEngine,
     worktables_index,
@@ -93,6 +90,7 @@ persisted_multi_row_backend_case!(
     congee,
     MultiRowCongee,
     MultiRowCongeeWorkTable,
+    MultiRowCongeeColumns,
     MultiRowCongeeRow,
     MultiRowCongeePersistenceEngine,
     congee,
@@ -102,6 +100,7 @@ persisted_multi_row_backend_case!(
     arctic,
     MultiRowArctic,
     MultiRowArcticWorkTable,
+    MultiRowArcticColumns,
     MultiRowArcticRow,
     MultiRowArcticPersistenceEngine,
     arctic,

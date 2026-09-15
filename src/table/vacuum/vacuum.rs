@@ -579,7 +579,9 @@ where
         to: PageId,
     ) -> eyre::Result<CandidateMove> {
         let lock = self.full_row_lock(&pk).await;
-        let _guard = LockGuard::new_with_mutation(lock, self.lock_manager.clone(), pk.clone());
+        // SAFETY: the guard is a local of this call, which holds
+        // `self.lock_manager` for its whole body.
+        let _guard = unsafe { LockGuard::new_with_mutation(lock, Arc::as_ptr(&self.lock_manager), pk.clone()) };
 
         let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
         if current_link != Some(from_link) {
@@ -618,7 +620,10 @@ where
     }
 
     async fn full_row_lock(&self, pk: &PrimaryKey) -> Arc<Lock> {
-        let lock_id = self.lock_manager.next_id();
+        // Striped by the key, as the generated paths are: vacuum takes this
+        // once per candidate row while foreground writers are running, so the
+        // table-wide counter would be a shared line it contends for.
+        let lock_id = self.lock_manager.next_id_for(pk);
         // One atomic acquire, no check-then-act: see LockMap::get_or_insert_with.
         let lock = self.lock_manager.get_or_insert_with(pk.clone(), LockType::new);
         let mut lock_guard = lock.write().await;
@@ -1783,7 +1788,7 @@ mod tests {
             another: 11,
             exchange: "updated0".to_string(),
         };
-        table.update(updated_target.clone()).await.unwrap();
+        table.replace(updated_target.clone()).await.unwrap();
         let current_target_link = table
             .0
             .primary_index

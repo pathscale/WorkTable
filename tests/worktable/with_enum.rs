@@ -49,7 +49,7 @@ async fn update() {
         id: 1,
         test: SomeEnum::Second,
     };
-    table.update(updated.clone()).await.unwrap();
+    table.replace(updated.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, updated);

@@ -22,7 +22,7 @@
   #text(size: 11pt, style: "italic")[Absolutely not a database.]
   #v(0.6em)
   #text(size: 9.5pt)[A user's guide to the `worktable!` macro, its queries, its indexes and its
-  persistence tier. Written against 1.9.0-alpha1.]
+  persistence tier. Written against 1.10.0-beta1.]
 ]
 #v(1.2em)
 
@@ -39,10 +39,10 @@ See #link(<persistence>)[Persistence].]
 = Getting started
 
 ```sh
-cargo add worktable@1.9.0-alpha1
+cargo add worktable@1.10.0-beta1
 ```
 
-Until this alpha is published, depend on the reviewed checkout with
+Until this beta is published, depend on the reviewed checkout with
 `worktable = { path = "../WorkTable" }`. A plain `cargo add worktable` selects the
 published release and may not include the APIs described here.
 
@@ -151,7 +151,139 @@ let many = table.select_by_country(44).execute()?;        // Vec<Row>
 optional column must say `using worktables_index`; Arctic supports `String` keys,
 but does not support optional keys.
 
-== 5. Declared queries
+== 5. Mutations and declared queries
+
+These operations are deliberately different. Choose by how much of the row the caller
+owns and whether an absent key is valid:
+
+#text(size: 7.5pt)[
+#table(
+  columns: (1.7fr, 1.05fr, 0.85fr, 2.7fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 5pt,
+  [*operation*], [*input*], [*key absent*], [*meaning*],
+  [`insert(row)`], [complete `Row`], [insert], [Create a new row. An existing primary key returns `PrimaryAlreadyExists`; the caller does not authorize replacement.],
+  [`upsert(row)`], [complete `Row`], [insert], [Insert or replace. The caller declares the complete row authoritative. A row selected earlier can overwrite newer fields if it is later passed here.],
+  [`replace(row)`], [complete `Row`], [`NotFound`], [Replace every field of an existing row. It never creates a missing row, but the supplied row is still a complete authoritative snapshot.],
+  [#stack(spacing: 0.22em, [`update_by_<key>(`], [`key, Columns::`], [`FIELD_SET, value)`])], [declared fields], [`NotFound`], [Change only the selector's declared fields. WorkTable rereads under its mutation lock when safe reconstruction needs the complete row, preserving concurrent changes to other fields.],
+  [#stack(spacing: 0.22em, [`update_in_place_`], [`by_<pk>(key,`], [`Columns::FIELD_SET,`], [`closure)`])], [#stack(spacing: 0.22em, [declared mutable], [archived fields])], [`NotFound`], [Directly mutate a declared, unindexed field set of an existing row. This is the lowest-work path and is restricted to primary-key lookup.],
+)
+]
+
+#text(size: 7.5pt)[
+#block(
+  fill: rgb("#f7f7f4"),
+  inset: 8pt,
+  radius: 2pt,
+  width: 100%,
+  breakable: false,
+)[
+*Pays shipping-schema cost, Apple M4 Max, `taskpolicy -b`.* Persisted
+`CustomerPayment`: autoincrement `u64` private key, packed 16-character Base62
+`payment_id` public key, four secondary indexes, 32,768 rows, 9 balanced
+fresh-process samples. Monetary columns are strings; rerun after typed money.
+Base `b1b9546` uses historical `update(row)` / generated query structs. Final
+`45c015d` uses `replace` and typed selectors. Strings and custom archived
+wrappers take the conservative complete-row `update` path, not in-place.
+
+#table(
+  columns: (1.45fr, 0.95fr, 0.95fr, 0.95fr, 0.85fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*operation*], [*base ns/op*], [*final ns/op*], [*final updates/s*], [*vs in-place*],
+  [`upsert`], [76175], [74430], [13435], [9.83x],
+  [`replace`], [71118], [69518], [14385], [9.18x],
+  [`update`], [11907], [11561], [86500], [1.53x],
+  [`update_in_place`], [7340], [7571], [132082], [1.00x],
+)
+
+#let bar(label, ns, max-ns) = {
+  let frac = ns / max-ns
+  grid(
+    columns: (3.4cm, 1fr, 1.8cm),
+    column-gutter: 6pt,
+    text(size: 7pt, raw(label)),
+    box(width: 100%, height: 7pt, fill: rgb("#e6e6e1"),
+      box(width: frac * 100%, height: 7pt, fill: rgb("#3a6ea5"))),
+    align(right, text(size: 7pt, [#ns ns])),
+  )
+}
+#v(0.3em)
+*Final `45c015d` median ns/op*
+#v(0.15em)
+#bar("upsert", 74430, 74430)
+#v(0.1em)
+#bar("replace", 69518, 74430)
+#v(0.1em)
+#bar("update", 11561, 74430)
+#v(0.1em)
+#bar("update_in_place", 7571, 74430)
+]
+]
+
+#text(size: 7.5pt)[
+#block(
+  fill: rgb("#f7f7f4"),
+  inset: 8pt,
+  radius: 2pt,
+  width: 100%,
+  breakable: false,
+)[
+*Same shipping row, extended campaign, 5 samples, `d4b8aac`.* Indexes on
+that table: unique `payment_id` and `app_id` are WTI; non-unique `symbol` and
+`endpoint_address` are Arctic. There is no `update_range` primitive.
+`range_ids` is consecutive private keys the caller already holds;
+`range_scan` is `range_on` then update each. Workers are disjoint keys.
+`using fxhash` is refused on a persisted table.
+
+The first 8-worker numbers were taken under `taskpolicy -b`. Eight tokio
+tasks did overlap (`overlap_max=8`) but Darwin background QoS held the
+process at ~1.3 cores, so the table looked like "concurrency does almost
+nothing". Inherit policy, same JoinSet:
+
+#table(
+  columns: (0.7fr, 1.5fr, 1.0fr, 1.1fr, 0.8fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*workers*], [*mutation*], [*updates/s*], [*cores*], [*vs 1*],
+  [1], [`replace`], [139920], [2.00], [1.00x],
+  [8], [`replace`], [177017], [6.14], [1.27x],
+  [12], [`replace`], [159189], [7.50], [1.14x],
+  [1], [`update_in_place`], [714567], [1.95], [1.00x],
+  [8], [`update_in_place`], [552544], [6.74], [0.77x],
+  [12], [`update_in_place`], [490803], [9.03], [0.69x],
+)
+
+Eight workers burn six cores for 27% more replace/s. In-place gets *worse*.
+On a unique `u64` secondary, 1-thread Congee/WTI/Arctic replace are within a
+few percent; at 8 workers all three lose ~22% (Congee least-bad, not Arctic).
+
+#table(
+  columns: (1.6fr, 1.2fr, 1.2fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*range (256 keys)*], [*ns/row*], [*updates/s*],
+  [`range_ids`], [6264], [159634],
+  [`range_scan`], [58262], [17164],
+)
+
+#table(
+  columns: (1.1fr, 1.3fr, 1.1fr, 1.2fr),
+  stroke: 0.4pt + rgb("#cccccc"),
+  inset: 4pt,
+  [*backend*], [*mutation*], [*ns/op*], [*updates/s*],
+  [WTI persist], [`replace`], [5636], [177444],
+  [Arctic persist], [`replace`], [3923], [254934],
+  [Congee persist], [`replace`], [3938], [253928],
+  [FxHash `vec`], [`upsert`], [56], [17733214],
+)
+
+FxHash is in-memory only. Arctic/Congee persisted `replace` on a unique
+`u64` secondary sit together; WTI `replace` is slower on that fixture.
+]
+]
+
+Declare targeted updates, deletes and direct archived-field mutations with the table:
 
 ```rust
 worktable! (
@@ -168,23 +300,56 @@ worktable! (
         delete: {
             ById() by id,               // empty parens: names no columns
         },
-        in_place: {
+        update_in_place: {
             StateById(state) by id,     // only `by <primary key>` is supported
+            AmountAndStateById(amount, state) by id,
         },
     },
 );
 ```
 
-CamelCase declared, snake_case generated:
+The lookup column names the method and the typed selector names the changed
+column. A one-column update takes that column's Rust value directly:
 
 ```rust
-table.update_amount_by_id(AmountByIdQuery { amount: 900 }, 1).await?;  // name + "Query"
+table.update_by_id(1, InvoiceColumns::AMOUNT, 900).await?;
 table.delete_by_id(1).await?;
-table.update_state_by_id_in_place(|state| *state = 2.into(), 1).await?;
+table.update_in_place_by_id(1, InvoiceColumns::STATE, |state| *state = 2.into()).await?;
+table.update_in_place_by_id(
+    1,
+    InvoiceColumns::AMOUNT_AND_STATE,
+    |(amount, state)| {
+        *amount = 925.into();
+        *state = 3.into();
+    },
+).await?;
 ```
 
-`update` reads, changes and writes. `in_place` mutates without selecting first and locks
-internally, so it is safe from several threads without the caller holding anything.
+`InvoiceColumns::AMOUNT` is a generated zero-sized selector. Its sealed dispatch
+implementation exists only for the declared `amount by id` combination and its
+value type is `u64`, so an undeclared selector/key combination or wrong value
+type fails to compile. The selector is monomorphized; it allocates nothing and
+uses no dynamic dispatch. A declaration over `name, amount` exposes the atomic
+selector `InvoiceColumns::NAME_AND_AMOUNT` and takes its generated query struct.
+Selector constants preserve source spelling in uppercase: `attr1` becomes
+`ATTR1`, while `some_field` becomes `SOME_FIELD`.
+
+A declared `update` reads, changes and writes only its named fields. Normal declared
+updates accept owned Rust values and are the safe default for strings, options and
+application-defined wrappers. An archived string contains a relative pointer, so
+WorkTable may reconstruct the complete row rather than move only that field's archived
+bytes. It rereads under the full mutation lock first, preserving concurrent changes to
+other fields. The macro cannot inspect an external type such as `EncryptedSecret` and
+prove whether its archived form contains relative pointers, so unknown custom types take
+that conservative path.
+
+`update_in_place` mutates one declared field set without selecting first and locks internally.
+A multi-column declaration passes a tuple of mutable archived fields to one closure, so the
+set changes under the same row lock and persistence operation. Use it when the application
+can safely edit the archived representation directly, as with scalars or fixed `#[repr(u8)]`
+enums. Do not copy an archived string, vector or pointer-bearing wrapper
+from another buffer into an `update_in_place` closure. Persisted in-place queries enqueue the
+changed slot bytes; they do not skip durability.
 
 == 6. Selects you do not declare
 
@@ -350,12 +515,13 @@ column, for a width the key cannot count to (`u16` beside a `u8` key declares 65
 into a partition that holds 256), and for `persist: true`, which it has no engine to
 honour.
 
-`queries:` works. An `update` or `delete` keyed by the primary key generates the same
-method name and takes the same `<Name>Query` struct as the paged table, so the call reads
-the same; it is not `async` and does not return `WorkTableError`, so a call cannot move
-between the shapes by accident. A query keyed by any other column is refused, because a
+`queries:` works. An `update` keyed by the primary key uses the same
+`update_by_<key>(key, Columns::FIELD_SET, value)` form as the paged table; a
+multi-column selector takes the same generated query struct. A delete keeps its
+declared method name. Dense calls are synchronous and return `Option`, so a call
+cannot move between the shapes by accident. A query keyed by any other column is refused, because a
 dense partition has no secondary index and scanning instead would turn a keyed operation
-into a linear one without saying so. `in_place` is refused as a synonym: every update
+into a linear one without saying so. `update_in_place` is refused: every update
 here is already in place.
 
 Note that `memory_by_key` and `memory_total` cannot see any of this. They report
@@ -426,10 +592,13 @@ error naming what to use instead, rather than being accepted and ignored.
 Declared `queries` are supported. They use equality on a primary or secondary index,
 including `fxhash`, and run synchronously through `&mut self`. An update declaration
 such as `StateById(state) by id` emits
-`update_state_by_id(StateByIdQuery { state: 7 }, &id) -> usize`; a delete declaration
+`update_by_id(id, TicketColumns::STATE, 7) -> usize`; a delete declaration
 `ByOwner() by owner` emits `delete_by_owner(&owner) -> usize`. The return value counts
-affected rows. `in_place: { Status(state) by id }` emits
-`update_status_in_place(|state| *state = 42, &id) -> usize` and accepts one column.
+affected rows. `update_in_place: { Status(state) by id }` emits
+`update_in_place_by_id(id, TicketColumns::STATE, |state| *state = 42) -> usize`
+for one column. A declaration such as `StateAndRevisionById(state, revision) by id`
+uses `TicketColumns::STATE_AND_REVISION` and passes `|(state, revision)| ...` to
+one closure.
 These methods belong to the table, not mutable wrappers on the shared partition set.
 
 Vec edits validate a cloned candidate before replacing a row. A primary or unique
@@ -437,7 +606,7 @@ secondary-key collision panics with that row and its indexes unchanged; a panick
 edit closure also leaves the stored row unchanged. Replacing an existing row through
 `upsert` checks unique secondary keys first. Multi-row queries apply one row at a time
 and are not transactions: earlier successful edits remain if a later edit fails.
-Cloning owned fields is part of this mutation cost, including Vec `in_place` queries.
+Cloning owned fields is part of this mutation cost, including Vec `update_in_place` queries.
 
 === Bytes and back: `unload` and `load`
 
@@ -576,13 +745,13 @@ worktable! {
     columns: { id: u64 primary_key, total: u64 },
     queries: {
         update runtime scheduled: { TotalById(total) by id },
-        in_place runtime scheduled: { TotalById(total) by id },
+        update_in_place runtime scheduled: { TotalById(total) by id },
     }
 }
 let table = Arc::new(OrdersWorkTable::default());
 table.insert(OrdersRow { id: 1, total: 10 }).await?;
-table.update_total_by_id(TotalByIdQuery { total: 20 }, 1u64).await?;
-table.update_total_by_id_in_place(|total| *total = 21.into(), 1u64).await?;
+table.update_by_id(1, OrdersColumns::TOTAL, 20).await?;
+table.update_in_place_by_id(1, OrdersColumns::TOTAL, |total| *total = 21.into()).await?;
 let rows = table.select_all()
     .order_on(OrdersRowFields::Total, Order::Desc)
     .limit(100).runtime(wide).execute_async().await?;
@@ -667,7 +836,7 @@ worktable! (
     queries: {
         update: { ScoreById(score) by id },
         delete: { ById() by id },
-        in_place: { ScoreById(score) by id },
+        update_in_place: { ScoreById(score) by id },
     },
     config: {
         page_size: 4096,
@@ -911,7 +1080,7 @@ more than halved randomized leaf lookup and was faster for four-client in-memory
 insertion. Select that tradeoff at the Cargo callsite:
 
 ```toml
-worktable = { version = "^1.9.0-alpha1", default-features = false,
+worktable = { version = "^1.10.0-beta1", default-features = false,
   features = ["std", "vanilla-index", "wti-predictable-search"] }
 ```
 
@@ -943,9 +1112,9 @@ Use `execute()` to materialize those builders. Unique secondary-index selects re
 was queued, not committed to stable storage. `delete_many(Vec<Key>).await` and
 `delete_range(range).await` return deleted keys and may report a `BatchDeleteError` with
 partial progress. Range deletion walks the keys present at that walk; it does not promise
-to delete concurrent future inserts into the range. `reinsert(old, new).await` is the
-explicit row-replacement operation; ordinary updates should use `upsert` or declared
-queries so secondary indexes stay synchronized.
+to delete concurrent future inserts into the range. Use `replace(row).await` when
+the complete row is authoritative, or a declared update when only selected
+columns are authoritative; both keep secondary indexes synchronized.
 
 With `autoincrement`, get a key from `get_next_pk()`, convert it into the row field, then
 insert. `reserve_pks(count)` reserves a disjoint range for a bulk producer. Reserved keys
@@ -1160,7 +1329,7 @@ opened as ordinary WorkTable space files.
 `worktable_version!` and `migration_engine!` describe explicit versioned conversions;
 see `docs/migration.md` and the executable `tests/migration` fixtures for each required
 trait and transformation. They do not automatically infer data migration from a changed
-schema. For this 1.9 alpha, a planned rebuild/data wipe is supported by the release plan;
+schema. For this 1.9 beta, a planned rebuild/data wipe is supported by the release plan;
 do not infer cross-version file compatibility from a successful same-version reopen.
 `worktable::worktable_dsl` exposes parsing, checking and canonical schema emission for
 tools; the TypeScript emitter is tested against that Rust source of truth.

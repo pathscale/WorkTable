@@ -53,7 +53,7 @@ async fn unique_update_does_not_mutate_a_row_that_stole_the_value() {
 
     let update = {
         let table = table.clone();
-        tokio::spawn(async move { table.update_value_by_code(ValueByCodeQuery { value: 99 }, 10).await })
+        tokio::spawn(async move { table.update_by_code(10, WrongRowColumns::VALUE, 99).await })
     };
 
     // Wait until the update registered its operation lock (it replaces the

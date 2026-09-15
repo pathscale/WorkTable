@@ -119,7 +119,7 @@ A **fixed, ordered prefix**, then a free-order section list.
 | 5, required with 4 | `partition_max_size:` | rows per partition, as an index width |
 | any order | `columns:` | the row and its primary key |
 | any order | `indexes:` | secondary indexes |
-| any order | `queries:` | generated `update` / `delete` / `in_place` |
+| any order | `queries:` | generated `update` / `delete` / `update_in_place` |
 | any order | `config:` | `page_size`, `row_derives` |
 
 The prefix is genuinely ordered: `parse_name` reads the first token and errors if
@@ -202,7 +202,7 @@ independent of the backend and combines with it.
 
 ## Queries
 
-Three kinds. CamelCase in the declaration, snake_case in the generated method.
+Three kinds. The declaration names each allowed lookup and field set.
 
 ```rust
 queries: {
@@ -212,23 +212,29 @@ queries: {
     delete: {
         ByName() by name,
     },
-    in_place: {
+    update_in_place: {
         SomeValueById(some_value) by id,
     }
 }
 ```
 
-**`update`** generates `update_amount_by_id(AmountByIdQuery { amount }, id)`. The
-query struct is the name plus `Query`.
+**`update`** enables
+`update_by_id(id, OrdersColumns::AMOUNT, amount)`. The zero-sized selector is
+table-scoped and fixes both the allowed field set and value type. A multi-field
+declaration uses one `Columns::FIELD_AND_FIELD` selector and its generated
+`<Name>Query` value so the field set stays atomic.
 
 **`delete`** generates `delete_by_name(name)`. Empty parentheses because a delete
 names no columns.
 
-**`in_place`** generates `update_some_value_by_id_in_place(id, |value| ...)`, which
+**`update_in_place`** enables
+`update_in_place_by_id(id, OrdersColumns::SOME_VALUE, |value| ...)`, which
 mutates without selecting first. Its locking is internal, so it is safe from
 several threads without the caller holding anything — which is also why it is a
-*different concurrency point* from `update`. **Only `by {pk_field}` is
-supported.**
+*different concurrency point* from `update`. A multi-column declaration uses
+one field-set selector such as `OrdersColumns::STATUS_AND_LAST_USED_AT` and a
+tuple closure `|(status, last_used_at)| ...`; the declared set changes under one
+row lock. **Only `by {pk_field}` is supported.**
 
 ## Selects, which are not declared
 
@@ -366,7 +372,7 @@ concurrency points and they want opposite things:
 | query fan-out | does not exist yet | independent chunks | 1.99x-2.84x on orderbook upsert/delete |
 
 The `queries:` sections already group by concurrency point: everything in
-`update:` goes through the same lock path, and `in_place:` is a different path by
+`update:` goes through the same lock path, and `update_in_place:` is a different path by
 design. So the annotation belongs on the section.
 
 ## Three positions, one keyword
@@ -407,7 +413,7 @@ worktable!(
             Fill(qty) by id,
             Cancel(qty) by symbol,
         },
-        in_place runtime fast_local: {
+        update_in_place runtime fast_local: {
             Bump(qty) by id,
         },
         delete runtime wide: {
@@ -524,7 +530,7 @@ runtime does this query use" and it is visible at the place you are reading.
 **The cost of that choice**, recorded so it is not a surprise: adding a section
 annotation becomes a breaking change for callers already using `.runtime()`. The
 window is narrow today — `.runtime()` exists only on select builders, and selects
-are not declared in `queries:`, so `update` / `delete` / `in_place` annotations
+are not declared in `queries:`, so `update` / `delete` / `update_in_place` annotations
 can never collide with it. It only bites if a `select` section annotation is added
 later.
 

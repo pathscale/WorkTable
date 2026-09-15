@@ -87,20 +87,20 @@ pub fn validate_arctic_page_size(columns: &Columns, config: Option<&crate::model
     Ok(())
 }
 
-/// `in_place` queries hand the caller a mutable reference to the archived
+/// `update_in_place` queries hand the caller a mutable reference to the archived
 /// column bytes and bypass all index maintenance, so a column that any index
 /// is built over cannot be mutated in place: the index would keep resolving
 /// the old value.
 pub fn validate_in_place_queries(columns: &Columns, queries: &crate::model::Queries) -> syn::Result<()> {
-    for (name, op) in &queries.in_place {
+    for (name, op) in &queries.updates_in_place {
         for column in &op.columns {
             if columns.indexes.values().any(|index| &index.field == column) {
                 return Err(syn::Error::new(
                     column.span(),
                     format!(
-                        "in_place query `{name}` mutates column `{column}`, which is covered by an index; \
+                        "update_in_place query `{name}` mutates column `{column}`, which is covered by an index; \
                          indexed columns cannot be updated in place because secondary indexes are not \
-                         maintained on this path. Use an `update` query instead"
+                        maintained on this path. Use an `update` query instead"
                     ),
                 ));
             }
@@ -382,7 +382,7 @@ pub fn validate_query_storage(
             .update_runtime
             .as_ref()
             .or(queries.delete_runtime.as_ref())
-            .or(queries.in_place_runtime.as_ref())
+            .or(queries.update_in_place_runtime.as_ref())
         {
             return Err(syn::Error::new(
                 profile.span(),
@@ -404,19 +404,19 @@ pub fn validate_query_storage(
             ));
         }
     }
-    for (name, op) in &queries.in_place {
+    for (name, op) in &queries.updates_in_place {
         if columns.primary_keys.len() != 1 || columns.primary_keys.first() != Some(&op.by) {
             return Err(syn::Error::new(
                 op.by.span(),
                 format!(
-                    "in_place query `{name}` requires selection by the single-column primary key; use an update query for an indexed predicate"
+                    "update_in_place query `{name}` requires selection by the single-column primary key; use an update query for an indexed predicate"
                 ),
             ));
         }
         if op.columns.iter().any(|column| columns.primary_keys.contains(column)) {
             return Err(syn::Error::new(
                 name.span(),
-                "in_place queries cannot mutate primary key columns; use an update query to maintain indexes",
+                "update_in_place queries cannot mutate primary key columns; use an update query to maintain indexes",
             ));
         }
     }

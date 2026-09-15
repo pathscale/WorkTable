@@ -6,8 +6,8 @@ use core::hash::Hash;
 use core::marker::PhantomData;
 use hashbrown::HashMap;
 
+use data_bucket::Link;
 use data_bucket::page::PageId;
-use data_bucket::{Link, SizeMeasurable};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use worktable_codegen::{MemStat, worktable};
@@ -261,7 +261,7 @@ where
                 .select_by_pos(old_pos)
                 .ok_or_else(|| eyre::eyre!("batch metadata position {old_pos} is missing during reindex"))?;
             self.info_wt
-                .update_pos_by_id(PosByIdQuery { pos: old_pos - 1 }, row.id)
+                .update_by_id(row.id, BatchInnerColumns::POS, old_pos - 1)
                 .await?;
         }
         Ok(())

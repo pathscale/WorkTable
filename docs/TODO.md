@@ -66,7 +66,7 @@ results were rerun across all three local trees before drawing conclusions.
 ### WT DSL expansion and trailing commas are deterministic
 
 The trailing-comma parser fix was already present on the beta.17 branch and is
-covered for `config`, `delete`, `in_place`, block order, and the no-comma form.
+covered for `config`, `delete`, `update_in_place`, block order, and the no-comma form.
 
 Expansion is now deterministic too. `columns_map`, query maps, and generated
 unique-type sets preserve declaration order with `IndexMap`/`IndexSet`. The

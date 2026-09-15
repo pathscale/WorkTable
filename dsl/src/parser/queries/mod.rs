@@ -48,15 +48,17 @@ impl Parser {
                         queries.deletes = deletes;
                         queries.delete_runtime = runtime;
                     }
-                    "in_place" => {
-                        let (runtime, in_place) = parser.parse_in_place()?;
-                        queries.in_place = in_place;
-                        queries.in_place_runtime = runtime;
+                    "update_in_place" => {
+                        let (runtime, updates) = parser.parse_updates_in_place()?;
+                        queries.updates_in_place = updates;
+                        queries.update_in_place_runtime = runtime;
                     }
                     other => {
                         return Err(syn::Error::new(
                             ident.span(),
-                            format!("Unexpected token `{other}`; expected one of `update`, `delete`, `in_place`"),
+                            format!(
+                                "Unexpected token `{other}`; expected one of `update`, `delete`, `update_in_place`"
+                            ),
                         ));
                     }
                 }
@@ -83,14 +85,14 @@ mod tests {
             queries: {
                 update: { Fill(qty) by id },
                 delete: { BySymbol() by symbol },
-                in_place: { Bump(qty) by id },
+                update_in_place: { Bump(qty) by id },
             }
         };
         let queries = Parser::new(tokens).parse_queries().unwrap();
 
         assert!(queries.update_runtime.is_none());
         assert!(queries.delete_runtime.is_none());
-        assert!(queries.in_place_runtime.is_none());
+        assert!(queries.update_in_place_runtime.is_none());
     }
 
     #[test]
@@ -99,17 +101,17 @@ mod tests {
             queries: {
                 update runtime fast_local: { Fill(qty) by id },
                 delete runtime wide: { BySymbol() by symbol },
-                in_place runtime bulk: { Bump(qty) by id },
+                update_in_place runtime bulk: { Bump(qty) by id },
             }
         };
         let queries = Parser::new(tokens).parse_queries().unwrap();
 
         assert_eq!(queries.update_runtime.unwrap(), "fast_local");
         assert_eq!(queries.delete_runtime.unwrap(), "wide");
-        assert_eq!(queries.in_place_runtime.unwrap(), "bulk");
+        assert_eq!(queries.update_in_place_runtime.unwrap(), "bulk");
         assert_eq!(queries.updates.len(), 1);
         assert_eq!(queries.deletes.len(), 1);
-        assert_eq!(queries.in_place.len(), 1);
+        assert_eq!(queries.updates_in_place.len(), 1);
     }
 
     #[test]
@@ -117,13 +119,13 @@ mod tests {
         let tokens = quote! {
             queries: {
                 update runtime fast_local: { Fill(qty) by id },
-                in_place: { Bump(qty) by id },
+                update_in_place: { Bump(qty) by id },
             }
         };
         let queries = Parser::new(tokens).parse_queries().unwrap();
 
         assert_eq!(queries.update_runtime.unwrap(), "fast_local");
-        assert!(queries.in_place_runtime.is_none());
+        assert!(queries.update_in_place_runtime.is_none());
     }
 
     #[test]
@@ -139,5 +141,15 @@ mod tests {
             error.contains("`nagoya` is a runtime backend, not a profile name"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn legacy_in_place_section_is_rejected() {
+        let tokens = quote! {
+            queries: { in_place: { Bump(qty) by id } }
+        };
+        let error = Parser::new(tokens).parse_queries().unwrap_err().to_string();
+
+        assert!(error.contains("Unexpected token `in_place`"), "{error}");
     }
 }

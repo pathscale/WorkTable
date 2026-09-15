@@ -104,7 +104,7 @@ SIGMOD R4 (2026-10-17). DaMoN 2027 CFP not posted.
 
 ## Update 2026-09-11: release evidence and paper scope
 
-The release checkout is WorkTable 1.9.0-alpha1. Its runtime and row-lock
+The release checkout is WorkTable 1.9.0-beta1. Its runtime and row-lock
 implementation differs from the earlier paper: inspect `src/lock/map.rs`,
 `src/runtime/` and the selected dependency graph at the pinned evaluation
 commit before describing them.

@@ -33,7 +33,7 @@ async fn update() {
     let row = TestRow { id: 1, test: [1; 20] };
     let pk = table.insert(row.clone()).await.unwrap();
     let new_row = TestRow { id: 1, test: [2; 20] };
-    table.update(new_row.clone()).await.unwrap();
+    table.replace(new_row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, new_row);
@@ -48,7 +48,7 @@ async fn update_in_a_middle() {
         let _ = table.insert(row.clone()).await.unwrap();
     }
     let new_row = TestRow { id: 3, test: [1; 20] };
-    table.update(new_row.clone()).await.unwrap();
+    table.replace(new_row.clone()).await.unwrap();
     let selected_row = table.select(3).unwrap();
 
     assert_eq!(selected_row, new_row);
@@ -60,7 +60,10 @@ async fn update_query() {
     let row = TestRow { id: 1, test: [1; 20] };
     let pk = table.insert(row.clone()).await.unwrap();
     let q = TestByIdQuery { test: [2; 20] };
-    table.update_test_by_id(q.clone(), pk.clone()).await.unwrap();
+    table
+        .update_by_id(pk.clone(), TestColumns::TEST, (q.clone()).test)
+        .await
+        .unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row.test, q.test);
@@ -99,7 +102,7 @@ async fn update_i() {
     let row = TestIRow { id: 1, test: [1; 20] };
     let pk = table.insert(row.clone()).await.unwrap();
     let new_row = TestIRow { id: 1, test: [2; 20] };
-    table.update(new_row.clone()).await.unwrap();
+    table.replace(new_row.clone()).await.unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row, new_row);
@@ -114,7 +117,7 @@ async fn update_in_a_middle_i() {
         let _ = table.insert(row.clone()).await.unwrap();
     }
     let new_row = TestIRow { id: 3, test: [1; 20] };
-    table.update(new_row.clone()).await.unwrap();
+    table.replace(new_row.clone()).await.unwrap();
     let selected_row = table.select(3).unwrap();
 
     assert_eq!(selected_row, new_row);
@@ -126,7 +129,10 @@ async fn update_query_i() {
     let row = TestIRow { id: 1, test: [1; 20] };
     let pk = table.insert(row.clone()).await.unwrap();
     let q = TestIByIdQuery { test: [2; 20] };
-    table.update_test_i_by_id(q.clone(), pk.clone()).await.unwrap();
+    table
+        .update_by_id(pk.clone(), TestIColumns::TEST, (q.clone()).test)
+        .await
+        .unwrap();
     let selected_row = table.select(pk).unwrap();
 
     assert_eq!(selected_row.test, q.test);

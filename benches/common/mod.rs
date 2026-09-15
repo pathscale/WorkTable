@@ -53,7 +53,7 @@ worktable!(
         another_idx: another,
     },
     queries: {
-        in_place: {
+        update_in_place: {
             ValById(val) by id,
         }
         update: {
