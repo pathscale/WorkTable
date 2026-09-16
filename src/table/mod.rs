@@ -225,6 +225,43 @@ where
         self.pk_gen.reserve(count)
     }
 
+    /// Resolves `pk` to a link and applies `read`, retrying while the link the
+    /// index hands back keeps changing under the read.
+    ///
+    /// A failed read is ambiguous on its own: the row may genuinely be absent
+    /// (ghosted, deleted) or it may have just moved, in which case the link is
+    /// stale rather than wrong. Re-looking the key up distinguishes the two --
+    /// an unchanged link means the row really is gone, a changed one means try
+    /// again at the new address.
+    ///
+    /// Shared by [`Self::select`], [`Self::select_ref`] and
+    /// [`Self::select_with`], which differ only in what they do with the link.
+    /// The caller takes the epoch pin, because `select_ref` hands that pin out
+    /// in its return value and the other two only need it held.
+    ///
+    /// The bound is the pre-existing one: 64 attempts, after which this gives
+    /// up and reports absence. A row moving 64 times while one reader looks at
+    /// it is not a case this distinguishes from deletion.
+    #[inline]
+    fn with_link_retry<T, F>(&self, pk: &PrimaryKey, mut read: F) -> Option<T>
+    where
+        F: FnMut(Link) -> Result<T, in_memory::PagesExecutionError>,
+    {
+        for _ in 0..64 {
+            let link = self.primary_index.pk_map.lookup_for_select(pk).map(Into::into)?;
+            if let Ok(value) = read(link) {
+                return Some(value);
+            }
+
+            let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(pk).map(Into::into);
+            if current_link == Some(link) {
+                return None;
+            }
+            core::hint::spin_loop();
+        }
+        None
+    }
+
     /// Selects `Row` from table identified with provided primary key. Returns `None` if no value presented.
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]
     pub fn select(&self, pk: PrimaryKey) -> Option<Row>
@@ -235,19 +272,7 @@ where
             Deserialize<<Row as StorableRow>::WrappedRow, HighDeserializer<rkyv::rancor::Error>>,
     {
         let _read_guard = self.data.read_guard();
-        for _ in 0..64 {
-            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
-            if let Ok(row) = self.data.select_non_ghosted(link) {
-                return Some(row);
-            }
-
-            let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
-            if current_link == Some(link) {
-                return None;
-            }
-            core::hint::spin_loop();
-        }
-        None
+        self.with_link_retry(&pk, |link| self.data.select_non_ghosted(link))
     }
 
     /// Point-read that yields a pin-guard plus archived inner row.
@@ -262,19 +287,11 @@ where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: ArchivedRowWrapper,
     {
         let pin = self.data.read_guard();
-        for _ in 0..64 {
-            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
-            if let Ok(copy) = self.data.copy_non_ghosted(link) {
-                return Some(SelectRef::new(pin, copy));
-            }
-
-            let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
-            if current_link == Some(link) {
-                return None;
-            }
-            core::hint::spin_loop();
-        }
-        None
+        // The copy is taken under the retry and the pin is attached to it
+        // afterwards, because the pin is moved into the result and so cannot be
+        // captured by a closure the loop calls more than once.
+        let copy = self.with_link_retry(&pk, |link| self.data.copy_non_ghosted(link))?;
+        Some(SelectRef::new(pin, copy))
     }
 
     /// Point-read that applies `f` to the archived inner row and returns `f`'s
@@ -288,20 +305,7 @@ where
         F: FnMut(&<<<Row as StorableRow>::WrappedRow as Archive>::Archived as ArchivedRowWrapper>::Inner) -> T,
     {
         let _pin = self.data.read_guard();
-        for _ in 0..64 {
-            let link = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into)?;
-            match self.data.with_non_ghosted(link, &mut f) {
-                Ok(value) => return Some(value),
-                Err(_) => {
-                    let current_link: Option<Link> = self.primary_index.pk_map.lookup_for_select(&pk).map(Into::into);
-                    if current_link == Some(link) {
-                        return None;
-                    }
-                    core::hint::spin_loop();
-                }
-            }
-        }
-        None
+        self.with_link_retry(&pk, |link| self.data.with_non_ghosted(link, &mut f))
     }
 
     #[cfg_attr(feature = "perf_measurements", performance_measurement(prefix_name = "WorkTable"))]
