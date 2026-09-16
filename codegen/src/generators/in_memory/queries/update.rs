@@ -335,52 +335,16 @@ impl InMemoryGenerator {
             let name_generator = WorktableNameGenerator::from_table_name(self.name.to_string());
             let const_name = name_generator.get_page_inner_size_const_ident();
 
-            if touches_index {
-                quote! {
-                    {
-                        drop(_guard);
-                        let pending_lock = { #full_row_lock };
-                        let _guard = pending_lock.into_guard_with_mutation();
-
-                        let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
-                        let mut row_new = row_old.clone();
-                        #(#row_updates)*
-                        self.reinsert(row_old, row_new).await?;
-                        return core::result::Result::Ok(());
-                    }
-                }
-            } else {
-                quote! {
-                    {
-                        // An opaque archived field may contain relative pointers.
-                        // Rebuild the complete row under its full lock so every
-                        // pointer is based in the destination slot, then retain the
-                        // current link when the serialized length still fits.
-                        drop(_guard);
-                        let pending_lock = { #full_row_lock };
-                        let _guard = pending_lock.into_guard_with_mutation();
-
-                        let row_old = self.0.select(pk.clone()).ok_or(WorkTableError::NotFound)?;
-                        let mut row_new = row_old.clone();
-                        #(#row_updates)*
-                        let current_link: Link = self.0
-                            .primary_index
-                            .pk_map
-                            .get_value(&pk)
-                            .map(Into::into)
-                            .ok_or(WorkTableError::NotFound)?;
-                        let in_place_ok = unsafe {
-                            self.0.data.update_in_place::<{ #const_name }>(row_new.clone(), current_link).is_ok()
-                        };
-                        if in_place_ok {
-                            return core::result::Result::Ok(());
-                        }
-
-                        self.reinsert(row_old, row_new).await?;
-                        return core::result::Result::Ok(());
-                    }
-                }
-            }
+            // Nothing extra on a successful in-place write: an in-memory table
+            // has no CDC stream to publish it to. The persisted generator passes
+            // the operation there instead. See `opaque_rebuild`.
+            crate::generators::opaque_rebuild::gen_rebuild_arm(
+                &row_updates,
+                &full_row_lock,
+                &const_name,
+                touches_index,
+                &quote! {},
+            )
         } else if let (Some(f), false) = (unsized_fields, touches_index) {
             let fields_check: Vec<_> = f
                 .iter()
@@ -1016,7 +980,9 @@ impl InMemoryGenerator {
                     if self.0.data.select_non_ghosted(link)?.#by_field != by {
                         continue;
                     }
-                    let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
+                    // SAFETY: the table owns `lock_manager` and is borrowed
+                    // for this whole operation, so the map outlives the guard.
+                    let _mutation_guard = unsafe { self.0.lock_manager.mutation_guard(&pk) };
                     let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row)
                         .map_err(|_| WorkTableError::SerializeError)?;
 
