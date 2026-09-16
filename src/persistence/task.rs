@@ -1316,6 +1316,60 @@ mod lifecycle_tests {
         }
     }
 
+    /// The busy-drop join must give up on a worker that never finishes.
+    ///
+    /// This is the half of the busy-drop change that the panic-containment
+    /// test does not reach: a hung file or object-store write, an engine
+    /// future that stalls, or a drop reached from the engine worker itself.
+    /// `nagoya::block_on` parks with no deadline, so without the bound this
+    /// hangs the dropping thread -- which on a `current_thread` runtime is the
+    /// only thread there is -- with no diagnostic.
+    #[test]
+    fn a_worker_that_never_finishes_does_not_park_the_dropping_thread_forever() {
+        let runtime = nagoya::runtime::Runtime::new(1);
+        let released = Arc::new(AtomicBool::new(false));
+        let handle = {
+            let released = released.clone();
+            runtime.spawn(async move {
+                while !released.load(Ordering::Acquire) {
+                    nagoya::yield_now().await;
+                }
+            })
+        };
+
+        let started = std::time::Instant::now();
+        let finished = join_with_timeout(handle, Duration::from_millis(50));
+        let waited = started.elapsed();
+
+        assert!(!finished, "a worker still running must not be reported as joined");
+        assert!(
+            waited < Duration::from_secs(5),
+            "the join must be bounded by its timeout, waited {waited:?}"
+        );
+        // Detached, not cancelled: the worker is still there to finish its
+        // in-flight write, which is what `JoinHandle::drop` guarantees and what
+        // this code did before the join existed.
+        released.store(true, Ordering::Release);
+    }
+
+    /// The same join must still return promptly when the worker does finish,
+    /// so the ordinary drain-and-fsync path is not silently paying the timeout.
+    #[test]
+    fn a_worker_that_finishes_is_joined_without_waiting_out_the_timeout() {
+        let runtime = nagoya::runtime::Runtime::new(1);
+        let handle = runtime.spawn(async {});
+
+        let started = std::time::Instant::now();
+        assert!(
+            join_with_timeout(handle, Duration::from_secs(30)),
+            "a completed worker must be reported as joined"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "joining a finished worker must not wait out the timeout"
+        );
+    }
+
     /// A worker that stops publishes a terminal state instead of leaving its
     /// waiters parked, and refuses operations afterwards.
     ///
@@ -1780,6 +1834,61 @@ pub struct PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, Availa
     phantom_data: PhantomData<AvailableIndexes>,
 }
 
+/// How long a busy `Drop` waits for the engine worker before detaching it.
+///
+/// Long enough that an ordinary drain and fsync finishes inside it, short
+/// enough that a wedged write (a stalled object-store request, an engine future
+/// that never completes, a drop reached from the engine worker itself) does not
+/// hold the dropping thread forever. On expiry the work is not abandoned: the
+/// handle is detached and the worker runs on, which is exactly what this code
+/// did before the join was introduced.
+const BUSY_DROP_JOIN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Runs `handle` to completion on this thread, giving up after `timeout`.
+///
+/// Returns whether the task finished. `nagoya::block_on` is the unbounded form
+/// and parks on a `Signal` with no deadline, which is not acceptable inside a
+/// destructor: see the note on [`PersistenceTask::drop`]. On expiry the handle
+/// is dropped, and `nagoya::JoinHandle::drop` detaches rather than cancels, so
+/// an in-flight persistence future is never cut in half by this.
+fn join_with_timeout<T>(handle: JoinHandle<T>, timeout: Duration) -> bool {
+    use alloc::task::Wake;
+    use core::future::Future;
+    use core::pin::pin;
+    use core::task::{Context, Waker};
+    use std::time::Instant;
+
+    /// Unparks the dropping thread when the engine task makes progress.
+    struct Unpark(std::thread::Thread);
+
+    impl Wake for Unpark {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    let deadline = Instant::now() + timeout;
+    let waker = Waker::from(Arc::new(Unpark(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let mut handle = pin!(handle);
+
+    loop {
+        if handle.as_mut().poll(&mut context).is_ready() {
+            return true;
+        }
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return false;
+        };
+        // A wake that landed before this park leaves a permit, so this cannot
+        // miss one; a spurious return is absorbed by re-polling.
+        std::thread::park_timeout(remaining);
+    }
+}
+
 impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     for PersistenceTask<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 {
@@ -1797,6 +1906,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
     /// worker is private to this task, so a busy drop instead joins that worker
     /// after requesting close. This keeps an immediate same-path reopen from
     /// racing the last writes.
+    ///
+    /// That join is **bounded**. `Drop` runs on whatever thread drops the
+    /// table, which may be an executor thread (the only one, on a
+    /// `current_thread` runtime) and may already be unwinding from a panic. An
+    /// unbounded park there turns a hung file or object-store write into a hung
+    /// process with no diagnostic. After [`BUSY_DROP_JOIN_TIMEOUT`] the handle
+    /// is dropped instead, which detaches rather than cancels, so the worker
+    /// still finishes its in-flight write exactly as it did before this join
+    /// existed; the difference is that the caller is told rather than stalled.
     fn drop(&mut self) {
         match self.engine_task_handle.as_ref() {
             None => return,
@@ -1831,11 +1949,21 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
             }
         } else if let Some(handle) = self.engine_task_handle.take() {
             // The engine owns a dedicated one-worker runtime. Joining here
-            // cannot occupy the worker that must make this task progress. A
-            // join rethrows a worker panic, which must not escape a destructor
-            // (and would abort the process if this drop is already unwinding).
+            // cannot occupy the worker that must make this task progress --
+            // but note that a drop reached *from* that worker would
+            // self-deadlock, which the timeout below also bounds. A join
+            // rethrows a worker panic, which must not escape a destructor (and
+            // would abort the process if this drop is already unwinding).
             // `WorkerCompletionGuard` records that panic in the lifecycle.
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| nagoya::block_on(handle)));
+            let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                join_with_timeout(handle, BUSY_DROP_JOIN_TIMEOUT)
+            }));
+            if matches!(joined, Ok(false)) {
+                tracing::error!(
+                    "PersistenceTask dropped with work in flight and the engine did not finish within {:?}; it keeps draining detached and then stops, but its errors can no longer be observed. Call close() (or wait_for_ops() before dropping) to guarantee a clean shutdown.",
+                    BUSY_DROP_JOIN_TIMEOUT
+                );
+            }
         }
     }
 }
