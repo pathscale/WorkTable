@@ -39,7 +39,10 @@ fn inserting_under_a_held_mutation_gate_completes() {
     let pk: UpsertGuardPrimaryKey = 1u64.into();
 
     // Exactly what `upsert` holds when it discovers the key is absent.
-    let _gate = table.0.lock_manager.mutation_guard(&pk);
+    //
+    // SAFETY: `table` is an `Arc` held for the rest of the test, so the map
+    // outlives this guard.
+    let _gate = unsafe { table.0.lock_manager.mutation_guard(&pk) };
 
     // Detached, not scoped. A scope joins its threads, so when the insert
     // deadlocks the test would hang at the end of the scope instead of

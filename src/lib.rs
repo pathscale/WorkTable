@@ -181,8 +181,16 @@ pub mod prelude {
         ArchivedRowWrapper, Data, DataPages, InlineArchived, Query, RowWrapper, SelectRef, StorableRow,
     };
     pub use crate::lock::FullRowLock;
+    pub use crate::lock::LockMap;
     pub use crate::lock::{Lock, RowLock};
-    pub use crate::lock::{LockAcquirer, LockGuard, LockMap, PendingLock};
+    // `LockAcquirer`, `LockGuard` and `PendingLock` borrow their `LockMap` as a
+    // raw pointer rather than an owning `Arc` (see the "Borrowed guards" note
+    // on `LockMap`), so holding one past the map's last `Arc` is undefined
+    // behaviour. They are not a user-facing API: the only callers are the
+    // operation bodies this crate generates, which is why they are re-exported
+    // here for that generated code and `#[doc(hidden)]` at their definitions.
+    #[doc(hidden)]
+    pub use crate::lock::{LockAcquirer, LockGuard, PendingLock};
     pub use crate::mem_stat::MemStat;
     pub use crate::partition::{DenseError, DenseRows, MAX_PARTITIONS, PartRef, PartitionError, PartitionSet};
     pub use crate::persistence::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId};

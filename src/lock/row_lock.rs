@@ -47,12 +47,19 @@ impl FullRowLock {
 
     /// Creates a [`LockGuard`] that will automatically unlock this lock when
     /// dropped.
-    pub fn guard<PrimaryKey: Clone + Hash + Eq + Debug>(
+    ///
+    /// # Safety
+    ///
+    /// As [`LockGuard::new`]: the guard borrows `lock_map` as a raw pointer
+    /// and dereferences it on `Drop`, so that allocation must outlive the
+    /// returned guard.
+    pub unsafe fn guard<PrimaryKey: Clone + Hash + Eq + Debug>(
         self,
         lock_map: &Arc<LockMap<Self, PrimaryKey>>,
         primary_key: PrimaryKey,
     ) -> LockGuard<Self, PrimaryKey> {
-        LockGuard::new(self.l, lock_map, primary_key)
+        // SAFETY: forwarded to this function's own contract.
+        unsafe { LockGuard::new(self.l, lock_map, primary_key) }
     }
 
     pub fn wait(&self) -> LockWait {
