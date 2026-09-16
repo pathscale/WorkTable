@@ -78,6 +78,19 @@ impl Default for CellLocks {
 }
 
 impl CellLocks {
+    /// Breaks the build when a field is added to [`CellLocks`] without being
+    /// added to [`Self::initialize_at`]. See
+    /// [`Data::every_field_is_initialized`] for why this exists.
+    #[cfg(test)]
+    #[expect(dead_code, reason = "compiled for its exhaustiveness check, never called")]
+    fn every_field_is_initialized(self) {
+        let Self {
+            states: _,
+            owners: _,
+            nested_reads: _,
+        } = self;
+    }
+
     /// Initialize the lock table directly in its final allocation.
     ///
     /// Building both fixed-size atomic arrays as a return value makes the
@@ -191,6 +204,16 @@ impl CellLocks {
                     // compare against and its own release has not run yet.
                     return Ok(version.load(Ordering::Acquire));
                 }
+                // Reaching here means the writer bit is set and the owner is
+                // this thread, but no key is published yet. `write` takes the
+                // bit with a CAS, drains readers, stores the key and only then
+                // stores the owner, so the owner cannot be us while the key is
+                // still zero -- unless a previous writer on this stripe left a
+                // stale owner, which its `Drop` clears before releasing the bit.
+                // The guard is therefore false in every reachable state today
+                // and exists to keep this reader honest if that field ordering
+                // is ever changed: falling through to `wait` is correct for an
+                // unidentified writer, and returning a stamp would not be.
             }
             Self::wait(&mut spins);
         }
@@ -226,6 +249,10 @@ impl CellLocks {
             return false;
         }
         let writer_key = current & CELL_READER_MASK;
+        // `writer_key != 0` mirrors the same guard in `load_stable`, and for
+        // the same reason: see the note there. It is unreachable-false given
+        // the current store order in `write`, and rejecting the snapshot is
+        // the safe answer if that ever stops holding.
         writer_key != 0 && Some(writer_key) != link.offset.checked_add(1)
     }
 
@@ -367,7 +394,20 @@ const SEQLOCK_STACK: usize = 256;
 // costs one stack frame, not memory per row.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ArchivedCopy {
-    Stack { buf: AlignedBytes<SEQLOCK_STACK>, len: u16 },
+    /// Only the first `len` bytes of `buf` are ever written.
+    ///
+    /// The storage stays `MaybeUninit`, rather than being `assume_init`ed into
+    /// an `AlignedBytes<256>`, because the tail beyond `len` is never
+    /// initialized: a row is at most 256 bytes and usually far less. Calling
+    /// `assume_init` on the whole array and then moving the `Copy` value into
+    /// this variant is a 256-byte read of uninitialized memory, which LLVM is
+    /// entitled to treat as poison even though `as_bytes` never exposes it.
+    /// Keeping it `MaybeUninit` also makes the move cheaper, not dearer: the
+    /// initialized prefix is all that has to be meaningful.
+    Stack {
+        buf: MaybeUninit<AlignedBytes<SEQLOCK_STACK>>,
+        len: u16,
+    },
     Heap(AlignedVec),
 }
 
@@ -375,7 +415,12 @@ impl ArchivedCopy {
     #[inline]
     pub(crate) fn as_bytes(&self) -> &[u8] {
         match self {
-            Self::Stack { buf, len } => &buf.0[..*len as usize],
+            // SAFETY: `copy_row_seqlock` is the only constructor of this
+            // variant and writes exactly `len` bytes at the start of `buf`
+            // before returning, with `len <= SEQLOCK_STACK`.
+            Self::Stack { buf, len } => unsafe {
+                core::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), *len as usize)
+            },
             Self::Heap(bytes) => bytes.as_slice(),
         }
     }
@@ -448,6 +493,30 @@ pub struct Data<Row, const DATA_LENGTH: usize = DATA_INNER_LENGTH> {
 unsafe impl<Row, const DATA_LENGTH: usize> Sync for Data<Row, DATA_LENGTH> {}
 
 impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
+    /// Breaks the build when a field is added to [`Data`] without being added
+    /// to [`Self::initialize_arc_at`].
+    ///
+    /// That initializer writes each field through `addr_of_mut!` and then
+    /// `assume_init`s the allocation, so the compiler cannot check it for
+    /// exhaustiveness the way it checks a struct literal: adding a field and
+    /// updating only the safe `new` beside it compiles cleanly and hands out an
+    /// `Arc` with one field uninitialized. Destructuring without `..` is the
+    /// check the initializer itself cannot have. Keep the binding list here and
+    /// the writes there in step.
+    #[cfg(test)]
+    #[expect(dead_code, reason = "compiled for its exhaustiveness check, never called")]
+    fn every_field_is_initialized(self) {
+        let Self {
+            id: _,
+            free_offset: _,
+            access: _,
+            cell_locks: _,
+            live_cells: _,
+            inner_data: _,
+            _phantom: _,
+        } = self;
+    }
+
     unsafe fn initialize_arc_at(target: *mut Self, id: PageId, free_offset: u32, source: Option<*const u8>) {
         unsafe {
             core::ptr::addr_of_mut!((*target).id).write(id);
@@ -739,18 +808,45 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             heap.extend_from_slice(&inner[start..start + len]);
             return Ok(ArchivedCopy::Heap(heap));
         }
+        // Backoff state for the retry path only. A snapshot that validates on
+        // the first attempt, which is the overwhelmingly common case, never
+        // touches this: the counter is incremented only after `still_stable`
+        // has already rejected a copy.
+        let mut spins = 0;
         loop {
             let stamp = self.cell_locks.load_stable(link)?;
             let inner = unsafe { &*self.inner_data.get() };
             let start = link.offset as usize;
             let mut storage = MaybeUninit::<AlignedBytes<SEQLOCK_STACK>>::uninit();
-            let buf = unsafe { &mut *storage.as_mut_ptr() };
-            buf.0[..len].copy_from_slice(&inner[start..start + len]);
+            // Copy through the raw pointer rather than materializing a
+            // `&mut [u8; 256]` over uninitialized storage: that reference
+            // asserts the whole array is initialized, which it is not, and is
+            // what Stacked/Tree Borrows objects to. Only `..len` is written,
+            // and only `..len` is ever read back (`ArchivedCopy::as_bytes`).
+            //
+            // SAFETY: `len <= SEQLOCK_STACK` is the branch condition above, so
+            // the destination has room; `validate_link` bounded
+            // `start..start + len` within the page; and the two regions cannot
+            // overlap because `storage` is a fresh local.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    inner[start..start + len].as_ptr(),
+                    storage.as_mut_ptr().cast::<u8>(),
+                    len,
+                );
+            }
             if !self.cell_locks.still_stable(link, stamp) {
+                // A stripe covers many offsets on the page, so a single hot
+                // writer can invalidate readers of unrelated rows. Without a
+                // backoff here those readers re-copy as fast as they can and
+                // hold the line the writer needs; `load_stable` backs off only
+                // while a writer is *in* the critical section, which is not
+                // the case a rejected stamp reports.
+                CellLocks::wait(&mut spins);
                 continue;
             }
             return Ok(ArchivedCopy::Stack {
-                buf: unsafe { storage.assume_init() },
+                buf: storage,
                 len: len as u16,
             });
         }
@@ -777,6 +873,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         // field is a relative pointer, which the closure would dereference
         // before `still_stable` ever runs.
         self.validate_link(link)?;
+        // Retry-path backoff only: see the note in `copy_row_seqlock`.
+        let mut spins = 0;
         loop {
             let stamp = self.cell_locks.load_stable(link)?;
             let archived = self.get_row_ref(link)?;
@@ -784,6 +882,7 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             if self.cell_locks.still_stable(link, stamp) {
                 return Ok(result);
             }
+            CellLocks::wait(&mut spins);
         }
     }
 
@@ -1441,6 +1540,8 @@ mod tests {
 mod cell_lock_models {
     use super::{CellLocks, Link};
     use alloc::boxed::Box;
+    use core::sync::atomic::Ordering;
+    use loom::sync::atomic::AtomicU32;
     use loom::{cell::UnsafeCell, sync::Arc, thread};
 
     struct Protected {
@@ -1468,6 +1569,40 @@ mod cell_lock_models {
 
     // Every access to value below holds the same row's read or write guard.
     unsafe impl Sync for Protected {}
+
+    /// Cell contents for the seqlock models, as two independently published
+    /// words rather than a `loom::cell::UnsafeCell`.
+    ///
+    /// The seqlock reader copies bytes *without* excluding the writer, which is
+    /// the whole point of the protocol and exactly what loom's `UnsafeCell`
+    /// reports as a data race. Two atomics are the stand-in: the writer
+    /// publishes them separately so a snapshot between the two stores is torn,
+    /// which is the condition `still_stable` has to catch, and loom still
+    /// explores every interleaving of the four accesses.
+    ///
+    /// They are `Release`/`Acquire` rather than `Relaxed`, and the reader takes
+    /// the later-published half first, because otherwise the model reports its
+    /// own reordering as a seqlock failure. With relaxed accesses loom is
+    /// entitled to produce `(0, 1)` -- half 0 stale, half 1 fresh -- even though
+    /// the writer stores half 0 first, and that outcome says nothing about the
+    /// protocol. Ordered this way, seeing half 1 set and then half 0 clear is
+    /// impossible unless `still_stable` accepted a snapshot spanning the write,
+    /// which is exactly the claim under test. The real path copies plain bytes
+    /// and has no such ordering to lean on; the model needs it only to keep the
+    /// assertion about the seqlock rather than about loom.
+    struct SeqlockProtected {
+        locks: Box<CellLocks>,
+        halves: (AtomicU32, AtomicU32),
+    }
+
+    impl SeqlockProtected {
+        fn new() -> Self {
+            Self {
+                locks: cell_locks(),
+                halves: (AtomicU32::new(0), AtomicU32::new(0)),
+            }
+        }
+    }
 
     #[test]
     fn colliding_offsets_cannot_split_readers_from_a_writer() {
@@ -1556,6 +1691,148 @@ mod cell_lock_models {
             protected.value.with(|value| unsafe {
                 assert_eq!(*value, (1, 1));
             });
+        });
+    }
+
+    /// The seqlock snapshot protocol, which `select` takes for every row that
+    /// fits the stack buffer and which neither model above drives.
+    ///
+    /// The reader does not CAS, so it can copy bytes while a writer is midway
+    /// through publishing them. What makes that sound is the pair
+    /// `load_stable` / `still_stable`: a snapshot is accepted only if no writer
+    /// was in the critical section when it started and the version counter has
+    /// not moved since. This asserts the property the copy path relies on --
+    /// **an accepted snapshot is never torn** -- rather than that a retry
+    /// happens, because a spurious retry is allowed and a missed one is not.
+    #[test]
+    fn an_accepted_seqlock_snapshot_is_never_torn() {
+        let mut model = loom::model::Builder::new();
+        model.preemption_bound = Some(2);
+        model.max_branches = 10_000;
+        model.check(|| {
+            let protected = Arc::new(SeqlockProtected::new());
+            let link = Link {
+                page_id: 1.into(),
+                offset: 64,
+                length: 16,
+            };
+
+            let writer = {
+                let protected = protected.clone();
+                thread::spawn(move || {
+                    let _guard = protected.locks.write(link).unwrap();
+                    // The two halves are published separately, so any snapshot
+                    // taken between them is torn and must be rejected.
+                    protected.halves.0.store(1, Ordering::Release);
+                    thread::yield_now();
+                    protected.halves.1.store(1, Ordering::Release);
+                })
+            };
+
+            // One attempt, not a retry loop: a loop would let the model pass by
+            // eventually succeeding, where the claim under test is about what a
+            // single accepted snapshot may contain.
+            if let Ok(stamp) = protected.locks.load_stable(link) {
+                // Read the LATER-published half first. With the writer
+                // publishing half 0 then half 1, observing half 1 set and then
+                // half 0 clear is impossible under release/acquire, so a torn
+                // pair here is the seqlock failing rather than the model's own
+                // atomics being reordered.
+                let second = protected.halves.1.load(Ordering::Acquire);
+                let first = protected.halves.0.load(Ordering::Acquire);
+                let snapshot = (first, second);
+                if protected.locks.still_stable(link, stamp) {
+                    assert!(
+                        snapshot == (0, 0) || snapshot == (1, 1),
+                        "a snapshot accepted by still_stable was torn: {snapshot:?}"
+                    );
+                }
+            }
+
+            writer.join().unwrap();
+        });
+    }
+
+    /// A completed write must invalidate a snapshot that started before it,
+    /// even though the state word is back to `0` by the time the reader
+    /// re-reads it.
+    ///
+    /// This is what the version counter is for, and why the writer's release
+    /// bumps it *before* clearing the writer bit. Checking the state word
+    /// alone would accept this interleaving.
+    #[test]
+    fn a_write_completed_during_the_snapshot_is_rejected() {
+        let mut model = loom::model::Builder::new();
+        model.preemption_bound = Some(2);
+        model.max_branches = 10_000;
+        model.check(|| {
+            let protected = Arc::new(SeqlockProtected::new());
+            let link = Link {
+                page_id: 1.into(),
+                offset: 64,
+                length: 16,
+            };
+
+            let stamp = protected.locks.load_stable(link).unwrap();
+
+            let writer = {
+                let protected = protected.clone();
+                thread::spawn(move || {
+                    let _guard = protected.locks.write(link).unwrap();
+                    protected.halves.0.store(1, Ordering::Relaxed);
+                    protected.halves.1.store(1, Ordering::Relaxed);
+                })
+            };
+
+            // Checked concurrently, so the model gets to place this read
+            // before, during and after the writer's critical section. A read
+            // that lands before it may legitimately accept; the assertion after
+            // the join is what must hold in every interleaving.
+            let _ = protected.locks.still_stable(link, stamp);
+
+            writer.join().unwrap();
+
+            // The state word is back to `0` here, so a check that read only
+            // that word would accept a snapshot taken before a write that has
+            // since completed. The version counter is what rejects it, and the
+            // writer's release bumps that counter before clearing the bit
+            // precisely so there is no instant where both look idle at the
+            // pre-write version.
+            assert!(
+                !protected.locks.still_stable(link, stamp),
+                "a completed write must invalidate every snapshot taken before it"
+            );
+        });
+    }
+
+    /// The reader's exemption for its own in-flight write on a *different* row
+    /// of the same stripe must hold under the model, not just in the
+    /// single-threaded test.
+    ///
+    /// `load_stable` admits this case and `still_stable` must agree with it:
+    /// rejecting it spins forever, because only this thread can clear the
+    /// writer bit it is waiting on.
+    #[test]
+    fn a_self_write_on_another_row_does_not_reject_the_readers_snapshot() {
+        let mut model = loom::model::Builder::new();
+        model.preemption_bound = Some(2);
+        model.max_branches = 10_000;
+        model.check(|| {
+            let locks = cell_locks();
+            let held = Link {
+                page_id: 1.into(),
+                offset: 7,
+                length: 16,
+            };
+            let other = Link { offset: 14, ..held };
+            assert_eq!(CellLocks::start(held), CellLocks::start(other));
+
+            let _write = locks.write(held).unwrap();
+            let stamp = locks.load_stable(other).unwrap();
+            assert!(
+                locks.still_stable(other, stamp),
+                "a thread reading another row under its own write must make progress"
+            );
         });
     }
 }
