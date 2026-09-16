@@ -33,14 +33,14 @@ jobs:
     # exceeded 30 minutes when GitHub's cache service was unavailable. Keep
     # enough room for a real from-scratch release gate.
     timeout-minutes: 45
-    # Not on a pull request. `cargo test --workspace --all-targets` is a
-    # ten-minute compile on a two-core runner before it runs anything, three
-    # times over the matrix, and it is the same command `scripts/ci-local.sh`
-    # runs on a developer's machine in a fraction of that. Run it there.
+    # Manual only. `cargo test --workspace --all-targets` is a ten-minute
+    # compile before it runs anything, and three legs of it is half an hour.
+    # Nothing waits on it: it does not gate a pull request and it does not gate
+    # `publish`, so a release is not held up by a matrix re-answering what the
+    # smoke job and a developer's own `scripts/ci-local.sh` already answered.
     #
-    # It still runs on master, which is what `publish` gates on, and on a manual
-    # `workflow_dispatch` when a change wants it earlier.
-    if: github.event_name != 'pull_request'
+    # Ask for it with `workflow_dispatch` when a change deserves it.
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +54,7 @@ jobs:
           - name: all-features
             args: "--all-features"
             # Full DWARF makes Rust 1.98's bundled rust-lld crash while linking
-            # the large integration-test binary on a two-core runner.
+            # the large integration-test binary on a small runner.
             test_debug: 0
 
     steps:
@@ -76,8 +76,8 @@ jobs:
         CARGO_PROFILE_TEST_DEBUG: ${{ matrix.test_debug }}
 
 
-  # What a pull request gets instead of the full matrix: the library tests of
-  # every crate, without `--all-targets`.
+  # What every push and pull request gets instead of the full matrix: the
+  # library tests of every crate, without `--all-targets`.
   #
   # That leaves out the integration-test binary and the compile-fail harness,
   # which is where the ten minutes live -- the trybuild tests shell out to
@@ -92,7 +92,6 @@ jobs:
     name: Smoke test (lib tests)
     runs-on: ubicloud-standard-2
     timeout-minutes: 15
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -128,12 +127,10 @@ jobs:
     name: Archived-row lock concurrency models
     runs-on: ubicloud-standard-2
     timeout-minutes: 15
-    # Not on a pull request. The models explore an interleaving space rather
-    # than run a suite, they build into their own CARGO_TARGET_DIR so they share
-    # no cache with any other job and pay a cold compile every time, and the
-    # answer does not change with a review comment. They still run on master,
-    # where `publish` gates on them, and on demand.
-    if: github.event_name != 'pull_request'
+    # Manual only, for the same reason as `build`. The models explore an
+    # interleaving space rather than run a suite, and they build into their own
+    # CARGO_TARGET_DIR so they share no cache and pay a cold compile every time.
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -202,7 +199,9 @@ jobs:
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [fmt, build, clippy_check, cell_lock_models, no_default_features, duplicate_index_crates]
+    # `build` and `cell_lock_models` are deliberately absent: they are manual
+    # only, so needing them would mean a skipped job blocks every release.
+    needs: [fmt, smoke, clippy_check, no_default_features, duplicate_index_crates]
     runs-on: ubicloud-standard-2
     timeout-minutes: 45
     steps:
