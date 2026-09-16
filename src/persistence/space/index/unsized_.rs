@@ -82,8 +82,12 @@ where
                 // leave this event's page identity stale. The affected value
                 // still selects the ordered page range. Structural events do
                 // not carry such a value and remain hard errors.
+                //
+                // The stale identity is passed too, so the positional lookup
+                // can reject a page that identity could not have named. See the
+                // sized twin in `super::SpaceIndex::resolve_batch_page`.
                 self.table_of_contents
-                    .page_containing(event_value)
+                    .page_containing(event_value, event_page_key)
                     .map(|(current_key, page_id)| (page_id, Some(current_key)))
             })
     }

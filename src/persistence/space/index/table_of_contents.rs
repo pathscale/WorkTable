@@ -75,15 +75,41 @@ where
     }
 
     /// Finds the page whose ordered range contains `value` and returns its
-    /// current maximum identity. CDC events name the maximum observed when the
-    /// event was created; that identity can become stale at a persistence
-    /// batch boundary after a preceding max removal re-keyed the page.
-    pub(crate) fn page_containing(&self, value: &T) -> Option<(T, PageId)>
+    /// current maximum identity, but only when that page is a plausible
+    /// successor of the stale identity `stale_maximum`.
+    ///
+    /// CDC events name the maximum observed when the event was created, and
+    /// that identity goes stale at a persistence batch boundary when a
+    /// preceding max removal re-keys the page. Recovering from it means
+    /// choosing a page by ordering rather than by identity, which is a guess,
+    /// so it is fenced to the one shape the staleness can actually take.
+    ///
+    /// The page that a removed maximum leaves behind has a *smaller* maximum
+    /// than the identity the event names, and nothing else can have been
+    /// inserted between the two: any page whose maximum falls in
+    /// `(found, stale_maximum]` would itself own that range and would have
+    /// answered the identity lookup. Both conditions are checked here, so an
+    /// event whose identity is missing for any other reason -- a torn table of
+    /// contents, a stream applied out of order, two writers on one file --
+    /// finds nothing and stays a hard error rather than being applied to
+    /// whichever page the ordering happened to pick.
+    ///
+    /// Without that fence the tail arm below returns the highest-keyed page for
+    /// any value above every maximum, so *some* page always matched and the
+    /// caller's error branch was unreachable for insert and remove events.
+    pub(crate) fn page_containing(&self, value: &T, stale_maximum: &T) -> Option<(T, PageId)>
     where
         T: Clone,
     {
+        // One pass. This runs per fallback event inside the persistence batch
+        // loop, and it is already linear in the table of contents; walking it
+        // twice to apply the fence below would double that for nothing.
         let mut ceiling: Option<(&T, &PageId)> = None;
         let mut last: Option<(&T, &PageId)> = None;
+        // The greatest surviving maximum at or below the stale one. If the
+        // stale identity was really this page's, nothing survives between them,
+        // so this ends up being the page found.
+        let mut greatest_below_stale: Option<&T> = None;
         for (maximum, page_id) in self.iter() {
             if last.is_none_or(|(current, _)| maximum > current) {
                 last = Some((maximum, page_id));
@@ -91,8 +117,18 @@ where
             if maximum >= value && ceiling.is_none_or(|(current, _)| maximum < current) {
                 ceiling = Some((maximum, page_id));
             }
+            if maximum <= stale_maximum && greatest_below_stale.is_none_or(|current| maximum > current) {
+                greatest_below_stale = Some(maximum);
+            }
         }
-        ceiling.or(last).map(|(maximum, page_id)| (maximum.clone(), *page_id))
+        let (maximum, page_id) = ceiling.or(last)?;
+        // The named identity must be one this page could have shed, and no
+        // surviving page may sit between the two: such a page would own the
+        // range itself and would have answered the identity lookup.
+        if maximum >= stale_maximum || greatest_below_stale != Some(maximum) {
+            return None;
+        }
+        Some((maximum.clone(), *page_id))
     }
 
     fn get_current_page_mut(&mut self) -> &mut GeneralPage<TableOfContentsPage<T>> {
@@ -386,6 +422,9 @@ mod tests {
         assert_eq!(toc.get(&9), None);
     }
 
+    /// The ordered lookup picks the smallest ceiling, and the tail for a value
+    /// above every maximum, whenever the stale identity the event named is one
+    /// the chosen page could have shed.
     #[test]
     fn page_containing_uses_the_smallest_ceiling_and_the_tail_for_larger_values() {
         let mut toc = IndexTableOfContents::<u8, 128, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(1)));
@@ -393,11 +432,43 @@ mod tests {
         toc.insert(10, 1.into());
         toc.insert(25, 2.into());
 
-        assert_eq!(toc.page_containing(&0), Some((10, 1.into())));
-        assert_eq!(toc.page_containing(&10), Some((10, 1.into())));
-        assert_eq!(toc.page_containing(&11), Some((25, 2.into())));
-        assert_eq!(toc.page_containing(&40), Some((40, 4.into())));
-        assert_eq!(toc.page_containing(&41), Some((40, 4.into())));
+        // Each stale maximum sits above the page found and below the next
+        // surviving page, which is what a removed maximum leaves behind.
+        assert_eq!(toc.page_containing(&0, &20), Some((10, 1.into())));
+        assert_eq!(toc.page_containing(&10, &20), Some((10, 1.into())));
+        assert_eq!(toc.page_containing(&11, &30), Some((25, 2.into())));
+        assert_eq!(toc.page_containing(&40, &45), Some((40, 4.into())));
+        assert_eq!(toc.page_containing(&41, &45), Some((40, 4.into())));
+    }
+
+    /// The positional lookup is a repair for one specific staleness, not a
+    /// general "nearest page" fallback.
+    ///
+    /// Unfenced it returns the tail for any value above every maximum, so it
+    /// always answered and the caller's error branch was dead: a batch whose
+    /// identity is missing through real corruption was applied to whichever
+    /// page sorted nearest, and that wrong write was persisted.
+    #[test]
+    fn page_containing_refuses_an_identity_the_page_could_not_have_had() {
+        let mut toc = IndexTableOfContents::<u8, 128, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        toc.insert(40, 4.into());
+        toc.insert(10, 1.into());
+        toc.insert(25, 2.into());
+
+        // Names a maximum at or below the page that owns the range. A live
+        // identity would have been found by the identity lookup, so this is a
+        // stream applied out of order, not a stale maximum.
+        assert_eq!(toc.page_containing(&11, &25), None);
+        assert_eq!(toc.page_containing(&11, &20), None);
+
+        // Names a maximum with a surviving page between it and the page found.
+        // That page owns the range, so the event does not belong here.
+        assert_eq!(toc.page_containing(&0, &30), None);
+        assert_eq!(toc.page_containing(&11, &40), None);
+
+        // An empty table of contents has nothing to repair to.
+        let empty = IndexTableOfContents::<u8, 128, DEFAULT_PAGE_STRIDE>::new(0.into(), Arc::new(AtomicU32::new(1)));
+        assert_eq!(empty.page_containing(&5, &9), None);
     }
 
     #[test]
