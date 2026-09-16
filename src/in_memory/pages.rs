@@ -227,6 +227,15 @@ struct PageDirectory<T> {
 }
 
 impl<T> PageDirectory<T> {
+    /// Breaks the build when a field is added to [`PageDirectory`] without
+    /// being added to [`Self::initialize_at`]. See
+    /// [`DataPages::every_field_is_initialized`] for why this exists.
+    #[cfg(test)]
+    #[expect(dead_code, reason = "compiled for its exhaustiveness check, never called")]
+    fn every_field_is_initialized(self) {
+        let Self { roots: _, chunks: _ } = self;
+    }
+
     unsafe fn initialize_at(target: *mut Self, pages: &[Arc<T>]) {
         unsafe {
             let roots = core::ptr::addr_of_mut!((*target).roots).cast::<AtomicPtr<PageDirectoryChunk<T>>>();
@@ -487,6 +496,36 @@ where
     Row: StorableRow,
     <Row as StorableRow>::WrappedRow: RowWrapper<Row>,
 {
+    /// Breaks the build when a field is added to [`DataPages`] without being
+    /// added to [`Self::initialize_arc_at`].
+    ///
+    /// That initializer writes each field through `addr_of_mut!` and then
+    /// `assume_init`s the allocation, so the compiler cannot check it for
+    /// exhaustiveness the way it checks a struct literal: adding a field and
+    /// updating only the safe `new` beside it compiles cleanly and hands out an
+    /// `Arc` with one field uninitialized. Destructuring without `..` is the
+    /// check the initializer itself cannot have. Keep the binding list here and
+    /// the writes there in step.
+    #[cfg(test)]
+    #[expect(dead_code, reason = "compiled for its exhaustiveness check, never called")]
+    fn every_field_is_initialized(self) {
+        let Self {
+            epoch: _,
+            retired: _,
+            reclaimable: _,
+            pending_retirements: _,
+            queued_page_retirements: _,
+            pages: _,
+            page_directory: _,
+            pages_write: _,
+            empty_links: _,
+            empty_pages: _,
+            row_count: _,
+            last_page_id: _,
+            current_page_id: _,
+        } = self;
+    }
+
     unsafe fn initialize_arc_at(
         target: *mut Self,
         mut pages: Vec<Arc<Data<<Row as StorableRow>::WrappedRow, DATA_LENGTH>>>,
