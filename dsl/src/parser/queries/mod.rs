@@ -160,6 +160,13 @@ mod tests {
         };
         let error = Parser::new(tokens).parse_queries().unwrap_err().to_string();
 
-        assert!(error.contains("Unexpected token `in_place`"), "{error}");
+        // The generic "Unexpected token" this used to assert is what the
+        // rename replaced: a table that still says `in_place:` is not using an
+        // unknown keyword, it is using last version's spelling of this one, and
+        // the error is only useful if it says so.
+        assert!(
+            error.contains("`in_place:` was renamed to `update_in_place:`"),
+            "{error}"
+        );
     }
 }
