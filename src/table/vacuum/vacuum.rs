@@ -625,7 +625,11 @@ where
         // table-wide counter would be a shared line it contends for.
         let lock_id = self.lock_manager.next_id_for(pk);
         // One atomic acquire, no check-then-act: see LockMap::get_or_insert_with.
-        let lock = self.lock_manager.get_or_insert_with(pk.clone(), LockType::new);
+        //
+        // SAFETY: `self.lock_manager` is this vacuum's own `Arc<LockMap>`,
+        // borrowed for the whole call, so it outlives the acquirer, which is
+        // dropped at the end of this function.
+        let lock = unsafe { self.lock_manager.get_or_insert_with(pk.clone(), LockType::new) };
         let mut lock_guard = lock.write().await;
         #[allow(clippy::mutable_key_type)]
         let (locks, op_lock) = lock_guard.lock(lock_id);
@@ -913,7 +917,8 @@ mod tests {
             table.delete(*id).await.unwrap();
         }
 
-        let mutation = table.0.lock_manager.mutation_guard(&ids[1].into());
+        // SAFETY: `table` outlives this guard, and with it the map.
+        let mutation = unsafe { table.0.lock_manager.mutation_guard(&ids[1].into()) };
         let vacuum = create_vacuum(&table).with_pacing(VacuumPacing {
             batch_pages: 1,
             backoff: Duration::from_millis(1),

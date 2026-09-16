@@ -322,7 +322,9 @@ where
         LockType: 'static,
     {
         let pk = row.get_primary_key().clone();
-        let _mutation_guard = self.lock_manager.mutation_guard(&pk);
+        // SAFETY: `self.lock_manager` is a field of this table and is borrowed
+        // for this whole call, so it outlives the guard taken here.
+        let _mutation_guard = unsafe { self.lock_manager.mutation_guard(&pk) };
         self.insert_locked(row)
     }
 
@@ -470,7 +472,9 @@ where
             // Stripe-ordered, exactly as `insert_many` takes them, so a batch
             // delete and a batch insert cannot deadlock against each other. Chunks
             // release before the next is taken, so that ordering holds across them.
-            let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
+            // SAFETY: `self.lock_manager` is a field of this table and is borrowed
+            // for this whole call, so it outlives every guard in the set.
+            let _mutation_guards = unsafe { self.lock_manager.mutation_guards(chunk.iter()) };
             let _publication =
                 TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
@@ -587,7 +591,9 @@ where
         // `DELETE_CHUNK_KEYS`. A range delete is the widest batch this table
         // takes, so it is the one that most needs not to hold every stripe.
         for chunk in keys.chunks(DELETE_CHUNK_KEYS) {
-            let _mutation_guards = self.lock_manager.mutation_guards(chunk.iter());
+            // SAFETY: `self.lock_manager` is a field of this table and is borrowed
+            // for this whole call, so it outlives every guard in the set.
+            let _mutation_guards = unsafe { self.lock_manager.mutation_guards(chunk.iter()) };
             let _publication =
                 TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
@@ -686,7 +692,9 @@ where
             return Ok(Vec::new());
         }
         let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
-        let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+        // SAFETY: `self.lock_manager` is a field of this table and is borrowed
+        // for this whole call, so it outlives every guard in the set.
+        let _mutation_guards = unsafe { self.lock_manager.mutation_guards(pks.iter()) };
         let _publication =
             TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
@@ -837,7 +845,9 @@ where
         PrimaryIndex<PrimaryKey, DATA_LENGTH, PkMap>: TableIndexCdc<PrimaryKey>,
     {
         let pk = row.get_primary_key().clone();
-        let _mutation_guard = self.lock_manager.mutation_guard(&pk);
+        // SAFETY: `self.lock_manager` is a field of this table and is borrowed
+        // for this whole call, so it outlives the guard taken here.
+        let _mutation_guard = unsafe { self.lock_manager.mutation_guard(&pk) };
         let _publication =
             TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 
@@ -1017,7 +1027,9 @@ where
             return (Vec::new(), Ok(Vec::new()));
         }
         let pks: Vec<PrimaryKey> = rows.iter().map(|row| row.get_primary_key().clone()).collect();
-        let _mutation_guards = self.lock_manager.mutation_guards(pks.iter());
+        // SAFETY: `self.lock_manager` is a field of this table and is borrowed
+        // for this whole call, so it outlives every guard in the set.
+        let _mutation_guards = unsafe { self.lock_manager.mutation_guards(pks.iter()) };
         let _publication =
             TableSecondaryIndex::<Row, AvailableTypes, AvailableIndexes>::row_publication(&*self.indexes);
 

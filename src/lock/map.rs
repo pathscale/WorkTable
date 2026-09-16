@@ -65,6 +65,7 @@ struct MutationStripe {
 /// Generated async row locks and synchronous inserts share these gates so a
 /// synchronous API entry point cannot interleave its multi-structure
 /// publication with an update or delete of the same key.
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct MutationGuard {
     /// Borrowed, not an `Arc` clone.
@@ -123,6 +124,7 @@ struct LockEntry<LockType> {
 /// Dropping this handle, including through async task cancellation, retries
 /// map cleanup after releasing its lock reference. Clones remain tracked so an
 /// entry cannot be removed while any caller may still register against it.
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct LockAcquirer<LockType, PrimaryKey>
 where
@@ -244,11 +246,20 @@ impl Drop for BulkMutationGuard {
 /// futures must be `'static` to spawn, so a lifetime on the guard becomes a
 /// lifetime on the future.
 ///
-/// What that costs is a safe public API that can be misused: taking a guard
-/// and then dropping the last `Arc<LockMap>` while the guard lives is
+/// What that costs is a precondition the type system cannot state: taking a
+/// guard and then dropping the last `Arc<LockMap>` while the guard lives is
 /// undefined behaviour. Every in-crate and generated caller takes its guard as
 /// a local of an operation that holds the table's own `Arc<LockMap>` for the
 /// whole call, which is why this is sound as used.
+///
+/// Because that precondition is real and cannot be checked, every entry point
+/// that hands out one of these borrowed guards is `unsafe`, and the guard
+/// types themselves are `#[doc(hidden)]` and out of the prelude. Leaving them
+/// safe would have made the hazard reachable from safe code with no `unsafe`
+/// anywhere in the caller, which is the definition of an unsound API: three
+/// safe lines that build a map, take a guard, drop the map and drop the guard
+/// are enough. They are not a user-facing API: every real caller is generated
+/// code inside this crate's own operation bodies.
 ///
 /// # Sharding
 ///
@@ -317,18 +328,30 @@ where
     /// `Arc::strong_count`. Generated operations should prefer
     /// [`Self::get_or_insert_with`], whose [`LockAcquirer`] makes cancellation
     /// tracking explicit.
+    ///
+    /// Replacing an entry carries its acquirer count over rather than starting
+    /// the new one at zero. The count is inline in the entry now, not the
+    /// shared `Arc<AtomicUsize>` an acquirer used to own, so an acquirer of the
+    /// replaced entry decrements *this* word when it drops: starting from zero
+    /// wraps it to `usize::MAX` and `remove_if_unused` then never reclaims the
+    /// key again. Only this public entry point can reach that state, and
+    /// carrying the count keeps every live acquirer accounted for by the entry
+    /// it will actually decrement.
     pub fn insert(
         &self,
         key: PrimaryKey,
         lock: Arc<nagoya::sync::RwLock<LockType>>,
     ) -> Option<Arc<nagoya::sync::RwLock<LockType>>> {
-        self.shard(&key)
-            .write()
+        let mut shard = self.shard(&key).write();
+        let carried = shard
+            .get(&key)
+            .map_or(0, |entry| entry.acquirers.load(Ordering::Acquire));
+        shard
             .insert(
                 key,
                 LockEntry {
                     lock,
-                    acquirers: AtomicUsize::new(0),
+                    acquirers: AtomicUsize::new(carried),
                 },
             )
             .map(|entry| entry.lock)
@@ -349,7 +372,18 @@ where
     /// can merge into it, but the *winner* already registered its operation on
     /// a lock that is no longer in the map, so it never waits for the loser and
     /// both proceed into the row at once.
-    pub fn get_or_insert_with<F>(self: &Arc<Self>, key: PrimaryKey, f: F) -> LockAcquirer<LockType, PrimaryKey>
+    ///
+    /// # Safety
+    ///
+    /// The returned [`LockAcquirer`] borrows this map as a raw pointer and
+    /// dereferences it on `Drop`, so the caller must keep an `Arc<LockMap>`
+    /// alive for at least as long as the acquirer and every clone of it.
+    /// Dropping the last `Arc` first is undefined behaviour.
+    ///
+    /// Generated operations satisfy this by construction: the acquirer is a
+    /// local of a call that reached this map through the table's own `Arc`,
+    /// which it holds for the whole call.
+    pub unsafe fn get_or_insert_with<F>(self: &Arc<Self>, key: PrimaryKey, f: F) -> LockAcquirer<LockType, PrimaryKey>
     where
         LockType: RowLock,
         F: FnOnce() -> LockType,
@@ -463,7 +497,14 @@ where
     /// The holder must not perform a suspending `.await`. Generated locked
     /// operations acquire this only after their async predecessor wait has
     /// completed, and the synchronous `insert` path never awaits.
-    pub fn mutation_guard(&self, key: &PrimaryKey) -> MutationGuard {
+    ///
+    /// # Safety
+    ///
+    /// The returned [`MutationGuard`] borrows this map's stripe array as a raw
+    /// pointer and dereferences it on `Drop`, so the caller must keep the map
+    /// alive for at least as long as the guard. See
+    /// [`Self::get_or_insert_with`].
+    pub unsafe fn mutation_guard(&self, key: &PrimaryKey) -> MutationGuard {
         self.mutation_guard_for_stripe(Self::stripe_of(key))
     }
 
@@ -476,7 +517,11 @@ where
     /// single-key holders (which never nest stripe acquisitions) cannot form a
     /// cycle with a batch. The same no-`.await` rule as
     /// [`Self::mutation_guard`] applies for the whole guard set's lifetime.
-    pub fn mutation_guards<'a>(&self, keys: impl Iterator<Item = &'a PrimaryKey>) -> Vec<MutationGuard>
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::mutation_guard`], for every guard in the returned set.
+    pub unsafe fn mutation_guards<'a>(&self, keys: impl Iterator<Item = &'a PrimaryKey>) -> Vec<MutationGuard>
     where
         PrimaryKey: 'a,
     {
@@ -631,12 +676,14 @@ mod tests {
         let lock_map: LockMap<FullRowLock, u64> = LockMap::default();
         let keys: Vec<u64> = (0..1000).collect();
 
-        let guards = lock_map.mutation_guards(keys.iter());
+        // SAFETY: `lock_map` outlives the guard set.
+        let guards = unsafe { lock_map.mutation_guards(keys.iter()) };
         assert!(guards.len() <= MUTATION_STRIPE_COUNT);
         drop(guards);
 
         for key in 0..1000u64 {
-            let _guard = lock_map.mutation_guard(&key);
+            // SAFETY: `lock_map` outlives the guard.
+            let _guard = unsafe { lock_map.mutation_guard(&key) };
         }
     }
 
@@ -663,7 +710,8 @@ mod tests {
         let lock_map: LockMap<FullRowLock, u64> = LockMap::default();
         let before = lock_map.mutation_epoch();
 
-        let guard = lock_map.mutation_guard(&17);
+        // SAFETY: `lock_map` outlives the guard.
+        let guard = unsafe { lock_map.mutation_guard(&17) };
         assert_eq!(lock_map.mutations_in_flight(), 1);
         drop(guard);
 
@@ -684,11 +732,13 @@ mod tests {
         let other_map = lock_map.clone();
         let handle = std::thread::spawn(move || {
             for _ in 0..100 {
-                let _guards = other_map.mutation_guards(backward.iter());
+                // SAFETY: this thread owns an `Arc` clone of the map.
+                let _guards = unsafe { other_map.mutation_guards(backward.iter()) };
             }
         });
         for _ in 0..100 {
-            let _guards = lock_map.mutation_guards(forward.iter());
+            // SAFETY: `lock_map` outlives the guard set.
+            let _guards = unsafe { lock_map.mutation_guards(forward.iter()) };
         }
         handle.join().unwrap();
     }
@@ -699,7 +749,9 @@ mod tests {
     #[test]
     fn cancelled_acquirer_removes_the_abandoned_entry() {
         let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
-        let acquirer = lock_map.get_or_insert_with(31, FullRowLock::new);
+        // SAFETY: `lock_map` outlives `acquirer` in every case below; it is
+        // dropped at the end of the test.
+        let acquirer = unsafe { lock_map.get_or_insert_with(31, FullRowLock::new) };
 
         lock_map.remove_with_lock_check(&31);
         assert!(lock_map.contains_key(&31));
@@ -708,13 +760,37 @@ mod tests {
         assert!(!lock_map.contains_key(&31));
     }
 
+    /// The acquirer count is inline in the map entry, so replacing an entry
+    /// through the public `insert` while an acquirer is live must not restart
+    /// that count at zero.
+    ///
+    /// With it restarted, the live acquirer's drop does `fetch_sub` from 0 and
+    /// wraps to `usize::MAX`. Nothing panics and nothing is unsound, but
+    /// `remove_if_unused` reads a non-zero count forever and the key is never
+    /// reclaimed: a silent, permanent entry leak in the row-lock map.
+    #[test]
+    fn replacing_an_entry_does_not_strand_a_live_acquirers_count() {
+        let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
+        // SAFETY: `lock_map` outlives the acquirer.
+        let acquirer = unsafe { lock_map.get_or_insert_with(57, FullRowLock::new) };
+
+        lock_map.insert(57, Arc::new(nagoya::sync::RwLock::new(FullRowLock::new())));
+        drop(acquirer);
+
+        assert!(
+            !lock_map.contains_key(&57),
+            "a replaced entry must still be reclaimable once its last acquirer drops"
+        );
+    }
+
     /// Cloning the acquisition handle represents two tasks between lookup and
     /// registration. The first cancellation must retain the shared lock, and
     /// only the last handle may remove it.
     #[test]
     fn cleanup_waits_for_every_acquirer_to_drop() {
         let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
-        let first = lock_map.get_or_insert_with(33, FullRowLock::new);
+        // SAFETY: `lock_map` outlives both handles.
+        let first = unsafe { lock_map.get_or_insert_with(33, FullRowLock::new) };
         let second = first.clone();
 
         drop(first);
@@ -727,9 +803,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancelling_async_waiter_releases_tracking_without_deadlock() {
         let lock_map: Arc<LockMap<FullRowLock, u64>> = Arc::new(LockMap::default());
-        let owner = lock_map.get_or_insert_with(41, FullRowLock::new);
+        // SAFETY: `lock_map` outlives both acquirers and the spawned task,
+        // which is awaited before the map is dropped.
+        let owner = unsafe { lock_map.get_or_insert_with(41, FullRowLock::new) };
         let owner_guard = owner.write().await;
-        let waiter = lock_map.get_or_insert_with(41, FullRowLock::new);
+        // SAFETY: as above.
+        let waiter = unsafe { lock_map.get_or_insert_with(41, FullRowLock::new) };
         let waiting_task = tokio::spawn(async move {
             let _guard = waiter.write().await;
         });
@@ -756,7 +835,9 @@ mod tests {
             handles.push(std::thread::spawn(move || {
                 for step in 0..10_000u64 {
                     let key = worker << 32 | step;
-                    let acquirer = map.get_or_insert_with(key, FullRowLock::new);
+                    // SAFETY: this thread owns an `Arc` clone of the map for
+                    // the whole loop, so it outlives each acquirer.
+                    let acquirer = unsafe { map.get_or_insert_with(key, FullRowLock::new) };
                     drop(acquirer);
                     assert!(!map.contains_key(&key));
                 }

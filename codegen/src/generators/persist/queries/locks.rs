@@ -100,7 +100,6 @@ impl PersistGenerator {
             .collect::<Vec<_>>();
 
         quote! {
-            #[allow(clippy::mutable_key_type)]
             pub fn #ident(&mut self, id: u16) -> (Vec<worktable::prelude::Arc<Lock>>,  worktable::prelude::Arc<Lock>) {
                 let mut set = Vec::new();
                 let new_lock = worktable::prelude::Arc::new(Lock::new(id));
@@ -119,19 +118,26 @@ impl PersistGenerator {
             // cache line per locked operation. See LockMap::next_ids.
             let lock_id = self.0.lock_manager.next_id_for(&pk);
             // Same atomic acquire as the per-column path: see LockMap::get_or_insert_with.
-            let lock = self
-                .0
-                .lock_manager
-                .get_or_insert_with(pk.clone(), #lock_ident::new);
+            // SAFETY: `self.0.lock_manager` is the table's own `Arc<LockMap>`,
+            // borrowed for this whole operation, so the map outlives the
+            // acquirer and the pending lock taken from it. See the "Borrowed
+            // guards" note on `LockMap`.
+            let lock = unsafe {
+                self.0
+                    .lock_manager
+                    .get_or_insert_with(pk.clone(), #lock_ident::new)
+            };
             let mut lock_guard = lock.write().await;
-            #[allow(clippy::mutable_key_type)]
             let (locks, op_lock) = lock_guard.lock(lock_id);
             drop(lock_guard);
             // The registered lock must be cancellation-covered BEFORE the
             // predecessor wait below: a future dropped at that await (tokio
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
-            let pending_lock = PendingLock::new(op_lock, &self.0.lock_manager, pk.clone());
+            // SAFETY: as above; the map outlives this pending lock and the
+            // `LockGuard` it is converted into, both of which are locals of
+            // this operation.
+            let pending_lock = unsafe { PendingLock::new(op_lock, &self.0.lock_manager, pk.clone()) };
             // No predecessor is the common case on disjoint keys: the row had no
             // entry, so every column slot was empty. Registering a waker on each
             // of nothing, boxing the joined slice and suspending the operation to
@@ -156,19 +162,26 @@ impl PersistGenerator {
             // enter the row: the loser merged into the winner's lock, but the
             // winner had already registered its operation on a lock that was no
             // longer the map's, so it never waited for the loser.
-            let lock = self
-                .0
-                .lock_manager
-                .get_or_insert_with(pk.clone(), #lock_ident::new);
+            // SAFETY: `self.0.lock_manager` is the table's own `Arc<LockMap>`,
+            // borrowed for this whole operation, so the map outlives the
+            // acquirer and the pending lock taken from it. See the "Borrowed
+            // guards" note on `LockMap`.
+            let lock = unsafe {
+                self.0
+                    .lock_manager
+                    .get_or_insert_with(pk.clone(), #lock_ident::new)
+            };
             let mut lock_guard = lock.write().await;
-            #[allow(clippy::mutable_key_type)]
             let (locks, op_lock) = lock_guard.#ident(lock_id);
             drop(lock_guard);
             // The registered lock must be cancellation-covered BEFORE the
             // predecessor wait below: a future dropped at that await (tokio
             // timeout, task abort) would otherwise leave the registered lock
             // held forever and hang every later operation on this key.
-            let pending_lock = PendingLock::new(op_lock, &self.0.lock_manager, pk.clone());
+            // SAFETY: as above; the map outlives this pending lock and the
+            // `LockGuard` it is converted into, both of which are locals of
+            // this operation.
+            let pending_lock = unsafe { PendingLock::new(op_lock, &self.0.lock_manager, pk.clone()) };
             // No predecessor is the common case on disjoint keys: the row had no
             // entry, so every column slot was empty. Registering a waker on each
             // of nothing, boxing the joined slice and suspending the operation to

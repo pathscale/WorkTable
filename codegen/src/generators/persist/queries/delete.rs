@@ -73,7 +73,9 @@ impl PersistGenerator {
             where #pk_ident: From<Pk>
             {
                 let pk: #pk_ident = pk.into();
-                let _mutation_guard = self.0.lock_manager.mutation_guard(&pk);
+                // SAFETY: the table owns `lock_manager` and is borrowed for
+                // this whole operation, so the map outlives the guard.
+                let _mutation_guard = unsafe { self.0.lock_manager.mutation_guard(&pk) };
                 #publication
                 #delete_logic
                 core::result::Result::Ok(())

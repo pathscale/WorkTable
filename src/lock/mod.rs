@@ -29,6 +29,7 @@ const MAX_SPINS: u32 = 12;
 ///
 /// The guard will also attempt to remove the lock entry from the map on drop
 /// (preventing memory leaks).
+#[doc(hidden)]
 pub struct LockGuard<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
     lock: Arc<Lock>,
     /// Borrowed, not an `Arc` clone: see [`LockAcquirer`]'s field of the same
@@ -66,7 +67,14 @@ where
 {
     /// Creates a new [`LockGuard`] that will clean up the [`Lock`] entry from
     /// the [`LockMap`] on [`Drop`].
-    pub fn new(lock: Arc<Lock>, lock_map: &Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
+    ///
+    /// # Safety
+    ///
+    /// The guard borrows the map as a raw pointer and dereferences it on
+    /// `Drop`, so `lock_map`'s allocation must outlive the returned guard:
+    /// holding the `Arc` only until this call returns is not enough. See the
+    /// "Borrowed guards" note on [`LockMap`].
+    pub unsafe fn new(lock: Arc<Lock>, lock_map: &Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
         Self::from_raw(lock, Arc::as_ptr(lock_map), primary_key)
     }
 
@@ -145,6 +153,7 @@ where
 /// cleanup; converting it into the final [`LockGuard`] with
 /// [`Self::into_guard`] or [`Self::into_guard_with_mutation`] defuses that
 /// cleanup and hands ownership over.
+#[doc(hidden)]
 pub struct PendingLock<LockType: RowLock, PrimaryKey: Hash + Eq + Debug + Clone> {
     lock: Option<Arc<Lock>>,
     /// Borrowed, not an `Arc` clone: see [`LockAcquirer`]'s field of the same
@@ -175,7 +184,12 @@ where
 {
     /// Takes ownership of a freshly registered operation lock. Must be called
     /// synchronously after registration, before the predecessor wait.
-    pub fn new(lock: Arc<Lock>, lock_map: &Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
+    ///
+    /// # Safety
+    ///
+    /// As [`LockGuard::new`]: the map's allocation must outlive this value and
+    /// the [`LockGuard`] it is converted into.
+    pub unsafe fn new(lock: Arc<Lock>, lock_map: &Arc<LockMap<LockType, PrimaryKey>>, primary_key: PrimaryKey) -> Self {
         Self {
             lock: Some(lock),
             lock_map: Arc::as_ptr(lock_map),
@@ -377,7 +391,8 @@ mod tests {
         assert!(lock.is_locked());
 
         {
-            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk);
+            // SAFETY: `lock_map` is a local `Arc` that outlives this guard.
+            let _guard = unsafe { LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk) };
             assert!(lock.is_locked());
         }
 
@@ -391,7 +406,8 @@ mod tests {
         let pk = 1u64;
         assert!(lock.is_locked());
 
-        let guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk);
+        // SAFETY: `lock_map` is a local `Arc` that outlives this guard.
+        let guard = unsafe { LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk) };
         assert!(lock.is_locked());
 
         guard.unlock();
@@ -407,7 +423,8 @@ mod tests {
         assert!(lock.is_locked());
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            let _guard = LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk);
+            // SAFETY: `lock_map` outlives the unwind this closure triggers.
+            let _guard = unsafe { LockGuard::<FullRowLock, u64>::new(lock.clone(), &lock_map, pk) };
             panic!("test panic");
         }));
 
@@ -428,9 +445,10 @@ mod tests {
         assert!(lock3.is_locked());
 
         {
-            let _guard1 = LockGuard::<FullRowLock, u64>::new(lock1.clone(), &lock_map, 1u64);
-            let _guard2 = LockGuard::<FullRowLock, u64>::new(lock2.clone(), &lock_map, 2u64);
-            let _guard3 = LockGuard::<FullRowLock, u64>::new(lock3.clone(), &lock_map, 3u64);
+            // SAFETY: `lock_map` is a local `Arc` that outlives all three guards.
+            let _guard1 = unsafe { LockGuard::<FullRowLock, u64>::new(lock1.clone(), &lock_map, 1u64) };
+            let _guard2 = unsafe { LockGuard::<FullRowLock, u64>::new(lock2.clone(), &lock_map, 2u64) };
+            let _guard3 = unsafe { LockGuard::<FullRowLock, u64>::new(lock3.clone(), &lock_map, 3u64) };
 
             assert!(lock1.is_locked());
             assert!(lock2.is_locked());
@@ -467,7 +485,8 @@ mod tests {
 
         // Create a guard and drop it
         {
-            let _guard = LockGuard::new(lock, &lock_map, pk);
+            // SAFETY: `lock_map` outlives this scope and so outlives the guard.
+            let _guard = unsafe { LockGuard::new(lock, &lock_map, pk) };
         }
 
         // Verify the lock entry was removed from the map
