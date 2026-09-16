@@ -132,16 +132,25 @@ impl VacuumPacing {
     /// once even on an idle table, so a waiting insert gets the registry
     /// before vacuum asks for it back.
     pub(crate) async fn wait_until_quiet(&self, activity: &impl ForegroundActivity, gate: &VacuumGate) {
+        // Sampled BEFORE the yield, not after, and this ordering is the whole
+        // content of the fast path below.
+        //
+        // Taken after the yield it is the same read the loop makes on its first
+        // pass, one line apart: the loop has already established that nothing is
+        // in flight and that the epoch has not moved, so re-asserting both
+        // against a snapshot taken between them proves nothing, and the guard
+        // collapses to `if quiet == 1 { return; }` with `quiet_samples` dead.
+        // Taken here it spans the yield, so it is an actual observation window:
+        // a mutation that completes while vacuum is off the executor moves the
+        // epoch and sends this call down the sampling path it exists for.
+        let entry_epoch = activity.mutation_epoch();
+        let stand_downs_seen = gate.stand_downs();
+
         nagoya::yield_now().await;
 
         let mut backoff = self.backoff;
         let mut quiet = 0;
         let mut observed_epoch = activity.mutation_epoch();
-        // The epoch and stand-down count as they were on entry, so the fast path
-        // below can prove nothing has happened since rather than merely that
-        // nothing is happening right now.
-        let entry_epoch = observed_epoch;
-        let stand_downs_seen = gate.stand_downs();
         loop {
             let current_epoch = activity.mutation_epoch();
             if gate.is_paused() || activity.mutations_in_flight() > 0 || current_epoch != observed_epoch {
@@ -159,19 +168,22 @@ impl VacuumPacing {
             // An idle table needs no confirmation. The repeated samples exist to
             // tell a real lull from the gap between two writes, and that ambiguity
             // only exists when something has been writing: if nothing is in flight
-            // and the epoch has not moved since the first observation, there is
-            // no gap to be fooled by.
+            // and the epoch has not moved across the entry yield, there is no gap
+            // to be fooled by. A table that was writing when vacuum arrived fails
+            // this and pays the full `quiet_samples` buffer.
             //
             // Paid unconditionally this cost 6 ms a batch (3 samples x 2 ms) on a
             // table with no writers at all, and `ghost-vs-drop` measured a 40-page
             // sweep at 31 ms of which roughly 36 ms was arithmetic sleep: the
             // vacuum was not slow, it was waiting for permission nobody was
             // withholding.
-            if quiet == 1
-                && stand_downs_seen == gate.stand_downs()
-                && activity.mutations_in_flight() == 0
-                && current_epoch == entry_epoch
-            {
+            //
+            // `mutations_in_flight() == 0` is deliberately not repeated here:
+            // the loop head above rejected anything else to reach this line,
+            // and re-reading it two lines later proves nothing further. The
+            // stand-down count is not redundant in the same way, because it
+            // can be moved by a concurrent sweep between entry and now.
+            if quiet == 1 && current_epoch == entry_epoch && stand_downs_seen == gate.stand_downs() {
                 return;
             }
             if quiet >= self.quiet_samples {
@@ -242,5 +254,121 @@ mod tests {
             .await
             .expect("vacuum should enter after the recheck buffer stays quiet")
             .unwrap();
+    }
+
+    /// Foreground activity reported through the epoch alone, driven by the
+    /// test rather than by being asked.
+    ///
+    /// `ActivityBetweenChecks` moves its epoch on every *read*, which forces
+    /// the busy branch on the first look and so never reaches the fast path.
+    /// These two tests are about the fast path, so the epoch has to be
+    /// something the test moves at a chosen moment.
+    #[derive(Default)]
+    struct QuietActivity {
+        epoch: AtomicU64,
+    }
+
+    impl ForegroundActivity for QuietActivity {
+        fn mutations_in_flight(&self) -> usize {
+            0
+        }
+
+        fn mutation_epoch(&self) -> u64 {
+            self.epoch.load(Ordering::Acquire)
+        }
+    }
+
+    /// The point of the fast path: a table nobody is writing to must not pay
+    /// `quiet_samples` sleeps for permission nobody is withholding.
+    ///
+    /// The backoffs are set far above the timeout, so this can only pass by
+    /// returning without sleeping at all.
+    #[tokio::test]
+    async fn an_idle_table_is_entered_without_any_sleep() {
+        let activity = QuietActivity::default();
+        let gate = VacuumGate::default();
+        let pacing = VacuumPacing {
+            backoff: Duration::from_secs(30),
+            max_backoff: Duration::from_secs(30),
+            quiet_samples: 3,
+            ..Default::default()
+        };
+
+        tokio::time::timeout(Duration::from_millis(500), pacing.wait_until_quiet(&activity, &gate))
+            .await
+            .expect("an idle table must not sleep through the quiet buffer");
+        assert_eq!(
+            gate.stand_downs(),
+            0,
+            "an idle table gives vacuum nothing to stand down for"
+        );
+    }
+
+    /// Foreground work that completes across the entry yield, and only there.
+    ///
+    /// The epoch advances on the read that follows the entry sample and then
+    /// holds still. Driving it from the read index rather than from a second
+    /// task is deliberate: `nagoya::yield_now` wakes itself before returning
+    /// `Pending`, so a current-thread tokio scheduler runs the waiter straight
+    /// through both reads before the test task is polled again, and a bump
+    /// placed by the test lands after the loop has already started. There is no
+    /// window there to race into.
+    #[derive(Default)]
+    struct WriteAcrossTheEntryYield {
+        reads: AtomicU64,
+    }
+
+    impl ForegroundActivity for WriteAcrossTheEntryYield {
+        fn mutations_in_flight(&self) -> usize {
+            0
+        }
+
+        fn mutation_epoch(&self) -> u64 {
+            // Read 0 is the entry sample and sees epoch 0. Every read after it
+            // sees epoch 1: one mutation completed while vacuum was off the
+            // executor, and the table has been quiet ever since.
+            u64::from(self.reads.fetch_add(1, Ordering::AcqRel) > 0)
+        }
+    }
+
+    /// The fast path must be defeated by work that completes across the entry
+    /// yield, which is the window it claims to observe.
+    ///
+    /// Measured by the stand-down count, which is what the two placements of
+    /// the entry sample actually disagree about here. Sampled before the yield
+    /// (correct), the pre-loop read and the loop's first read agree, so no
+    /// stand-down fires; the fast path is refused on `current_epoch !=
+    /// entry_epoch` alone and the call pays the full quiet buffer. Sampled
+    /// after it, `entry_epoch` becomes the pre-loop read, the loop's first read
+    /// disagrees with it, and the busy branch fires a stand-down instead. Zero
+    /// is the fixed behaviour and one is the regression.
+    #[tokio::test]
+    async fn a_write_across_the_entry_yield_defeats_the_fast_path() {
+        let activity = WriteAcrossTheEntryYield::default();
+        let gate = VacuumGate::default();
+        let pacing = VacuumPacing {
+            backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+            quiet_samples: 3,
+            ..Default::default()
+        };
+
+        tokio::time::timeout(Duration::from_millis(500), pacing.wait_until_quiet(&activity, &gate))
+            .await
+            .expect("the sampling path must still complete once the table stays quiet");
+
+        assert_eq!(
+            gate.stand_downs(),
+            0,
+            "the entry sample must span the yield, so the epoch move is seen as staleness \
+             rather than as a fresh mutation arriving mid-loop"
+        );
+        // Three loop iterations, not one: the fast path was refused. Entry
+        // sample, the pre-loop read, and one read per `quiet_samples`.
+        assert_eq!(
+            activity.reads.load(Ordering::Acquire),
+            5,
+            "a mutation completing across the entry yield must cost the full quiet buffer"
+        );
     }
 }
