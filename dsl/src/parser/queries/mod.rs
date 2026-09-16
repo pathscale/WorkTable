@@ -53,6 +53,16 @@ impl Parser {
                         queries.updates_in_place = updates;
                         queries.update_in_place_runtime = runtime;
                     }
+                    // The 1.10 rename. Without this arm the old spelling gets
+                    // the generic "unexpected token" below, which lists the new
+                    // keyword but does not say it is the same thing renamed, so
+                    // the reader has to guess that their table still works.
+                    "in_place" => {
+                        return Err(syn::Error::new(
+                            ident.span(),
+                            "`in_place:` was renamed to `update_in_place:` in WorkTable 1.10; rename the section keyword, the queries inside it are unchanged",
+                        ));
+                    }
                     other => {
                         return Err(syn::Error::new(
                             ident.span(),
