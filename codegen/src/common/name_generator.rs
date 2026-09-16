@@ -76,6 +76,21 @@ pub fn archived_field_requires_rebuild(ty: &TokenStream) -> bool {
 /// type's `Archive::Archived` layout. That is conservative in the safe
 /// direction: an unrecognised column costs the table its zero-copy path, it
 /// does not grant one unsoundly.
+///
+/// "No relative pointer" is necessary but not sufficient: the type must also
+/// have no validity invariant, because a torn read must yield a wrong *value*
+/// and not an invalid one. `char` is the type that fails that second test and
+/// is why this list is an allowlist rather than "anything `Copy`". It archives
+/// to `rend::char_le`, whose `to_native` transmutes its `u32` on the promise
+/// that it holds a valid scalar value. Two valid chars can tear into one that
+/// is not: `U+1D800` is `[00 D8 01 00]` and `U+0041` is `[41 00 00 00]`, so a
+/// copy taking the low half of the first and the high half of the second reads
+/// `0x0000D800`, a surrogate. The closure transmutes that before `still_stable`
+/// ever runs, which is undefined behaviour and not a discarded wrong number.
+/// `bool` stays: it is one byte, so it cannot tear into a third value.
+///
+/// A `char` column therefore costs its table `select_with` and nothing else.
+/// This gate is only an optimisation.
 pub fn archived_field_is_inline_scalar(ty: &TokenStream) -> bool {
     fn type_is_inline(ty: &Type) -> bool {
         let Type::Path(type_path) = ty else {
@@ -86,8 +101,11 @@ pub fn archived_field_is_inline_scalar(ty: &TokenStream) -> bool {
         };
 
         match segment.ident.to_string().as_str() {
-            "bool" | "char" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
-            | "i128" | "isize" | "f32" | "f64" => true,
+            // `char` is deliberately absent: see the note above. Every type
+            // here has every bit pattern valid, so a torn read is a wrong
+            // number rather than an invalid value.
+            "bool" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+            | "isize" | "f32" | "f64" => true,
             // An archived `Option<T>` of an inline `T` stays inline: rkyv
             // encodes the niche or a discriminant beside the payload.
             "Option" => match &segment.arguments {
@@ -218,6 +236,20 @@ impl WorktableNameGenerator {
 
     /// Payload budget whose end is aligned for a tail-stored archived key.
     /// Variable-width index entries are written backwards from this boundary.
+    ///
+    /// # On-disk format
+    ///
+    /// This is a **format-affecting** value for unsized primary keys: it fixes
+    /// how many entries an index node holds, so a change to it makes existing
+    /// index files unreadable at the new capacity. The house convention is
+    /// regenerate rather than migrate, but the change has to be stated rather
+    /// than discovered.
+    ///
+    /// Rounding down to the archived key's alignment is what corrects the
+    /// earlier under-budgeting (see the `u128_primary_index_capacity` test). A
+    /// plain `String` key is unaffected, because `align_of::<ArchivedString>()`
+    /// is 4 and the capacity was already a multiple of it; a composite key
+    /// containing a `u128` aligns to 16 and does change.
     pub fn get_aligned_disk_page_capacity(&self, key_type: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let capacity = self.get_disk_page_capacity();
         quote::quote! {
