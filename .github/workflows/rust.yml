@@ -33,17 +33,29 @@ jobs:
     # exceeded 30 minutes when GitHub's cache service was unavailable. Keep
     # enough room for a real from-scratch release gate.
     timeout-minutes: 45
-    # A pull request builds the default leg only. The other two legs answer a
-    # release question rather than a review one, and they cost about 38 minutes
-    # of two-core runner between them on every push to every branch. They still
-    # run on master, which is what `publish` gates on, and on a manual
-    # `workflow_dispatch` when a change wants them earlier.
+    # Not on a pull request. `cargo test --workspace --all-targets` is a
+    # ten-minute compile on a two-core runner before it runs anything, three
+    # times over the matrix, and it is the same command `scripts/ci-local.sh`
+    # runs on a developer's machine in a fraction of that. Run it there.
+    #
+    # It still runs on master, which is what `publish` gates on, and on a manual
+    # `workflow_dispatch` when a change wants it earlier.
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request'
-          && '[{"name":"default","args":"","test_debug":2}]'
-          || '[{"name":"default","args":"","test_debug":2},{"name":"versioned-publication","args":"--features versioned-row-publication","test_debug":2},{"name":"all-features","args":"--all-features","test_debug":0}]') }}
+        include:
+          - name: default
+            args: ""
+            test_debug: 2
+          - name: versioned-publication
+            args: "--features versioned-row-publication"
+            test_debug: 2
+          - name: all-features
+            args: "--all-features"
+            # Full DWARF makes Rust 1.98's bundled rust-lld crash while linking
+            # the large integration-test binary on a two-core runner.
+            test_debug: 0
 
     steps:
     - uses: actions/checkout@v4
@@ -63,6 +75,32 @@ jobs:
       env:
         CARGO_PROFILE_TEST_DEBUG: ${{ matrix.test_debug }}
 
+
+  # What a pull request gets instead of the full matrix: the library tests of
+  # every crate, without `--all-targets`.
+  #
+  # That leaves out the integration-test binary and the compile-fail harness,
+  # which is where the ten minutes live -- the trybuild tests shell out to
+  # nested cargo builds, and one of them alone took 56 seconds. The lib tests
+  # are the part that answers "did this change break something" quickly, and
+  # they are not a token gesture: the assertion that turned this whole workflow
+  # red was `worktable_dsl`'s `legacy_in_place_section_is_rejected`, a lib test
+  # this job runs and the fmt/clippy/no-std jobs all passed straight over.
+  #
+  # The full matrix still runs on master and on demand.
+  smoke:
+    name: Smoke test (lib tests)
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+          add-job-id-key: "false"
+      - name: Library tests (cargo test --workspace --lib)
+        run: cargo test --workspace --lib --verbose
 
   clippy_check:
     name: Clippy (${{ matrix.name }})
