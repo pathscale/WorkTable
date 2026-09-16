@@ -104,8 +104,16 @@ where
                 // recorded identity stale. Insert/remove events carry the
                 // affected value, which still identifies the ordered page
                 // range. Structural events do not, and remain hard errors.
+                //
+                // `event_page_key` is passed as well as the value: resolving by
+                // ordering alone always finds *some* page, which would make the
+                // caller's error branch unreachable and apply a genuinely
+                // corrupt event to whichever page sorted nearest. Given the
+                // stale identity, `page_containing` can check that the page it
+                // found is one that identity could have belonged to, and
+                // returns nothing when it is not.
                 self.table_of_contents
-                    .page_containing(event_value)
+                    .page_containing(event_value, event_page_key)
                     .map(|(current_key, page_id)| (page_id, Some(current_key)))
             })
     }
