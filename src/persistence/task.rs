@@ -72,26 +72,21 @@ const MAX_BATCH_OPERATIONS: usize = 512;
 /// contiguous prefix than a partial one, never something unsafe.
 const COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS: usize = 4;
 
-/// How long the drain loop waits before retrying a collection that found a hole.
-///
-/// **This is a backoff, not a barrier, and the number is interim.** It was 500 ms, which
-/// is far longer than the wait is ever worth: the loop is not waiting for work to finish,
-/// it is waiting for an event that a later escalation will make unnecessary anyway, so the
-/// only thing the constant buys is not spinning while that plays out.
-///
-/// It was measured downstream as the dominant cost of shutting a daemon down. A settled
-/// store stepped from 0.42 s at 700 indexed files to 1.45 s at 800 and then flattened,
-/// rising after that only at the underlying linear rate of about 0.06 s per 100 files. A
-/// page drain cannot step by a second and then flatten, and the riser was two of these
-/// sleeps. During `close` it is worse than merely long: closing refuses every push, so the
-/// event the hole waits for can never be queued and each sleep is time bought for nothing.
-///
-/// The right mechanism is to wait on `progress_notify`, which is signalled both when the
-/// queue drains and when the lifecycle moves, `close` included, so the loop would wake on
-/// the event rather than guess at it. `wait_for_ops` already waits that way. Doing it here
-/// means reshaping this loop, so this reduces the constant now and leaves the mechanism to
-/// its own change.
-const RETRY_BACKOFF: Duration = Duration::from_millis(100);
+// History of the wait the drain loop no longer performs, kept because the number it
+// used is a tempting thing to reintroduce.
+//
+// The loop used to sleep a flat 500 ms whenever a collection found a hole in the event
+// stream. That was a clock standing in for an event, and it was measured downstream as
+// the dominant cost of shutting a daemon down: a settled store stepped from 0.42 s at
+// 700 indexed files to 1.45 s at 800 and then flattened, rising after that only at the
+// underlying linear rate of about 0.06 s per 100 files. A page drain cannot step by a
+// second and then flatten; the riser was two of these sleeps.
+//
+// It is now `Queue::await_more_operations`, which waits on the queue's own wake-up and
+// returns the instant the missing operation is pushed. The one number left is a
+// backstop against a lost wake, is reached only when nothing is pushed at all, and is a
+// per-table parameter rather than a constant: `PersistenceConfig::event_gap_wait_cap`,
+// defaulting to `crate::persistence::DEFAULT_EVENT_GAP_WAIT_CAP`.
 
 #[derive(Debug)]
 struct PersistenceLifecycle {
@@ -1792,6 +1787,55 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Queue<PrimaryKeyGenState, Pr
         self.notify.notify_waiters();
     }
 
+    /// Waits for an operation that could close an event gap, rather than for a
+    /// clock.
+    ///
+    /// Only the drain loop calls this, and only once collection has taken the
+    /// whole queue and *still* found a hole, which is the one situation where
+    /// the missing event genuinely has to arrive from somewhere else. That
+    /// somewhere else is a push, so a push is what this waits on: the wait ends
+    /// the instant the operation carrying the missing id is queued, and on a
+    /// table with live producers `cap` is never reached.
+    ///
+    /// Two things end it early, each for its own reason.
+    ///
+    /// A non-empty queue returns immediately. The push may have landed while
+    /// the collection that found the hole was still running, in which case the
+    /// event is already here and waiting for it is waiting for something that
+    /// has happened. The waiter is registered *before* the queue is read, so a
+    /// push landing between the two wakes this rather than being missed.
+    ///
+    /// Anything other than `Running` returns immediately too, and this one is
+    /// provable rather than a heuristic: a push takes the lifecycle lock and is
+    /// refused unless the state is `Running`, and `begin_close` takes the same
+    /// lock, so once `Closing` has been observed here no further push can ever
+    /// be accepted. The missing event can no longer arrive, and every moment
+    /// spent waiting for it is time bought for nothing -- which is exactly the
+    /// shape shutdown showed. The yield keeps the escalation off this worker's
+    /// only pool thread without pretending to wait.
+    ///
+    /// `cap` therefore covers one case: a wake lost to a race, with no later
+    /// push to deliver another. It comes from
+    /// [`PersistenceConfig::event_gap_wait_cap`](crate::persistence::PersistenceConfig::event_gap_wait_cap)
+    /// so a table whose producers are genuinely slower than the default assumes
+    /// can say so, instead of a constant deciding for every table at once.
+    async fn await_more_operations(&self, cap: Duration) {
+        let notified = self.notify.notified();
+        let mut notified = core::pin::pin!(notified);
+        // Registered before both checks below, for the reason spelled out in
+        // `pop_marking_in_progress`: `wake()` uses `notify_waiters`, which
+        // retains no permit, so a waiter created afterwards misses it forever.
+        notified.as_mut().enable();
+        if self.len() != 0 {
+            return;
+        }
+        if !matches!(self.lifecycle.state(), PersistenceState::Running) {
+            nagoya::yield_now().await;
+            return;
+        }
+        let _ = nagoya::timeout(cap, notified).await;
+    }
+
     fn immediate_pop(&self) -> Option<PersistenceMessage<PrimaryKeyGenState, PrimaryKey, SecondaryKeys>> {
         if let Some(v) = self.queue.lock().pop_front() {
             self.len.fetch_sub(1, Ordering::Release);
@@ -2053,6 +2097,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         AvailableIndexes: Copy + Clone + Debug + Hash + Eq + Send + Sync + 'static,
     {
         let table_path = engine.config().table_path().to_owned();
+        // Read once, here, rather than per wait: the worker owns the engine
+        // from this point on, and a parameter that could change under a
+        // running drain loop would be a worse thing to explain than a
+        // parameter that is fixed when the table starts.
+        let event_gap_wait_cap = engine.config().event_gap_wait_cap();
         let lifecycle = Arc::new(PersistenceLifecycle::new());
         let queue = Arc::new(Queue::new(lifecycle.clone(), &table_path));
 
@@ -2158,40 +2207,16 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                         // Only here is waiting the right thing: collection has
                         // already taken the whole queue and the stream still
                         // has a hole, so the event it needs is not yet queued.
-                        // Sleeping on the escalating retries instead charged
-                        // 500 ms for each step towards the fallback that fixes
-                        // them, which is how a 0.03s drain became 290s.
+                        // Waiting on the escalating retries instead charged for
+                        // every step towards the fallback that fixes them,
+                        // which is how a 0.03s drain became 290s.
                         //
-                        // **500 ms was far too long, and this is the interim
-                        // number rather than the right mechanism.** Measured
-                        // downstream: shutdown of a settled daemon stepped from
-                        // 0.42 s at 700 indexed files to 1.45 s at 800 and then
-                        // flattened, rising after that only at the underlying
-                        // linear rate of about 0.06 s per 100 files. A page
-                        // drain cannot step by a second and then flatten, so the
-                        // riser was two of these sleeps. A mid-write shutdown
-                        // cost the same as a settled one, which is what says the
-                        // hole is the ordinary event-order inversion rather than
-                        // an unfinished write.
-                        //
-                        // It is worst during `close`, where it is futile by
-                        // construction: closing refuses every push from then on,
-                        // so the event this hole waits for can never be queued,
-                        // and the loop can only finish through the escalation
-                        // that `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS` already
-                        // guarantees. Every sleep on that path is time bought
-                        // for nothing.
-                        //
-                        // The proper fix is to wait on progress rather than on a
-                        // clock: `progress_notify` is notified both when the
-                        // queue drains and when the lifecycle moves, including
-                        // by `close`, so a notified wait with this as a backstop
-                        // would wake on the event instead of guessing at it.
-                        // `wait_for_ops` already does exactly that. That is a
-                        // larger change to this loop than a release wants to
-                        // carry, so this reduces the constant now and leaves the
-                        // mechanism for its own change.
-                        nagoya::sleep(RETRY_BACKOFF).await;
+                        // This waits on the push that would carry the missing
+                        // event, not on a clock. See
+                        // `Queue::await_more_operations` for why a non-empty
+                        // queue and a non-`Running` lifecycle each end it at
+                        // once, and for what the cap is still there to cover.
+                        engine_queue.await_more_operations(event_gap_wait_cap).await;
                     }
                 } else if let Some(page_ids) = pending_reclaim.take() {
                     // `get_first_op_id_available() == None` is only sufficient
