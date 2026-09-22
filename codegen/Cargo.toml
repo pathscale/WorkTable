@@ -1,6 +1,6 @@
 [package]
 name = "worktable_codegen"
-version = "1.10.0-beta1"
+version = "1.10.0-beta2"
 edition = "2024"
 license = "MIT"
 description = "Proc-macro companion crate for worktable: the worktable! macro and its derives."
@@ -26,7 +26,7 @@ proc-macro = true
 # a declaration. See its crate docs for why that needed a separate crate.
 # Name the reviewed prerelease while accepting compatible schema-model and
 # validator updates. Release checks verify the resolved generated API.
-worktable_dsl = { path = "../dsl", version = "^1.10.0-beta1" }
+worktable_dsl = { path = "../dsl", version = "^1.10.0-beta2" }
 # Test-only. As a normal dependency this proc-macro crate put `rkyv` with its
 # default features into the graph, which turned on `rkyv/std` for the target
 # build too and dragged `ptr_meta` with it. The generated code names `rkyv`
