@@ -118,10 +118,37 @@ mod space;
 mod task;
 
 // TODO: remove this
+/// Backstop for [`PersistenceConfig::event_gap_wait_cap`].
+///
+/// The worker waits on the queue's own wake-up, so this is only reached when no
+/// push arrives at all and no wake was delivered. It is short because nothing is
+/// bought by making it long: the wait exists to avoid spinning, not to give a
+/// producer time, and the producer's own push is what ends it.
+pub const DEFAULT_EVENT_GAP_WAIT_CAP: core::time::Duration = core::time::Duration::from_millis(100);
+
 pub trait PersistenceConfig {
     fn table_path(&self) -> &str;
 
     fn version(&self) -> u32;
+
+    /// Longest the persistence worker parks waiting for an index event that is
+    /// missing from the queue.
+    ///
+    /// The wait itself is event-driven: the worker registers on the queue's
+    /// wake-up and returns the moment an operation is pushed, so on a table
+    /// whose producers are live this cap is never reached and the value does
+    /// not matter. It bounds the one case the wake cannot cover, a wake lost
+    /// to a race, and it is the only place a number is still guessed.
+    ///
+    /// Override it per table when this table's producers are slower than the
+    /// default assumes -- a remote or batch producer that can genuinely be a
+    /// second between pushes -- or shorten it when a stall must surface fast.
+    /// Note what it does *not* bound: the worker gives up on a gap after a
+    /// fixed number of waits, so this cap multiplied by that count is the
+    /// worst-case time before a stalled gap fails the table.
+    fn event_gap_wait_cap(&self) -> core::time::Duration {
+        DEFAULT_EVENT_GAP_WAIT_CAP
+    }
 }
 
 /// Controls the consistency checks applied while loading persisted state.

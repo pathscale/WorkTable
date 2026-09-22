@@ -23,11 +23,17 @@ use crate::prelude::{Order, SelectQueryExecutor};
 /// fails the table.
 ///
 /// A gap is usually transient: the operation carrying the missing id has been
-/// pushed but not yet batched, or its producer has not reached its push. Each
-/// deferral sleeps 500ms in the worker loop, so this is about a minute of
-/// waiting. The previous value of eight was about four seconds, which a
-/// producer descheduled under load can lose, and the engine then blamed a
-/// permanent bug for what was a slow thread.
+/// pushed but not yet batched, or its producer has not reached its push.
+///
+/// This counts deferrals, not time, and the difference matters now that the
+/// worker waits on the push rather than on a clock. A deferral that ends
+/// because the awaited operation arrived costs whatever the producer took; one
+/// that ends on the backstop costs
+/// [`PersistenceConfig::event_gap_wait_cap`](crate::persistence::PersistenceConfig::event_gap_wait_cap),
+/// so that cap times this count is the worst case before a stalled gap fails
+/// the table. It was raised from eight for a reason that still holds: eight was
+/// about four seconds, which a producer descheduled under load can lose, and
+/// the engine then blamed a permanent bug for what was a slow thread.
 ///
 /// Widening the collection is a *separate* decision, taken far sooner and
 /// tracked by the analyzer's own no-progress counter. This one only decides
