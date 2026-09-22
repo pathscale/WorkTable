@@ -72,6 +72,27 @@ const MAX_BATCH_OPERATIONS: usize = 512;
 /// contiguous prefix than a partial one, never something unsafe.
 const COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS: usize = 4;
 
+/// How long the drain loop waits before retrying a collection that found a hole.
+///
+/// **This is a backoff, not a barrier, and the number is interim.** It was 500 ms, which
+/// is far longer than the wait is ever worth: the loop is not waiting for work to finish,
+/// it is waiting for an event that a later escalation will make unnecessary anyway, so the
+/// only thing the constant buys is not spinning while that plays out.
+///
+/// It was measured downstream as the dominant cost of shutting a daemon down. A settled
+/// store stepped from 0.42 s at 700 indexed files to 1.45 s at 800 and then flattened,
+/// rising after that only at the underlying linear rate of about 0.06 s per 100 files. A
+/// page drain cannot step by a second and then flatten, and the riser was two of these
+/// sleeps. During `close` it is worse than merely long: closing refuses every push, so the
+/// event the hole waits for can never be queued and each sleep is time bought for nothing.
+///
+/// The right mechanism is to wait on `progress_notify`, which is signalled both when the
+/// queue drains and when the lifecycle moves, `close` included, so the loop would wake on
+/// the event rather than guess at it. `wait_for_ops` already waits that way. Doing it here
+/// means reshaping this loop, so this reduces the constant now and leaves the mechanism to
+/// its own change.
+const RETRY_BACKOFF: Duration = Duration::from_millis(100);
+
 #[derive(Debug)]
 struct PersistenceLifecycle {
     state: ParkingMutex<PersistenceState>,
@@ -2140,7 +2161,37 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                         // Sleeping on the escalating retries instead charged
                         // 500 ms for each step towards the fallback that fixes
                         // them, which is how a 0.03s drain became 290s.
-                        nagoya::sleep(Duration::from_millis(500)).await;
+                        //
+                        // **500 ms was far too long, and this is the interim
+                        // number rather than the right mechanism.** Measured
+                        // downstream: shutdown of a settled daemon stepped from
+                        // 0.42 s at 700 indexed files to 1.45 s at 800 and then
+                        // flattened, rising after that only at the underlying
+                        // linear rate of about 0.06 s per 100 files. A page
+                        // drain cannot step by a second and then flatten, so the
+                        // riser was two of these sleeps. A mid-write shutdown
+                        // cost the same as a settled one, which is what says the
+                        // hole is the ordinary event-order inversion rather than
+                        // an unfinished write.
+                        //
+                        // It is worst during `close`, where it is futile by
+                        // construction: closing refuses every push from then on,
+                        // so the event this hole waits for can never be queued,
+                        // and the loop can only finish through the escalation
+                        // that `COLLECT_WHOLE_QUEUE_AFTER_ATTEMPTS` already
+                        // guarantees. Every sleep on that path is time bought
+                        // for nothing.
+                        //
+                        // The proper fix is to wait on progress rather than on a
+                        // clock: `progress_notify` is notified both when the
+                        // queue drains and when the lifecycle moves, including
+                        // by `close`, so a notified wait with this as a backstop
+                        // would wake on the event instead of guessing at it.
+                        // `wait_for_ops` already does exactly that. That is a
+                        // larger change to this loop than a release wants to
+                        // carry, so this reduces the constant now and leaves the
+                        // mechanism for its own change.
+                        nagoya::sleep(RETRY_BACKOFF).await;
                     }
                 } else if let Some(page_ids) = pending_reclaim.take() {
                     // `get_first_op_id_available() == None` is only sufficient
