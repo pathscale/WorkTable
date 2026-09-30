@@ -13,6 +13,7 @@ This is an explicit product boundary, not an implied durability guarantee.
 |---|---|---|
 | Mutation returns `Ok` | The in-memory mutation completed and its persistence operation was accepted by the running queue. | The bytes have reached the OS, disk, or S3. |
 | `wait_for_ops()` returns `Ok` | The local persistence task reached an idle point: its queue and analyzer are empty and no batch is in flight. Errors observed by the worker are surfaced. | Intake is not closed; concurrent or later writers may queue more work. File `flush` is not `fsync`, and a multi-file batch is not crash-atomic. |
+| `wait_for_durable()` returns `Ok` | The configured engine completed the queued operations. Per-table S3 sync includes acknowledgement of its table manifest. | It does not call local `fsync`, close intake, or make a multi-file local update crash-atomic. |
 | `close()` returns `Ok` | Intake is closed, queued work is drained, and the persistence worker has joined without a reported error. | Power-loss durability or atomicity across data and index files. |
 | Graceful process exit after `close()` | The WorkTable worker completed all writes it reported. | Survival of a subsequent power loss before the operating system commits buffered writes. |
 | Process crash or `SIGKILL` | No row-fidelity guarantee for an interrupted batch. The next load either returns a state whose primary links and rows validate, or returns `PersistenceLoadError`. | Preservation of the latest acknowledged changes. |
@@ -87,6 +88,29 @@ When `manifest.v1` is absent, startup lists and restores the former whole-file l
 The next successful mutation uploads segments and establishes the first manifest. Once a
 manifest exists, its failure is fatal; WorkTable will not silently continue from stale
 local files and overwrite a newer remote generation.
+
+## S3 writer leases
+
+Per-table S3 sync can receive an `Arc<S3Lease>` through `S3DiskConfig::lease`. Keep each
+host's lease under a host-specific prefix in the same bucket as its table manifests. The
+lease record stores the owner, Unix expiry, and generation. Acquisition conditionally
+creates a missing object with `If-None-Match: *`; takeover and renewal use `If-Match` on
+the current ETag. Release conditionally marks the object expired and preserves its
+generation so later takeovers increment it.
+Clone a handle before wrapping one in `Arc<S3Lease>`; retain the mutable handle to call
+`renew()`. Clones share the current ETag and fencing state.
+
+Before applying persisted work, WorkTable checks that the lease record still has the
+expected owner, generation, ETag, and a future expiry. It repeats that check before and
+after each segment or manifest upload. Any failed or uncertain renewal fences the lease;
+the persistence task then fails and `wait_for_durable()` returns the error. Applications
+must renew before the configured TTL expires and stop intake when the persistence task
+fails.
+
+When S3 access and secret keys are empty, WorkTable resolves environment credentials,
+shared credentials profiles, container credentials, or an EC2 instance role using
+IMDSv2. Supply an explicit region for this path. Temporary credentials are refreshed
+before their expiry. The S3 sync HTTP path remains blocking.
 
 ## Offline index recovery
 

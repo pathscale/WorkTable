@@ -52,10 +52,14 @@ fn data_page_image(address: worktable::data_bucket::storage::PageAddress, rows: 
     image
 }
 
+/// Key, If-Match and If-None-Match of one conditional PUT.
+type ConditionalPut = (String, Option<String>, Option<String>);
+
 #[derive(Clone, Default)]
 struct FakeS3State {
     objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     puts: Arc<Mutex<Vec<(String, usize)>>>,
+    conditional_puts: Arc<Mutex<Vec<ConditionalPut>>>,
     gets: Arc<Mutex<Vec<String>>>,
     reject_manifest_puts: Arc<AtomicBool>,
 }
@@ -124,6 +128,11 @@ async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
 
                 let (status, content_type, body, etag) = if method == "PUT" {
                     let body = request[header_end..header_end + content_length].to_vec();
+                    state.conditional_puts.lock().unwrap().push((
+                        key.to_string(),
+                        headers.get("if-none-match").cloned(),
+                        headers.get("if-match").cloned(),
+                    ));
                     if key.ends_with("/manifest.v1") && state.reject_manifest_puts.load(Ordering::Acquire) {
                         (
                             "500 Internal Server Error",
@@ -393,6 +402,7 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
                 region: None,
                 prefix: Some("wt-test".to_string()),
             },
+            lease: None,
         };
 
         // Build the existing WTI-compatible on-disk format through the normal
@@ -529,6 +539,186 @@ fn s3_engine_reuses_logical_persistence_for_a_loaded_default_arctic_table() {
             assert_eq!(table.select(257).unwrap().value, 10_000);
         }
 
+        server.abort();
+    });
+}
+
+#[test]
+fn s3_lease_uses_conditional_etags_and_monotonic_generations() {
+    use worktable::lease::{S3Lease, S3LeaseConfig};
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (endpoint, state, server) = fake_s3().await;
+        let config = S3LeaseConfig {
+            bucket: "test".to_string(),
+            prefix: "lease-tests".to_string(),
+            region: "us-east-1".to_string(),
+            owner: "writer-a".to_string(),
+            ttl_secs: 60,
+        };
+        let first =
+            S3Lease::acquire_with_endpoint(config.clone(), endpoint.clone(), "test".to_string(), "test".to_string())
+                .await
+                .unwrap();
+        assert_eq!(first.generation(), 1);
+        assert!(first.is_held());
+        let renewal_handle = first.clone();
+        renewal_handle.renew().await.unwrap();
+        assert!(first.is_held(), "renewal must update every shared lease handle");
+        drop(renewal_handle);
+
+        assert!(
+            S3Lease::acquire_with_endpoint(config.clone(), endpoint.clone(), "test".to_string(), "test".to_string(),)
+                .await
+                .is_err(),
+            "a live lease must reject another owner"
+        );
+
+        // Simulate an expired record whose ETag no longer matches the first
+        // owner's copy. Its renewal must fail conditionally and fence it.
+        let lease_key = "lease-tests/lease.v1";
+        {
+            let mut objects = state.objects.lock().unwrap();
+            let record = objects.get_mut(lease_key).unwrap();
+            record[16..24].copy_from_slice(&0_u64.to_le_bytes());
+        }
+        assert!(first.renew().await.is_err());
+        assert!(!first.is_held());
+
+        let second = S3Lease::acquire_with_endpoint(
+            S3LeaseConfig {
+                owner: "writer-b".to_string(),
+                ..config.clone()
+            },
+            endpoint.clone(),
+            "test".to_string(),
+            "test".to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.generation(), 2);
+        second.release().await.unwrap();
+
+        let third = S3Lease::acquire_with_endpoint(config, endpoint, "test".to_string(), "test".to_string())
+            .await
+            .unwrap();
+        assert_eq!(third.generation(), 3);
+        third.release().await.unwrap();
+
+        let conditional_puts = state.conditional_puts.lock().unwrap();
+        assert!(
+            conditional_puts
+                .iter()
+                .any(|(_, if_none_match, _)| if_none_match.as_deref() == Some("*"))
+        );
+        assert!(
+            conditional_puts
+                .iter()
+                .filter(|(_, _, if_match)| if_match.is_some())
+                .count()
+                >= 4
+        );
+        server.abort();
+    });
+}
+
+#[test]
+fn leased_s3_table_waits_for_manifest_ack_and_rejects_a_fenced_writer() {
+    use std::sync::Arc;
+    use worktable::lease::{S3Lease, S3LeaseConfig};
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let path = "tests/data/s3/lease_gated";
+        remove_dir_if_exists(path.to_string()).await;
+        let (endpoint, state, server) = fake_s3().await;
+        let lease = Arc::new(
+            S3Lease::acquire_with_endpoint(
+                S3LeaseConfig {
+                    bucket: "test".to_string(),
+                    prefix: "lease-gated".to_string(),
+                    region: "us-east-1".to_string(),
+                    owner: "writer-a".to_string(),
+                    ttl_secs: 60,
+                },
+                endpoint.clone(),
+                "test".to_string(),
+                "test".to_string(),
+            )
+            .await
+            .unwrap(),
+        );
+        let config = S3DiskConfig {
+            disk: DiskConfig::new_with_table_name(path, TestS3WorkTable::name_snake_case(), TestS3WorkTable::version()),
+            s3: S3Config {
+                bucket_name: "test".to_string(),
+                endpoint,
+                access_key: "test".to_string(),
+                secret_key: "test".to_string(),
+                region: Some("us-east-1".to_string()),
+                prefix: Some("lease-gated/tables".to_string()),
+            },
+            lease: Some(lease.clone()),
+        };
+        let engine = TestS3S3SyncPersistenceEngine::new(config.clone()).await.unwrap();
+        let table = TestS3WorkTable::load(engine).await.unwrap();
+        table
+            .insert(TestS3Row {
+                id: table.get_next_pk().into(),
+                value: 1,
+                payload: "durable".to_string(),
+            })
+            .await
+            .unwrap();
+        table.wait_for_durable().await.unwrap();
+        let committed_manifests = state
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| key.ends_with("/manifest.v1"))
+            .count();
+        assert_eq!(committed_manifests, 1);
+
+        // Expiring the S3 record changes its ETag and makes the next queued
+        // mutation fail before the table can publish another manifest.
+        {
+            let mut objects = state.objects.lock().unwrap();
+            let record = objects.get_mut("lease-gated/lease.v1").unwrap();
+            record[16..24].copy_from_slice(&0_u64.to_le_bytes());
+        }
+        table
+            .insert(TestS3Row {
+                id: table.get_next_pk().into(),
+                value: 2,
+                payload: "fenced".to_string(),
+            })
+            .await
+            .unwrap();
+        assert!(table.wait_for_durable().await.is_err());
+        let manifest_count_after_fence = state
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| key.ends_with("/manifest.v1"))
+            .count();
+        assert_eq!(manifest_count_after_fence, committed_manifests);
+
+        drop(table);
+        drop(config);
+        remove_dir_if_exists(path.to_string()).await;
         server.abort();
     });
 }

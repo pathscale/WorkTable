@@ -6,14 +6,16 @@ use core::time::Duration;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+use rusty_s3::{Bucket, S3Action, UrlStyle};
 use ureq::Agent;
 use url::Url;
 use walkdir::WalkDir;
 
 use crate::TableSecondaryIndexEventsOps;
+use crate::lease::{S3CredentialsProvider, S3Lease};
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
     DiskConfig, DiskPersistenceEngine, PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps,
@@ -46,6 +48,8 @@ pub struct S3Config {
 pub struct S3DiskConfig {
     pub disk: DiskConfig,
     pub s3: S3Config,
+    /// Optional single-writer lease checked before and after each S3 upload.
+    pub lease: Option<Arc<S3Lease>>,
 }
 
 impl PersistenceConfig for S3DiskConfig {
@@ -396,7 +400,7 @@ pub struct S3SyncDiskPersistenceEngine<
     >,
     config: S3DiskConfig,
     bucket: Bucket,
-    credentials: Credentials,
+    credentials: S3CredentialsProvider,
     client: Agent,
     committed_manifest: Option<TableManifest>,
     committed_blocks: HashMap<String, Vec<[u8; 32]>>,
@@ -431,8 +435,12 @@ where
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
-    fn create_bucket(config: &S3Config) -> eyre::Result<(Bucket, Credentials, Agent)> {
-        let credentials = Credentials::new(&config.access_key, &config.secret_key);
+    fn create_bucket(config: &S3Config) -> eyre::Result<(Bucket, S3CredentialsProvider, Agent)> {
+        if config.access_key.is_empty() && config.secret_key.is_empty() && config.region.is_none() {
+            return Err(eyre::eyre!(
+                "an explicit S3 region is required when using default credentials"
+            ));
+        }
         let endpoint: Url = config.endpoint.parse()?;
         let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
         let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
@@ -441,6 +449,11 @@ where
         // engine owns its thread, so a request that blocks it is the right
         // execution shape and does not require a Tokio reactor.
         let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
+        let credentials = S3CredentialsProvider::static_or_default(
+            config.access_key.clone(),
+            config.secret_key.clone(),
+            config.region.clone().unwrap_or_else(|| "auto".to_string()),
+        )?;
 
         Ok((bucket, credentials, client))
     }
@@ -470,6 +483,13 @@ where
         ))
     }
 
+    fn ensure_lease_live(&self) -> eyre::Result<()> {
+        if let Some(lease) = &self.config.lease {
+            lease.check_live_generation(lease.generation())?;
+        }
+        Ok(())
+    }
+
     fn chunk_path(hash: &[u8; 32]) -> String {
         let mut hex = String::with_capacity(64);
         for byte in hash {
@@ -480,11 +500,12 @@ where
 
     fn get_object_optional(
         bucket: &Bucket,
-        credentials: &Credentials,
+        credentials: &S3CredentialsProvider,
         client: &Agent,
         key: &str,
     ) -> eyre::Result<Option<Vec<u8>>> {
-        let action = bucket.get_object(Some(credentials), key);
+        let credentials = credentials.resolve()?;
+        let action = bucket.get_object(Some(&credentials), key);
         let url = action.sign(Duration::from_secs(3600));
         let response = match client.get(url.as_str()).call() {
             Ok(response) => response,
@@ -497,26 +518,34 @@ where
     }
 
     fn put_object_verified(&self, key: &str, bytes: &[u8]) -> eyre::Result<()> {
-        let action = self.bucket.put_object(Some(&self.credentials), key);
+        self.ensure_lease_live()?;
+        let credentials = self.credentials.resolve()?;
+        let action = self.bucket.put_object(Some(&credentials), key);
         let url = action.sign(Duration::from_secs(3600));
-        match self.client.put(url.as_str()).send_bytes(bytes) {
-            Ok(_) => Ok(()),
-            Err(put_error) => {
-                // A connection can fail after the object service committed the
-                // PUT. Resolve that ambiguity before reporting failure; the
-                // caller must never repeat a local database mutation merely to
-                // discover that its manifest was already published.
-                let stored = Self::get_object_optional(&self.bucket, &self.credentials, &self.client, key)?;
-                if stored.as_deref() == Some(bytes) {
-                    Ok(())
-                } else {
-                    Err(put_error.into())
+        let upload_result = (|| -> eyre::Result<()> {
+            match self.client.put(url.as_str()).send_bytes(bytes) {
+                Ok(_) => Ok(()),
+                Err(put_error) => {
+                    // A connection can fail after the object service committed the
+                    // PUT. Resolve that ambiguity before reporting failure; the
+                    // caller must never repeat a local database mutation merely to
+                    // discover that its manifest was already published.
+                    let stored = Self::get_object_optional(&self.bucket, &self.credentials, &self.client, key)?;
+                    if stored.as_deref() == Some(bytes) {
+                        Ok(())
+                    } else {
+                        Err(put_error.into())
+                    }
                 }
             }
-        }
+        })();
+        let lease_check = self.ensure_lease_live();
+        upload_result?;
+        lease_check
     }
 
     async fn sync_to_s3(&mut self) -> eyre::Result<()> {
+        self.ensure_lease_live()?;
         let table_path = Path::new(self.config.disk.table_path());
         if !table_path.exists() {
             return Ok(());
@@ -625,7 +654,7 @@ where
 
     async fn sync_from_s3(
         bucket: &Bucket,
-        credentials: &Credentials,
+        credentials: &S3CredentialsProvider,
         client: &Agent,
         config: &S3DiskConfig,
     ) -> eyre::Result<Option<TableManifest>> {
@@ -653,7 +682,7 @@ where
 
     async fn restore_manifest(
         bucket: &Bucket,
-        credentials: &Credentials,
+        credentials: &S3CredentialsProvider,
         client: &Agent,
         config: &S3DiskConfig,
         manifest: &TableManifest,
@@ -714,7 +743,7 @@ where
 
     async fn restore_legacy_objects(
         bucket: &Bucket,
-        credentials: &Credentials,
+        credentials: &S3CredentialsProvider,
         client: &Agent,
         config: &S3DiskConfig,
     ) -> eyre::Result<bool> {
@@ -728,7 +757,8 @@ where
         let mut objects = Vec::new();
 
         loop {
-            let mut action = bucket.list_objects_v2(Some(credentials));
+            let resolved_credentials = credentials.resolve()?;
+            let mut action = bucket.list_objects_v2(Some(&resolved_credentials));
             action.with_prefix(&table_root);
             if let Some(token) = continuation.as_deref() {
                 action.with_continuation_token(token);
@@ -1080,6 +1110,7 @@ where
         &mut self,
         op: Operation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents>,
     ) -> eyre::Result<()> {
+        self.ensure_lease_live()?;
         self.inner.apply_operation(op).await?;
         self.sync_to_s3().await
     }
@@ -1088,6 +1119,7 @@ where
         &mut self,
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> eyre::Result<()> {
+        self.ensure_lease_live()?;
         self.inner.apply_batch_operation(batch_op).await?;
         self.sync_to_s3().await
     }

@@ -124,13 +124,16 @@ Persisted tables expose fallible draining and graceful shutdown:
 
 ```rust
 table.wait_for_ops().await?; // drain currently queued operations
+table.wait_for_durable().await?; // wait through the configured engine's durability boundary
 table.close().await?;        // stop intake, drain, and join the engine task
 ```
 
 `wait_for_ops()` requires application-level writer quiescence if it is being used as
 a shutdown boundary; it does not prevent another task from queueing later work.
-Neither method is an `fsync` or a transaction commit. The exact guarantees and the
-snapshot-restore/replay procedure are documented in
+`wait_for_durable()` drains the same queue and names the configured engine's
+acknowledgement boundary. With per-table S3 sync persistence, it returns only after the
+table manifest is acknowledged by S3. Neither method is an `fsync` or a transaction
+commit. The exact guarantees and the snapshot-restore/replay procedure are documented in
 [`docs/persistence-durability.md`](docs/persistence-durability.md).
 
 An unrecoverable event gap, queue-analysis error, batch-apply error, or engine-task
@@ -146,6 +149,7 @@ These lifecycle calls are not a crash-durability guarantee:
 |---|---|
 | Mutation returns | The in-memory change was accepted and its persistence operation was queued. |
 | `wait_for_ops()` returns | The persistence engine completed the queued operations; no fsync or stable-storage guarantee is made. |
+| `wait_for_durable()` returns | The configured persistence engine acknowledged the queued operations; per-table S3 sync includes its manifest acknowledgement. No local fsync guarantee is made. |
 | `close()` returns | Intake stopped, the queue drained, and the engine task joined; no fsync guarantee is made. |
 | Process crash / `SIGKILL` | Acknowledged rows may be lost and the file may be torn. |
 | Power loss | No atomic-batch or stable-storage guarantee. |

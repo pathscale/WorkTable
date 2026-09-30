@@ -10,6 +10,7 @@ impl Generator {
         let space_info_fn = self.gen_worktable_space_info_fn();
         let persisted_pk_fn = self.gen_worktable_persisted_primary_key_fn();
         let wait_for_ops_fn = self.gen_worktable_wait_for_ops_fn();
+        let wait_for_durable_fn = self.gen_worktable_wait_for_durable_fn();
         let persistence_monitor_fn = self.gen_worktable_persistence_monitor_fn();
         let close_fn = self.gen_worktable_close_fn();
         let unload_fn = self.gen_worktable_unload_fn();
@@ -20,6 +21,7 @@ impl Generator {
                 #space_info_fn
                 #persisted_pk_fn
                 #wait_for_ops_fn
+                #wait_for_durable_fn
                 #persistence_monitor_fn
                 #close_fn
                 #unload_fn
@@ -98,6 +100,27 @@ impl Generator {
             quote! {
                 pub async fn wait_for_ops(&self) -> PersistenceResult {
                    self.1.wait_for_ops().await
+                }
+            }
+        }
+    }
+
+    fn gen_worktable_wait_for_durable_fn(&self) -> TokenStream {
+        if self.attributes.read_only {
+            quote! {
+                /// Waits for the configured persistence engine to complete
+                /// every operation queued before this call.
+                pub async fn wait_for_durable(&self) -> PersistenceResult {
+                    Ok(())
+                }
+            }
+        } else {
+            quote! {
+                /// Waits for the configured persistence engine to complete
+                /// every operation queued before this call. S3 sync persistence
+                /// returns after the table manifest has been acknowledged.
+                pub async fn wait_for_durable(&self) -> PersistenceResult {
+                    self.1.wait_for_durable().await
                 }
             }
         }

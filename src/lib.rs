@@ -41,6 +41,8 @@ pub mod vec_hydrate;
 #[cfg(feature = "s3-support")]
 pub mod features;
 #[cfg(feature = "s3-support")]
+pub mod lease;
+#[cfg(feature = "s3-support")]
 pub use features::{DatabaseS3DiskConfig, DatabaseS3PersistenceEngine};
 
 pub use columnar::{

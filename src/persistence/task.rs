@@ -2322,6 +2322,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         }
     }
 
+    /// Waits until every operation queued before the call has been completed
+    /// by the configured persistence engine.
+    ///
+    /// For S3 sync persistence, completion includes the S3 manifest
+    /// acknowledgement. Other engines define their own persistence boundary.
+    pub async fn wait_for_durable(&self) -> PersistenceResult {
+        self.wait_for_ops().await
+    }
+
     /// Returns a cloneable monitor independent of this task's ownership.
     pub fn monitor(&self) -> PersistenceMonitor {
         PersistenceMonitor {

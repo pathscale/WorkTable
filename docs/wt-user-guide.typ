@@ -976,13 +976,15 @@ The S3 engine still uses the disk engine as its local working copy.
   [*Boundary*], [*What you actually get*],
   [A mutation returns], [The in-memory change was accepted and its persistence operation was queued.],
   [`wait_for_ops()` returns], [The engine completed the queued operations. No fsync, no stable-storage guarantee.],
+  [`wait_for_durable()` returns], [The configured engine acknowledged queued operations; S3 engines include the remote manifest or generation acknowledgement. No local fsync guarantee.],
   [`close()` returns], [Intake stopped, the queue drained, the engine task joined. Still no fsync guarantee.],
   [Process crash or `SIGKILL`], [Acknowledged rows may be lost and the file may be torn.],
   [Power loss], [No atomic-batch or stable-storage guarantee.],
 )
 
-Call `close()` on orderly shutdown. `wait_for_ops()` is not a shutdown boundary: it does
-not stop another task queueing more work, so it means nothing without writer quiescence.
+Call `close()` on orderly shutdown. `wait_for_ops()` and `wait_for_durable()` are not
+shutdown boundaries: neither stops another task queueing more work, so neither is a
+shutdown proof without writer quiescence.
 
 Persistence failure is terminal. An event gap, queue-analysis error, batch-apply error or
 engine-task failure fails the table, and the original error goes to waiters, to `close()`
@@ -1315,6 +1317,11 @@ existing per-table manifests. New databases should use `database_s3_persistence!
 `DatabaseS3DiskConfig`. Both paths use blocking `ureq`, require no Tokio socket reactor,
 and add no local `fsync` guarantee. Exact dirty-page reporting remains a future local-work
 optimization; the scan and network work are already outside the mutation caller.
+
+Per-table S3 sync can set `S3DiskConfig::lease` to a host-specific `Arc<S3Lease>`.
+The writer checks the lease owner, ETag, expiry and generation around each S3 upload;
+call `renew()` before its configured TTL expires. `wait_for_durable()` waits through the
+table manifest acknowledgement.
 
 *The v3 format cutover is a storage migration.* Ordinary persisted tables now
 write format 3, with a page-local directory that records every live row and a
