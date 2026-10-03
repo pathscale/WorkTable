@@ -431,16 +431,32 @@ where
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
-    fn create_bucket(config: &S3Config) -> eyre::Result<(Bucket, Credentials, Agent)> {
+    /// Open with a caller-owned HTTP agent, including its TLS trust policy.
+    pub async fn new_with_agent(config: S3DiskConfig, client: Agent) -> eyre::Result<Self> {
+        let (bucket, credentials, client) = Self::create_bucket(&config.s3, client)?;
+        // If a manifest exists, failure is fatal: continuing with local files
+        // could publish stale state over a newer committed remote generation.
+        let committed_manifest = Self::sync_from_s3(&bucket, &credentials, &client, &config).await?;
+        let inner = DiskPersistenceEngine::new(config.disk.clone()).await?;
+        let committed_blocks = describe_table_blocks(Path::new(config.disk.table_path()))?;
+
+        Ok(Self {
+            inner,
+            config,
+            bucket,
+            credentials,
+            client,
+            committed_manifest,
+            committed_blocks,
+            phantom: PhantomData,
+        })
+    }
+
+    fn create_bucket(config: &S3Config, client: Agent) -> eyre::Result<(Bucket, Credentials, Agent)> {
         let credentials = Credentials::new(&config.access_key, &config.secret_key);
         let endpoint: Url = config.endpoint.parse()?;
         let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
         let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
-
-        // Blocking, like every other I/O call in this crate. The persistence
-        // engine owns its thread, so a request that blocks it is the right
-        // execution shape and does not require a Tokio reactor.
-        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
 
         Ok((bucket, credentials, client))
     }
@@ -1057,23 +1073,8 @@ where
     where
         Self: Sized,
     {
-        let (bucket, credentials, client) = Self::create_bucket(&config.s3)?;
-        // If a manifest exists, failure is fatal: continuing with local files
-        // could publish stale state over a newer committed remote generation.
-        let committed_manifest = Self::sync_from_s3(&bucket, &credentials, &client, &config).await?;
-        let inner = DiskPersistenceEngine::new(config.disk.clone()).await?;
-        let committed_blocks = describe_table_blocks(Path::new(config.disk.table_path()))?;
-
-        Ok(Self {
-            inner,
-            config,
-            bucket,
-            credentials,
-            client,
-            committed_manifest,
-            committed_blocks,
-            phantom: PhantomData,
-        })
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
+        Self::new_with_agent(config, client).await
     }
 
     async fn apply_operation(
