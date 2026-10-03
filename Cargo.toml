@@ -161,6 +161,8 @@ libc = { version = "^0.2", default-features = false }
 windows-sys = { version = "^0.61", default-features = false, features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 fastrand = "2"
 chrono = "0.4"
 # For one test, and only one: the flavor registry lives here and the DSL

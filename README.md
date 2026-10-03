@@ -581,3 +581,10 @@ enum WorkTableError
 ## Examples 
 
 Check out - [Examples](./examples)
+# S3 HTTP policy
+
+`S3SyncDiskPersistenceEngine::new_with_agent(config, agent)` (including generated
+S3 engine aliases) uses the supplied `ureq::Agent` for every restore, manifest and
+upload request. A host can supply restricted TLS trust anchors and redirect
+policy without changing table configuration. `PersistenceEngine::new(config)`
+retains the existing default agent for other consumers.
