@@ -101,8 +101,7 @@ an in-place batch atomic against process death or power loss.
 A graceful persistence failure is terminal and is returned by later mutations,
 `wait_for_ops()`, and `close()`. Abrupt termination can lose acknowledged rows,
 leave a torn file, or produce bytes that pass structural validation but do not
-represent a row that was written. Persistence is therefore best-effort in the
-1.0 beta line; applications that require crash durability need an external
+represent a row that was written. Persistence is therefore best-effort; applications that require crash durability need an external
 snapshot/rebuild strategy.
 
 Persisted `SpaceInfo` records the generated row schema, primary-key fields, and

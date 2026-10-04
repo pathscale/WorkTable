@@ -1,6 +1,20 @@
 Change Log
 ==========
 
+## [1.11.0]
+
+### Added
+
+- Caller-owned HTTP agents for S3 persistence, allowing explicit TLS trust policies without changing the default constructor.
+
+### Fixed
+
+- Preserve atomic counter bounds and ordering without deprecated `fetch_update` calls, including no-default-features builds on newer Rust toolchains.
+
+### Changed
+
+- Promote `worktable`, `worktable_codegen` and `worktable_dsl` together to stable 1.11.0. Persistence durability guarantees remain unchanged.
+
 ## [1.10.0-beta1]
 
 ### Changed

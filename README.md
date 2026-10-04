@@ -23,7 +23,7 @@ from a macro, and that persisting it is one feature flag away.
 ## Install
 
 ```sh
-cargo add worktable@1.0.0-beta.5
+cargo add worktable@1.11.0
 ```
 
 ## New in 1.9
@@ -113,7 +113,7 @@ for table in database.catalog().system_tables() {
 
 ```toml
 [dependencies]
-worktable = { version = "^1.10.0-beta1", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "^1.11.0", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
@@ -150,7 +150,7 @@ These lifecycle calls are not a crash-durability guarantee:
 | Process crash / `SIGKILL` | Acknowledged rows may be lost and the file may be torn. |
 | Power loss | No atomic-batch or stable-storage guarantee. |
 
-The 1.0 beta persistence tier is therefore best-effort rather than a substitute
+The persistence tier is therefore best-effort rather than a substitute
 for a crash-atomic embedded database. Applications requiring crash durability
 need an external snapshot/rebuild strategy. A graceful persistence error is
 terminal and surfaced consistently, but abrupt termination can currently leave

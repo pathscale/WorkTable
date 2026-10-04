@@ -997,18 +997,36 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
 
     pub(crate) fn register_cell(&self, link: Link) -> Result<(), ExecutionError> {
         debug_assert_eq!(link.page_id, self.id);
-        self.live_cells
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1))
-            .map(|_| ())
-            .map_err(|_| ExecutionError::LiveCellCountOverflow)
+        let mut current = self.live_cells.load(Ordering::Acquire);
+        loop {
+            let Some(next) = current.checked_add(1) else {
+                return Err(ExecutionError::LiveCellCountOverflow);
+            };
+            match self
+                .live_cells
+                .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return Ok(()),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     pub(crate) fn remove_cell(&self, link: Link) -> Result<(), ExecutionError> {
         debug_assert_eq!(link.page_id, self.id);
-        self.live_cells
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_sub(1))
-            .map(|_| ())
-            .map_err(|_| ExecutionError::LiveCellCountUnderflow)
+        let mut current = self.live_cells.load(Ordering::Acquire);
+        loop {
+            let Some(next) = current.checked_sub(1) else {
+                return Err(ExecutionError::LiveCellCountUnderflow);
+            };
+            match self
+                .live_cells
+                .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return Ok(()),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     #[cfg(feature = "std")]
@@ -1070,6 +1088,71 @@ mod tests {
     struct TestRow {
         a: u64,
         b: u64,
+    }
+
+    #[test]
+    fn live_cell_count_bounds_return_errors_without_wrapping() {
+        let page = Data::<TestRow>::new(1.into());
+        let link = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 1,
+        };
+
+        page.live_cells.store(u32::MAX, Ordering::Relaxed);
+        assert_eq!(page.register_cell(link), Err(ExecutionError::LiveCellCountOverflow));
+        assert_eq!(page.live_cells.load(Ordering::Relaxed), u32::MAX);
+
+        page.live_cells.store(0, Ordering::Relaxed);
+        assert_eq!(page.remove_cell(link), Err(ExecutionError::LiveCellCountUnderflow));
+        assert_eq!(page.live_cells.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn concurrent_live_cell_updates_keep_exact_count() {
+        const THREADS: usize = 8;
+        const UPDATES_PER_THREAD: usize = 256;
+
+        let page = Arc::new(Data::<TestRow>::new(1.into()));
+        let link = Link {
+            page_id: 1.into(),
+            offset: 0,
+            length: 1,
+        };
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let page = Arc::clone(&page);
+                thread::spawn(move || {
+                    for _ in 0..UPDATES_PER_THREAD {
+                        page.register_cell(link).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        let expected = (THREADS * UPDATES_PER_THREAD) as u32;
+        assert_eq!(page.live_cells.load(Ordering::Acquire), expected);
+
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let page = Arc::clone(&page);
+                thread::spawn(move || {
+                    for _ in 0..UPDATES_PER_THREAD {
+                        page.remove_cell(link).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        assert_eq!(page.live_cells.load(Ordering::Acquire), 0);
     }
 
     /// A writer that begins AND completes between `load_stable` and

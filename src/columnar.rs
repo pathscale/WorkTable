@@ -61,9 +61,16 @@ static NEXT_COLUMNAR_INCARNATION: AtomicU64 = AtomicU64::new(1);
 /// columnar references when a table is rebuilt or reopened.
 #[doc(hidden)]
 pub fn next_columnar_incarnation() -> u64 {
-    NEXT_COLUMNAR_INCARNATION
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
-        .expect("columnar table incarnation space is exhausted")
+    let mut current = NEXT_COLUMNAR_INCARNATION.load(Ordering::Relaxed);
+    loop {
+        let next = current
+            .checked_add(1)
+            .expect("columnar table incarnation space is exhausted");
+        match NEXT_COLUMNAR_INCARNATION.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(previous) => return previous,
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 /// Identity carried by generated columnar query results.

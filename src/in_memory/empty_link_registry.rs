@@ -181,11 +181,18 @@ impl<const DATA_LENGTH: usize> EmptyLinkRegistry<DATA_LENGTH> {
             self.item_count.fetch_sub(1, Ordering::AcqRel);
             // Saturating still, as a belt: the count is what the fast path
             // trusts, and this is accounting.
-            let _ = self
-                .sum_links_len
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
-                    Some(v.saturating_sub(u64::from(link.length)))
-                });
+            let decrease_by = u64::from(link.length);
+            let mut current = self.sum_links_len.load(Ordering::Acquire);
+            loop {
+                let next = current.saturating_sub(decrease_by);
+                match self
+                    .sum_links_len
+                    .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+                {
+                    Ok(_) => break,
+                    Err(observed) => current = observed,
+                }
+            }
         }
     }
 
