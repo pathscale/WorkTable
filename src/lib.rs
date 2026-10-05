@@ -276,5 +276,7 @@ pub mod prelude {
     pub const WT_DATA_EXTENSION: &str = ".wt.data";
 
     #[cfg(feature = "s3-support")]
-    pub use crate::features::{S3Config, S3DiskConfig, S3SyncDiskPersistenceEngine};
+    pub use crate::features::{
+        S3CommittedSnapshotIdentity, S3CommittedSnapshotReader, S3Config, S3DiskConfig, S3SyncDiskPersistenceEngine,
+    };
 }
