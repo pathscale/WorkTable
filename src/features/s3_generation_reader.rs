@@ -12,12 +12,11 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path};
 
-use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+use rusty_s3::{Bucket, Credentials, S3Action};
 use ureq::Agent;
-use url::Url;
 use uuid::Uuid;
 
-use super::s3_support::S3DiskConfig;
+use super::s3_support::{S3DiskConfig, S3TransportOptions};
 use super::s3_support::rename_directory_no_replace;
 use crate::persistence::PersistenceConfig;
 use crate::prelude::{WT_DATA_EXTENSION, WT_INDEX_EXTENSION};
@@ -63,10 +62,18 @@ pub struct S3GenerationReader {
 impl S3GenerationReader {
     /// Create a reader using the caller's configured HTTP agent and TLS policy.
     pub fn new_with_agent(config: &S3DiskConfig, client: Agent) -> eyre::Result<Self> {
-        let credentials = Credentials::new(&config.s3.access_key, &config.s3.secret_key);
-        let endpoint: Url = config.s3.endpoint.parse()?;
-        let region = config.s3.region.clone().unwrap_or_else(|| "auto".to_string());
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, config.s3.bucket_name.clone(), region)?;
+        Self::new_with_agent_and_transport(config, client, S3TransportOptions::default())
+    }
+
+    /// Create a reader with caller-owned HTTP/TLS settings and explicit S3
+    /// session-token and URL-style options.
+    pub fn new_with_agent_and_transport(
+        config: &S3DiskConfig,
+        client: Agent,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<Self> {
+        let (bucket, credentials) =
+            super::s3_support::create_s3_bucket_and_credentials(&config.s3, &transport)?;
 
         let table_name = Path::new(config.disk.table_path())
             .file_name()
@@ -90,6 +97,17 @@ impl S3GenerationReader {
             client,
             table_root,
         })
+    }
+
+    /// Create a reader with default HTTP settings and explicit S3 transport options.
+    pub fn new_with_transport(
+        config: &S3DiskConfig,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(30))
+            .build();
+        Self::new_with_agent_and_transport(config, client, transport)
     }
 
     /// Restore the committed generation into a path that does not already

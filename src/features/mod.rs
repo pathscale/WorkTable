@@ -3,6 +3,8 @@ pub mod database_s3;
 #[cfg(feature = "s3-support")]
 pub mod s3_generation;
 #[cfg(feature = "s3-support")]
+pub mod s3_generation_engine;
+#[cfg(feature = "s3-support")]
 pub mod s3_generation_reader;
 #[cfg(feature = "s3-support")]
 pub mod s3_support;
@@ -12,6 +14,8 @@ pub use database_s3::{DatabaseS3DiskConfig, DatabaseS3PersistenceEngine};
 
 #[cfg(feature = "s3-support")]
 pub use s3_generation::*;
+#[cfg(feature = "s3-support")]
+pub use s3_generation_engine::S3GenerationPersistenceEngine;
 #[cfg(feature = "s3-support")]
 pub use s3_generation_reader::*;
 #[cfg(feature = "s3-support")]

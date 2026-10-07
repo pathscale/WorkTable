@@ -42,6 +42,52 @@ pub struct S3Config {
     pub prefix: Option<String>,
 }
 
+/// Per-table S3 transport settings that can be supplied without changing the
+/// long-standing `S3Config` struct-literal shape.
+#[derive(Clone, Default)]
+pub struct S3TransportOptions {
+    /// Optional AWS session token for temporary credentials.
+    pub session_token: Option<String>,
+    /// Use virtual-hosted-style URLs instead of the default path-style URLs.
+    pub virtual_host_style: bool,
+}
+
+impl Debug for S3TransportOptions {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("S3TransportOptions")
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("virtual_host_style", &self.virtual_host_style)
+            .finish()
+    }
+}
+
+pub(super) fn create_s3_bucket_and_credentials(
+    config: &S3Config,
+    transport: &S3TransportOptions,
+) -> eyre::Result<(Bucket, Credentials)> {
+    let credentials = match &transport.session_token {
+        Some(token) => Credentials::new_with_token(
+            config.access_key.clone(),
+            config.secret_key.clone(),
+            token.clone(),
+        ),
+        None => Credentials::new(&config.access_key, &config.secret_key),
+    };
+    let endpoint: Url = config.endpoint.parse()?;
+    let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
+    let url_style = if transport.virtual_host_style {
+        UrlStyle::VirtualHost
+    } else {
+        UrlStyle::Path
+    };
+    let bucket = Bucket::new(endpoint, url_style, config.bucket_name.clone(), region)?;
+    Ok((bucket, credentials))
+}
+
 #[derive(Debug, Clone)]
 pub struct S3DiskConfig {
     pub disk: DiskConfig,
@@ -445,7 +491,17 @@ where
 {
     /// Open with a caller-owned HTTP agent, including its TLS trust policy.
     pub async fn new_with_agent(config: S3DiskConfig, client: Agent) -> eyre::Result<Self> {
-        let (bucket, credentials, client) = Self::create_bucket(&config.s3, client)?;
+        Self::new_with_agent_and_transport(config, client, S3TransportOptions::default()).await
+    }
+
+    /// Open with explicit temporary credentials and URL style, while keeping
+    /// the existing `S3Config` unchanged for existing callers.
+    pub async fn new_with_agent_and_transport(
+        config: S3DiskConfig,
+        client: Agent,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<Self> {
+        let (bucket, credentials, client) = Self::create_bucket(&config.s3, &transport, client)?;
         // If a manifest exists, failure is fatal: continuing with local files
         // could publish stale state over a newer committed remote generation.
         let committed_manifest = Self::sync_from_s3(&bucket, &credentials, &client, &config).await?;
@@ -464,12 +520,23 @@ where
         })
     }
 
-    fn create_bucket(config: &S3Config, client: Agent) -> eyre::Result<(Bucket, Credentials, Agent)> {
-        let credentials = Credentials::new(&config.access_key, &config.secret_key);
-        let endpoint: Url = config.endpoint.parse()?;
-        let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
+    /// Open with default HTTP settings plus explicit per-table transport settings.
+    pub async fn new_with_transport(
+        config: S3DiskConfig,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(30))
+            .build();
+        Self::new_with_agent_and_transport(config, client, transport).await
+    }
 
+    fn create_bucket(
+        config: &S3Config,
+        transport: &S3TransportOptions,
+        client: Agent,
+    ) -> eyre::Result<(Bucket, Credentials, Agent)> {
+        let (bucket, credentials) = create_s3_bucket_and_credentials(config, transport)?;
         Ok((bucket, credentials, client))
     }
 
@@ -757,10 +824,20 @@ impl S3CommittedSnapshotReader {
     /// length and BLAKE3 hash before one staged-directory rename installs it.
     /// This entry point never lists loose objects or replaces a local table.
     pub async fn restore(config: S3DiskConfig, client: Agent) -> eyre::Result<S3CommittedSnapshotIdentity> {
+        Self::restore_with_agent_and_transport(config, client, S3TransportOptions::default()).await
+    }
+
+    /// Restore a committed snapshot with the caller's HTTP agent and explicit
+    /// session-token and URL-style settings.
+    pub async fn restore_with_agent_and_transport(
+        config: S3DiskConfig,
+        client: Agent,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<S3CommittedSnapshotIdentity> {
         let table_path = Path::new(config.disk.table_path());
         ensure_fresh_table_destination(table_path)?;
 
-        let (bucket, credentials, client) = Self::create_bucket(&config.s3, client)?;
+        let (bucket, credentials, client) = Self::create_bucket(&config.s3, &transport, client)?;
         let table_name = Self::table_name(&config)?;
         let prefix = config.s3.prefix.as_deref().unwrap_or("");
         let manifest_key = Self::full_s3_path(prefix, MANIFEST_FILE, table_name);
@@ -777,6 +854,17 @@ impl S3CommittedSnapshotReader {
             manifest_blake3: *blake3::hash(&manifest_bytes).as_bytes(),
             manifest_etag,
         })
+    }
+
+    /// Restore with default HTTP settings and explicit per-table transport options.
+    pub async fn restore_with_transport(
+        config: S3DiskConfig,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<S3CommittedSnapshotIdentity> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(30))
+            .build();
+        Self::restore_with_agent_and_transport(config, client, transport).await
     }
 
     fn validate_committed_manifest(manifest: &TableManifest) -> eyre::Result<()> {
@@ -814,12 +902,12 @@ impl S3CommittedSnapshotReader {
         Ok(())
     }
 
-    fn create_bucket(config: &S3Config, client: Agent) -> eyre::Result<(Bucket, Credentials, Agent)> {
-        let credentials = Credentials::new(&config.access_key, &config.secret_key);
-        let endpoint: Url = config.endpoint.parse()?;
-        let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
-
+    fn create_bucket(
+        config: &S3Config,
+        transport: &S3TransportOptions,
+        client: Agent,
+    ) -> eyre::Result<(Bucket, Credentials, Agent)> {
+        let (bucket, credentials) = create_s3_bucket_and_credentials(config, transport)?;
         Ok((bucket, credentials, client))
     }
 

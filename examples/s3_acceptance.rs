@@ -20,7 +20,9 @@ use worktable::features::s3_generation::{
     S3GenerationFile, S3GenerationPublishOutcome, S3GenerationPublisher, S3GenerationSegment,
 };
 use worktable::features::s3_generation_reader::S3GenerationReader;
-use worktable::features::s3_support::{S3Config as TableS3Config, S3DiskConfig};
+use worktable::features::s3_support::{
+    S3Config as TableS3Config, S3DiskConfig, S3TransportOptions,
+};
 use worktable::prelude::eyre;
 use worktable::prelude::*;
 use worktable::{DatabaseS3DiskConfig, S3Database, database_s3_persistence, worktable};
@@ -139,17 +141,6 @@ async fn run_acceptance(config: DataBucketS3Config, run_nanos: u128, local_root:
 }
 
 async fn run_real_table_generation_roundtrip(config: DataBucketS3Config, local_root: &Path) -> eyre::Result<()> {
-    if config.session_token.is_some() {
-        return Err(eyre::eyre!(
-            "the per-table generation API does not accept S3 session tokens; refusing to silently drop the configured token"
-        ));
-    }
-    if config.virtual_host_style {
-        return Err(eyre::eyre!(
-            "the per-table generation API currently uses path-style S3 requests; disable virtual-host style for this acceptance"
-        ));
-    }
-
     let table_name = M331AcceptanceWorkTable::name_snake_case();
     let source_disk = DiskConfig::new_with_table_name(
         local_root.join("per-table-source").display().to_string(),
@@ -192,7 +183,15 @@ async fn run_real_table_generation_roundtrip(config: DataBucketS3Config, local_r
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(30))
         .build();
-    let publisher = S3GenerationPublisher::new_with_agent(&publisher_config, agent.clone())?;
+    let transport = S3TransportOptions {
+        session_token: config.session_token.clone(),
+        virtual_host_style: config.virtual_host_style,
+    };
+    let publisher = S3GenerationPublisher::new_with_agent_and_transport(
+        &publisher_config,
+        agent.clone(),
+        transport.clone(),
+    )?;
     let segment_storage = build_generation_segments(&persisted_files)?;
     let files = persisted_files
         .iter()
@@ -227,7 +226,7 @@ async fn run_real_table_generation_roundtrip(config: DataBucketS3Config, local_r
         disk: restore_disk.clone(),
         s3,
     };
-    let reader = S3GenerationReader::new_with_agent(&reader_config, agent)?;
+    let reader = S3GenerationReader::new_with_agent_and_transport(&reader_config, agent, transport)?;
     let restored_generation = reader.restore_to(restore_disk.table_path())?;
     if restored_generation.generation_id != published_generation
         || usize::try_from(restored_generation.file_count)? != files.len()

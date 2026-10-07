@@ -10,18 +10,19 @@ use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Component, Path};
 
-use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+use rusty_s3::{Bucket, Credentials, S3Action};
 use ureq::Agent;
-use url::Url;
 use uuid::Uuid;
 
-use super::s3_support::S3DiskConfig;
+use super::s3_support::{S3DiskConfig, S3TransportOptions};
 use crate::persistence::PersistenceConfig;
 use crate::prelude::{WT_DATA_EXTENSION, WT_INDEX_EXTENSION};
 
 const COMMIT_MAGIC: &[u8; 8] = b"WTS3G001";
 const COMMIT_POINTER_KEY: &str = "generation-commit.v1";
-const SEGMENT_TARGET: usize = 4 * 1024 * 1024;
+/// Maximum byte length accepted for one immutable generation segment.
+pub const S3_GENERATION_SEGMENT_MAX_BYTES: usize = 4 * 1024 * 1024;
+const SEGMENT_TARGET: usize = S3_GENERATION_SEGMENT_MAX_BYTES;
 const MAX_FILES: usize = 16_384;
 const MAX_SEGMENTS: usize = 4_194_304;
 const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
@@ -135,10 +136,18 @@ pub struct S3GenerationPublisher {
 impl S3GenerationPublisher {
     /// Create a generation publisher with the caller's configured HTTP agent.
     pub fn new_with_agent(config: &S3DiskConfig, client: Agent) -> eyre::Result<Self> {
-        let credentials = Credentials::new(&config.s3.access_key, &config.s3.secret_key);
-        let endpoint: Url = config.s3.endpoint.parse()?;
-        let region = config.s3.region.clone().unwrap_or_else(|| "auto".to_string());
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, config.s3.bucket_name.clone(), region)?;
+        Self::new_with_agent_and_transport(config, client, S3TransportOptions::default())
+    }
+
+    /// Create a publisher with caller-owned HTTP/TLS settings and explicit S3
+    /// session-token and URL-style options.
+    pub fn new_with_agent_and_transport(
+        config: &S3DiskConfig,
+        client: Agent,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<Self> {
+        let (bucket, credentials) =
+            super::s3_support::create_s3_bucket_and_credentials(&config.s3, &transport)?;
 
         let table_name = Path::new(config.disk.table_path())
             .file_name()
@@ -162,6 +171,17 @@ impl S3GenerationPublisher {
             client,
             table_root,
         })
+    }
+
+    /// Create a publisher with default HTTP settings and explicit S3 transport options.
+    pub fn new_with_transport(
+        config: &S3DiskConfig,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(30))
+            .build();
+        Self::new_with_agent_and_transport(config, client, transport)
     }
 
     /// Read a table-relative object and capture the strong ETag needed for CAS.
