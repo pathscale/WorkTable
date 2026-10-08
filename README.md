@@ -94,6 +94,20 @@ The older `s3_sync_persistence!` callsite remains available for existing per-tab
 manifests. New databases should use the shared domain so tables commit against one
 catalog and restore through catalog page mappings.
 
+`S3GenerationPersistenceEngine` is an opt-in `PersistenceEngine` for the per-table
+WTS3G001 format. It restores only a validated committed generation, then publishes
+each changed disk batch with create-if-absent on first commit or the previous commit
+pointer's ETag thereafter. It checks the committed generation through the strict reader
+before returning success. A conflict that cannot be reconciled to the local bytes, or
+any unvalidated write, fences that engine instance; reopen it to restore the current
+committed generation. The existing `s3_sync_persistence!` behavior is unchanged.
+The current borrowed-segment publisher holds a complete local table snapshot in
+memory while publishing and strictly reads back the complete remote generation
+after publication. This opt-in engine is a draft candidate: the current acceptance
+example exercises publisher/reader transport, not this engine's lifecycle. Engine
+startup, conflict fencing, recovery and close behavior require verification before
+release; source review alone does not establish acceptance.
+
 ```rust
 use worktable::{database_s3_persistence, DatabaseS3DiskConfig, S3Database};
 

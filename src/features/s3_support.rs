@@ -32,7 +32,8 @@ const CHANGE_BLOCK_SIZE: usize = data_bucket::PAGE_SIZE;
 const MAX_MANIFEST_FILES: usize = 16_384;
 const MAX_MANIFEST_EXTENTS: usize = 4_194_304;
 
-#[derive(Debug, Clone)]
+/// S3 settings. Debug output redacts both credential fields.
+#[derive(Clone)]
 pub struct S3Config {
     pub bucket_name: String,
     pub endpoint: String,
@@ -40,6 +41,59 @@ pub struct S3Config {
     pub secret_key: String,
     pub region: Option<String>,
     pub prefix: Option<String>,
+}
+
+impl Debug for S3Config {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("S3Config")
+            .field("bucket_name", &self.bucket_name)
+            .field("endpoint", &self.endpoint)
+            .field("access_key", &"[REDACTED]")
+            .field("secret_key", &"[REDACTED]")
+            .field("region", &self.region)
+            .field("prefix", &self.prefix)
+            .finish()
+    }
+}
+
+/// Per-table S3 transport settings that can be supplied without changing the
+/// long-standing `S3Config` struct-literal shape.
+#[derive(Clone, Default)]
+pub struct S3TransportOptions {
+    /// Optional AWS session token for temporary credentials.
+    pub session_token: Option<String>,
+    /// Use virtual-hosted-style URLs instead of the default path-style URLs.
+    pub virtual_host_style: bool,
+}
+
+impl Debug for S3TransportOptions {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("S3TransportOptions")
+            .field("session_token", &self.session_token.as_ref().map(|_| "[REDACTED]"))
+            .field("virtual_host_style", &self.virtual_host_style)
+            .finish()
+    }
+}
+
+pub(super) fn create_s3_bucket_and_credentials(
+    config: &S3Config,
+    transport: &S3TransportOptions,
+) -> eyre::Result<(Bucket, Credentials)> {
+    let credentials = match &transport.session_token {
+        Some(token) => Credentials::new_with_token(config.access_key.clone(), config.secret_key.clone(), token.clone()),
+        None => Credentials::new(&config.access_key, &config.secret_key),
+    };
+    let endpoint: Url = config.endpoint.parse()?;
+    let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
+    let url_style = if transport.virtual_host_style {
+        UrlStyle::VirtualHost
+    } else {
+        UrlStyle::Path
+    };
+    let bucket = Bucket::new(endpoint, url_style, config.bucket_name.clone(), region)?;
+    Ok((bucket, credentials))
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +111,18 @@ impl PersistenceConfig for S3DiskConfig {
         self.disk.version()
     }
 }
+
+/// Identity of the committed S3 table manifest used for a strict restore.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3CommittedSnapshotIdentity {
+    /// BLAKE3 hash of the exact `manifest.v1` bytes that were restored.
+    pub manifest_blake3: [u8; 32],
+    /// ETag returned for `manifest.v1`, when the S3-compatible endpoint provides one.
+    pub manifest_etag: Option<String>,
+}
+
+/// Explicit reader for committed S3 snapshots, with no loose-object fallback.
+pub struct S3CommittedSnapshotReader;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SegmentExtent {
@@ -433,7 +499,17 @@ where
 {
     /// Open with a caller-owned HTTP agent, including its TLS trust policy.
     pub async fn new_with_agent(config: S3DiskConfig, client: Agent) -> eyre::Result<Self> {
-        let (bucket, credentials, client) = Self::create_bucket(&config.s3, client)?;
+        Self::new_with_agent_and_transport(config, client, S3TransportOptions::default()).await
+    }
+
+    /// Open with explicit temporary credentials and URL style, while keeping
+    /// the existing `S3Config` unchanged for existing callers.
+    pub async fn new_with_agent_and_transport(
+        config: S3DiskConfig,
+        client: Agent,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<Self> {
+        let (bucket, credentials, client) = Self::create_bucket(&config.s3, &transport, client)?;
         // If a manifest exists, failure is fatal: continuing with local files
         // could publish stale state over a newer committed remote generation.
         let committed_manifest = Self::sync_from_s3(&bucket, &credentials, &client, &config).await?;
@@ -452,12 +528,18 @@ where
         })
     }
 
-    fn create_bucket(config: &S3Config, client: Agent) -> eyre::Result<(Bucket, Credentials, Agent)> {
-        let credentials = Credentials::new(&config.access_key, &config.secret_key);
-        let endpoint: Url = config.endpoint.parse()?;
-        let region = config.region.clone().unwrap_or_else(|| "auto".to_string());
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket_name.clone(), region)?;
+    /// Open with default HTTP settings plus explicit per-table transport settings.
+    pub async fn new_with_transport(config: S3DiskConfig, transport: S3TransportOptions) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
+        Self::new_with_agent_and_transport(config, client, transport).await
+    }
 
+    fn create_bucket(
+        config: &S3Config,
+        transport: &S3TransportOptions,
+        client: Agent,
+    ) -> eyre::Result<(Bucket, Credentials, Agent)> {
+        let (bucket, credentials) = create_s3_bucket_and_credentials(config, transport)?;
         Ok((bucket, credentials, client))
     }
 
@@ -675,56 +757,7 @@ where
         manifest: &TableManifest,
     ) -> eyre::Result<()> {
         let table_path = Path::new(config.disk.table_path());
-        let stage = staging_path(table_path, "stage")?;
-        remove_path_if_exists(&stage)?;
-        std::fs::create_dir_all(&stage)?;
-
-        let prefix = config.s3.prefix.as_deref().unwrap_or("");
-        let table_name = Self::table_name(config)?;
-        let restore_result = async {
-            for file in &manifest.files {
-                let local_path = stage.join(&file.path);
-                if let Some(parent) = local_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                let mut restored_file = std::fs::File::create(&local_path)?;
-                restored_file.set_len(file.length)?;
-                let mut by_segment: HashMap<[u8; 32], (u32, Vec<&SegmentExtent>)> = HashMap::new();
-                for extent in &file.extents {
-                    let entry = by_segment
-                        .entry(extent.hash)
-                        .or_insert_with(|| (extent.segment_length, Vec::new()));
-                    if entry.0 != extent.segment_length {
-                        return Err(eyre::eyre!("S3 manifest gives one segment conflicting lengths"));
-                    }
-                    entry.1.push(extent);
-                }
-                for (hash, (segment_length, extents)) in by_segment {
-                    let key = Self::full_s3_path(prefix, &Self::chunk_path(&hash), table_name);
-                    let bytes = Self::get_object_optional(bucket, credentials, client, &key)?
-                        .ok_or_else(|| eyre::eyre!("S3 manifest references missing segment {key}"))?;
-                    if bytes.len() != segment_length as usize || blake3::hash(&bytes).as_bytes() != &hash {
-                        return Err(eyre::eyre!("S3 segment failed length or hash validation: {key}"));
-                    }
-                    for extent in extents {
-                        let from = extent.segment_offset as usize;
-                        let to = from
-                            .checked_add(extent.length as usize)
-                            .ok_or_else(|| eyre::eyre!("S3 manifest segment slice overflow"))?;
-                        restored_file.seek(SeekFrom::Start(extent.file_offset))?;
-                        restored_file.write_all(&bytes[from..to])?;
-                    }
-                }
-                restored_file.flush()?;
-            }
-            Ok::<(), eyre::Report>(())
-        }
-        .await;
-
-        if let Err(error) = restore_result {
-            let _ = std::fs::remove_dir_all(&stage);
-            return Err(error);
-        }
+        let stage = restore_manifest_to_stage(bucket, credentials, client, config, manifest).await?;
         publish_staged_table(table_path, &stage)
     }
 
@@ -782,6 +815,230 @@ where
         publish_staged_table(table_path, &stage)?;
         Ok(true)
     }
+}
+
+impl S3CommittedSnapshotReader {
+    /// Restore a committed snapshot into a fresh table directory.
+    ///
+    /// This fails if `manifest.v1` is absent, invalid, or incomplete. The
+    /// supported manifest wire formats do not identify an application schema
+    /// version; callers must open the result with their expected generated
+    /// table type and version. Every referenced segment is checked by exact
+    /// length and BLAKE3 hash before one staged-directory rename installs it.
+    /// This entry point never lists loose objects or replaces a local table.
+    pub async fn restore(config: S3DiskConfig, client: Agent) -> eyre::Result<S3CommittedSnapshotIdentity> {
+        Self::restore_with_agent_and_transport(config, client, S3TransportOptions::default()).await
+    }
+
+    /// Restore a committed snapshot with the caller's HTTP agent and explicit
+    /// session-token and URL-style settings.
+    pub async fn restore_with_agent_and_transport(
+        config: S3DiskConfig,
+        client: Agent,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<S3CommittedSnapshotIdentity> {
+        let table_path = Path::new(config.disk.table_path());
+        ensure_fresh_table_destination(table_path)?;
+
+        let (bucket, credentials, client) = Self::create_bucket(&config.s3, &transport, client)?;
+        let table_name = Self::table_name(&config)?;
+        let prefix = config.s3.prefix.as_deref().unwrap_or("");
+        let manifest_key = Self::full_s3_path(prefix, MANIFEST_FILE, table_name);
+        let (manifest_bytes, manifest_etag) =
+            Self::get_object_optional_with_etag(&bucket, &credentials, &client, &manifest_key)?
+                .ok_or_else(|| eyre::eyre!("committed S3 snapshot manifest is missing: {manifest_key}"))?;
+        let manifest = TableManifest::decode(&manifest_bytes)?;
+        Self::validate_committed_manifest(&manifest)?;
+
+        let stage = restore_manifest_to_stage(&bucket, &credentials, &client, &config, &manifest).await?;
+        publish_staged_table_fresh(table_path, &stage)?;
+
+        Ok(S3CommittedSnapshotIdentity {
+            manifest_blake3: *blake3::hash(&manifest_bytes).as_bytes(),
+            manifest_etag,
+        })
+    }
+
+    /// Restore with default HTTP settings and explicit per-table transport options.
+    pub async fn restore_with_transport(
+        config: S3DiskConfig,
+        transport: S3TransportOptions,
+    ) -> eyre::Result<S3CommittedSnapshotIdentity> {
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
+        Self::restore_with_agent_and_transport(config, client, transport).await
+    }
+
+    fn validate_committed_manifest(manifest: &TableManifest) -> eyre::Result<()> {
+        if manifest.files.is_empty() {
+            eyre::bail!("committed S3 snapshot manifest contains no table files");
+        }
+
+        let primary_index_path = format!("primary{WT_INDEX_EXTENSION}");
+        let mut has_data_file = false;
+        let mut has_primary_index = false;
+        for file in &manifest.files {
+            if file.path.contains('/') || !is_table_name(&file.path) {
+                eyre::bail!("committed S3 snapshot manifest contains a non-root or non-table file");
+            }
+            if file.path.ends_with(WT_DATA_EXTENSION) && file.path != WT_DATA_EXTENSION {
+                eyre::bail!("committed S3 snapshot manifest contains an unexpected data file path");
+            }
+            if file.path == WT_DATA_EXTENSION {
+                if file.length == 0 {
+                    eyre::bail!("committed S3 snapshot manifest contains an empty table data file");
+                }
+                has_data_file = true;
+            }
+            if file.path == primary_index_path && file.length != 0 {
+                has_primary_index = true;
+            }
+        }
+
+        if !has_data_file {
+            eyre::bail!("committed S3 snapshot manifest contains no table data file");
+        }
+        if !has_primary_index {
+            eyre::bail!("committed S3 snapshot manifest contains no primary index file");
+        }
+        Ok(())
+    }
+
+    fn create_bucket(
+        config: &S3Config,
+        transport: &S3TransportOptions,
+        client: Agent,
+    ) -> eyre::Result<(Bucket, Credentials, Agent)> {
+        let (bucket, credentials) = create_s3_bucket_and_credentials(config, transport)?;
+        Ok((bucket, credentials, client))
+    }
+
+    fn table_name(config: &S3DiskConfig) -> eyre::Result<&str> {
+        Path::new(config.disk.table_path())
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| eyre::eyre!("invalid table path"))
+    }
+
+    fn full_s3_path(prefix: &str, s3_path: &str, table_name: &str) -> String {
+        let prefix = prefix.trim_end_matches('/');
+        let path = s3_path.trim_start_matches('/');
+        if prefix.is_empty() {
+            format!("{table_name}/{path}")
+        } else {
+            format!("{prefix}/{table_name}/{path}")
+        }
+    }
+
+    fn chunk_path(hash: &[u8; 32]) -> String {
+        let mut hex = String::with_capacity(64);
+        for byte in hash {
+            write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        format!("chunks/{hex}")
+    }
+
+    fn get_object_optional(
+        bucket: &Bucket,
+        credentials: &Credentials,
+        client: &Agent,
+        key: &str,
+    ) -> eyre::Result<Option<Vec<u8>>> {
+        let action = bucket.get_object(Some(credentials), key);
+        let url = action.sign(Duration::from_secs(3600));
+        let response = match client.get(url.as_str()).call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(404, _)) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let mut bytes = Vec::new();
+        response.into_reader().read_to_end(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+
+    fn get_object_optional_with_etag(
+        bucket: &Bucket,
+        credentials: &Credentials,
+        client: &Agent,
+        key: &str,
+    ) -> eyre::Result<Option<(Vec<u8>, Option<String>)>> {
+        let action = bucket.get_object(Some(credentials), key);
+        let url = action.sign(Duration::from_secs(3600));
+        let response = match client.get(url.as_str()).call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(404, _)) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let etag = response.header("ETag").map(ToString::to_string);
+        let mut bytes = Vec::new();
+        response.into_reader().read_to_end(&mut bytes)?;
+        Ok(Some((bytes, etag)))
+    }
+}
+
+async fn restore_manifest_to_stage(
+    bucket: &Bucket,
+    credentials: &Credentials,
+    client: &Agent,
+    config: &S3DiskConfig,
+    manifest: &TableManifest,
+) -> eyre::Result<PathBuf> {
+    let table_path = Path::new(config.disk.table_path());
+    let stage = staging_path(table_path, "stage")?;
+    // create_dir claims this unique sibling without deleting a path that may
+    // belong to another concurrent restore after a timestamp collision.
+    std::fs::create_dir(&stage)?;
+
+    let prefix = config.s3.prefix.as_deref().unwrap_or("");
+    let table_name = S3CommittedSnapshotReader::table_name(config)?;
+    let restore_result = async {
+        for file in &manifest.files {
+            let local_path = stage.join(&file.path);
+            if let Some(parent) = local_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut restored_file = std::fs::File::create(&local_path)?;
+            restored_file.set_len(file.length)?;
+            let mut by_segment: HashMap<[u8; 32], (u32, Vec<&SegmentExtent>)> = HashMap::new();
+            for extent in &file.extents {
+                let entry = by_segment
+                    .entry(extent.hash)
+                    .or_insert_with(|| (extent.segment_length, Vec::new()));
+                if entry.0 != extent.segment_length {
+                    return Err(eyre::eyre!("S3 manifest gives one segment conflicting lengths"));
+                }
+                entry.1.push(extent);
+            }
+            for (hash, (segment_length, extents)) in by_segment {
+                let key = S3CommittedSnapshotReader::full_s3_path(
+                    prefix,
+                    &S3CommittedSnapshotReader::chunk_path(&hash),
+                    table_name,
+                );
+                let bytes = S3CommittedSnapshotReader::get_object_optional(bucket, credentials, client, &key)?
+                    .ok_or_else(|| eyre::eyre!("S3 manifest references missing segment {key}"))?;
+                if bytes.len() != segment_length as usize || blake3::hash(&bytes).as_bytes() != &hash {
+                    return Err(eyre::eyre!("S3 segment failed length or hash validation: {key}"));
+                }
+                for extent in extents {
+                    let from = extent.segment_offset as usize;
+                    let to = from
+                        .checked_add(extent.length as usize)
+                        .ok_or_else(|| eyre::eyre!("S3 manifest segment slice overflow"))?;
+                    restored_file.seek(SeekFrom::Start(extent.file_offset))?;
+                    restored_file.write_all(&bytes[from..to])?;
+                }
+            }
+            restored_file.flush()?;
+        }
+        Ok::<(), eyre::Report>(())
+    }
+    .await;
+
+    if let Err(error) = restore_result {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(error);
+    }
+    Ok(stage)
 }
 
 fn is_table_name(name: &str) -> bool {
@@ -1014,6 +1271,17 @@ fn remove_path_if_exists(path: &Path) -> eyre::Result<()> {
     Ok(())
 }
 
+fn ensure_fresh_table_destination(table_path: &Path) -> eyre::Result<()> {
+    match std::fs::symlink_metadata(table_path) {
+        Ok(_) => eyre::bail!(
+            "strict S3 snapshot restore requires a fresh destination: {}",
+            table_path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn publish_staged_table(table_path: &Path, stage: &Path) -> eyre::Result<()> {
     if let Some(parent) = table_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
@@ -1037,6 +1305,97 @@ fn publish_staged_table(table_path: &Path, stage: &Path) -> eyre::Result<()> {
         tracing::warn!(path = %backup.display(), error = %error, "restored table but could not remove backup directory");
     }
     Ok(())
+}
+
+fn publish_staged_table_fresh(table_path: &Path, stage: &Path) -> eyre::Result<()> {
+    if let Some(parent) = table_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    if let Err(error) = ensure_fresh_table_destination(table_path) {
+        let _ = remove_path_if_exists(stage);
+        return Err(error);
+    }
+    if let Err(error) = rename_directory_no_replace(stage, table_path) {
+        let _ = remove_path_if_exists(stage);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// Atomically install a staged directory only if the destination is still
+/// absent. `std::fs::rename` may replace an empty directory on Unix, so the
+/// preceding freshness check alone does not protect a concurrent local writer.
+pub(super) fn rename_directory_no_replace(stage: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let stage = CString::new(stage.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "staging path contains NUL"))?;
+        let destination = CString::new(destination.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "destination path contains NUL"))?;
+        // SAFETY: both paths are NUL-terminated C strings and AT_FDCWD selects
+        // their already-resolved absolute/relative path names. RENAME_NOREPLACE
+        // makes the kernel reject every existing destination atomically.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                stage.as_ptr(),
+                libc::AT_FDCWD,
+                destination.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let stage = CString::new(stage.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "staging path contains NUL"))?;
+        let destination = CString::new(destination.as_os_str().as_bytes())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "destination path contains NUL"))?;
+        // SAFETY: both paths are NUL-terminated C strings. RENAME_EXCL asks
+        // renamex_np to fail atomically if any destination entry already exists.
+        let result = unsafe { libc::renamex_np(stage.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        use windows_sys::Win32::Storage::FileSystem::MoveFileW;
+
+        let stage: Vec<u16> = stage.as_os_str().encode_wide().chain(Some(0)).collect();
+        let destination: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: both input buffers are NUL-terminated UTF-16 paths. MoveFileW
+        // fails if the destination exists, and does not request replacement.
+        let result = unsafe { MoveFileW(stage.as_ptr(), destination.as_ptr()) };
+        if result == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = (stage, destination);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "atomic no-replace directory install is unavailable on this platform",
+        ))
+    }
 }
 
 impl<
