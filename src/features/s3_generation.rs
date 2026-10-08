@@ -146,8 +146,7 @@ impl S3GenerationPublisher {
         client: Agent,
         transport: S3TransportOptions,
     ) -> eyre::Result<Self> {
-        let (bucket, credentials) =
-            super::s3_support::create_s3_bucket_and_credentials(&config.s3, &transport)?;
+        let (bucket, credentials) = super::s3_support::create_s3_bucket_and_credentials(&config.s3, &transport)?;
 
         let table_name = Path::new(config.disk.table_path())
             .file_name()
@@ -174,13 +173,8 @@ impl S3GenerationPublisher {
     }
 
     /// Create a publisher with default HTTP settings and explicit S3 transport options.
-    pub fn new_with_transport(
-        config: &S3DiskConfig,
-        transport: S3TransportOptions,
-    ) -> eyre::Result<Self> {
-        let client = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+    pub fn new_with_transport(config: &S3DiskConfig, transport: S3TransportOptions) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
         Self::new_with_agent_and_transport(config, client, transport)
     }
 

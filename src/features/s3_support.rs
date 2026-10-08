@@ -32,7 +32,8 @@ const CHANGE_BLOCK_SIZE: usize = data_bucket::PAGE_SIZE;
 const MAX_MANIFEST_FILES: usize = 16_384;
 const MAX_MANIFEST_EXTENTS: usize = 4_194_304;
 
-#[derive(Debug, Clone)]
+/// S3 settings. Debug output redacts both credential fields.
+#[derive(Clone)]
 pub struct S3Config {
     pub bucket_name: String,
     pub endpoint: String,
@@ -40,6 +41,20 @@ pub struct S3Config {
     pub secret_key: String,
     pub region: Option<String>,
     pub prefix: Option<String>,
+}
+
+impl Debug for S3Config {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("S3Config")
+            .field("bucket_name", &self.bucket_name)
+            .field("endpoint", &self.endpoint)
+            .field("access_key", &"[REDACTED]")
+            .field("secret_key", &"[REDACTED]")
+            .field("region", &self.region)
+            .field("prefix", &self.prefix)
+            .finish()
+    }
 }
 
 /// Per-table S3 transport settings that can be supplied without changing the
@@ -56,10 +71,7 @@ impl Debug for S3TransportOptions {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("S3TransportOptions")
-            .field(
-                "session_token",
-                &self.session_token.as_ref().map(|_| "[REDACTED]"),
-            )
+            .field("session_token", &self.session_token.as_ref().map(|_| "[REDACTED]"))
             .field("virtual_host_style", &self.virtual_host_style)
             .finish()
     }
@@ -70,11 +82,7 @@ pub(super) fn create_s3_bucket_and_credentials(
     transport: &S3TransportOptions,
 ) -> eyre::Result<(Bucket, Credentials)> {
     let credentials = match &transport.session_token {
-        Some(token) => Credentials::new_with_token(
-            config.access_key.clone(),
-            config.secret_key.clone(),
-            token.clone(),
-        ),
+        Some(token) => Credentials::new_with_token(config.access_key.clone(), config.secret_key.clone(), token.clone()),
         None => Credentials::new(&config.access_key, &config.secret_key),
     };
     let endpoint: Url = config.endpoint.parse()?;
@@ -521,13 +529,8 @@ where
     }
 
     /// Open with default HTTP settings plus explicit per-table transport settings.
-    pub async fn new_with_transport(
-        config: S3DiskConfig,
-        transport: S3TransportOptions,
-    ) -> eyre::Result<Self> {
-        let client = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+    pub async fn new_with_transport(config: S3DiskConfig, transport: S3TransportOptions) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
         Self::new_with_agent_and_transport(config, client, transport).await
     }
 
@@ -861,9 +864,7 @@ impl S3CommittedSnapshotReader {
         config: S3DiskConfig,
         transport: S3TransportOptions,
     ) -> eyre::Result<S3CommittedSnapshotIdentity> {
-        let client = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
         Self::restore_with_agent_and_transport(config, client, transport).await
     }
 

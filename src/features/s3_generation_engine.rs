@@ -18,21 +18,18 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use super::s3_generation::{
-    S3_GENERATION_SEGMENT_MAX_BYTES, S3GenerationFile, S3GenerationPublishOutcome,
-    S3GenerationPublishReceipt, S3GenerationPublisher, S3GenerationSegment, S3ObjectSnapshot,
-    S3ObjectVersion,
+    S3_GENERATION_SEGMENT_MAX_BYTES, S3GenerationFile, S3GenerationPublishOutcome, S3GenerationPublishReceipt,
+    S3GenerationPublisher, S3GenerationSegment, S3ObjectSnapshot, S3ObjectVersion,
 };
 use super::s3_generation_reader::{S3GenerationReadReceipt, S3GenerationReader};
 use super::s3_support::{S3DiskConfig, S3TransportOptions, rename_directory_no_replace};
 use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
-    DiskConfig, DiskPersistenceEngine, PersistenceConfig, PersistenceEngine, SpaceDataOps,
-    SpaceIndexOps, SpaceSecondaryIndexOps,
+    DiskConfig, DiskPersistenceEngine, PersistenceConfig, PersistenceEngine, SpaceDataOps, SpaceIndexOps,
+    SpaceSecondaryIndexOps,
 };
-use crate::prelude::{
-    PrimaryKeyGeneratorState, TablePrimaryKey, WT_DATA_EXTENSION, WT_INDEX_EXTENSION,
-};
+use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey, WT_DATA_EXTENSION, WT_INDEX_EXTENSION};
 
 /// Persistence candidate that durably publishes every successful WorkTable
 /// batch as a new immutable S3 generation.
@@ -140,10 +137,7 @@ impl OwnedTableSnapshot {
         Ok(files)
     }
 
-    fn generation_files<'a>(
-        &'a self,
-        segments: &'a [Vec<S3GenerationSegment<'a>>],
-    ) -> Vec<S3GenerationFile<'a>> {
+    fn generation_files<'a>(&'a self, segments: &'a [Vec<S3GenerationSegment<'a>>]) -> Vec<S3GenerationFile<'a>> {
         self.files
             .iter()
             .zip(segments)
@@ -209,11 +203,7 @@ fn collect_table_file_paths(table_path: &Path) -> eyre::Result<Vec<TableFilePath
     Ok(files)
 }
 
-fn update_table_hash_header(
-    hash: &mut blake3::Hasher,
-    path: &str,
-    length: u64,
-) -> eyre::Result<()> {
+fn update_table_hash_header(hash: &mut blake3::Hasher, path: &str, length: u64) -> eyre::Result<()> {
     hash.update(&u64::try_from(path.len())?.to_le_bytes());
     hash.update(path.as_bytes());
     hash.update(&length.to_le_bytes());
@@ -338,10 +328,7 @@ fn sibling_path(table_path: &Path, label: &str) -> eyre::Result<PathBuf> {
 }
 
 fn ensure_table_parent(table_path: &Path) -> eyre::Result<()> {
-    if let Some(parent) = table_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
+    if let Some(parent) = table_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
     Ok(())
@@ -446,8 +433,7 @@ where
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send + Sync,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send + Sync,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send + Sync,
-    SecondaryIndexEvents:
-        Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
+    SecondaryIndexEvents: Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
@@ -458,13 +444,8 @@ where
 
     /// Open with explicit temporary credentials and URL style using the
     /// default HTTP agent configuration.
-    pub async fn new_with_transport(
-        config: S3DiskConfig,
-        transport: S3TransportOptions,
-    ) -> eyre::Result<Self> {
-        let client = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+    pub async fn new_with_transport(config: S3DiskConfig, transport: S3TransportOptions) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
         Self::new_with_agent_and_transport(config, client, transport).await
     }
 
@@ -479,11 +460,8 @@ where
         let local_writer_lock = acquire_local_writer_lock(&table_path)?;
         ensure_directory_or_absent(&table_path)?;
 
-        let publisher = S3GenerationPublisher::new_with_agent_and_transport(
-            &config,
-            client.clone(),
-            transport.clone(),
-        )?;
+        let publisher =
+            S3GenerationPublisher::new_with_agent_and_transport(&config, client.clone(), transport.clone())?;
         let reader = S3GenerationReader::new_with_agent_and_transport(&config, client, transport)?;
         let mut committed_version = None;
         let mut committed_table_hash = None;
@@ -506,9 +484,7 @@ where
                 Some(path) => path.to_owned(),
                 None => {
                     if let Err(cleanup_error) = remove_path_if_exists(&stage) {
-                        eyre::bail!(
-                            "S3 generation staging path is not UTF-8 and cleanup failed ({cleanup_error})"
-                        );
+                        eyre::bail!("S3 generation staging path is not UTF-8 and cleanup failed ({cleanup_error})");
                     }
                     eyre::bail!("S3 generation staging path is not UTF-8");
                 }
@@ -546,9 +522,7 @@ where
             }
             if let Err(error) = install_restored_table(&table_path, &stage) {
                 if let Err(cleanup_error) = remove_path_if_exists(&stage) {
-                    eyre::bail!(
-                        "S3 generation install failed ({error}) and staging cleanup failed ({cleanup_error})"
-                    );
+                    eyre::bail!("S3 generation install failed ({error}) and staging cleanup failed ({cleanup_error})");
                 }
                 return Err(error);
             }
@@ -588,9 +562,7 @@ where
 
     fn ensure_not_fenced(&self) -> eyre::Result<()> {
         if self.fenced {
-            eyre::bail!(
-                "S3 generation persistence is fenced; reopen to restore the committed generation"
-            );
+            eyre::bail!("S3 generation persistence is fenced; reopen to restore the committed generation");
         }
         Ok(())
     }
@@ -599,9 +571,10 @@ where
         let table_path = Path::new(self.config.disk.table_path());
         let restore_path = sibling_path(table_path, "readback")?;
         let result = (|| {
-            let pointer = self.publisher.get_commit_pointer()?.ok_or_else(|| {
-                eyre::eyre!("S3 generation commit pointer is missing during readback")
-            })?;
+            let pointer = self
+                .publisher
+                .get_commit_pointer()?
+                .ok_or_else(|| eyre::eyre!("S3 generation commit pointer is missing during readback"))?;
             restore_pointer_to(&self.reader, pointer, &restore_path)
         })();
         let cleanup = remove_path_if_exists(&restore_path);
@@ -609,9 +582,9 @@ where
             (Ok(state), Ok(())) => Ok(state),
             (Err(error), Ok(())) => Err(error),
             (Ok(_), Err(cleanup_error)) => Err(cleanup_error),
-            (Err(error), Err(cleanup_error)) => eyre::bail!(
-                "S3 generation readback failed ({error}) and staging cleanup failed ({cleanup_error})"
-            ),
+            (Err(error), Err(cleanup_error)) => {
+                eyre::bail!("S3 generation readback failed ({error}) and staging cleanup failed ({cleanup_error})")
+            }
         }
     }
 
@@ -637,11 +610,9 @@ where
         };
         let files = snapshot.generation_files(&segments);
         let generation_id = Uuid::new_v4();
-        let publish_result = self.publisher.publish_generation(
-            generation_id,
-            &files,
-            self.committed_version.as_ref(),
-        );
+        let publish_result = self
+            .publisher
+            .publish_generation(generation_id, &files, self.committed_version.as_ref());
 
         match publish_result {
             Ok(S3GenerationPublishOutcome::Published(receipt))
@@ -702,16 +673,12 @@ where
             eyre::bail!("local WorkTable changed during S3 generation publication; engine fenced");
         }
 
-        if let Some(receipt) = receipt {
-            if remote.pointer_hash == receipt.pointer_hash
-                && (remote.generation_id != receipt.generation_id
-                    || remote.file_count != receipt.file_count)
-            {
-                self.fenced = true;
-                eyre::bail!(
-                    "S3 generation receipt does not match validated pointer; engine fenced"
-                );
-            }
+        if let Some(receipt) = receipt
+            && remote.pointer_hash == receipt.pointer_hash
+            && (remote.generation_id != receipt.generation_id || remote.file_count != receipt.file_count)
+        {
+            self.fenced = true;
+            eyre::bail!("S3 generation receipt does not match validated pointer; engine fenced");
         }
 
         self.committed_version = Some(remote.version);
@@ -744,17 +711,14 @@ where
     SpaceData: SpaceDataOps<PrimaryKeyGenState> + Send + Sync,
     SpacePrimaryIndex: SpaceIndexOps<PrimaryKey> + Send + Sync,
     SpaceSecondaryIndexes: SpaceSecondaryIndexOps<SecondaryIndexEvents> + Send + Sync,
-    SecondaryIndexEvents:
-        Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
+    SecondaryIndexEvents: Clone + Debug + Default + TableSecondaryIndexEventsOps<AvailableIndexes> + Send + Sync,
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
     type Config = S3DiskConfig;
 
     async fn new(config: Self::Config) -> eyre::Result<Self> {
-        let client = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
         Self::new_with_agent(config, client).await
     }
 
@@ -772,12 +736,7 @@ where
 
     async fn apply_batch_operation(
         &mut self,
-        operation: BatchOperation<
-            PrimaryKeyGenState,
-            PrimaryKey,
-            SecondaryIndexEvents,
-            AvailableIndexes,
-        >,
+        operation: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> eyre::Result<()> {
         self.ensure_not_fenced()?;
         if let Err(error) = self.inner.apply_batch_operation(operation).await {

@@ -16,8 +16,8 @@ use rusty_s3::{Bucket, Credentials, S3Action};
 use ureq::Agent;
 use uuid::Uuid;
 
-use super::s3_support::{S3DiskConfig, S3TransportOptions};
 use super::s3_support::rename_directory_no_replace;
+use super::s3_support::{S3DiskConfig, S3TransportOptions};
 use crate::persistence::PersistenceConfig;
 use crate::prelude::{WT_DATA_EXTENSION, WT_INDEX_EXTENSION};
 
@@ -72,8 +72,7 @@ impl S3GenerationReader {
         client: Agent,
         transport: S3TransportOptions,
     ) -> eyre::Result<Self> {
-        let (bucket, credentials) =
-            super::s3_support::create_s3_bucket_and_credentials(&config.s3, &transport)?;
+        let (bucket, credentials) = super::s3_support::create_s3_bucket_and_credentials(&config.s3, &transport)?;
 
         let table_name = Path::new(config.disk.table_path())
             .file_name()
@@ -100,13 +99,8 @@ impl S3GenerationReader {
     }
 
     /// Create a reader with default HTTP settings and explicit S3 transport options.
-    pub fn new_with_transport(
-        config: &S3DiskConfig,
-        transport: S3TransportOptions,
-    ) -> eyre::Result<Self> {
-        let client = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build();
+    pub fn new_with_transport(config: &S3DiskConfig, transport: S3TransportOptions) -> eyre::Result<Self> {
+        let client = ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build();
         Self::new_with_agent_and_transport(config, client, transport)
     }
 

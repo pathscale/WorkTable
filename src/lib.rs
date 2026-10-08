@@ -41,9 +41,7 @@ pub mod vec_hydrate;
 #[cfg(feature = "s3-support")]
 pub mod features;
 #[cfg(feature = "s3-support")]
-pub use features::{
-    DatabaseS3DiskConfig, DatabaseS3PersistenceEngine, S3GenerationPersistenceEngine,
-};
+pub use features::{DatabaseS3DiskConfig, DatabaseS3PersistenceEngine, S3GenerationPersistenceEngine};
 
 pub use columnar::{
     ClusteredColumnarIndex, ColumnCompression, ColumnSlotId, ColumnSlotId8, ColumnSlotId16, ColumnSlotId32,
@@ -279,7 +277,7 @@ pub mod prelude {
 
     #[cfg(feature = "s3-support")]
     pub use crate::features::{
-        S3CommittedSnapshotIdentity, S3CommittedSnapshotReader, S3Config, S3DiskConfig,
-        S3GenerationPersistenceEngine, S3SyncDiskPersistenceEngine,
+        S3CommittedSnapshotIdentity, S3CommittedSnapshotReader, S3Config, S3DiskConfig, S3GenerationPersistenceEngine,
+        S3SyncDiskPersistenceEngine,
     };
 }

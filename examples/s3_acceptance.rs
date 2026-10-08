@@ -20,9 +20,7 @@ use worktable::features::s3_generation::{
     S3GenerationFile, S3GenerationPublishOutcome, S3GenerationPublisher, S3GenerationSegment,
 };
 use worktable::features::s3_generation_reader::S3GenerationReader;
-use worktable::features::s3_support::{
-    S3Config as TableS3Config, S3DiskConfig, S3TransportOptions,
-};
+use worktable::features::s3_support::{S3Config as TableS3Config, S3DiskConfig, S3TransportOptions};
 use worktable::prelude::eyre;
 use worktable::prelude::*;
 use worktable::{DatabaseS3DiskConfig, S3Database, database_s3_persistence, worktable};
@@ -187,11 +185,8 @@ async fn run_real_table_generation_roundtrip(config: DataBucketS3Config, local_r
         session_token: config.session_token.clone(),
         virtual_host_style: config.virtual_host_style,
     };
-    let publisher = S3GenerationPublisher::new_with_agent_and_transport(
-        &publisher_config,
-        agent.clone(),
-        transport.clone(),
-    )?;
+    let publisher =
+        S3GenerationPublisher::new_with_agent_and_transport(&publisher_config, agent.clone(), transport.clone())?;
     let segment_storage = build_generation_segments(&persisted_files)?;
     let files = persisted_files
         .iter()
