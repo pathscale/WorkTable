@@ -56,7 +56,13 @@ master. See the two entries under Persistence engine in
   large as the stride. A 1 MiB stride overflows both the 8 MiB main stack and
   the 2 MiB nagoya worker stacks.
 
-262,144 bytes is the largest stride currently known to work end to end.
+262,144 bytes is the largest stride currently known to work end to end, verified
+on `worktables_index`-backed indexes. Note that this is above the 65,535 ceiling
+in the paragraph above and is not a contradiction: that ceiling is arctic's
+alone, because the limit is arctic's packed 16-bit link fields rather than
+anything in the page format. A stride legal on one backend can be rejected on
+another, so the ceiling that applies is the one belonging to the backend each
+index resolved to.
 
 Custom-page tests assert physical file lengths and reopen every row. String
 and UUID index tests exercise the full index budget independently of row
