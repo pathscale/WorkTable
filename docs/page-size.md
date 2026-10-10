@@ -44,6 +44,20 @@ of at least 512 bytes. Arctic-backed tables reject sizes above 65,535 because
 its packed links have 16-bit offset and length fields. These are validation
 rules for the existing page_size option; the v3 implementation adds no grammar.
 
+Two further limits apply above roughly 256 KiB and neither is currently
+validated. Both were reported from api.space.revenge.studio on worktable
+1.10.0-beta2 with a 1 MiB stride, and the mechanism for each is present on
+master. See the two entries under Persistence engine in
+[known issues](known-issues.md).
+
+- A primary index page can be sized two bytes over its own payload capacity,
+  which fails the first flush rather than the configuration.
+- Page payloads are inline const-generic arrays, so a future holding one is as
+  large as the stride. A 1 MiB stride overflows both the 8 MiB main stack and
+  the 2 MiB nagoya worker stacks.
+
+262,144 bytes is the largest stride currently known to work end to end.
+
 Custom-page tests assert physical file lengths and reopen every row. String
 and UUID index tests exercise the full index budget independently of row
 capacity. The slotted-page tests enumerate rows without consulting an index,

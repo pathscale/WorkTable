@@ -11,6 +11,34 @@ Severity words: "corruption" means wrong or lost data, "outage" means a hang or 
 
 ## Persistence engine
 
+- **A primary index page is sized two bytes over its payload capacity above roughly 256 KiB,
+  and the first flush fails.** Reported from api.space.revenge.studio on worktable
+  1.10.0-beta2, `src/db/schema/inventory.rs` (`InventoryAsset`) at `997e28d`, with
+  `config: { page_size: 1048576 }`: "primary index batch apply: page PageId(2) needs 1048550
+  bytes of a 1048548 byte page". 262,144 works. Severity: outage, and it presents as a flush
+  failure rather than as a rejected configuration.
+
+  Mechanism, read on master rather than reproduced. `get_index_page_size_from_data_length`
+  (`DataBucket/src/page/index/page.rs:26`) derives the node capacity as
+  `(length - overhead) / (slot_size + index_value_size)`, where `overhead` sums the two
+  vectors' encoded size **at zero elements** (`slots_size(0)` twice). Whatever those two
+  encodings gain as the element count grows is unbudgeted, which is the two bytes. Nothing
+  clamps the result afterwards: index pages take the default `Persistable::page_bytes`
+  (`DataBucket/src/util/persistable.rs:20`), which ignores the `capacity` argument and
+  returns `as_bytes()` whole, so `persist_page_in_place` can only check the overflow after
+  the fact and fail. Suggested direction: make `overhead` a function of the capacity being
+  solved for, or clamp in `page_bytes` for index pages the way data pages already use their
+  capacity argument.
+
+- **Page payloads are inline const-generic arrays, so a persistence future is as large as the
+  stride.** `DataPage<const DATA_LENGTH: usize>` holds `data: [u8; DATA_LENGTH]`
+  (`DataBucket/src/page/data.rs:7`), by value, so every future that carries a page carries
+  the whole payload in its state machine. At a 1 MiB stride `spawn_on` overflows the 8 MiB
+  main stack and the 2 MiB nagoya worker stacks. Space Revenge worked around it with a 32 MiB
+  thread and `RUST_MIN_STACK`. Severity: outage at large strides, perf at every stride, since
+  the move cost is paid per page whatever the size. Boxing the payload removes both.
+  Reported alongside the entry above.
+
 - **Fixed in the 2026-09-11 release review: page capacity on reopen.** The metadata
   reader and six generated metadata/index read paths passed the full stride as the
   payload capacity. DataBucket layout validation rejected them before reading any
