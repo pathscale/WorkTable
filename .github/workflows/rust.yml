@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Formatting (cargo fmt --all --check)
         run: cargo fmt --all --check
 
@@ -59,6 +61,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
     - uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: "true"
@@ -94,6 +98,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
@@ -116,6 +122,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
@@ -133,6 +141,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --release --lib cell_lock_models
@@ -146,6 +156,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sh scripts/check-no-std.sh -p worktable --lib --no-default-features
@@ -169,6 +181,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
@@ -206,6 +220,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Publish when master carries a new version
         env:
