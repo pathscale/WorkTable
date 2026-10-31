@@ -222,38 +222,19 @@ impl PersistGenerator {
             .map(|(name, op)| {
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
                 let method_ident = Ident::new(format!("delete_{snake_case_name}").as_str(), Span::mixed_site());
-                let type_ = self
-                    .columns
-                    .columns_map
-                    .get(&op.by)
-                    .ok_or_else(|| syn::Error::new_spanned(&op.by, "Unexpected column name"))?;
-                let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
-                if let Some(index) = index {
-                    let index_name = &index.name;
-
-                    if index.is_unique {
-                        Ok(Self::gen_unique_delete(type_, &method_ident, index_name))
-                    } else {
-                        Ok(Self::gen_non_unique_delete(type_, &method_ident, index))
+                let (type_, target) =
+                    worktable_dsl::validate::resolve_mutation_by(&self.columns, "delete", name, &op.by, true)?;
+                match target {
+                    worktable_dsl::validate::QueryByTarget::SecondaryIndex(index) => {
+                        if index.is_unique {
+                            Ok(Self::gen_unique_delete(type_, &method_ident, &index.name))
+                        } else {
+                            Ok(Self::gen_non_unique_delete(type_, &method_ident, index))
+                        }
                     }
-                } else if self.columns.primary_keys.len() == 1 && *self.columns.primary_keys.first().unwrap() == op.by {
-                    Ok(Self::gen_pk_delete(type_, &method_ident))
-                } else if self.columns.primary_keys.len() > 1 && self.columns.primary_keys.contains(&op.by) {
-                    Err(syn::Error::new_spanned(
-                        &op.by,
-                        format!(
-                            "delete queries do not yet support `by {}` (composite primary key).",
-                            op.by
-                        ),
-                    ))
-                } else {
-                    Err(syn::Error::new_spanned(
-                        &op.by,
-                        format!(
-                            "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
-                            col = op.by
-                        ),
-                    ))
+                    worktable_dsl::validate::QueryByTarget::SinglePrimaryKey => {
+                        Ok(Self::gen_pk_delete(type_, &method_ident))
+                    }
                 }
             })
             .collect::<syn::Result<Vec<_>>>()?;

@@ -38,43 +38,14 @@ impl PersistGenerator {
         let defs = in_place_queries
             .iter()
             .map(|(name, op)| {
-                if !self.columns.columns_map.contains_key(&op.by) {
-                    return Err(syn::Error::new_spanned(&op.by, "Unexpected column name"));
-                }
+                worktable_dsl::validate::resolve_mutation_by(&self.columns, "update_in_place", name, &op.by, false)?;
                 for column in &op.columns {
                     if !self.columns.columns_map.contains_key(column) {
-                        return Err(syn::Error::new_spanned(column, "Unexpected column name"));
+                        return Err(worktable_dsl::validate::unknown_column_error(column));
                     }
                 }
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
-                let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
-                if index.is_some() {
-                    Err(syn::Error::new_spanned(
-                        &op.by,
-                        format!(
-                            "update_in_place queries do not yet support `by {}` (secondary-index in-place updates are not supported).",
-                            op.by
-                        ),
-                    ))
-                } else if self.columns.primary_keys.len() == 1 && *self.columns.primary_keys.first().unwrap() == op.by {
-                    Ok(self.gen_primary_key_in_place(snake_case_name, &op.columns))
-                } else if self.columns.primary_keys.len() > 1 && self.columns.primary_keys.contains(&op.by) {
-                    Err(syn::Error::new_spanned(
-                        &op.by,
-                        format!(
-                            "update_in_place queries do not yet support `by {}` (composite primary key).",
-                            op.by
-                        ),
-                    ))
-                } else {
-                    Err(syn::Error::new_spanned(
-                        &op.by,
-                        format!(
-                            "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
-                            col = op.by
-                        ),
-                    ))
-                }
+                Ok(self.gen_primary_key_in_place(snake_case_name, &op.columns))
             })
             .collect::<syn::Result<Vec<_>>>()?;
 

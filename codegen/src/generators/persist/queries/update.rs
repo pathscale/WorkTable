@@ -206,16 +206,14 @@ impl PersistGenerator {
         let defs = updates
             .iter()
             .map(|(name, op)| {
-                if !self.columns.columns_map.contains_key(&op.by) {
-                    return Err(syn::Error::new_spanned(&op.by, "Unexpected column name"));
-                }
+                let (_, target) =
+                    worktable_dsl::validate::resolve_mutation_by(&self.columns, "update", name, &op.by, true)?;
                 for column in &op.columns {
                     if !self.columns.columns_map.contains_key(column) {
-                        return Err(syn::Error::new_spanned(column, "Unexpected column name"));
+                        return Err(worktable_dsl::validate::unknown_column_error(column));
                     }
                 }
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
-                let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
 
                 let indexes_columns: Option<Vec<_>> = {
                     let columns: Vec<_> = self
@@ -248,44 +246,31 @@ impl PersistGenerator {
                 };
 
                 let idents = &op.columns;
-                if let Some(index) = index {
-                    if index.is_unique {
-                        Ok(self.gen_unique_update(
-                            snake_case_name,
-                            name,
-                            index,
-                            idents,
-                            indexes_columns.as_ref(),
-                            storage,
-                        ))
-                    } else {
-                        Ok(self.gen_non_unique_update(
-                            snake_case_name,
-                            name,
-                            index,
-                            idents,
-                            indexes_columns.as_ref(),
-                            storage,
-                        ))
+                match target {
+                    worktable_dsl::validate::QueryByTarget::SecondaryIndex(index) => {
+                        if index.is_unique {
+                            Ok(self.gen_unique_update(
+                                snake_case_name,
+                                name,
+                                index,
+                                idents,
+                                indexes_columns.as_ref(),
+                                storage,
+                            ))
+                        } else {
+                            Ok(self.gen_non_unique_update(
+                                snake_case_name,
+                                name,
+                                index,
+                                idents,
+                                indexes_columns.as_ref(),
+                                storage,
+                            ))
+                        }
                     }
-                } else if self.columns.primary_keys.len() == 1 && *self.columns.primary_keys.first().unwrap() == op.by {
-                    Ok(self.gen_pk_update(snake_case_name, name, idents, indexes_columns.as_ref(), storage))
-                } else if self.columns.primary_keys.len() > 1 && self.columns.primary_keys.contains(&op.by) {
-                    Err(syn::Error::new_spanned(
-                        &op.by,
-                        format!(
-                            "update queries do not yet support `by {}` (composite primary key).",
-                            op.by
-                        ),
-                    ))
-                } else {
-                    Err(syn::Error::new_spanned(
-                        &op.by,
-                        format!(
-                            "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
-                            col = op.by
-                        ),
-                    ))
+                    worktable_dsl::validate::QueryByTarget::SinglePrimaryKey => {
+                        Ok(self.gen_pk_update(snake_case_name, name, idents, indexes_columns.as_ref(), storage))
+                    }
                 }
             })
             .collect::<syn::Result<Vec<_>>>()?;
