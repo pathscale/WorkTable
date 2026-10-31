@@ -1,0 +1,5 @@
+error: BySlot is declared `by slot`, but `slot` is neither the primary key nor indexed. Add an index on `slot`, or write the scan explicitly with select_all().where_by(...).
+  --> tests/ui/delete_by_unindexed_column.rs:14:25
+   |
+14 |             BySlot() by slot,
+   |                         ^^^^

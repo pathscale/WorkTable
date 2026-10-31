@@ -1,0 +1,5 @@
+error: delete queries do not yet support `by tenant_id` (composite primary key).
+  --> tests/ui/delete_by_composite_pk.rs:15:27
+   |
+15 |             ByTenant() by tenant_id,
+   |                           ^^^^^^^^^

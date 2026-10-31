@@ -23,7 +23,7 @@ from a macro, and that persisting it is one feature flag away.
 ## Install
 
 ```sh
-cargo add worktable@1.11.0
+cargo add worktable@1.12.0
 ```
 
 ## New in 1.9
@@ -113,7 +113,7 @@ for table in database.catalog().system_tables() {
 
 ```toml
 [dependencies]
-worktable = { version = "^1.11.0", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "^1.12.0", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
@@ -261,7 +261,7 @@ worktable!(
             AnotherById(another) by id,
         },
         delete: {
-            ByAnother() by another,
+            ById() by id,
             ByExchange() by exchange,
             ByTest() by test,
         }
@@ -442,14 +442,14 @@ queries: {
         AnotherById(another) by id,
     },
     delete: {
-        ByAnother() by another,
+        ById() by id,
         ByExchange() by exchange,
         ByTest() by test,
     }
 }
 ```
 
-Default query declaration is `<QueryName>(<column_name>*) by <column_name>`. It is same for update/select/delete.
+Default query declaration is `<QueryName>(<column_name>*) by <column_name>`. The lookup column after `by` must be the single primary key or covered by `indexes:` (`update_in_place` requires the single primary key); declaring a query `by` an unindexed column fails to compile with `{query} is declared \`by {col}\`, but \`{col}\` is neither the primary key nor indexed. Add an index on \`{col}\`, or write the scan explicitly with select_all().where_by(...).` so that every full-table scan is written explicitly at the call site.
 
 For each query `<QueryName>Query` and `<QueryName>By` structs are generated. They will be used by user to call the
 query.

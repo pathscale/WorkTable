@@ -19,6 +19,7 @@ worktable!(
         delete: {
             ByVal1() by val1,
             ByVal2() by val2,
+            ByToken() by token,
         }
     }
 );
@@ -29,4 +30,32 @@ fn brute_force_delete_future_is_send() {
 
     let table = DeleteTestWorkTable::default();
     assert_send(table.delete_by_val_2(1));
+}
+
+#[tokio::test]
+async fn delete_by_primary_key_deletes_row_without_scan() {
+    let table = DeleteTestWorkTable::default();
+    table
+        .insert(DeleteTestRow {
+            token: "a".to_string(),
+            val1: 1,
+            val2: 10,
+        })
+        .await
+        .unwrap();
+    table
+        .insert(DeleteTestRow {
+            token: "b".to_string(),
+            val1: 2,
+            val2: 20,
+        })
+        .await
+        .unwrap();
+
+    table.delete_by_token("a".to_string()).await.unwrap();
+    assert!(table.select("a".to_string()).is_none());
+    assert!(table.select("b".to_string()).is_some());
+
+    assert!(table.delete_by_token("missing".to_string()).await.is_ok());
+    assert!(table.select("b".to_string()).is_some());
 }

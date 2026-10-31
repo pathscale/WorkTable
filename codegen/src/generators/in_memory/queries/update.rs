@@ -23,7 +23,7 @@ impl InMemoryGenerator {
                 &self.columns,
                 q,
             )?;
-            let custom_updates = self.gen_custom_updates(q.updates.clone());
+            let custom_updates = self.gen_custom_updates(q.updates.clone())?;
             let custom_updates = crate::generators::profile_dispatch::wrap(
                 custom_updates,
                 profile.as_ref(),
@@ -193,10 +193,18 @@ impl InMemoryGenerator {
         }
     }
 
-    fn gen_custom_updates(&mut self, updates: IndexMap<Ident, Operation>) -> TokenStream {
+    fn gen_custom_updates(&mut self, updates: IndexMap<Ident, Operation>) -> syn::Result<TokenStream> {
         let defs = updates
             .iter()
             .map(|(name, op)| {
+                if !self.columns.columns_map.contains_key(&op.by) {
+                    return Err(syn::Error::new_spanned(&op.by, "Unexpected column name"));
+                }
+                for column in &op.columns {
+                    if !self.columns.columns_map.contains_key(column) {
+                        return Err(syn::Error::new_spanned(column, "Unexpected column name"));
+                    }
+                }
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
                 let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
 
@@ -233,32 +241,49 @@ impl InMemoryGenerator {
                 let idents = &op.columns;
                 if let Some(index) = index {
                     if index.is_unique {
-                        self.gen_unique_update(snake_case_name, name, index, idents, indexes_columns.as_ref(), storage)
-                    } else {
-                        self.gen_non_unique_update(
+                        Ok(self.gen_unique_update(
                             snake_case_name,
                             name,
                             index,
                             idents,
                             indexes_columns.as_ref(),
                             storage,
-                        )
-                    }
-                } else if self.columns.primary_keys.len() == 1 {
-                    if *self.columns.primary_keys.first().unwrap() == op.by {
-                        self.gen_pk_update(snake_case_name, name, idents, indexes_columns.as_ref(), storage)
+                        ))
                     } else {
-                        todo!()
+                        Ok(self.gen_non_unique_update(
+                            snake_case_name,
+                            name,
+                            index,
+                            idents,
+                            indexes_columns.as_ref(),
+                            storage,
+                        ))
                     }
+                } else if self.columns.primary_keys.len() == 1 && *self.columns.primary_keys.first().unwrap() == op.by {
+                    Ok(self.gen_pk_update(snake_case_name, name, idents, indexes_columns.as_ref(), storage))
+                } else if self.columns.primary_keys.len() > 1 && self.columns.primary_keys.contains(&op.by) {
+                    Err(syn::Error::new_spanned(
+                        &op.by,
+                        format!(
+                            "update queries do not yet support `by {}` (composite primary key).",
+                            op.by
+                        ),
+                    ))
                 } else {
-                    todo!()
+                    Err(syn::Error::new_spanned(
+                        &op.by,
+                        format!(
+                            "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
+                            col = op.by
+                        ),
+                    ))
                 }
             })
-            .collect::<Vec<_>>();
+            .collect::<syn::Result<Vec<_>>>()?;
 
-        quote! {
+        Ok(quote! {
             #(#defs)*
-        }
+        })
     }
 
     fn gen_persist_call(&self) -> TokenStream {

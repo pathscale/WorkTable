@@ -391,27 +391,64 @@ pub fn validate_query_storage(
         }
         return Ok(());
     }
-    for (name, op) in &queries.updates {
-        let by_primary = columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(&op.by);
-        let by_index = columns.indexes.values().any(|index| index.field == op.by);
-        if !by_primary && !by_index {
-            return Err(syn::Error::new(
-                op.by.span(),
+    for (kind, ops) in [("delete", &queries.deletes), ("update", &queries.updates)] {
+        for (name, op) in ops {
+            if !columns.columns_map.contains_key(&op.by) {
+                continue;
+            }
+            let by_index = columns.indexes.values().any(|index| index.field == op.by);
+            let by_single_pk = columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(&op.by);
+            if by_index || by_single_pk {
+                continue;
+            }
+            if columns.primary_keys.len() > 1 && columns.primary_keys.contains(&op.by) {
+                return Err(syn::Error::new_spanned(
+                    &op.by,
+                    format!(
+                        "{kind} queries do not yet support `by {}` (composite primary key).",
+                        op.by
+                    ),
+                ));
+            }
+            return Err(syn::Error::new_spanned(
+                &op.by,
                 format!(
-                    "update query `{name}` requires a single-column primary key or a secondary index on `{}`",
-                    op.by
+                    "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
+                    col = op.by
                 ),
             ));
         }
     }
     for (name, op) in &queries.updates_in_place {
-        if columns.primary_keys.len() != 1 || columns.primary_keys.first() != Some(&op.by) {
-            return Err(syn::Error::new(
-                op.by.span(),
-                format!(
-                    "update_in_place query `{name}` requires selection by the single-column primary key; use an update query for an indexed predicate"
-                ),
-            ));
+        if columns.columns_map.contains_key(&op.by) {
+            if columns.indexes.values().any(|index| index.field == op.by) {
+                return Err(syn::Error::new_spanned(
+                    &op.by,
+                    format!(
+                        "update_in_place queries do not yet support `by {}` (secondary-index in-place updates are not supported).",
+                        op.by
+                    ),
+                ));
+            }
+            if columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(&op.by) {
+                // Supported single-PK path.
+            } else if columns.primary_keys.len() > 1 && columns.primary_keys.contains(&op.by) {
+                return Err(syn::Error::new_spanned(
+                    &op.by,
+                    format!(
+                        "update_in_place queries do not yet support `by {}` (composite primary key).",
+                        op.by
+                    ),
+                ));
+            } else {
+                return Err(syn::Error::new_spanned(
+                    &op.by,
+                    format!(
+                        "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
+                        col = op.by
+                    ),
+                ));
+            }
         }
         if op.columns.iter().any(|column| columns.primary_keys.contains(column)) {
             return Err(syn::Error::new(

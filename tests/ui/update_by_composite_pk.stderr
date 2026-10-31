@@ -1,0 +1,5 @@
+error: update queries do not yet support `by tenant_id` (composite primary key).
+  --> tests/ui/update_by_composite_pk.rs:15:37
+   |
+15 |             ValueByTenant(value) by tenant_id,
+   |                                     ^^^^^^^^^
