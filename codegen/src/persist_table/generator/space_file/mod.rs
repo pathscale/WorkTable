@@ -3,7 +3,6 @@ mod worktable_impls;
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use crate::common::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 
 pub const WT_INDEX_EXTENSION: &str = ".wt.idx";
@@ -23,7 +22,7 @@ impl Generator {
     }
 
     fn gen_space_file_type(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let index_persisted_ident = name_generator.get_persisted_index_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();
         let pk_type = name_generator.get_primary_key_type_ident();
@@ -60,7 +59,7 @@ impl Generator {
     }
 
     fn gen_space_file_get_primary_index_info_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let literal_name = name_generator.get_work_table_literal_name();
         let version_const = name_generator.get_version_const_ident();
         let primary_page_count = if self.attributes.pk_congee {
@@ -115,7 +114,7 @@ impl Generator {
     }
 
     pub fn gen_space_file_impls(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let space_ident = name_generator.get_space_file_ident();
 
         let into_worktable_fn = self.gen_space_file_into_worktable_fn();
@@ -133,7 +132,7 @@ impl Generator {
 
     fn gen_space_file_into_worktable_fn(&self) -> TokenStream {
         let wt_ident = &self.struct_def.ident;
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let index_ident = name_generator.get_index_type_ident();
         let task_ident = name_generator.get_persistence_task_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
@@ -360,7 +359,7 @@ impl Generator {
     }
 
     fn gen_space_file_parse_file_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let pk_type = name_generator.get_primary_key_type_ident();
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();

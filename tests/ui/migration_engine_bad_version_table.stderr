@@ -1,0 +1,5 @@
+error: `NotATable` must end in `WorkTable`; `migration_engine!` derives the row type from it
+  --> tests/ui/migration_engine_bad_version_table.rs:11:14
+   |
+11 |         1 => v1::NotATable,
+   |              ^^^^^^^^^^^^^

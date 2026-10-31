@@ -14,18 +14,60 @@ impl Parser {
         }
     }
 
-    pub fn parse_pk_ident(item: &ItemStruct) -> Ident {
+    pub fn parse_pk_ident(item: &ItemStruct) -> syn::Result<Ident> {
         // WorkTable<#row_type, #pk_type, <#pk_type as TablePrimaryKey>::Generator, #const_name>
-        let type_str = item.fields.iter().next().unwrap().ty.to_token_stream().to_string();
-        let mut split = type_str.split("<");
-        split.next();
-        let mut gens = split.next().unwrap().split(",");
-        let pk_type = gens.nth(1).unwrap();
+        let first_field = item.fields.iter().next().ok_or_else(|| {
+            syn::Error::new(
+                item.ident.span(),
+                format!(
+                    "`{}` must have a field wrapping `WorkTable<Row, PrimaryKey, ...>`",
+                    item.ident
+                ),
+            )
+        })?;
+        let syn::Type::Path(type_path) = &first_field.ty else {
+            return Err(syn::Error::new_spanned(
+                &first_field.ty,
+                "`PersistTable` field type must be a path with generic arguments `WorkTable<Row, PrimaryKey, ...>`",
+            ));
+        };
+        let last_segment = type_path.path.segments.last().ok_or_else(|| {
+            syn::Error::new_spanned(&first_field.ty, "`PersistTable` field type path cannot be empty")
+        })?;
+        let syn::PathArguments::AngleBracketed(arguments) = &last_segment.arguments else {
+            return Err(syn::Error::new_spanned(
+                &first_field.ty,
+                format!(
+                    "`{}` must have generic type arguments `<Row, PrimaryKey, ...>`",
+                    last_segment.ident
+                ),
+            ));
+        };
+        let Some(syn::GenericArgument::Type(pk_ty)) = arguments.args.iter().nth(1) else {
+            return Err(syn::Error::new_spanned(
+                &first_field.ty,
+                format!(
+                    "`{}` must have at least two generic type arguments `<Row, PrimaryKey, ...>`",
+                    last_segment.ident
+                ),
+            ));
+        };
+        let syn::Type::Path(pk_path) = pk_ty else {
+            return Err(syn::Error::new_spanned(
+                pk_ty,
+                "second generic argument of `PersistTable` field must be the primary key type identifier",
+            ));
+        };
+        let pk_seg = pk_path
+            .path
+            .segments
+            .last()
+            .ok_or_else(|| syn::Error::new_spanned(pk_ty, "primary key type path cannot be empty"))?;
 
-        Ident::new(pk_type.trim(), Span::mixed_site())
+        Ok(Ident::new(&pk_seg.ident.to_string(), Span::mixed_site()))
     }
 
-    pub fn parse_attributes(attrs: &Vec<Attribute>) -> PersistTableAttributes {
+    pub fn parse_attributes(attrs: &[Attribute]) -> syn::Result<PersistTableAttributes> {
         let mut res = PersistTableAttributes {
             pk_unsized: false,
             read_only: false,
@@ -109,12 +151,11 @@ impl Parser {
                         })?;
                         return Ok(());
                     }
-                    Ok(())
-                })
-                .expect("always ok even on unrecognized attrs");
+                    Err(meta.error("unsupported `#[table(...)]` attribute"))
+                })?;
             }
         }
 
-        res
+        Ok(res)
     }
 }

@@ -8,13 +8,12 @@ use quote::quote;
 use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::persist::PersistGenerator;
 use quote::ToTokens;
-use syn::Type;
 
 const RANGE_VARIANTS: &[&str] = &["", "Inclusive", "From", "To", "ToInclusive"];
 
-fn is_numeric_type(ty: &Type) -> bool {
+fn is_numeric_type(ty: &str) -> bool {
     matches!(
-        ty.to_token_stream().to_string().as_str(),
+        ty,
         "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" | "f32" | "f64"
     )
 }
@@ -29,7 +28,7 @@ impl PersistGenerator {
             .columns_map
             .values()
             .map(|ty| ty.to_token_stream().to_string())
-            .filter(|ty| is_numeric_type(&syn::parse_str::<Type>(ty).unwrap()))
+            .filter(|ty| is_numeric_type(ty))
             .map(|ty| ty.to_string())
             .collect();
 
@@ -120,7 +119,7 @@ impl PersistGenerator {
             .columns
             .columns_map
             .iter()
-            .filter(|(_, ty)| is_numeric_type(&syn::parse_str::<Type>(&ty.to_token_stream().to_string()).unwrap()))
+            .filter(|(_, ty)| is_numeric_type(&ty.to_token_stream().to_string()))
             .map(|(column, ty)| {
                 let variants: Vec<_> = RANGE_VARIANTS
                     .iter()

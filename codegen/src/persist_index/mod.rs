@@ -10,13 +10,13 @@ mod space;
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let input_struct = Parser::parse_struct(input)?;
-    let attributes = Parser::parse_attributes(&input_struct.attrs);
-    let mut generator = Generator::with_attributes(input_struct, attributes);
+    let attributes = Parser::parse_attributes(&input_struct.attrs)?;
+    let mut generator = Generator::with_attributes(input_struct, attributes)?;
 
     let type_def = generator.gen_persist_type()?;
     let persistable_def = generator.gen_persistable_impl()?;
     let impl_def = generator.gen_persist_impl()?;
-    let space_index = generator.gen_space_index();
+    let space_index = generator.gen_space_index()?;
 
     Ok(quote! {
         #type_def

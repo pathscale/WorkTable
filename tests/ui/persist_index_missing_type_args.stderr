@@ -1,0 +1,5 @@
+error: `u64` must have generic type arguments `<Key, ...>`
+ --> tests/ui/persist_index_missing_type_args.rs:7:12
+  |
+7 |     by_id: u64,
+  |            ^^^

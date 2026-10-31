@@ -89,6 +89,7 @@ impl ReadOnlyGenerator {
             .primary_keys
             .iter()
             .map(|i| {
+                // Guaranteed by `ColumnsParser::parse_columns` at `codegen/src/worktable/parser/columns.rs:64` (`primary_keys` populated alongside `columns_map`).
                 self.columns
                     .columns_map
                     .get(i)

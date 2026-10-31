@@ -401,7 +401,9 @@ pub fn expand(
     let row_ident = Ident::new(&format!("{name}Row"), name.span());
     let table_ident = Ident::new(&format!("{name}WorkTable"), name.span());
 
+    // Guaranteed by `columns.primary_keys.len() != 1` check at `vec_table/mod.rs:378`.
     let pk = columns.primary_keys.first().expect("checked above").clone();
+    // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
     let pk_type = columns
         .columns_map
         .get(&pk)
@@ -602,6 +604,7 @@ pub fn expand(
             let fn_name = Ident::new(&format!("select_by_{column}"), index_name.span());
             let field = Ident::new(&format!("{index_name}_map"), index_name.span());
             let map = quote! { self.#field };
+            // Guaranteed by `columns.columns_map.get(column)` check at `vec_table/mod.rs:434`.
             let ty = columns.columns_map.get(column).expect("checked above");
             if index.is_unique {
                 let get = unique_get(repr, &map, &quote! { key });

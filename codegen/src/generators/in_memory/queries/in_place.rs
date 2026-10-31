@@ -64,6 +64,7 @@ impl InMemoryGenerator {
 
         let types = columns
             .iter()
+            // Guaranteed by `self.columns.columns_map.contains_key(column)` check at `in_memory/queries/in_place.rs:41`.
             .map(|c| self.columns.columns_map.get(c).unwrap())
             .collect::<Vec<_>>();
         let column_types = if types.len() == 1 {

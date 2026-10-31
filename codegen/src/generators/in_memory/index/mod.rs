@@ -204,6 +204,7 @@ impl InMemoryGenerator {
 
         let indexes = self.columns.indexes.values().map(|i| {
             let camel_case_name = i.name.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+            // Guaranteed by `i.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
             let i: TokenStream = camel_case_name.parse().unwrap();
             quote! {
                 #i,

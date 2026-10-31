@@ -53,4 +53,20 @@ fn compile_fail() {
 
     // Read-path safety rules.
     t.compile_fail("tests/ui/select_with_needs_inline_archived.rs");
+
+    // Malformed macro and derive input rules.
+    t.compile_fail("tests/ui/worktable_without_columns.rs");
+    t.compile_fail("tests/ui/worktable_version_without_columns.rs");
+    t.compile_fail("tests/ui/migration_engine_bad_current.rs");
+    t.compile_fail("tests/ui/migration_engine_bad_version_table.rs");
+    t.compile_fail("tests/ui/persist_index_bad_name.rs");
+    t.compile_fail("tests/ui/persist_index_tuple_struct.rs");
+    t.compile_fail("tests/ui/persist_index_non_path_field.rs");
+    t.compile_fail("tests/ui/persist_index_missing_type_args.rs");
+    t.compile_fail("tests/ui/persist_index_no_type_arg.rs");
+    t.compile_fail("tests/ui/persist_index_malformed_attr.rs");
+    t.compile_fail("tests/ui/persist_table_bad_name.rs");
+    t.compile_fail("tests/ui/persist_table_no_fields.rs");
+    t.compile_fail("tests/ui/persist_table_too_few_generics.rs");
+    t.compile_fail("tests/ui/persist_table_malformed_attr.rs");
 }

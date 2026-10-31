@@ -115,7 +115,8 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         }
     }
 
-    let mut columns = columns.expect("defined");
+    let mut columns =
+        columns.ok_or_else(|| syn::Error::new(name.span(), "Expected a `columns` block in declaration"))?;
     if let Some(i) = indexes {
         columns.indexes = i
     }
@@ -184,6 +185,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         // something it has nothing to do with, so this composes instead of
         // being refused.
         if let Some(key) = partition_by {
+            // Guaranteed Some: `vec_columns` is cloned from `partition_by.as_ref()` at line 175.
             let columns = vec_columns.expect("cloned whenever `partition_by` is present");
             generated.extend(crate::generators::partitions::expand(
                 &name,
@@ -211,37 +213,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     //
     // Refused here rather than left to fail somewhere inside the index
     // generators, where the error would land on a type the author never wrote.
-    {
-        let mut offenders = Vec::new();
-        if columns.primary_index_backend == worktable_dsl::IndexBackend::FxHash {
-            offenders.push((
-                columns
-                    .primary_keys
-                    .first()
-                    .map(|key| key.span())
-                    .unwrap_or_else(proc_macro2::Span::call_site),
-                "the primary key".to_string(),
-            ));
-        }
-        for index in columns.indexes.values() {
-            if index.backend == worktable_dsl::IndexBackend::FxHash {
-                offenders.push((index.name.span(), format!("`{}`", index.name)));
-            }
-        }
-        if let Some((span, what)) = offenders.into_iter().next() {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "`using fxhash` on {what}: a hash index has no ordered scan and no persisted \
-                     page form, so it cannot back a paged table. This table generates \
-                     `select_by_<column>_range` for its indexes and, if persisted, writes each \
-                     index as sorted pages. Use `vec: true`, which is single-writer and asks its \
-                     index only for point operations, or pick an ordered backend \
-                     (`arctic` is the default)."
-                ),
-            ));
-        }
-    }
+    reject_paged_fxhash(&columns)?;
 
     let columnar_chunk_rows = config
         .as_ref()
@@ -304,6 +276,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     generated.extend(gen_runtime_type(&name, runtime));
 
     if let Some(key) = partition_by {
+        // Guaranteed Some: `partition_columns` is cloned from `partition_by.as_ref()` at line 258.
         let columns = partition_columns.expect("cloned whenever `partition_by` is present");
         generated.extend(crate::generators::partitions::expand(
             &name,
@@ -317,6 +290,39 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     generated.extend(gen_schema_const(&worktable_dsl::Schema::from_tokens(declaration)?));
 
     Ok(generated)
+}
+
+pub(crate) fn reject_paged_fxhash(columns: &worktable_dsl::Columns) -> syn::Result<()> {
+    let mut offenders = Vec::new();
+    if columns.primary_index_backend == worktable_dsl::IndexBackend::FxHash {
+        offenders.push((
+            columns
+                .primary_keys
+                .first()
+                .map(|key| key.span())
+                .unwrap_or_else(proc_macro2::Span::call_site),
+            "the primary key".to_string(),
+        ));
+    }
+    for index in columns.indexes.values() {
+        if index.backend == worktable_dsl::IndexBackend::FxHash {
+            offenders.push((index.name.span(), format!("`{}`", index.name)));
+        }
+    }
+    if let Some((span, what)) = offenders.into_iter().next() {
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`using fxhash` on {what}: a hash index has no ordered scan and no persisted \
+                 page form, so it cannot back a paged table. This table generates \
+                 `select_by_<column>_range` for its indexes and, if persisted, writes each \
+                 index as sorted pages. Use `vec: true`, which is single-writer and asks its \
+                 index only for point operations, or pick an ordered backend \
+                 (`arctic` is the default)."
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Warn about a primary key too narrow to be a table's, when it is a table's.
@@ -342,6 +348,7 @@ fn gen_narrow_primary_key_lint(columns: &worktable_dsl::model::Columns) -> Token
     if columns.primary_keys.len() != 1 {
         return quote! {};
     }
+    // Guaranteed Some: `columns.primary_keys.len() != 1` returned above at line 349.
     let pk = columns.primary_keys.first().expect("checked above");
     let Some(ty) = columns.columns_map.get(pk) else {
         return quote! {};

@@ -69,6 +69,7 @@ impl Parser {
             let Some(_) = self.input_iter.peek() else {
                 return Ok(None);
             };
+            // Guaranteed by `self.input_iter.peek()` check at `dsl/src/parser/config.rs:69`.
             let ident = self.input_iter.next().unwrap();
             let name = if let TokenTree::Ident(ident) = ident {
                 ident

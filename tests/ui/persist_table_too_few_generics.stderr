@@ -1,0 +1,5 @@
+error: `Inner` must have at least two generic type arguments `<Row, PrimaryKey, ...>`
+ --> tests/ui/persist_table_too_few_generics.rs:6:32
+  |
+6 | struct TooFewGenericsWorkTable(Inner<u64>);
+  |                                ^^^^^^^^^^

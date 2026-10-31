@@ -1,0 +1,5 @@
+error: `BadTableName` must end in `WorkTable`; table type names are derived from it
+ --> tests/ui/persist_table_bad_name.rs:7:8
+  |
+7 | struct BadTableName(Inner<Row, u64>);
+  |        ^^^^^^^^^^^^

@@ -27,6 +27,7 @@ impl PersistGenerator {
 
             if idx.is_unique {
                 let (capacity, node_count) = match idx.backend {
+                    // Guaranteed by `reject_paged_fxhash` at `worktable/mod.rs:348`.
                     crate::common::model::IndexBackend::FxHash => unreachable!(
                         "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
                     ),

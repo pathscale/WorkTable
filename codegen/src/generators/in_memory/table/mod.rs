@@ -67,6 +67,7 @@ impl InMemoryGenerator {
             .primary_keys
             .iter()
             .map(|i| {
+                // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
                 self.columns
                     .columns_map
                     .get(i)

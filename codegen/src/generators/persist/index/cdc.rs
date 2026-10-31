@@ -49,10 +49,12 @@ impl PersistGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 // The index key type wraps floats in OrderedFloat (see the
                 // non-CDC twin in usual.rs); pass the wrapped key, not the raw
                 // column value.
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let key = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! { OrderedFloat(row.#i) }
                 } else {
@@ -108,10 +110,12 @@ impl PersistGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 // Same OrderedFloat wrapping as save_row_cdc; float equality
                 // also goes through the index key type so NaN behaves like the
                 // index treats it.
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let key_is_float = is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str());
                 let key_new = if key_is_float {
                     quote! { OrderedFloat(row_new.#i) }
@@ -207,6 +211,7 @@ impl PersistGenerator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let key = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! { OrderedFloat(row.#i) }
                 } else {
@@ -253,7 +258,9 @@ impl PersistGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let type_str = self.columns.columns_map.get(i).unwrap().to_string();
                 let row = if is_float(type_str.as_str()) {
                     quote! {
@@ -378,6 +385,7 @@ impl PersistGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
                 let new_value_expr = if type_str == "String" {

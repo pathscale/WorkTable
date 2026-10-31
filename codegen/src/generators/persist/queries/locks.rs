@@ -35,6 +35,7 @@ impl PersistGenerator {
 
                 let lock_ident = WorktableNameGenerator::get_update_in_place_query_lock_ident(&snake_case_name);
 
+                // Guaranteed by `updates.keys()` iteration at `persist/queries/locks.rs:32`.
                 let columns = &updates.get(name).as_ref().expect("exists").columns;
                 let lock_fn = Self::gen_rows_lock_fn(columns, lock_ident);
 
@@ -57,6 +58,7 @@ impl PersistGenerator {
 
                 let lock_ident = WorktableNameGenerator::get_update_query_lock_ident(&snake_case_name);
 
+                // Guaranteed by `updates.keys()` iteration at `persist/queries/locks.rs:54`.
                 let op = updates.get(name).expect("exists");
                 // The lock set covers the updated columns AND the predicate
                 // (`by`) column: multi-row updates re-validate the predicate

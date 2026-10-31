@@ -1,0 +1,5 @@
+error: `PersistIndex` requires named fields; tuple structs are not supported
+ --> tests/ui/persist_index_tuple_struct.rs:6:19
+  |
+6 | struct TupleIndex(u64);
+  |                   ^^^

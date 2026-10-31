@@ -594,6 +594,7 @@ fn diff_columns(stored: &Schema, declared: &Schema, changes: &mut Vec<Change>) {
                         now_optional: column.optional,
                     });
                 }
+                // Guaranteed by `stored.column(&column.name)` match at `dsl/src/schema/diff.rs:577`.
                 let was_at = stored
                     .columns
                     .iter()
@@ -652,6 +653,7 @@ fn diff_indexes(stored: &Schema, declared: &Schema, changes: &mut Vec<Change>) {
                     });
                 }
             }
+            // Guaranteed by `names` constructed from `stored.indexes.iter().chain(declared.indexes.iter())` at `dsl/src/schema/diff.rs:622`.
             (None, None) => unreachable!("the name came from one of the two"),
         }
     }

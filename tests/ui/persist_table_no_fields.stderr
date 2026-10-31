@@ -1,0 +1,5 @@
+error: `EmptyWorkTable` must have a field wrapping `WorkTable<Row, PrimaryKey, ...>`
+ --> tests/ui/persist_table_no_fields.rs:6:8
+  |
+6 | struct EmptyWorkTable;
+  |        ^^^^^^^^^^^^^^

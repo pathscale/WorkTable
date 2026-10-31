@@ -65,6 +65,7 @@ fn gen_mem_fn_body(data: &Data, method: TokenStream, default_for_copy: TokenStre
                         }
                     }
                     Fields::Named(fields) => {
+                        // Guaranteed by `syn::Fields::Named` match at `mem_stat/mod.rs:67`.
                         let bindings: Vec<_> = fields.named.iter().map(|f| f.ident.as_ref().unwrap()).collect();
 
                         let calls = bindings.iter().map(|b| quote! { #b.#method }).collect::<Vec<_>>();

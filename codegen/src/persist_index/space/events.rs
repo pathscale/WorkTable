@@ -2,13 +2,11 @@ use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::common::name_generator::WorktableNameGenerator;
 use crate::persist_index::generator::Generator;
 
 impl Generator {
     pub fn gen_space_secondary_index_events_type(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let ident = name_generator.get_space_secondary_index_events_ident();
+        let ident = self.name_generator.get_space_secondary_index_events_ident();
 
         let fields: Vec<_> = self
             .field_types
@@ -31,7 +29,7 @@ impl Generator {
     }
 
     pub fn gen_space_secondary_index_events_impl(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let ident = name_generator.get_space_secondary_index_events_ident();
         let avt_index_ident = name_generator.get_available_indexes_ident();
 
@@ -83,14 +81,14 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_first_evs_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let avt_index_ident = name_generator.get_available_indexes_ident();
+        let avt_index_ident = self.name_generator.get_available_indexes_ident();
 
         let fields_first: Vec<_> = self
             .field_types
             .keys()
             .map(|i| {
                 let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                // Guaranteed Ok: `i` is a valid Rust `Ident` from `syn::Field::ident` (`persist_index/generator.rs:106`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 quote! {
                     let first = self.#i.first().map(|ev| ev.id());
@@ -109,14 +107,14 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_last_evs_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let avt_index_ident = name_generator.get_available_indexes_ident();
+        let avt_index_ident = self.name_generator.get_available_indexes_ident();
 
         let fields_last: Vec<_> = self
             .field_types
             .keys()
             .map(|i| {
                 let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                // Guaranteed Ok: `i` is a valid Rust `Ident` from `syn::Field::ident` (`persist_index/generator.rs:106`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 quote! {
                     let last = self.#i.last().map(|ev| ev.id());
@@ -135,8 +133,7 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_extend_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let ident = name_generator.get_space_secondary_index_events_ident();
+        let ident = self.name_generator.get_space_secondary_index_events_ident();
 
         let fields_extend: Vec<_> = self
             .field_types
@@ -156,8 +153,7 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_remove_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let ident = name_generator.get_space_secondary_index_events_ident();
+        let ident = self.name_generator.get_space_secondary_index_events_ident();
 
         let fields_remove: Vec<_> = self
             .field_types
@@ -183,14 +179,14 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_iter_event_ids_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let avt_index_ident = name_generator.get_available_indexes_ident();
+        let avt_index_ident = self.name_generator.get_available_indexes_ident();
 
         let fields_iter: Vec<_> = self
             .field_types
             .keys()
             .map(|i| {
                 let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                // Guaranteed Ok: `i` is a valid Rust `Ident` from `syn::Field::ident` (`persist_index/generator.rs:106`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 quote! {
                     self.#i.iter().map(|ev| (#avt_index_ident::#index_variant, ev.id())).collect::<Vec<_>>()
@@ -211,14 +207,14 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_is_first_split_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let avt_index_ident = name_generator.get_available_indexes_ident();
+        let avt_index_ident = self.name_generator.get_available_indexes_ident();
 
         let fields_matches: Vec<_> = self
             .field_types
             .keys()
             .map(|i| {
                 let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                // Guaranteed Ok: `i` is a valid Rust `Ident` from `syn::Field::ident` (`persist_index/generator.rs:106`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 quote! {
                     #avt_index_ident::#index_variant => {
@@ -257,14 +253,14 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_contains_event_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let avt_index_ident = name_generator.get_available_indexes_ident();
+        let avt_index_ident = self.name_generator.get_available_indexes_ident();
 
         let fields_matches: Vec<_> = self
             .field_types
             .keys()
             .map(|i| {
                 let camel_case_name = i.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+                // Guaranteed Ok: `i` is a valid Rust `Ident` from `syn::Field::ident` (`persist_index/generator.rs:106`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
                 quote! {
                     #avt_index_ident::#index_variant => {
@@ -292,8 +288,7 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_events_validate_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let ident = name_generator.get_space_secondary_index_events_ident();
+        let ident = self.name_generator.get_space_secondary_index_events_ident();
 
         let fields_validate: Vec<_> = self
             .field_types

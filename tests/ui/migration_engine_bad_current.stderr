@@ -1,0 +1,5 @@
+error: `NotATable` must end in `WorkTable`; table type names are derived from it
+ --> tests/ui/migration_engine_bad_current.rs:8:14
+  |
+8 |     current: NotATable,
+  |              ^^^^^^^^^

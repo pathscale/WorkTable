@@ -20,6 +20,7 @@ impl ReadOnlyGenerator {
             .map(|i| {
                 (
                     i.clone(),
+                    // Guaranteed by `ColumnsParser::parse_columns` at `codegen/src/worktable/parser/columns.rs:64` (`primary_keys` populated alongside `columns_map`).
                     self.columns
                         .columns_map
                         .get(i)
@@ -49,6 +50,7 @@ impl ReadOnlyGenerator {
             .primary_keys
             .iter()
             .map(|i| {
+                // Guaranteed by `ColumnsParser::parse_columns` at `codegen/src/worktable/parser/columns.rs:64` (`primary_keys` populated alongside `columns_map`).
                 self.columns
                     .columns_map
                     .get(i)
@@ -227,11 +229,13 @@ impl ReadOnlyGenerator {
                 }
             }
             GeneratorType::Autoincrement => {
+                // Guaranteed by `ColumnsParser::parse_columns` at `codegen/src/worktable/parser/columns.rs:64` (`GeneratorType::Autoincrement` only set when `primary_keys` is non-empty).
                 let i = self
                     .columns
                     .primary_keys
                     .first()
                     .expect("at least one primary key should exist if autoincrement");
+                // Guaranteed by `ColumnsParser::parse_columns` at `codegen/src/worktable/parser/columns.rs:64` (`primary_keys` populated alongside `columns_map`).
                 let type_ = self
                     .columns
                     .columns_map

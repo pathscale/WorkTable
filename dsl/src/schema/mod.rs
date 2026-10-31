@@ -403,6 +403,7 @@ fn columns_from_model(model: &Columns) -> syn::Result<Vec<ColumnSpec>> {
     ordered
         .into_iter()
         .map(|(name, _)| {
+            // Guaranteed by `Columns::try_from_rows` inserting into `columns_map` and `field_positions` together at `dsl/src/model/column.rs:66-67`.
             let ty = model.columns_map.get(name).expect("every positioned column has a type");
             let (ty, optional) = split_optional(ty)?;
             let primary_key = model.primary_keys.contains(name);

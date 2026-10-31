@@ -6,18 +6,15 @@ use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::in_memory::InMemoryGenerator;
 
 pub fn map_to_uppercase(str: &str) -> String {
-    if str.contains("OrderedFloat") {
-        let mut split = str.split("<");
-        let _ = split.next();
-        let inner_type = split
-            .next()
-            .expect("OrderedFloat def contains inner type")
-            .replace(">", "");
+    if str.contains("OrderedFloat")
+        && let Some((_, inner_type)) = str.split_once('<')
+    {
+        let inner_type = inner_type.replace(">", "");
         format!("Ordered{}", inner_type.to_uppercase().trim())
-    } else if str.contains("Option") {
-        let mut split = str.split("<");
-        let _ = split.next();
-        let inner_type = split.next().expect("Option def contains inner type").replace(">", "");
+    } else if str.contains("Option")
+        && let Some((_, inner_type)) = str.split_once('<')
+    {
+        let inner_type = inner_type.replace(">", "");
         format!("Option{}", inner_type.to_uppercase().trim())
     } else {
         str.to_uppercase()
@@ -40,6 +37,7 @@ impl InMemoryGenerator {
         let rows: Vec<_> = unique_types
             .iter()
             .map(|s| {
+                // Guaranteed Ok: `s` is `TokenStream::to_string()` of a parsed column type from `columns_map` (`dsl/src/parser/columns.rs:76`).
                 let type_ident: TokenStream = s
                     .to_string()
                     .parse()
@@ -96,6 +94,7 @@ impl InMemoryGenerator {
                 .keys()
                 .map(|v| {
                     let ident = Ident::new(format!("{v}Query").as_str(), Span::mixed_site());
+                    // Guaranteed Some: `v` comes from `queries.updates.keys()` at line 95.
                     let (rows, updates): (Vec<_>, Vec<_>) = queries
                         .updates
                         .get(v)
@@ -109,15 +108,11 @@ impl InMemoryGenerator {
                                 .get(i)
                                 .ok_or(syn::Error::new(i.span(), "Unexpected column name"))?;
 
-                            let def = if type_.to_string().contains("OrderedFloat") {
-                                let inner_type = type_.to_string();
-                                let mut split = inner_type.split("<");
-                                let _ = split.next();
-                                let inner_type = split
-                                    .next()
-                                    .expect("OrderedFloat def contains inner type")
-                                    .to_uppercase()
-                                    .replace(">", "");
+                            let type_str = type_.to_string();
+                            let def = if type_str.contains("OrderedFloat")
+                                && let Some((_, inner_type)) = type_str.split_once('<')
+                            {
+                                let inner_type = inner_type.to_uppercase().replace(">", "");
                                 let ident =
                                     Ident::new(format!("Ordered{}Def", inner_type.trim()).as_str(), Span::call_site());
                                 quote! {

@@ -72,6 +72,7 @@ impl ReadOnlyGenerator {
                 let index_field = &index.name;
                 let row_field = &index.field;
                 let index_name = Literal::string(&index_field.to_string());
+                // Guaranteed by `ReadOnlyGenerator::gen_index_def` at `codegen/src/generators/read_only/index/mod.rs:36` (run before `gen_table_def`).
                 let field_type = self
                     .columns
                     .columns_map
@@ -133,6 +134,7 @@ impl ReadOnlyGenerator {
                 let index_field = &index.name;
                 let row_field = &index.field;
                 let index_name = Literal::string(&index_field.to_string());
+                // Guaranteed by `ReadOnlyGenerator::gen_index_def` at `codegen/src/generators/read_only/index/mod.rs:36` (run before `gen_table_def`).
                 let field_type = self
                     .columns
                     .columns_map
@@ -229,6 +231,7 @@ impl ReadOnlyGenerator {
             .primary_keys
             .iter()
             .map(|i| {
+                // Guaranteed by `ColumnsParser::parse_columns` at `codegen/src/worktable/parser/columns.rs:64` (`primary_keys` populated alongside `columns_map`).
                 self.columns
                     .columns_map
                     .get(i)

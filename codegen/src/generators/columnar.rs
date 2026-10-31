@@ -30,6 +30,7 @@ fn compression_variant(compression: ColumnCompression) -> Ident {
 
 fn key_type(columns: &Columns, fields: &[Ident]) -> TokenStream {
     let fields = fields.iter().map(|field| {
+        // Guaranteed by `validate_columnar_indexes` at `dsl/src/validate.rs:388`.
         let ty = columns.columns_map.get(field).expect("validated columnar index field");
         if is_float(&ty.to_string()) {
             quote! { OrderedFloat<#ty> }
@@ -42,6 +43,7 @@ fn key_type(columns: &Columns, fields: &[Ident]) -> TokenStream {
 
 fn row_key(columns: &Columns, fields: &[Ident], row: TokenStream) -> TokenStream {
     let fields = fields.iter().map(|field| {
+        // Guaranteed by `validate_columnar_indexes` at `dsl/src/validate.rs:388`.
         let ty = columns.columns_map.get(field).expect("validated columnar index field");
         if is_float(&ty.to_string()) {
             quote! { OrderedFloat(#row.#field) }
@@ -194,11 +196,13 @@ pub(crate) fn definitions(table: &Ident, columns: &Columns) -> TokenStream {
 
     let column_fields = columns.columnar_fields.iter().map(|(field, _)| {
         let storage = column_field(field);
+        // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-69`.
         let ty = columns.columns_map.get(field).expect("columnar field exists");
         quote! { #storage: ColumnarColumn<#ty>, }
     });
     let column_defaults = columns.columnar_fields.iter().map(|(field, config)| {
         let storage = column_field(field);
+        // Guaranteed by `ColumnarFieldConfig::default` at `dsl/src/parser/columnar.rs:22-30` and `worktable/mod.rs:144`.
         let chunk_rows = Literal::usize_unsuffixed(config.chunk_rows.expect("columnar defaults applied"));
         let compression = compression_variant(config.compression);
         quote! { #storage: ColumnarColumn::new(#chunk_rows, ColumnCompression::#compression), }
@@ -380,6 +384,7 @@ pub(crate) fn table_methods(table: &Ident, columns: &Columns) -> TokenStream {
         let storage = column_field(field);
         let scan = format_ident!("columnar_scan_{}", field);
         let project = format_ident!("columnar_project_{}", field);
+        // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-69`.
         let ty = columns.columns_map.get(field).expect("columnar field exists");
         quote! {
             pub fn #scan(&self) -> Result<Vec<(#row_ref, #ty)>, WorkTableError> {
@@ -419,10 +424,12 @@ pub(crate) fn table_methods(table: &Ident, columns: &Columns) -> TokenStream {
         let select = format_ident!("columnar_select_{}", index.name);
         let scan = format_ident!("columnar_scan_{}", index.name);
         let args = index.cluster_by.iter().map(|field| {
+            // Guaranteed by `validate_columnar_indexes` at `dsl/src/validate.rs:388`.
             let ty = columns.columns_map.get(field).expect("columnar index field exists");
             quote! { #field: #ty }
         });
         let key_fields = index.cluster_by.iter().map(|field| {
+            // Guaranteed by `validate_columnar_indexes` at `dsl/src/validate.rs:388`.
             let ty = columns.columns_map.get(field).expect("columnar index field exists");
             if is_float(&ty.to_string()) {
                 quote! { OrderedFloat(#field) }

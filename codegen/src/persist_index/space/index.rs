@@ -1,12 +1,12 @@
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use crate::common::name_generator::{WorktableNameGenerator, is_unsized};
+use crate::common::name_generator::is_unsized;
 use crate::persist_index::generator::{ArtBackend, Generator, index_layout};
 
 impl Generator {
-    pub fn gen_space_secondary_index_type(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+    pub fn gen_space_secondary_index_type(&self) -> syn::Result<TokenStream> {
+        let name_generator = &self.name_generator;
         let ident = name_generator.get_space_secondary_index_ident();
         let inner_const_name = name_generator.get_disk_page_capacity();
         let page_const_name = name_generator.get_page_size_const_ident();
@@ -17,7 +17,9 @@ impl Generator {
             .iter()
             .map(|field| {
                 let layout = index_layout(field)?;
+                // Guaranteed Some: `Generator::with_attributes` in `persist_index/generator.rs:106` rejects unnamed fields.
                 let i = field.ident.as_ref().expect("index fields should be named");
+                // Guaranteed Some: `Generator::with_attributes` in `persist_index/generator.rs:174` populates `field_types` for every kept field.
                 let t = self.field_types.get(i).expect("field type was collected");
                 Ok(match layout.art_backend {
                     Some(ArtBackend::Arctic) if is_unsized(&t.to_string()) => quote! {
@@ -49,43 +51,44 @@ impl Generator {
                     },
                 })
             })
-            .collect::<syn::Result<Vec<_>>>()
-            .expect("generated index layouts were validated");
+            .collect::<syn::Result<Vec<_>>>()?;
 
-        quote! {
+        Ok(quote! {
             #[derive(Debug)]
             pub struct #ident {
                 #(#fields)*
             }
-        }
+        })
     }
 
-    pub fn gen_space_secondary_index_impl_space_index(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+    pub fn gen_space_secondary_index_impl_space_index(&self) -> syn::Result<TokenStream> {
+        let name_generator = &self.name_generator;
         let events_ident = name_generator.get_space_secondary_index_events_ident();
         let ident = name_generator.get_space_secondary_index_ident();
 
-        let from_table_files_path_fn = self.gen_space_secondary_index_from_table_files_path_fn();
+        let from_table_files_path_fn = self.gen_space_secondary_index_from_table_files_path_fn()?;
         let index_process_change_events_fn = self.gen_space_secondary_index_process_change_events_fn();
         let index_process_change_event_batch_fn = self.gen_space_secondary_index_process_change_event_batch_fn();
 
-        quote! {
+        Ok(quote! {
             impl SpaceSecondaryIndexOps<#events_ident> for #ident {
                 #from_table_files_path_fn
                 #index_process_change_events_fn
                 #index_process_change_event_batch_fn
             }
-        }
+        })
     }
 
-    fn gen_space_secondary_index_from_table_files_path_fn(&self) -> TokenStream {
+    fn gen_space_secondary_index_from_table_files_path_fn(&self) -> syn::Result<TokenStream> {
         let fields: Vec<_> = self
             .struct_def
             .fields
             .iter()
             .map(|field| {
                 let layout = index_layout(field)?;
+                // Guaranteed Some: `Generator::with_attributes` in `persist_index/generator.rs:106` rejects unnamed fields.
                 let i = field.ident.as_ref().expect("index fields should be named");
+                // Guaranteed Some: `Generator::with_attributes` in `persist_index/generator.rs:174` populates `field_types` for every kept field.
                 let t = self.field_types.get(i).expect("field type was collected");
                 let literal_name = Literal::string(i.to_string().as_str());
                 Ok(match layout.art_backend {
@@ -118,22 +121,20 @@ impl Generator {
                     },
                 })
             })
-            .collect::<syn::Result<Vec<_>>>()
-            .expect("generated index layouts were validated");
+            .collect::<syn::Result<Vec<_>>>()?;
 
-        quote! {
+        Ok(quote! {
             async fn from_table_files_path<S: AsRef<str>>(path: S, version: u32) -> worktable::prelude::eyre::Result<Self> {
                 let path = path.as_ref();
                 Ok(Self {
                     #(#fields)*
                 })
             }
-        }
+        })
     }
 
     fn gen_space_secondary_index_process_change_events_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let events_ident = name_generator.get_space_secondary_index_events_ident();
+        let events_ident = self.name_generator.get_space_secondary_index_events_ident();
 
         let process: Vec<_> = self
             .field_types
@@ -156,8 +157,7 @@ impl Generator {
     }
 
     fn gen_space_secondary_index_process_change_event_batch_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let events_ident = name_generator.get_space_secondary_index_events_ident();
+        let events_ident = self.name_generator.get_space_secondary_index_events_ident();
 
         let process: Vec<_> = self
             .field_types

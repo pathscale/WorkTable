@@ -1,4 +1,3 @@
-use crate::common::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -8,7 +7,7 @@ impl Generator {
         if self.attributes.read_only {
             return quote! {};
         }
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let ident = name_generator.get_persistence_task_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
         let space_secondary_indexes_events = name_generator.get_space_secondary_index_events_ident();
@@ -28,7 +27,7 @@ impl Generator {
         if self.attributes.read_only {
             return quote! {};
         }
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let ident = name_generator.get_persistence_engine_ident();
         let primary_key_type = name_generator.get_primary_key_type_ident();
         let inner_const_name = name_generator.get_page_inner_size_const_ident();

@@ -43,7 +43,7 @@ impl MigrationEngineInput {
         }
 
         let current = current.ok_or_else(|| syn::Error::new(span, "missing `current`"))?;
-        let name_generator = WorktableNameGenerator::from_struct_ident(&current);
+        let name_generator = WorktableNameGenerator::from_struct_ident(&current)?;
 
         Ok(Self {
             migration: migration.ok_or_else(|| syn::Error::new(span, "missing `migration`"))?,
@@ -57,12 +57,18 @@ impl MigrationEngineInput {
     /// Derive the row type path from a table path.
     /// e.g. `v1::UserV1WorkTable` -> `v1::UserV1Row`
     /// e.g. `UserWorkTable` -> `UserRow`
-    pub fn row_type_for(table: &syn::Path) -> syn::Path {
-        let last_segment = table.segments.last().expect("path should have at least one segment");
+    pub fn row_type_for(table: &syn::Path) -> syn::Result<syn::Path> {
+        let last_segment = table
+            .segments
+            .last()
+            .ok_or_else(|| syn::Error::new_spanned(table, "table path must not be empty"))?;
         let ident_str = last_segment.ident.to_string();
-        let base = ident_str
-            .strip_suffix("WorkTable")
-            .expect("table type should end with `WorkTable`");
+        let base = ident_str.strip_suffix("WorkTable").ok_or_else(|| {
+            syn::Error::new_spanned(
+                table,
+                format!("`{ident_str}` must end in `WorkTable`; `migration_engine!` derives the row type from it"),
+            )
+        })?;
         let row_ident = Ident::new(&format!("{}Row", base), last_segment.ident.span());
 
         let leading_segments: Vec<_> = table.segments.iter().take(table.segments.len() - 1).cloned().collect();
@@ -80,12 +86,13 @@ impl MigrationEngineInput {
             arguments: syn::PathArguments::None,
         });
 
-        new_path
+        Ok(new_path)
     }
 }
 
 fn parse_ident_field(parser: &mut Parser) -> syn::Result<Ident> {
-    let _key = parser.input_iter.next().unwrap(); // consume the key ident
+    // Guaranteed Some: called only after `parser.peek_next()` matched the key token at line 24.
+    let _key = parser.input_iter.next().unwrap();
     parser.parse_colon()?;
     let value = parser
         .input_iter
@@ -101,6 +108,7 @@ fn parse_ident_field(parser: &mut Parser) -> syn::Result<Ident> {
 }
 
 fn parse_version_tables(parser: &mut Parser) -> syn::Result<BTreeMap<u32, syn::Path>> {
+    // Guaranteed Some: called only after `parser.peek_next()` matched `"version_tables"` at line 24.
     let _key = parser.input_iter.next().unwrap();
     parser.parse_colon()?;
 
@@ -146,6 +154,7 @@ fn parse_version_tables(parser: &mut Parser) -> syn::Result<BTreeMap<u32, syn::P
             .collect();
         let path: syn::Path = syn::parse2(path_tokens.clone())
             .map_err(|e| syn::Error::new(path_tokens.span(), format!("Invalid path: {}", e)))?;
+        MigrationEngineInput::row_type_for(&path)?;
 
         inner_parser.try_parse_comma()?;
         result.insert(version, path);

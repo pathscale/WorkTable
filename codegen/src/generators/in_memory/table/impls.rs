@@ -365,6 +365,7 @@ impl InMemoryGenerator {
         {
             return quote! {};
         }
+        // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
         let pk_inner_type = self
             .columns
             .columns_map

@@ -24,8 +24,10 @@ impl PersistGenerator {
         let ident = name_generator.get_row_type_ident();
         let primary_key_ident = name_generator.get_primary_key_type_ident();
 
+        // Guaranteed by `gen_primary_key_def` called before `gen_row_def` at `persist/mod.rs:33` and `worktable/mod.rs:212`.
         let primary_key = self.pk.clone().expect("should be set in `Generator` at this point");
         let primary_key_columns_clone = if primary_key.values.len() == 1 {
+            // Guaranteed by `primary_key.values.len() == 1` check at `persist/row.rs:29`.
             let pk_field = primary_key
                 .values
                 .keys()
@@ -65,6 +67,7 @@ impl PersistGenerator {
 
         let mut rows = vec![quote! {}; self.columns.field_positions.len()];
         for (i, pos) in &self.columns.field_positions {
+            // Guaranteed by `Columns::try_from_rows` inserting into `columns_map` and `field_positions` together at `dsl/src/model/column.rs:66-67`.
             let type_ = self.columns.columns_map.get(i).unwrap();
             rows[*pos] = quote! {pub #i: #type_,}
         }

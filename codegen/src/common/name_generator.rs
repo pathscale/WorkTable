@@ -133,14 +133,18 @@ pub struct WorktableNameGenerator {
 }
 
 impl WorktableNameGenerator {
-    pub fn from_struct_ident(struct_ident: &Ident) -> Self {
-        Self {
-            name: struct_ident
-                .to_string()
-                .strip_suffix("WorkTable")
-                .expect("table type name should end on `WorkTable`")
-                .to_string(),
-        }
+    pub fn from_struct_ident(struct_ident: &Ident) -> syn::Result<Self> {
+        let name = struct_ident
+            .to_string()
+            .strip_suffix("WorkTable")
+            .ok_or_else(|| {
+                syn::Error::new(
+                    struct_ident.span(),
+                    format!("`{struct_ident}` must end in `WorkTable`; table type names are derived from it"),
+                )
+            })?
+            .to_string();
+        Ok(Self { name })
     }
 
     pub fn from_table_name(name: String) -> Self {

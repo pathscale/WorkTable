@@ -1,0 +1,5 @@
+error: first generic argument of `Holder` must be a key type
+ --> tests/ui/persist_index_no_type_arg.rs:7:19
+  |
+7 |     by_id: Holder<'static>,
+  |                   ^^^^^^^

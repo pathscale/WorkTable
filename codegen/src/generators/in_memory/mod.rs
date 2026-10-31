@@ -74,10 +74,13 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         }
     }
 
-    let mut columns = columns.expect("defined");
+    let mut columns =
+        columns.ok_or_else(|| syn::Error::new(name.span(), "Expected a `columns` block in declaration"))?;
     if let Some(i) = indexes {
         columns.indexes = i
     }
+    worktable_dsl::validate::validate_index_backends(&columns, worktable_dsl::Persistence::MemoryOnly)?;
+    crate::worktable::reject_paged_fxhash(&columns)?;
 
     expand_from_parsed(name, columns, queries, config)
 }

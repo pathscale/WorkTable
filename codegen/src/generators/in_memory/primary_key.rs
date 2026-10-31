@@ -21,6 +21,7 @@ impl InMemoryGenerator {
             .map(|i| {
                 (
                     i.clone(),
+                    // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
                     self.columns
                         .columns_map
                         .get(i)
@@ -52,6 +53,7 @@ impl InMemoryGenerator {
             .primary_keys
             .iter()
             .map(|i| {
+                // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
                 self.columns
                     .columns_map
                     .get(i)
@@ -232,11 +234,13 @@ impl InMemoryGenerator {
                 }
             }
             GeneratorType::Autoincrement => {
+                // Guaranteed by `pk.is_empty()` check at `dsl/src/model/column.rs:101`.
                 let i = self
                     .columns
                     .primary_keys
                     .first()
                     .expect("at least one primary key should exist if autoincrement");
+                // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
                 let type_ = self
                     .columns
                     .columns_map

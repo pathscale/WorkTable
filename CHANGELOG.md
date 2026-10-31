@@ -6,6 +6,7 @@ Change Log
 ### Fixed
 
 - Reject four `worktable!` declaration shapes at compile time that previously compiled and misbehaved or panicked: paged `update` queries whose column list includes any primary-key column (`vec: true` tables continue to re-key), two `indexes:` entries declared over the same column, `update` or `update_in_place` queries with an empty column list, and `delete` queries declaring a column list.
+- Malformed input to `worktable!`, `worktable_version!`, `migration_engine!`, `#[derive(PersistIndex)]` and `#[derive(PersistTable)]` now produces a spanned compile error instead of a proc-macro panic.
 
 ## [1.12.0]
 

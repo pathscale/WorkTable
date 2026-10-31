@@ -1,0 +1,5 @@
+error: index field type must be a path type with generic arguments, e.g. `TreeIndex<Key, Link>`
+ --> tests/ui/persist_index_non_path_field.rs:7:12
+  |
+7 |     by_id: (u64, u64),
+  |            ^^^^^^^^^^

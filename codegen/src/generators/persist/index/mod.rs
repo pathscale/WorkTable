@@ -119,6 +119,7 @@ impl PersistGenerator {
                 #[allow(clippy::collapsible_else_if)]
                 let res = if idx.is_unique {
                     match idx.backend {
+                        // Guaranteed by `reject_paged_fxhash` at `worktable/mod.rs:348`.
                         crate::common::model::IndexBackend::FxHash => unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"),
                         crate::common::model::IndexBackend::WorktablesIndex => {
                             let map = if cfg!(feature = "logical-index-persistence") {
@@ -180,6 +181,7 @@ impl PersistGenerator {
 
         let indexes = self.columns.indexes.values().map(|i| {
             let camel_case_name = i.name.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+            // Guaranteed by `i.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
             let i: TokenStream = camel_case_name.parse().unwrap();
             quote! {
                 #i,

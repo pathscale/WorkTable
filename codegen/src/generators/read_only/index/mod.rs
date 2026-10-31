@@ -110,6 +110,7 @@ impl ReadOnlyGenerator {
                 #[allow(clippy::collapsible_else_if)]
                 let res = if idx.is_unique {
                     match idx.backend {
+                        // Guaranteed by `reject_paged_fxhash` at `codegen/src/worktable/mod.rs:146`.
                         crate::common::model::IndexBackend::FxHash => unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"),
                         crate::common::model::IndexBackend::WorktablesIndex => {
                             if is_unsized(&t.to_string()) {
@@ -163,6 +164,7 @@ impl ReadOnlyGenerator {
 
         let indexes = self.columns.indexes.values().map(|i| {
             let camel_case_name = i.name.to_string().from_case(Case::Snake).to_case(Case::Pascal);
+            // Guaranteed by `IndexParser::parse_indexes` at `codegen/src/worktable/parser/index.rs:19` (`i.name` is a parsed `syn::Ident`).
             let i: TokenStream = camel_case_name.parse().unwrap();
             quote! {
                 #i,

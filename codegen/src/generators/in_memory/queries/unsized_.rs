@@ -54,6 +54,7 @@ impl InMemoryGenerator {
                 .filter(|(_, op)| {
                     op.columns
                         .iter()
+                        // Guaranteed by `gen_result_types_def` at `in_memory/queries/type.rs:88` and `gen_query_update_impl` at `in_memory/queries/update.rs:203` running before `gen_unsized_impls`.
                         .any(|c| self.columns.columns_map.get(c).unwrap().to_string() == "String")
                 })
                 .map(|(i, op)| {
@@ -61,6 +62,7 @@ impl InMemoryGenerator {
                     let unsized_fields: Vec<_> = op
                         .columns
                         .iter()
+                        // Guaranteed by `gen_result_types_def` at `in_memory/queries/type.rs:88` and `gen_query_update_impl` at `in_memory/queries/update.rs:203` running before `gen_unsized_impls`.
                         .filter(|c| self.columns.columns_map.get(*c).unwrap().to_string() == "String")
                         .map(|c| {
                             let fn_ident = Ident::new(format!("get_{c}_size").as_str(), Span::call_site());

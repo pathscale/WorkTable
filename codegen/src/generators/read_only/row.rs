@@ -24,8 +24,10 @@ impl ReadOnlyGenerator {
         let ident = name_generator.get_row_type_ident();
         let primary_key_ident = name_generator.get_primary_key_type_ident();
 
+        // Guaranteed by `ReadOnlyGenerator::gen_primary_key_def` at `codegen/src/generators/read_only/primary_key.rs:35` (called at `codegen/src/generators/read_only/mod.rs:32` before `gen_row_def`).
         let primary_key = self.pk.clone().expect("should be set in `Generator` at this point");
         let primary_key_columns_clone = if primary_key.values.len() == 1 {
+            // Guaranteed by `primary_key.values.len() == 1` on the line above.
             let pk_field = primary_key
                 .values
                 .keys()
@@ -65,6 +67,7 @@ impl ReadOnlyGenerator {
 
         let mut rows = vec![quote! {}; self.columns.field_positions.len()];
         for (i, pos) in &self.columns.field_positions {
+            // Guaranteed by `ColumnsParser::parse_columns` at `codegen/src/worktable/parser/columns.rs:76` (`field_positions` constructed from `columns_map.keys()`).
             let type_ = self.columns.columns_map.get(i).unwrap();
             rows[*pos] = quote! {pub #i: #type_,}
         }

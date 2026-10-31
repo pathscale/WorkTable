@@ -74,6 +74,7 @@ pub fn type_ident(name: &Ident) -> Ident {
 /// table is generated: a declaration that cannot be dense has to say so once,
 /// naming the column, rather than failing inside an expansion.
 pub fn validate(name: &Ident, columns: &Columns, max_size: PartitionMaxSize) -> syn::Result<(Ident, TokenStream)> {
+    // Guaranteed by `max_size.is_dense()` check in `worktable/mod.rs:171`.
     let rows = max_size.rows().expect("only a dense width reaches here");
 
     if let Some(indexed_column) = columns.indexes.keys().next() {
@@ -102,7 +103,9 @@ pub fn validate(name: &Ident, columns: &Columns, max_size: PartitionMaxSize) -> 
         ));
     }
 
+    // Guaranteed by `columns.primary_keys.len() != 1` check at `dense_table.rs:91`.
     let pk = columns.primary_keys.first().expect("checked above").clone();
+    // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
     let pk_type = columns
         .columns_map
         .get(&pk)
@@ -171,10 +174,12 @@ pub fn expand(
     queries: &DenseQueries,
 ) -> syn::Result<TokenStream> {
     let (pk, pk_type) = validate(name, columns, max_size)?;
+    // Guaranteed by `max_size.is_dense()` check in `worktable/mod.rs:171`.
     let rows = max_size.rows().expect("only a dense width reaches here");
 
     let row_ident = format_ident!("{}Row", name);
     let table = type_ident(name);
+    // Guaranteed by `PartitionMaxSize::rows` at `dsl/src/model/config.rs:31` returning at most 65,536.
     let cap = Literal::usize_suffixed(usize::try_from(rows).expect("a cap is at most 65,536"));
 
     let per_column = columns

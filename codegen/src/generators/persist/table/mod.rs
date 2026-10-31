@@ -105,6 +105,7 @@ impl PersistGenerator {
             .primary_keys
             .iter()
             .map(|i| {
+                // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
                 self.columns
                     .columns_map
                     .get(i)
@@ -114,6 +115,7 @@ impl PersistGenerator {
             .collect::<Vec<_>>();
         let pk_types_unsized = is_unsized_vec(pk_types);
         let derive = match (pk_types_unsized, self.columns.primary_index_backend) {
+            // Guaranteed by `reject_paged_fxhash` at `worktable/mod.rs:348`.
             (_, crate::common::model::IndexBackend::FxHash) => unreachable!(
                 "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
             ),
@@ -183,6 +185,7 @@ impl PersistGenerator {
             .field_positions
             .iter()
             .map(|(name, position)| {
+                // Guaranteed by `Columns::try_from_rows` inserting into `columns_map` and `field_positions` together at `dsl/src/model/column.rs:66-67`.
                 let type_name = self.columns.columns_map.get(name).expect("column exists").to_string();
                 (*position, name, Literal::string(&type_name))
             })
@@ -196,6 +199,7 @@ impl PersistGenerator {
         let secondary_index_types = secondary_indexes
             .iter()
             .map(|index| {
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let type_name = self
                     .columns
                     .columns_map

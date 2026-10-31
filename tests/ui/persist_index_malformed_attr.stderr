@@ -1,0 +1,5 @@
+error: unexpected literal in nested attribute, expected ident
+ --> tests/ui/persist_index_malformed_attr.rs:7:13
+  |
+7 |     #[index(123)]
+  |             ^^^

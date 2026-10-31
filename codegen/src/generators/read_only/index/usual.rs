@@ -49,8 +49,10 @@ impl ReadOnlyGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `IndexParser::parse_indexes` at `codegen/src/worktable/parser/index.rs:19` (`index_field_name` is a parsed `syn::Ident`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
+                // Guaranteed by `ReadOnlyGenerator::gen_index_def` at `codegen/src/generators/read_only/index/mod.rs:36` (run before `gen_secondary_index_impl_def`).
                 let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
@@ -98,7 +100,9 @@ impl ReadOnlyGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `IndexParser::parse_indexes` at `codegen/src/worktable/parser/index.rs:19` (`index_field_name` is a parsed `syn::Ident`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                // Guaranteed by `ReadOnlyGenerator::gen_index_def` at `codegen/src/generators/read_only/index/mod.rs:36` (run before `gen_secondary_index_impl_def`).
                 let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
@@ -181,6 +185,7 @@ impl ReadOnlyGenerator {
             .iter()
             .map(|(i, idx)| {
                 let index_field_name = &idx.name;
+                // Guaranteed by `ReadOnlyGenerator::gen_index_def` at `codegen/src/generators/read_only/index/mod.rs:36` (run before `gen_secondary_index_impl_def`).
                 let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)
@@ -268,6 +273,7 @@ impl ReadOnlyGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `IndexParser::parse_indexes` at `codegen/src/worktable/parser/index.rs:19` (`index_field_name` is a parsed `syn::Ident`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
                 let new_value_expr = if type_str == "String" {
@@ -325,7 +331,9 @@ impl ReadOnlyGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `IndexParser::parse_indexes` at `codegen/src/worktable/parser/index.rs:19` (`index_field_name` is a parsed `syn::Ident`).
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                // Guaranteed by `ReadOnlyGenerator::gen_index_def` at `codegen/src/generators/read_only/index/mod.rs:36` (run before `gen_secondary_index_impl_def`).
                 let row = if is_float(self.columns.columns_map.get(i).unwrap().to_string().as_str()) {
                     quote! {
                         OrderedFloat(row.#i)

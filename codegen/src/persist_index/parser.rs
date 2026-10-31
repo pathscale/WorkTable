@@ -15,7 +15,7 @@ impl Parser {
         }
     }
 
-    pub fn parse_attributes(attrs: &Vec<Attribute>) -> PersistIndexAttributes {
+    pub fn parse_attributes(attrs: &[Attribute]) -> syn::Result<PersistIndexAttributes> {
         let mut res = PersistIndexAttributes::default();
 
         for attr in attrs {
@@ -25,13 +25,12 @@ impl Parser {
                         res.read_only = true;
                         return Ok(());
                     }
-                    Ok(())
-                })
-                .expect("always ok even on unrecognized attrs");
+                    Err(meta.error("unsupported `#[index(...)]` attribute; expected `read_only`"))
+                })?;
             }
         }
 
-        res
+        Ok(res)
     }
 }
 

@@ -1,0 +1,5 @@
+error: unexpected literal in nested attribute, expected ident
+ --> tests/ui/persist_table_malformed_attr.rs:6:9
+  |
+6 | #[table(123)]
+  |         ^^^

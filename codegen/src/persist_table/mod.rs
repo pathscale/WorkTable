@@ -11,12 +11,14 @@ pub use generator::WT_INDEX_EXTENSION;
 
 pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let input_fn = Parser::parse_struct(input)?;
-    let pk_ident = Parser::parse_pk_ident(&input_fn);
-    let attributes = Parser::parse_attributes(&input_fn.attrs);
+    let name_generator = crate::common::name_generator::WorktableNameGenerator::from_struct_ident(&input_fn.ident)?;
+    let pk_ident = Parser::parse_pk_ident(&input_fn)?;
+    let attributes = Parser::parse_attributes(&input_fn.attrs)?;
     let pk_upstream = attributes.pk_upstream;
 
     let generator = Generator {
         struct_def: input_fn,
+        name_generator,
         pk_ident,
         pk_upstream,
         attributes,

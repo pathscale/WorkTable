@@ -38,10 +38,12 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         }
     }
 
-    let mut columns = columns.expect("columns must be defined");
+    let mut columns = columns.ok_or_else(|| Error::new(name.span(), "Expected a `columns` block in declaration"))?;
     if let Some(i) = indexes {
         columns.indexes = i
     }
+    worktable_dsl::validate::validate_index_backends(&columns, worktable_dsl::Persistence::Persisted)?;
+    crate::worktable::reject_paged_fxhash(&columns)?;
 
     let runtime = crate::worktable::gen_runtime_type(&name, None);
     let table = read_only::expand(name, columns, version)?;

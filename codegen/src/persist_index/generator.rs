@@ -15,6 +15,7 @@ pub struct PersistIndexAttributes {
 
 pub struct Generator {
     pub struct_def: ItemStruct,
+    pub name_generator: WorktableNameGenerator,
     pub field_types: HashMap<Ident, TokenStream>,
     pub attributes: PersistIndexAttributes,
     pub skipped_fields: Vec<Ident>,
@@ -75,14 +76,18 @@ pub(super) fn index_layout(field: &Field) -> syn::Result<IndexLayout> {
 }
 
 impl WorktableNameGenerator {
-    pub fn from_index_ident(index_ident: &Ident) -> Self {
-        Self {
-            name: index_ident
-                .to_string()
-                .strip_suffix("Index")
-                .expect("index type nae should end on `Index`")
-                .to_string(),
-        }
+    pub fn from_index_ident(index_ident: &Ident) -> syn::Result<Self> {
+        let name = index_ident
+            .to_string()
+            .strip_suffix("Index")
+            .ok_or_else(|| {
+                syn::Error::new(
+                    index_ident.span(),
+                    format!("`{index_ident}` must end in `Index`; `PersistIndex` derives index type names from it"),
+                )
+            })?
+            .to_string();
+        Ok(Self { name })
     }
 
     pub fn get_persisted_index_ident(&self) -> Ident {
@@ -91,52 +96,81 @@ impl WorktableNameGenerator {
 }
 
 impl Generator {
-    pub fn with_attributes(mut struct_def: ItemStruct, attributes: PersistIndexAttributes) -> Self {
+    pub fn with_attributes(mut struct_def: ItemStruct, attributes: PersistIndexAttributes) -> syn::Result<Self> {
+        let name_generator = WorktableNameGenerator::from_index_ident(&struct_def.ident)?;
+        if matches!(struct_def.fields, syn::Fields::Unit) {
+            return Err(syn::Error::new(
+                struct_def.ident.span(),
+                "`PersistIndex` requires a struct with named fields; unit structs are not supported",
+            ));
+        }
+
         let mut fields = vec![];
         let mut types = vec![];
         let mut skipped_fields = vec![];
 
         for field in &struct_def.fields {
-            let skipped = field.attrs.iter().any(|attribute| {
+            let field_ident = field.ident.clone().ok_or_else(|| {
+                syn::Error::new_spanned(
+                    field,
+                    "`PersistIndex` requires named fields; tuple structs are not supported",
+                )
+            })?;
+            let mut skipped = false;
+            for attribute in &field.attrs {
                 if !attribute.path().is_ident("index") {
-                    return false;
+                    continue;
                 }
-                let mut skipped = false;
-                let _ = attribute.parse_nested_meta(|meta| {
+                attribute.parse_nested_meta(|meta| {
                     if meta.path.is_ident("skip") {
                         skipped = true;
+                        Ok(())
+                    } else {
+                        Err(meta.error("unsupported field `#[index(...)]` attribute; expected `skip`"))
                     }
-                    Ok(())
-                });
-                skipped
-            });
+                })?;
+            }
             if skipped {
-                skipped_fields.push(field.ident.clone().expect("index fields should always be named fields"));
+                skipped_fields.push(field_ident);
                 continue;
             }
-            fields.push(field.ident.clone().expect("index fields should always be named fields"));
+            fields.push(field_ident);
 
             let syn::Type::Path(type_path) = &field.ty else {
-                unreachable!();
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "index field type must be a path type with generic arguments, e.g. `TreeIndex<Key, Link>`",
+                ));
             };
 
             let last_segment = type_path
                 .path
                 .segments
                 .last()
-                .expect("Index type should have at least one segment");
+                .ok_or_else(|| syn::Error::new_spanned(&field.ty, "index field type path cannot be empty"))?;
 
             let syn::PathArguments::AngleBracketed(arguments) = &last_segment.arguments else {
-                unreachable!("IndexMap always have angle brackets arguments which are generic")
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    format!("`{}` must have generic type arguments `<Key, ...>`", last_segment.ident),
+                ));
             };
 
-            let first_arg = arguments
-                .args
-                .first()
-                .expect("Index type should have at least one type argument");
+            let first_arg = arguments.args.first().ok_or_else(|| {
+                syn::Error::new_spanned(
+                    &field.ty,
+                    format!(
+                        "`{}` must have a key type as its first generic argument",
+                        last_segment.ident
+                    ),
+                )
+            })?;
 
             let syn::GenericArgument::Type(ty) = first_arg else {
-                unreachable!("Index type should have at least one type argument")
+                return Err(syn::Error::new_spanned(
+                    first_arg,
+                    format!("first generic argument of `{}` must be a key type", last_segment.ident),
+                ));
             };
 
             types.push(ty.to_token_stream());
@@ -151,19 +185,20 @@ impl Generator {
         }
         let map = fields.into_iter().zip(types).collect::<HashMap<_, _>>();
 
-        Self {
+        Ok(Self {
             struct_def,
+            name_generator,
             field_types: map,
             attributes,
             skipped_fields,
-        }
+        })
     }
 
     /// Generates persisted index type. This type has same name as index, but with `Persisted` postfix. Field names of
     /// this type are same to index type, and values are `Vec<GeneralPage<IndexPage<T>>>`, where `T` is index key
     /// type.
     pub fn gen_persist_type(&mut self) -> syn::Result<TokenStream> {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let name_ident = name_generator.get_persisted_index_ident();
 
         let fields: Vec<_> = self
@@ -172,7 +207,9 @@ impl Generator {
             .iter()
             .map(|field| {
                 let layout = index_layout(field)?;
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
                 let i = field.ident.as_ref().expect("index fields should be named");
+                // Guaranteed Some: `Generator::with_attributes` at line 174 populates `field_types` for every kept field.
                 let t = self.field_types.get(i).expect("field type was collected");
                 if layout.art_backend == Some(ArtBackend::Congee) {
                     let field_type = &field.ty;
@@ -199,15 +236,14 @@ impl Generator {
     }
 
     pub fn gen_persist_impl(&mut self) -> syn::Result<TokenStream> {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let name_ident = name_generator.get_persisted_index_ident();
+        let name_ident = self.name_generator.get_persisted_index_ident();
 
         let persist_fn = if self.attributes.read_only {
             quote! {}
         } else {
-            self.gen_persist_fn()
+            self.gen_persist_fn()?
         };
-        let parse_from_file_fn = self.gen_parse_from_file_fn();
+        let parse_from_file_fn = self.gen_parse_from_file_fn()?;
 
         Ok(quote! {
             impl #name_ident {
@@ -218,8 +254,8 @@ impl Generator {
     }
 
     /// Generates `persist` function for persisted index. It calls `persist_page` function for every page in index.
-    fn gen_persist_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+    fn gen_persist_fn(&self) -> syn::Result<TokenStream> {
+        let name_generator = &self.name_generator;
         let ident = name_generator.get_work_table_ident();
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_disk_page_capacity();
@@ -232,7 +268,9 @@ impl Generator {
             .iter()
             .map(|field| {
                 let layout = index_layout(field)?;
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
                 let i = field.ident.as_ref().expect("index fields should be named");
+                // Guaranteed Some: `Generator::with_attributes` at line 174 populates `field_types` for every kept field.
                 let ty = self.field_types.get(i).expect("field type was collected");
                 let index_name_literal = Literal::string(i.to_string().as_str());
                 Ok(match layout.art_backend {
@@ -259,22 +297,21 @@ impl Generator {
                     },
                 })
             })
-            .collect::<syn::Result<Vec<_>>>()
-            .expect("generated index layouts were validated");
+            .collect::<syn::Result<Vec<_>>>()?;
 
-        quote! {
+        Ok(quote! {
             pub async fn persist(&mut self, path: &str) -> worktable::prelude::eyre::Result<()>
             {
                 #(#persist_logic)*
                 Ok(())
             }
-        }
+        })
     }
 
     /// Generates `parse_from_file` function for persisted index. It calls `parse_page` function for every page in each
     /// index interval and collects them into `Vec`'s. Then this `Vec`'s are used to construct persisted index object.
-    fn gen_parse_from_file_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+    fn gen_parse_from_file_fn(&self) -> syn::Result<TokenStream> {
+        let name_generator = &self.name_generator;
         let page_const_name = name_generator.get_page_size_const_ident();
         let inner_const_name = name_generator.get_disk_page_capacity();
         let version_const_name = name_generator.get_version_const_ident();
@@ -286,7 +323,9 @@ impl Generator {
             .iter()
             .map(|field| {
                 let layout = index_layout(field)?;
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
                 let i = field.ident.as_ref().expect("index fields should be named");
+                // Guaranteed Some: `Generator::with_attributes` at line 174 populates `field_types` for every kept field.
                 let ty = self.field_types.get(i).expect("field type was collected");
                 let literal = Literal::string(i.to_string().as_str());
                 let parsed_type = if is_unsized(&ty.to_string()) {
@@ -344,17 +383,19 @@ impl Generator {
                     }
                 })
             })
-            .collect::<syn::Result<Vec<_>>>()
-            .expect("generated index layouts were validated");
+            .collect::<syn::Result<Vec<_>>>()?;
 
         let idents = self
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().expect("index fields should always be named fields"))
+            .map(|f| {
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
+                f.ident.as_ref().expect("index fields should always be named fields")
+            })
             .collect::<Vec<_>>();
 
-        quote! {
+        Ok(quote! {
             pub async fn parse_from_file(path: &str) -> worktable::prelude::eyre::Result<Self> {
                 #(#field_names_literals)*
 
@@ -362,18 +403,15 @@ impl Generator {
                     #(#idents,)*
                 })
             }
-        }
+        })
     }
 
     /// Generates `PersistableIndex` trait implementation for persisted index.
     pub fn gen_persistable_impl(&self) -> syn::Result<TokenStream> {
         let ident = &self.struct_def.ident;
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let name_ident = name_generator.get_persisted_index_ident();
+        let name_ident = self.name_generator.get_persisted_index_ident();
 
         let get_persisted_index_fn = if self.attributes.read_only {
-            let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-            let name_ident = name_generator.get_persisted_index_ident();
             quote! {
                 fn get_persisted_index(&self) -> Self::PersistedIndex {
                     #name_ident::default()
@@ -397,7 +435,7 @@ impl Generator {
     /// Generates `get_persisted_index` function of `PersistableIndex` trait for persisted index. It maps every
     /// `TreeIndex` into `Vec` of `IndexPage`s using `IndexPage::from_nod` function.
     fn gen_get_persisted_index_fn(&self) -> syn::Result<TokenStream> {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let const_name = name_generator.get_disk_page_capacity();
         let page_const_name = name_generator.get_page_size_const_ident();
 
@@ -405,7 +443,10 @@ impl Generator {
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().expect("index fields should always be named fields"))
+            .map(|f| {
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
+                f.ident.as_ref().expect("index fields should always be named fields")
+            })
             .collect::<Vec<_>>();
         let field_names_init: Vec<_> = self
             .struct_def
@@ -413,10 +454,12 @@ impl Generator {
             .iter()
             .map(|field| {
                 let layout = index_layout(field)?;
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
                 let i = field
                     .ident
                     .as_ref()
                     .expect("index fields should always be named fields");
+                // Guaranteed Some: `Generator::with_attributes` at line 174 populates `field_types` for every kept field.
                 let ty = self
                     .field_types
                     .get(i)
@@ -552,14 +595,16 @@ impl Generator {
     /// Generates `from_persisted` function of `PersistableIndex` trait for persisted index. It maps every page in
     /// persisted page back to `TreeIndex`
     fn gen_from_persisted_fn(&self) -> syn::Result<TokenStream> {
-        let name_generator = WorktableNameGenerator::from_index_ident(&self.struct_def.ident);
-        let const_name = name_generator.get_disk_page_capacity();
+        let const_name = self.name_generator.get_disk_page_capacity();
 
         let idents = self
             .struct_def
             .fields
             .iter()
-            .map(|f| f.ident.as_ref().expect("index fields should always be named fields"))
+            .map(|f| {
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
+                f.ident.as_ref().expect("index fields should always be named fields")
+            })
             .collect::<Vec<_>>();
         let index_gen = self
             .struct_def
@@ -567,10 +612,12 @@ impl Generator {
             .iter()
             .map(|f| {
                 let layout = index_layout(f)?;
+                // Guaranteed Some: `Generator::with_attributes` at line 106 rejects unnamed fields.
                 let i = f.ident.as_ref().expect("index fields should always be named fields");
                 let is_unique = layout.is_unique;
                 let uses_upstream = layout.uses_upstream;
                 let t = layout.type_ident;
+                // Guaranteed Some: `Generator::with_attributes` at line 174 populates `field_types` for every kept field.
                 let ty = self
                     .field_types
                     .get(i)
@@ -764,7 +811,7 @@ mod tests {
             }
         };
         let struct_ = Parser::parse_struct(input).unwrap();
-        let generator = Generator::with_attributes(struct_, PersistIndexAttributes::default());
+        let generator = Generator::with_attributes(struct_, PersistIndexAttributes::default()).unwrap();
 
         assert_eq!(
             generator
@@ -796,7 +843,7 @@ mod tests {
             }
         };
         let struct_ = Parser::parse_struct(input).unwrap();
-        let attrs = Parser::parse_attributes(&struct_.attrs);
+        let attrs = Parser::parse_attributes(&struct_.attrs).unwrap();
 
         assert!(attrs.read_only);
     }
@@ -816,7 +863,7 @@ mod tests {
             }
         };
         let struct_ = Parser::parse_struct(input).unwrap();
-        let attrs = Parser::parse_attributes(&struct_.attrs);
+        let attrs = Parser::parse_attributes(&struct_.attrs).unwrap();
 
         assert!(!attrs.read_only);
     }
@@ -830,7 +877,7 @@ mod tests {
             }
         };
         let struct_ = Parser::parse_struct(input).unwrap();
-        let generator = Generator::with_attributes(struct_, PersistIndexAttributes::default());
+        let generator = Generator::with_attributes(struct_, PersistIndexAttributes::default()).unwrap();
 
         let error = generator.gen_persistable_impl().unwrap_err();
         assert!(error.to_string().contains("unsupported persisted index type"));

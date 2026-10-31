@@ -1,7 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use crate::common::name_generator::WorktableNameGenerator;
 use crate::persist_table::generator::Generator;
 
 impl Generator {
@@ -134,7 +133,7 @@ impl Generator {
     }
 
     fn gen_worktable_space_info_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let pk = name_generator.get_primary_key_type_ident();
         let literal_name = name_generator.get_work_table_literal_name();
         let version_const = name_generator.get_version_const_ident();
@@ -181,7 +180,7 @@ impl Generator {
     }
 
     fn gen_worktable_persisted_primary_key_fn(&self) -> TokenStream {
-        let name_generator = WorktableNameGenerator::from_struct_ident(&self.struct_def.ident);
+        let name_generator = &self.name_generator;
         let pk_type = name_generator.get_primary_key_type_ident();
         let const_name = name_generator.get_page_inner_size_const_ident();
         let pk_tokens = quote! { #pk_type };

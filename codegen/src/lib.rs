@@ -23,27 +23,25 @@ mod worktable_version;
 use proc_macro::TokenStream;
 // TODO: Refactor this codegen stuff because it's now too strange.
 
+fn into_macro_output(res: syn::Result<proc_macro2::TokenStream>) -> TokenStream {
+    res.unwrap_or_else(|e| e.to_compile_error()).into()
+}
+
 #[proc_macro]
 pub fn worktable(input: TokenStream) -> TokenStream {
-    worktable::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(worktable::expand(input.into()))
 }
 
 #[cfg(feature = "s3-support")]
 #[proc_macro]
 pub fn s3_sync_persistence(input: TokenStream) -> TokenStream {
-    s3_persistence::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(s3_persistence::expand(input.into()))
 }
 
 #[cfg(feature = "s3-support")]
 #[proc_macro]
 pub fn database_s3_persistence(input: TokenStream) -> TokenStream {
-    database_s3_persistence::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(database_s3_persistence::expand(input.into()))
 }
 
 /// Declares the process's named runtime profiles.
@@ -62,42 +60,30 @@ pub fn database_s3_persistence(input: TokenStream) -> TokenStream {
 /// call sites.
 #[proc_macro]
 pub fn runtimes(input: TokenStream) -> TokenStream {
-    runtimes::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(runtimes::expand(input.into()))
 }
 
 #[proc_macro_derive(PersistIndex, attributes(index))]
 pub fn persist_index(input: TokenStream) -> TokenStream {
-    persist_index::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(persist_index::expand(input.into()))
 }
 
 #[proc_macro_derive(PersistTable, attributes(table))]
 pub fn persist_table(input: TokenStream) -> TokenStream {
-    persist_table::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(persist_table::expand(input.into()))
 }
 
 #[proc_macro_derive(MemStat)]
 pub fn mem_stat(input: TokenStream) -> TokenStream {
-    mem_stat::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(mem_stat::expand(input.into()))
 }
 
 #[proc_macro]
 pub fn worktable_version(input: TokenStream) -> TokenStream {
-    worktable_version::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(worktable_version::expand(input.into()))
 }
 
 #[proc_macro]
 pub fn migration_engine(input: TokenStream) -> TokenStream {
-    migration_engine::expand(input.into())
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
+    into_macro_output(migration_engine::expand(input.into()))
 }

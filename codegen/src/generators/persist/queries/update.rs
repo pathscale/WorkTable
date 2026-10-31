@@ -232,6 +232,7 @@ impl PersistGenerator {
                     let fields = op
                         .columns
                         .iter()
+                        // Guaranteed by `self.columns.columns_map.contains_key(column)` check at `persist/queries/update.rs:212`.
                         .filter(|c| self.columns.columns_map.get(*c).unwrap().to_string() == "String")
                         .collect::<Vec<_>>();
                     if fields.is_empty() { None } else { Some(fields) }
@@ -239,6 +240,7 @@ impl PersistGenerator {
                 let requires_rebuild = op
                     .columns
                     .iter()
+                    // Guaranteed by `self.columns.columns_map.contains_key(column)` check at `persist/queries/update.rs:212`.
                     .any(|column| archived_field_requires_rebuild(self.columns.columns_map.get(column).unwrap()));
                 let storage = UpdateStorage {
                     string_fields: unsized_columns,
@@ -747,6 +749,7 @@ impl PersistGenerator {
             string_fields: unsized_fields,
             requires_rebuild,
         } = storage;
+        // Guaranteed by `gen_primary_key_def` called at `persist/mod.rs:33` and `worktable/mod.rs:212` before `gen_query_update_impl`.
         let pk_ident = &self.pk.as_ref().unwrap().ident;
         let method_ident = Ident::new(format!("__wt_update_{snake_case_name}").as_str(), Span::mixed_site());
         let query_ident = Ident::new(format!("{name}Query").as_str(), Span::mixed_site());
@@ -1124,6 +1127,7 @@ impl PersistGenerator {
             requires_rebuild,
         } = storage;
         let by_field = &index.field;
+        // Guaranteed by `resolve_mutation_by` at `persist/queries/update.rs:210` (`dsl/src/validate.rs:431`).
         let by_is_float = is_float(
             self.columns
                 .columns_map

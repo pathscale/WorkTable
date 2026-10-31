@@ -6,18 +6,15 @@ use crate::common::name_generator::WorktableNameGenerator;
 use crate::generators::read_only::ReadOnlyGenerator;
 
 pub fn map_to_uppercase(str: &str) -> String {
-    if str.contains("OrderedFloat") {
-        let mut split = str.split("<");
-        let _ = split.next();
-        let inner_type = split
-            .next()
-            .expect("OrderedFloat def contains inner type")
-            .replace(">", "");
+    if str.contains("OrderedFloat")
+        && let Some((_, inner_type)) = str.split_once('<')
+    {
+        let inner_type = inner_type.replace(">", "");
         format!("Ordered{}", inner_type.to_uppercase().trim())
-    } else if str.contains("Option") {
-        let mut split = str.split("<");
-        let _ = split.next();
-        let inner_type = split.next().expect("Option def contains inner type").replace(">", "");
+    } else if str.contains("Option")
+        && let Some((_, inner_type)) = str.split_once('<')
+    {
+        let inner_type = inner_type.replace(">", "");
         format!("Option{}", inner_type.to_uppercase().trim())
     } else {
         str.to_uppercase()
@@ -40,6 +37,7 @@ impl ReadOnlyGenerator {
         let rows: Vec<_> = unique_types
             .iter()
             .map(|s| {
+                // Guaranteed Ok: `s` is `TokenStream::to_string()` of a parsed column type from `columns_map` (`dsl/src/parser/columns.rs:76`).
                 let type_ident: TokenStream = s
                     .to_string()
                     .parse()

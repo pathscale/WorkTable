@@ -1,0 +1,5 @@
+error: Expected a `columns` block in declaration
+ --> tests/ui/worktable_version_without_columns.rs:5:11
+  |
+5 |     name: MissingColumnsVersion,
+  |           ^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: `BadName` must end in `Index`; `PersistIndex` derives index type names from it
+ --> tests/ui/persist_index_bad_name.rs:7:8
+  |
+7 | struct BadName {
+  |        ^^^^^^^

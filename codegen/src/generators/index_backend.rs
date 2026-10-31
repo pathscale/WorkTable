@@ -69,6 +69,7 @@ pub(crate) fn primary_key_backend_impl(
 ) -> syn::Result<(TokenStream, TokenStream)> {
     match backend {
         IndexBackend::FxHash => {
+            // Guaranteed by `reject_paged_fxhash` at `worktable/mod.rs:348`.
             unreachable!("`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs")
         }
         IndexBackend::WorktablesIndex | IndexBackend::Indexset => Ok((quote! {}, quote! {})),
@@ -162,6 +163,7 @@ pub(crate) fn primary_key_backend_impl(
 /// widening one without the other produced a check that accepted a
 /// declaration the macro then refused.
 fn supported_types(backend: IndexBackend) -> &'static [&'static str] {
+    // Guaranteed by `primary_key_backend_impl` at `index_backend.rs:75,120` only calling this for `Congee` and `Arctic`.
     worktable_dsl::validate::supported_key_types(backend)
         .expect("a backend reaching this point declares a key-type list")
 }

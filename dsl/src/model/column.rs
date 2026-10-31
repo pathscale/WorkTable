@@ -123,6 +123,7 @@ impl Columns {
             column_slot_id: Default::default(),
             primary_keys: pk,
             primary_index_backend,
+            // Guaranteed by `pk.is_empty()` check at `dsl/src/model/column.rs:101` and `gen_type = Some(row.gen_type)` at line 78.
             generator_type: gen_type.expect("set"),
             field_positions,
         })

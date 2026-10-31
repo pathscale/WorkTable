@@ -79,6 +79,7 @@ impl PersistGenerator {
                 let index_field = &index.name;
                 let row_field = &index.field;
                 let index_name = Literal::string(&index_field.to_string());
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let field_type = self
                     .columns
                     .columns_map
@@ -140,6 +141,7 @@ impl PersistGenerator {
                 let index_field = &index.name;
                 let row_field = &index.field;
                 let index_name = Literal::string(&index_field.to_string());
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let field_type = self
                     .columns
                     .columns_map
@@ -242,6 +244,7 @@ impl PersistGenerator {
             .primary_keys
             .iter()
             .map(|i| {
+                // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
                 self.columns
                     .columns_map
                     .get(i)
@@ -271,6 +274,7 @@ impl PersistGenerator {
             }
         } else {
             match self.columns.primary_index_backend {
+                // Guaranteed by `reject_paged_fxhash` at `worktable/mod.rs:348`.
                 crate::common::model::IndexBackend::FxHash => unreachable!(
                     "`using fxhash` on a paged table is refused in `worktable/mod.rs` before any generator runs"
                 ),
@@ -286,6 +290,7 @@ impl PersistGenerator {
                         UpstreamIndexMap::<_, OffsetEqLink<#const_name>>::with_maximum_node_size(size)
                     ));
                 },
+                // Guaranteed by `self.columns.primary_index_backend == IndexBackend::Arctic` check at `persist/table/impls.rs:262`.
                 crate::common::model::IndexBackend::Arctic => unreachable!("handled before variable-size dispatch"),
                 crate::common::model::IndexBackend::Congee => quote! {
                     inner.primary_index = worktable::prelude::Arc::new(PrimaryIndex::from_map(
@@ -719,6 +724,7 @@ impl PersistGenerator {
         {
             return quote! {};
         }
+        // Guaranteed by `Columns::try_from_rows` at `dsl/src/model/column.rs:66-92`.
         let pk_inner_type = self
             .columns
             .columns_map

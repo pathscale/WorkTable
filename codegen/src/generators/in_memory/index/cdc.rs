@@ -49,6 +49,7 @@ impl InMemoryGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
                 quote! {
@@ -98,6 +99,7 @@ impl InMemoryGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
                 let remove = if idx.is_unique {
@@ -215,7 +217,9 @@ impl InMemoryGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
+                // Guaranteed by `validate_index_backends` at `dsl/src/validate.rs:230`.
                 let type_str = self.columns.columns_map.get(i).unwrap().to_string();
                 let row = if is_float(type_str.as_str()) {
                     quote! {
@@ -338,6 +342,7 @@ impl InMemoryGenerator {
                     .to_string()
                     .from_case(Case::Snake)
                     .to_case(Case::Pascal);
+                // Guaranteed by `idx.name` parsed as an `Ident` at `dsl/src/parser/index.rs:97`.
                 let index_variant: TokenStream = camel_case_name.parse().unwrap();
 
                 let new_value_expr = if type_str == "String" {

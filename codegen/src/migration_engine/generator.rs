@@ -3,7 +3,7 @@ use quote::{ToTokens, quote};
 
 use super::parser::MigrationEngineInput;
 
-pub fn generate(input: MigrationEngineInput) -> TokenStream {
+pub fn generate(input: MigrationEngineInput) -> syn::Result<TokenStream> {
     let migration = &input.migration;
     let current_table = &input.current;
     let ctx_type = &input.ctx;
@@ -15,12 +15,13 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
     let pk_type = input.name_generator.get_primary_key_type_ident();
 
     let current_table_path = syn::Path::from(input.current.clone());
-    let current_row = MigrationEngineInput::row_type_for(&current_table_path);
+    let current_row = MigrationEngineInput::row_type_for(&current_table_path)?;
 
     let sorted_versions: Vec<u32> = input.version_tables.keys().copied().collect();
     let current_version: u32 = sorted_versions.last().map(|v| v + 1).unwrap_or(1);
 
-    let version_fns = input.version_tables.iter().map(|(version, table_path)| {
+    let mut version_fns = Vec::with_capacity(input.version_tables.len());
+    for (version, table_path) in &input.version_tables {
         let fn_name = Ident::new(&format!("migrate_v{}", version), current_table.span());
 
         // Build the migration chain from this version to current
@@ -31,9 +32,9 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
             migration,
             &current_row,
             &input.version_tables,
-        );
+        )?;
 
-        quote! {
+        version_fns.push(quote! {
             async fn #fn_name(
                 source_path: &str,
                 target: &mut #current_table,
@@ -51,8 +52,8 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
                 }
                 Ok(())
             }
-        }
-    });
+        });
+    }
 
     // Generate the version match arms
     let match_arms = input.version_tables.keys().map(|version| {
@@ -62,7 +63,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
         }
     });
 
-    quote! {
+    Ok(quote! {
         pub struct #engine_name;
 
         impl #engine_name {
@@ -94,7 +95,7 @@ pub fn generate(input: MigrationEngineInput) -> TokenStream {
         pub struct MigrationReport {
             pub source_version: u32,
         }
-    }
+    })
 }
 
 /// Build the chain of migration steps from a version table to the current row.
@@ -105,7 +106,7 @@ fn build_chain_steps(
     migration_type: &Ident,
     current_row: &syn::Path,
     version_tables: &std::collections::BTreeMap<u32, syn::Path>,
-) -> TokenStream {
+) -> syn::Result<TokenStream> {
     let start_idx = sorted_versions.iter().position(|v| *v == start_version).unwrap_or(0);
     let total = sorted_versions.len();
 
@@ -116,19 +117,19 @@ fn build_chain_steps(
         .unwrap_or(proc_macro2::Span::call_site());
 
     if sorted_versions.is_empty() {
-        let from_row = MigrationEngineInput::row_type_for(start_table);
+        let from_row = MigrationEngineInput::row_type_for(start_table)?;
         let to_row = current_row.to_token_stream();
-        return quote! {
+        return Ok(quote! {
             let current_row = <#migration_type as Migration<#from_row, #to_row>>::migrate(row, ctx);
-        };
+        });
     }
 
     if start_idx == total - 1 {
-        let from_row = MigrationEngineInput::row_type_for(start_table);
+        let from_row = MigrationEngineInput::row_type_for(start_table)?;
         let to_row = current_row.to_token_stream();
-        return quote! {
+        return Ok(quote! {
             let current_row = <#migration_type as Migration<#from_row, #to_row>>::migrate(row, ctx);
-        };
+        });
     }
 
     let mut steps = TokenStream::new();
@@ -136,19 +137,21 @@ fn build_chain_steps(
 
     for i in (start_idx + 1)..=total {
         let from_row_tokens = if i == start_idx + 1 {
-            MigrationEngineInput::row_type_for(start_table).to_token_stream()
+            MigrationEngineInput::row_type_for(start_table)?.to_token_stream()
         } else {
             let from_version = sorted_versions[i - 1];
+            // Guaranteed Some: `sorted_versions` is collected from `version_tables.keys()` at line 20.
             let from_table = version_tables.get(&from_version).unwrap();
-            MigrationEngineInput::row_type_for(from_table).to_token_stream()
+            MigrationEngineInput::row_type_for(from_table)?.to_token_stream()
         };
 
         let to_var = Ident::new(&format!("next_{}", i), span);
 
         let to_row_tokens = if i < total {
             let to_version = sorted_versions[i];
+            // Guaranteed Some: `sorted_versions` is collected from `version_tables.keys()` at line 20.
             let to_table = version_tables.get(&to_version).unwrap();
-            MigrationEngineInput::row_type_for(to_table).to_token_stream()
+            MigrationEngineInput::row_type_for(to_table)?.to_token_stream()
         } else {
             current_row.to_token_stream()
         };
@@ -160,8 +163,8 @@ fn build_chain_steps(
         current_var = quote! { #to_var };
     }
 
-    quote! {
+    Ok(quote! {
         #steps
         let current_row = #current_var;
-    }
+    })
 }
