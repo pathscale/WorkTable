@@ -1878,3 +1878,72 @@ fn vec_secondary_key_churn_does_not_retain_empty_posting_lists() {
     table.delete(&2).unwrap();
     assert!(table.label_map.is_empty());
 }
+
+worktable!(
+    name: VecReKey,
+    vec: true,
+    columns: {
+        id: u64 primary_key,
+        code: u64,
+        value: u64,
+    },
+    indexes: {
+        code_idx: code unique,
+    },
+    queries: {
+        update: {
+            ReKey(id) by id,
+            ReKeyWithValue(id, value) by code,
+        }
+    }
+);
+
+#[test]
+fn vec_update_query_over_primary_key_rekeys_row() {
+    let mut table = VecReKeyWorkTable::new();
+    table
+        .insert(VecReKeyRow {
+            id: 1,
+            code: 10,
+            value: 100,
+        })
+        .unwrap();
+    table
+        .insert(VecReKeyRow {
+            id: 2,
+            code: 20,
+            value: 200,
+        })
+        .unwrap();
+
+    assert_eq!(table.update_by_id(1, VecReKeyColumns::ID, 3), 1);
+    assert!(table.select(&1).is_none());
+    assert_eq!(
+        table.select(&3),
+        Some(&VecReKeyRow {
+            id: 3,
+            code: 10,
+            value: 100,
+        })
+    );
+    assert_eq!(table.select_by_code(&10).unwrap().id, 3);
+
+    assert_eq!(
+        table.update_by_code(
+            20,
+            VecReKeyColumns::ID_AND_VALUE,
+            ReKeyWithValueQuery { id: 4, value: 400 },
+        ),
+        1
+    );
+    assert!(table.select(&2).is_none());
+    assert_eq!(
+        table.select(&4),
+        Some(&VecReKeyRow {
+            id: 4,
+            code: 20,
+            value: 400,
+        })
+    );
+    assert_eq!(table.select_by_code(&20).unwrap().id, 4);
+}

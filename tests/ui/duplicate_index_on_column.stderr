@@ -1,0 +1,5 @@
+error: column `a` is already indexed by `a1`; declare one index per column
+  --> tests/ui/duplicate_index_on_column.rs:14:13
+   |
+14 |         a2: a unique,
+   |             ^

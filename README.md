@@ -23,7 +23,7 @@ from a macro, and that persisting it is one feature flag away.
 ## Install
 
 ```sh
-cargo add worktable@1.12.0
+cargo add worktable@1.13.0
 ```
 
 ## New in 1.9
@@ -113,7 +113,7 @@ for table in database.catalog().system_tables() {
 
 ```toml
 [dependencies]
-worktable = { version = "^1.12.0", features = ["s3-support"] }   # S3 sync, optional
+worktable = { version = "^1.13.0", features = ["s3-support"] }   # S3 sync, optional
 ```
 
 Persisted indexes default to WorkTablesIndex. Vanilla IndexSet can be selected explicitly with `using indexset` while retaining the existing disk/S3 representation. Congee and Arctic persistence is experimental and uses their native checkpoint/WAL adapters; declarations using either backend must state `persist: true` or `persist: false` explicitly. The full syntax and capability matrix are documented in [Per-index backends with `using`](docs/index-backend-dsl-proposal.md).
@@ -412,7 +412,7 @@ This struct is used in `WorkTable` interface and will be used by users.
 `indexes` field is used to define table's index schema. Default usage is `<index_name>: <column_name> <unique>?`.
 
 Index allows faster access to data by some field. Adding `indexes` field adds methods to the generated `WorkTable`. This
-method for now is `select_by_<indexed_column_name>`. It will be described below.
+method for now is `select_by_<indexed_column_name>`. It will be described below. At most one index may be declared per column; declaring a second `indexes:` entry over the same column is rejected at compile time with `column \`{col}\` is already indexed by \`{first}\`; declare one index per column`.
 
 ### Default implemented `queries`
 
@@ -450,6 +450,12 @@ queries: {
 ```
 
 Default query declaration is `<QueryName>(<column_name>*) by <column_name>`. The lookup column after `by` must be the single primary key or covered by `indexes:` (`update_in_place` requires the single primary key); declaring a query `by` an unindexed column fails to compile with `{query} is declared \`by {col}\`, but \`{col}\` is neither the primary key nor indexed. Add an index on \`{col}\`, or write the scan explicitly with select_all().where_by(...).` so that every full-table scan is written explicitly at the call site.
+
+In addition, the column list of each declared query is validated at compile time:
+
+- On paged tables (in-memory and persisted), an `update` query cannot include any primary-key column (including one member of a composite key, whatever its `by` column), failing with `update query \`{name}\` cannot change primary key column \`{col}\`; delete the row and insert it with the new key` (`vec: true` tables re-key properly and remain allowed).
+- An `update` or `update_in_place` query with an empty column list fails with `update query \`{name}\` declares no columns to update`.
+- A `delete` query declaring columns fails with `delete query \`{name}\` takes no columns; write it as \`{name}() by {by}\``.
 
 For each query `<QueryName>Query` and `<QueryName>By` structs are generated. They will be used by user to call the
 query.

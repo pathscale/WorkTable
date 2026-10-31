@@ -1,0 +1,5 @@
+error: delete query `ByB` takes no columns; write it as `ByB() by b`
+  --> tests/ui/delete_with_columns.rs:18:17
+   |
+18 |             ByB(a) by b,
+   |                 ^

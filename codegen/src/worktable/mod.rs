@@ -130,8 +130,12 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     // instead. A silent no-op would be worse: `runtime: nagoya(locality)` on a
     // synchronous table is a reasonable thing to write and a completely
     // meaningless thing to have accepted.
+    let is_dense_partition = !storage.is_vec() && partition_by.as_ref().is_some_and(|key| key.max_size.is_dense());
     if let Some(q) = &queries {
-        worktable_dsl::validate::validate_query_storage(&columns, q, storage)?;
+        worktable_dsl::validate::validate_query_column_lists(q)?;
+        if !is_dense_partition {
+            worktable_dsl::validate::validate_query_storage(&columns, q, storage)?;
+        }
     }
     if storage.is_vec() {
         if !columns.columnar_indexes.is_empty() || !columns.columnar_fields.is_empty() {

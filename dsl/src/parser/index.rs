@@ -79,6 +79,7 @@ impl Parser {
 
         while ind {
             let (name, row) = parser.parse_index()?;
+            crate::validate::validate_unique_index_column(&rows, &name)?;
             rows.insert(name, row);
             ind = parser.has_next()
         }

@@ -1,0 +1,5 @@
+error: update query `Nothing` declares no columns to update
+  --> tests/ui/update_empty_columns.rs:14:13
+   |
+14 |             Nothing() by id,
+   |             ^^^^^^^

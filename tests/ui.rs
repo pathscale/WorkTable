@@ -31,10 +31,14 @@ fn compile_fail() {
     t.compile_fail("tests/ui/nonunique_congee_index.rs");
     t.compile_fail("tests/ui/congee_unsupported_key_type.rs");
     t.compile_fail("tests/ui/congee_without_persist.rs");
+    t.compile_fail("tests/ui/duplicate_index_on_column.rs");
 
     // Query rules.
     t.compile_fail("tests/ui/autoincrement_unsupported_key.rs");
     t.compile_fail("tests/ui/in_place_over_indexed_column.rs");
+    t.compile_fail("tests/ui/update_primary_key_column.rs");
+    t.compile_fail("tests/ui/update_empty_columns.rs");
+    t.compile_fail("tests/ui/delete_with_columns.rs");
     t.compile_fail("tests/ui/update_selector_wrong_value.rs");
     t.compile_fail("tests/ui/update_selector_collision.rs");
     t.compile_fail("tests/ui/delete_by_unindexed_column.rs");

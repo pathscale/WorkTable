@@ -139,3 +139,31 @@ Unsupported index or key combinations (such as `update_in_place` on a secondary 
 
 When a scan is intended on an unindexed column, write the scan at the call site with `select_all().where_by(...)` and then call `update` or `delete` per matched primary key so the linear scan is visible in the caller's code.
 
+### Compile-time validation rules
+
+The macro and `worktable_dsl::check` also reject the following shapes at compile time, spanning the offending token:
+
+1. **Primary-key columns in paged `update` queries.** On a paged table (in-memory or persisted), an `update` query whose column list includes any primary-key column (including one member of a composite primary key, regardless of its `by` column) is rejected because paged `update` rewrites the row without re-keying the primary index (`vec: true` tables re-key properly and remain allowed):
+
+   ```text
+   update query `{name}` cannot change primary key column `{col}`; delete the row and insert it with the new key
+   ```
+
+2. **Duplicate secondary indexes on one column.** Declaring two `indexes:` entries over the same column is rejected because only one `select_by_<col>` method is generated per column:
+
+   ```text
+   column `{col}` is already indexed by `{first}`; declare one index per column
+   ```
+
+3. **Empty column list on `update` or `update_in_place`.** Every `update` and `update_in_place` query must name at least one column to mutate:
+
+   ```text
+   update query `{name}` declares no columns to update
+   ```
+
+4. **Columns on a `delete` query.** A `delete` query removes the entire row and takes no column list:
+
+   ```text
+   delete query `{name}` takes no columns; write it as `{name}() by {by}`
+   ```
+

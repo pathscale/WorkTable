@@ -253,6 +253,41 @@ fn index_backends_into(columns: &Columns, persistence: Persistence, errors: &mut
             ));
         }
     }
+
+    let mut seen_fields: indexmap::IndexMap<&proc_macro2::Ident, &proc_macro2::Ident> = indexmap::IndexMap::new();
+    for index in columns.indexes.values() {
+        if let Some(first) = seen_fields.get(&index.field) {
+            errors.push(syn::Error::new_spanned(
+                &index.field,
+                format!(
+                    "column `{}` is already indexed by `{first}`; declare one index per column",
+                    index.field
+                ),
+            ));
+        } else {
+            seen_fields.insert(&index.field, &index.name);
+        }
+    }
+}
+
+/// Reject a second `indexes:` entry over a column that is already indexed.
+///
+/// Only one `select_by_<col>` method is generated per column, so a second index
+/// over the same column cannot be queried by name.
+pub fn validate_unique_index_column(
+    indexes: &indexmap::IndexMap<proc_macro2::Ident, crate::model::Index>,
+    column: &proc_macro2::Ident,
+) -> syn::Result<()> {
+    if let Some(first) = indexes.get(column) {
+        return Err(syn::Error::new_spanned(
+            column,
+            format!(
+                "column `{column}` is already indexed by `{}`; declare one index per column",
+                first.name
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// The key types `autoincrement` can generate.
@@ -422,6 +457,32 @@ pub fn resolve_mutation_by<'a>(
     ))
 }
 
+/// Reject query column-list shapes that are invalid on every table storage:
+/// an `update` (or `update_in_place`) query with no columns to update, or a
+/// `delete` query declaring columns.
+pub fn validate_query_column_lists(queries: &crate::model::Queries) -> syn::Result<()> {
+    for (name, op) in queries.updates.iter().chain(queries.updates_in_place.iter()) {
+        if op.columns.is_empty() {
+            return Err(syn::Error::new_spanned(
+                name,
+                format!("update query `{name}` declares no columns to update"),
+            ));
+        }
+    }
+    for (name, op) in &queries.deletes {
+        if let Some(col) = op.columns.first() {
+            return Err(syn::Error::new_spanned(
+                col,
+                format!(
+                    "delete query `{name}` takes no columns; write it as `{name}() by {}`",
+                    op.by
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Reject paged query shapes for which no operation is generated. Vec queries
 /// have a separate synchronous implementation and must not inherit these limits.
 pub fn validate_query_storage(
@@ -429,6 +490,7 @@ pub fn validate_query_storage(
     queries: &crate::model::Queries,
     storage: crate::model::Storage,
 ) -> syn::Result<()> {
+    validate_query_column_lists(queries)?;
     if storage.is_vec() {
         if let Some(profile) = queries
             .update_runtime
@@ -442,6 +504,18 @@ pub fn validate_query_storage(
             ));
         }
         return Ok(());
+    }
+    for (name, op) in &queries.updates {
+        for col in &op.columns {
+            if columns.primary_keys.contains(col) {
+                return Err(syn::Error::new_spanned(
+                    col,
+                    format!(
+                        "update query `{name}` cannot change primary key column `{col}`; delete the row and insert it with the new key"
+                    ),
+                ));
+            }
+        }
     }
     for (kind, ops) in [("delete", &queries.deletes), ("update", &queries.updates)] {
         for (name, op) in ops {

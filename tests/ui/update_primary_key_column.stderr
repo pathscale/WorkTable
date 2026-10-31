@@ -1,0 +1,5 @@
+error: update query `ReKey` cannot change primary key column `id`; delete the row and insert it with the new key
+  --> tests/ui/update_primary_key_column.rs:15:19
+   |
+15 |             ReKey(id) by id,
+   |                   ^^
