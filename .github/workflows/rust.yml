@@ -1,11 +1,13 @@
 name: Rust
 
 on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish new versions to crates.io (master only)
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -212,7 +214,7 @@ jobs:
           echo "one version of each: ok"
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: inputs.publish && github.ref == 'refs/heads/master'
     # `build` and `cell_lock_models` are deliberately absent: they are manual
     # only, so needing them would mean a skipped job blocks every release.
     needs: [fmt, smoke, clippy_check, no_default_features, duplicate_index_crates]
