@@ -107,4 +107,35 @@ You can find tests that cover `update_in_place` queries [here](../tests/worktabl
 
 ### `delete` queries
 
-`TODO`
+A `delete` query removes every row matching the lookup column:
+
+```rust
+delete: {
+    ById() by id,
+    ByName() by name,
+}
+```
+
+When the lookup column is the single primary key (and has no secondary index), the generated `delete_by_<pk>` method delegates to `self.delete(pk).await` and treats `WorkTableError::NotFound` as `Ok(())`. When the lookup column has a unique or non-unique secondary index, `delete_by_<col>` looks up matching links through that index and deletes each matching row.
+
+### Lookup column rule (`by <column>`)
+
+Every declared `update`, `delete`, or `update_in_place` query must name a lookup column that can be resolved without a hidden full-table scan:
+
+- `update` and `delete` require `by <col>` to be either the single primary key or a column covered by `indexes:`.
+- `update_in_place` requires `by <col>` to be the single primary key.
+
+Declaring a query `by` a column that is neither the primary key nor indexed is rejected at compile time with:
+
+```text
+{query} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).
+```
+
+Unsupported index or key combinations (such as `update_in_place` on a secondary index, or any declared mutation `by` one column of a composite primary key) are rejected at compile time with:
+
+```text
+{kind} queries do not yet support `by {col}` ({reason}).
+```
+
+When a scan is intended on an unindexed column, write the scan at the call site with `select_all().where_by(...)` and then call `update` or `delete` per matched primary key so the linear scan is visible in the caller's code.
+

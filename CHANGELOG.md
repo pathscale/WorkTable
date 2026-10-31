@@ -1,6 +1,12 @@
 Change Log
 ==========
 
+## [1.12.0]
+
+### Changed
+
+- Declared queries `by` a column that is neither the primary key nor indexed are now compile errors. Previously, `delete` silently generated a full-table scan and `update` panicked during macro expansion.
+
 ## [1.11.0]
 
 ### Added

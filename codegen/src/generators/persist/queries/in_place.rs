@@ -14,7 +14,7 @@ impl PersistGenerator {
 
         let custom_in_place = if let Some(q) = &self.queries {
             let profile = q.update_in_place_runtime.clone();
-            let custom_in_place = self.gen_in_place_queries(q.updates_in_place.clone());
+            let custom_in_place = self.gen_in_place_queries(q.updates_in_place.clone())?;
             let custom_in_place = crate::generators::profile_dispatch::wrap(
                 custom_in_place,
                 profile.as_ref(),
@@ -34,27 +34,53 @@ impl PersistGenerator {
         })
     }
 
-    fn gen_in_place_queries(&self, in_place_queries: IndexMap<Ident, Operation>) -> TokenStream {
+    fn gen_in_place_queries(&self, in_place_queries: IndexMap<Ident, Operation>) -> syn::Result<TokenStream> {
         let defs = in_place_queries
             .iter()
             .map(|(name, op)| {
+                if !self.columns.columns_map.contains_key(&op.by) {
+                    return Err(syn::Error::new_spanned(&op.by, "Unexpected column name"));
+                }
+                for column in &op.columns {
+                    if !self.columns.columns_map.contains_key(column) {
+                        return Err(syn::Error::new_spanned(column, "Unexpected column name"));
+                    }
+                }
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
                 let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
-                if let Some(index) = index {
-                    let _index_name = &index.name;
-
-                    if index.is_unique { todo!() } else { todo!() }
-                } else if self.columns.primary_keys.len() == 1 {
-                    self.gen_primary_key_in_place(snake_case_name, &op.columns)
+                if index.is_some() {
+                    Err(syn::Error::new_spanned(
+                        &op.by,
+                        format!(
+                            "update_in_place queries do not yet support `by {}` (secondary-index in-place updates are not supported).",
+                            op.by
+                        ),
+                    ))
+                } else if self.columns.primary_keys.len() == 1 && *self.columns.primary_keys.first().unwrap() == op.by {
+                    Ok(self.gen_primary_key_in_place(snake_case_name, &op.columns))
+                } else if self.columns.primary_keys.len() > 1 && self.columns.primary_keys.contains(&op.by) {
+                    Err(syn::Error::new_spanned(
+                        &op.by,
+                        format!(
+                            "update_in_place queries do not yet support `by {}` (composite primary key).",
+                            op.by
+                        ),
+                    ))
                 } else {
-                    todo!()
+                    Err(syn::Error::new_spanned(
+                        &op.by,
+                        format!(
+                            "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
+                            col = op.by
+                        ),
+                    ))
                 }
             })
-            .collect::<Vec<_>>();
+            .collect::<syn::Result<Vec<_>>>()?;
 
-        quote! {
+        Ok(quote! {
             #(#defs)*
-        }
+        })
     }
 
     fn gen_primary_key_in_place(&self, snake_case_name: String, columns: &[Ident]) -> TokenStream {

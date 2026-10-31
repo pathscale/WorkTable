@@ -1824,6 +1824,43 @@ mod schema_const {
             "a hash-backed table must not get a range method"
         );
     }
+
+    #[test]
+    fn delete_by_single_pk_delegates_to_pk_delete_without_scan() {
+        for persist in [false, true] {
+            let output = expand(quote! {
+                name: PkDeleteCheck,
+                persist: #persist,
+                columns: {
+                    id: u64 primary_key,
+                    value: u64,
+                },
+                queries: {
+                    delete: {
+                        ById() by id,
+                    }
+                }
+            })
+            .unwrap()
+            .to_string();
+
+            let delete_by_id = output
+                .split("pub async fn delete_by_id")
+                .nth(1)
+                .expect("generated delete_by_id method");
+
+            assert!(
+                delete_by_id.contains(
+                    "match self . delete (by) . await { core :: result :: Result :: Ok (()) => core :: result :: Result :: Ok (()) , core :: result :: Result :: Err (WorkTableError :: NotFound) => core :: result :: Result :: Ok (()) , core :: result :: Result :: Err (e) => core :: result :: Result :: Err (e) , }"
+                ),
+                "expected PK delete delegation in persist={persist}: {delete_by_id}"
+            );
+            assert!(
+                !delete_by_id.contains("iter_with"),
+                "PK delete must not emit iter_with scan in persist={persist}: {delete_by_id}"
+            );
+        }
+    }
 }
 
 /// What the `runtime:` key generates.

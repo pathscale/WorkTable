@@ -15,7 +15,7 @@ impl PersistGenerator {
 
         let custom_deletes = if let Some(q) = &self.queries {
             let profile = q.delete_runtime.clone();
-            let custom_deletes = self.gen_custom_deletes(q.deletes.clone());
+            let custom_deletes = self.gen_custom_deletes(q.deletes.clone())?;
             let custom_deletes = crate::generators::profile_dispatch::wrap(
                 custom_deletes,
                 profile.as_ref(),
@@ -216,53 +216,61 @@ impl PersistGenerator {
         }
     }
 
-    fn gen_custom_deletes(&mut self, deleted: IndexMap<Ident, Operation>) -> TokenStream {
+    fn gen_custom_deletes(&mut self, deleted: IndexMap<Ident, Operation>) -> syn::Result<TokenStream> {
         let defs = deleted
             .iter()
             .map(|(name, op)| {
                 let snake_case_name = name.to_string().from_case(Case::Pascal).to_case(Case::Snake);
                 let method_ident = Ident::new(format!("delete_{snake_case_name}").as_str(), Span::mixed_site());
+                let type_ = self
+                    .columns
+                    .columns_map
+                    .get(&op.by)
+                    .ok_or_else(|| syn::Error::new_spanned(&op.by, "Unexpected column name"))?;
                 let index = self.columns.indexes.values().find(|idx| idx.field == op.by);
-                let type_ = self.columns.columns_map.get(&op.by).unwrap();
                 if let Some(index) = index {
                     let index_name = &index.name;
 
                     if index.is_unique {
-                        Self::gen_unique_delete(type_, &method_ident, index_name)
+                        Ok(Self::gen_unique_delete(type_, &method_ident, index_name))
                     } else {
-                        Self::gen_non_unique_delete(type_, &method_ident, index)
+                        Ok(Self::gen_non_unique_delete(type_, &method_ident, index))
                     }
+                } else if self.columns.primary_keys.len() == 1 && *self.columns.primary_keys.first().unwrap() == op.by {
+                    Ok(Self::gen_pk_delete(type_, &method_ident))
+                } else if self.columns.primary_keys.len() > 1 && self.columns.primary_keys.contains(&op.by) {
+                    Err(syn::Error::new_spanned(
+                        &op.by,
+                        format!(
+                            "delete queries do not yet support `by {}` (composite primary key).",
+                            op.by
+                        ),
+                    ))
                 } else {
-                    Self::gen_brute_force_delete_field(&op.by, type_, &method_ident)
+                    Err(syn::Error::new_spanned(
+                        &op.by,
+                        format!(
+                            "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
+                            col = op.by
+                        ),
+                    ))
                 }
             })
-            .collect::<Vec<_>>();
+            .collect::<syn::Result<Vec<_>>>()?;
 
-        quote! {
+        Ok(quote! {
             #(#defs)*
-        }
+        })
     }
 
-    fn gen_brute_force_delete_field(field: &Ident, type_: &TokenStream, name: &Ident) -> TokenStream {
+    fn gen_pk_delete(type_: &TokenStream, name: &Ident) -> TokenStream {
         quote! {
             pub async fn #name(&self, by: #type_) -> core::result::Result<(), WorkTableError> {
-                let _bulk_mutation = self.0.lock_manager.bulk_mutation_guard();
-                let pks = core::cell::RefCell::new(Vec::new());
-                self.iter_with(|row| {
-                    if row.#field == by {
-                        pks.borrow_mut().push(row.get_primary_key());
-                    }
-                    Ok(())
-                })?;
-                let pks = pks.into_inner();
-                for pk in pks {
-                    match self.delete(pk).await {
-                        core::result::Result::Ok(()) => {}
-                        core::result::Result::Err(WorkTableError::NotFound) => {}
-                        core::result::Result::Err(e) => return core::result::Result::Err(e),
-                    }
+                match self.delete(by).await {
+                    core::result::Result::Ok(()) => core::result::Result::Ok(()),
+                    core::result::Result::Err(WorkTableError::NotFound) => core::result::Result::Ok(()),
+                    core::result::Result::Err(e) => core::result::Result::Err(e),
                 }
-                core::result::Result::Ok(())
             }
         }
     }

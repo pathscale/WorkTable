@@ -1,0 +1,5 @@
+error: update_in_place queries do not yet support `by group_id` (secondary-index in-place updates are not supported).
+  --> tests/ui/in_place_by_nonunique_index.rs:18:36
+   |
+18 |             BumpByGroup(amount) by group_id,
+   |                                    ^^^^^^^^

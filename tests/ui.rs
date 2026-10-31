@@ -37,6 +37,15 @@ fn compile_fail() {
     t.compile_fail("tests/ui/in_place_over_indexed_column.rs");
     t.compile_fail("tests/ui/update_selector_wrong_value.rs");
     t.compile_fail("tests/ui/update_selector_collision.rs");
+    t.compile_fail("tests/ui/delete_by_unindexed_column.rs");
+    t.compile_fail("tests/ui/delete_by_unindexed_column_persist.rs");
+    t.compile_fail("tests/ui/update_by_unindexed_column.rs");
+    t.compile_fail("tests/ui/in_place_by_unindexed_column.rs");
+    t.compile_fail("tests/ui/in_place_by_unique_index.rs");
+    t.compile_fail("tests/ui/in_place_by_nonunique_index.rs");
+    t.compile_fail("tests/ui/delete_by_composite_pk.rs");
+    t.compile_fail("tests/ui/update_by_composite_pk.rs");
+    t.compile_fail("tests/ui/in_place_by_composite_pk.rs");
 
     // Read-path safety rules.
     t.compile_fail("tests/ui/select_with_needs_inline_archived.rs");
