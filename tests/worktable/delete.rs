@@ -25,7 +25,7 @@ worktable!(
 );
 
 #[test]
-fn brute_force_delete_future_is_send() {
+fn indexed_delete_future_is_send() {
     fn assert_send<T: Send>(_: T) {}
 
     let table = DeleteTestWorkTable::default();

@@ -370,6 +370,58 @@ pub fn validate_columnar_indexes(columns: &Columns) -> syn::Result<()> {
     Ok(())
 }
 
+/// How a declared mutation query (`delete`, `update`, `update_in_place`) resolves
+/// its `by <col>` target after validation.
+#[derive(Debug, Clone, Copy)]
+pub enum QueryByTarget<'a> {
+    SinglePrimaryKey,
+    SecondaryIndex(&'a crate::model::Index),
+}
+
+/// Shared diagnostic for an unknown column in a query declaration.
+pub fn unknown_column_error(column: &proc_macro2::Ident) -> syn::Error {
+    syn::Error::new_spanned(column, "Unexpected column name")
+}
+
+/// Validates and resolves `op.by` for a declared mutation query (`delete`,
+/// `update`, or `update_in_place`), keeping the diagnostic text in one place
+/// for both `worktable_dsl` and `worktable_codegen`.
+pub fn resolve_mutation_by<'a>(
+    columns: &'a Columns,
+    kind: &str,
+    query: &proc_macro2::Ident,
+    by: &proc_macro2::Ident,
+    allow_secondary_index: bool,
+) -> syn::Result<(&'a proc_macro2::TokenStream, QueryByTarget<'a>)> {
+    let type_ = columns.columns_map.get(by).ok_or_else(|| unknown_column_error(by))?;
+    if let Some(index) = columns.indexes.values().find(|idx| &idx.field == by) {
+        if allow_secondary_index {
+            return Ok((type_, QueryByTarget::SecondaryIndex(index)));
+        }
+        return Err(syn::Error::new_spanned(
+            by,
+            format!(
+                "{kind} queries do not yet support `by {by}` (secondary-index in-place updates are not supported)."
+            ),
+        ));
+    }
+    if columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(by) {
+        return Ok((type_, QueryByTarget::SinglePrimaryKey));
+    }
+    if columns.primary_keys.len() > 1 && columns.primary_keys.contains(by) {
+        return Err(syn::Error::new_spanned(
+            by,
+            format!("{kind} queries do not yet support `by {by}` (composite primary key)."),
+        ));
+    }
+    Err(syn::Error::new_spanned(
+        by,
+        format!(
+            "{query} is declared `by {by}`, but `{by}` is neither the primary key nor indexed. Add an index on `{by}`, or write the scan explicitly with select_all().where_by(...)."
+        ),
+    ))
+}
+
 /// Reject paged query shapes for which no operation is generated. Vec queries
 /// have a separate synchronous implementation and must not inherit these limits.
 pub fn validate_query_storage(
@@ -393,62 +445,14 @@ pub fn validate_query_storage(
     }
     for (kind, ops) in [("delete", &queries.deletes), ("update", &queries.updates)] {
         for (name, op) in ops {
-            if !columns.columns_map.contains_key(&op.by) {
-                continue;
+            if columns.columns_map.contains_key(&op.by) {
+                resolve_mutation_by(columns, kind, name, &op.by, true)?;
             }
-            let by_index = columns.indexes.values().any(|index| index.field == op.by);
-            let by_single_pk = columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(&op.by);
-            if by_index || by_single_pk {
-                continue;
-            }
-            if columns.primary_keys.len() > 1 && columns.primary_keys.contains(&op.by) {
-                return Err(syn::Error::new_spanned(
-                    &op.by,
-                    format!(
-                        "{kind} queries do not yet support `by {}` (composite primary key).",
-                        op.by
-                    ),
-                ));
-            }
-            return Err(syn::Error::new_spanned(
-                &op.by,
-                format!(
-                    "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
-                    col = op.by
-                ),
-            ));
         }
     }
     for (name, op) in &queries.updates_in_place {
         if columns.columns_map.contains_key(&op.by) {
-            if columns.indexes.values().any(|index| index.field == op.by) {
-                return Err(syn::Error::new_spanned(
-                    &op.by,
-                    format!(
-                        "update_in_place queries do not yet support `by {}` (secondary-index in-place updates are not supported).",
-                        op.by
-                    ),
-                ));
-            }
-            if columns.primary_keys.len() == 1 && columns.primary_keys.first() == Some(&op.by) {
-                // Supported single-PK path.
-            } else if columns.primary_keys.len() > 1 && columns.primary_keys.contains(&op.by) {
-                return Err(syn::Error::new_spanned(
-                    &op.by,
-                    format!(
-                        "update_in_place queries do not yet support `by {}` (composite primary key).",
-                        op.by
-                    ),
-                ));
-            } else {
-                return Err(syn::Error::new_spanned(
-                    &op.by,
-                    format!(
-                        "{name} is declared `by {col}`, but `{col}` is neither the primary key nor indexed. Add an index on `{col}`, or write the scan explicitly with select_all().where_by(...).",
-                        col = op.by
-                    ),
-                ));
-            }
+            resolve_mutation_by(columns, "update_in_place", name, &op.by, false)?;
         }
         if op.columns.iter().any(|column| columns.primary_keys.contains(column)) {
             return Err(syn::Error::new(
