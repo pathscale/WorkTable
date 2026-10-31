@@ -528,10 +528,12 @@ pub fn validate_query_storage(
         if columns.columns_map.contains_key(&op.by) {
             resolve_mutation_by(columns, "update_in_place", name, &op.by, false)?;
         }
-        if op.columns.iter().any(|column| columns.primary_keys.contains(column)) {
-            return Err(syn::Error::new(
-                name.span(),
-                "update_in_place queries cannot mutate primary key columns; use an update query to maintain indexes",
+        if let Some(col) = op.columns.iter().find(|column| columns.primary_keys.contains(column)) {
+            return Err(syn::Error::new_spanned(
+                col,
+                format!(
+                    "update_in_place query `{name}` cannot change primary key column `{col}`; delete the row and insert it with the new key"
+                ),
             ));
         }
     }
