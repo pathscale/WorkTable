@@ -66,7 +66,7 @@ blake3 = { version = "1", optional = true }
 # crate links the standard library through a dependency. That matters for
 # EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
 # bare-metal target: we ship on Linux, macOS and Windows.
-congee = { package = "congee-wt", version = "^0.4", default-features = false }
+congee = { package = "congee-wt", version = "^0.4.6", default-features = false }
 convert_case = { version = "0.6", default-features = false, optional = true }
 crc32fast = { version = "1", default-features = false }
 # 0.7 supplies the v3 row directory, integrity checks and configurable stride.

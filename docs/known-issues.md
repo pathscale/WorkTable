@@ -265,11 +265,11 @@ KeyTracker, payload tag assertion, doc and refcount fixes). Still open there:
   residuals on large trees. Call both only while quiesced.
 - Remove never shrinks or merges nodes (memory ratchets under churn); retry loops spin
   without parking; there is no resumable scan cursor, so consumers should key-page.
-- **WorkTable follow-up once PR #3 publishes**: drop the global write mutex in
-  `src/index/congee.rs` (the 0.4.1 visibility bug it worked around is fixed and the
-  reader-side holes are closed) and convert the range adapter from 64-slot doubling
-  rescans to key-paging. Congee ranges are end-exclusive; the adapter's arithmetic already
-  matches.
+- **Fixed: the WorkTable global write mutex is removed.** The adapter requires
+  congee-wt `^0.4.6`, which includes PR #3's structural visibility and reader fixes.
+  Mutations now use Congee's native concurrency and epoch reclamation.
+- **Range adapter follow-up**: convert the 64-slot doubling rescans to key-paging.
+  Congee ranges are end-exclusive; the adapter's arithmetic already matches.
 
 ## arctic-wt backend
 

@@ -187,7 +187,9 @@ Generated point lookups use a strict backend-specific visibility contract by
 default. WorkTablesIndex 0.0.5 keeps the structural mapping pinned until its
 selected node is locked, making both hits and misses definitive; contended
 lookups release the structural guard before waiting and retry the mapping.
-Congee and Arctic use their native concurrent point lookups. The explicit
+Congee and Arctic use their native concurrent point lookups. Congee mutations
+also use native concurrency; the adapter requires congee-wt `^0.4.6` and no
+longer serializes writes with a global mutex. The explicit
 vanilla `using indexset` backend remains experimental and is excluded from the
 stable concurrent-read contract because upstream IndexSet does not expose an
 equivalent validation primitive. This index-visibility contract is independent
