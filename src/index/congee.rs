@@ -7,7 +7,6 @@ use core::ops::{Bound, RangeBounds};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use congee::{CongeeRaw, DefaultAllocator};
-use parking_lot::Mutex;
 
 use super::UniqueIndex;
 
@@ -49,10 +48,6 @@ impl_congee_key!(u64);
 /// reclamation pattern used by Congee's own `CongeeArc` implementation.
 pub struct CongeeIndex<K, V> {
     inner: CongeeRaw<usize, usize>,
-    // congee-wt 0.4.1 can lose disjoint insert/remove mutations when their
-    // structural updates overlap. Keep point reads native and concurrent, but
-    // serialize mutations until the backend offers the required visibility.
-    mutation: Mutex<()>,
     len: AtomicUsize,
     marker: core::marker::PhantomData<(K, V)>,
 }
@@ -78,7 +73,6 @@ where
         };
         Self {
             inner: CongeeRaw::new_with_drainer(DefaultAllocator {}, drainer),
-            mutation: Mutex::new(()),
             len: AtomicUsize::new(0),
             marker: core::marker::PhantomData,
         }
@@ -218,7 +212,6 @@ where
         let len = inner.keys().len();
         Ok(Self {
             inner,
-            mutation: Mutex::new(()),
             len: AtomicUsize::new(len),
             marker: core::marker::PhantomData,
         })
@@ -253,7 +246,6 @@ where
 
     #[inline]
     fn insert_value(&self, key: K, value: V) -> Option<V> {
-        let _mutation = self.mutation.lock();
         let guard = self.inner.pin();
         let pointer = Arc::into_raw(Arc::new(value)).expose_provenance();
         match self.inner.insert(key.into_congee(), pointer, &guard) {
@@ -272,7 +264,6 @@ where
 
     #[inline]
     fn insert_value_checked(&self, key: K, value: V) -> Option<()> {
-        let _mutation = self.mutation.lock();
         let guard = self.inner.pin();
         let pointer = Arc::into_raw(Arc::new(value)).expose_provenance();
         let result = self
@@ -300,7 +291,6 @@ where
 
     #[inline]
     fn remove_value(&self, key: &K) -> Option<(K, V)> {
-        let _mutation = self.mutation.lock();
         let guard = self.inner.pin();
         let pointer = self.inner.remove(&key.into_congee(), &guard)?;
         self.len.fetch_sub(1, Ordering::Relaxed);
