@@ -9,6 +9,11 @@ natively, and Claude Code loads it through the `@AGENTS.md` import in
 
 ## Invariants (don't break these)
 
+- **No Python.** Do not run Python scripts, inline commands, or heredocs. Ask the
+  tool that owns the answer first. Do not replace Python with another ad hoc parser
+  or assume `jq` is installed. Fixed-shape fields can use `sed -nE`; real parsing
+  belongs in this repository's Rust code, where it can be tested.
+
 - **Keep `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` clean.** Lint failures are part of the build here, not advisory. Note `--workspace`: without it `worktable_codegen` is never linted, and note `-D warnings`, because CI denies what your terminal merely prints.
 - **Shell scripts are POSIX `sh`.** `#!/bin/sh`, and none of `[[ ]]`, arrays, `echo -e`, process substitution or `pipefail`. Check with `sh -n` before committing. Bash is not guaranteed to be the system shell, and a script that only runs on one machine is not a check.
 - **Publishing to crates.io is irreversible.** A version number can never be reused, and yanking does not delete. Run `cargo publish --dry-run` first, publish from the merged default branch, and tag the release.
