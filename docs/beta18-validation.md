@@ -9,13 +9,13 @@ in this document resolves a released crate.
 
 | package | local path | base revision |
 |---|---|---:|
-| WorkTable | `/Users/revenge/code/WorkTable` | `a046217` plus working-tree changes |
-| Arctic | `/Users/revenge/code/arctic-wt` | `46f1895` plus working-tree changes |
-| ps-reclaim | `/Users/revenge/code/ps-reclaim` | `5ee0523` |
-| WorkTablesIndex | `/Users/revenge/code/WorkTablesIndex` | `c10c82a` |
-| DataBucket | `/Users/revenge/code/DataBucket` | `fa0f8a9` |
-| Congee | `/Users/revenge/code/congee-wt` | `35855d3` |
-| benchmark suite | `/Users/revenge/code/wt-benchmarks` | `df76063` plus working-tree changes |
+| WorkTable | `(local path omitted)` | `a046217` plus working-tree changes |
+| Arctic | `(local path omitted)` | `46f1895` plus working-tree changes |
+| ps-reclaim | `(local path omitted)` | `5ee0523` |
+| WorkTablesIndex | `(local path omitted)` | `c10c82a` |
+| DataBucket | `(local path omitted)` | `fa0f8a9` |
+| Congee | `(local path omitted)` | `35855d3` |
+| benchmark suite | `(local path omitted)` | `df76063` plus working-tree changes |
 
 WorkTable, codegen, and DSL now identify as `1.0.0-beta.18`.
 
