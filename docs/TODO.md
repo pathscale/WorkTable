@@ -12,3 +12,9 @@
 - [Security review follow-up](plans/security-review-follow-up.md): recheck historical static-review topics against current source; no finding is assumed confirmed.
 - [Queue dispositions](plans/security-review-follow-up.md#queue-dispositions-2026-11-05): four narrow source fixes landed; unresolved overlap, S3 error-redaction, mutation-safety, and codegen type-identity work remains explicitly tracked.
 - [Historical root release requirements](plans/historical-root-requirements.md): reconcile reclamation/unload/accounting, vacuum, backend migration, malformed-input diagnostics and application acceptance against current source; historical notes do not establish defects or completion.
+
+## Pending schema-name release verification
+
+- [ ] Re-run the concrete S3 adoption regression and consumer whole-database preservation regression after schema-name initialization and adapter forwarding changes. Adoption passed before these final changes; consumer previously failed on digit/acronym casing in persisted table names. Existing stores are intentionally not renamed.
+- [ ] Validate default/std/no-std and S3 builds plus package publication. The generated schema-name hook requires codegen 2.0.0 to avoid breaking older WorkTable consumers that accept codegen 1.x. Neither codegen 2 nor WorkTable 1.13.1 is published yet.
+- [ ] Confirm legacy-store migration for preexisting metadata names; do not relax exact schema checks or infer missing tables.

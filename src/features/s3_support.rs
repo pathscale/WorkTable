@@ -201,6 +201,28 @@ where
         self.snapshot.sync().await
     }
 
+    async fn initialize_schema_name(&mut self, name: alloc::string::String) -> eyre::Result<()> {
+        self.inner.initialize_schema_name(name).await
+    }
+
+    async fn ensure_schema(
+        &mut self,
+        row_schema: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,
+        primary_key_fields: alloc::vec::Vec<alloc::string::String>,
+        secondary_index_types: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,
+    ) -> eyre::Result<()> {
+        self.inner.ensure_schema(row_schema, primary_key_fields, secondary_index_types).await
+    }
+
+    async fn validate_schema(
+        &mut self,
+        row_schema: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,
+        primary_key_fields: alloc::vec::Vec<alloc::string::String>,
+        secondary_index_types: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,
+    ) -> eyre::Result<()> {
+        self.inner.validate_schema(row_schema, primary_key_fields, secondary_index_types).await
+    }
+
     async fn apply_batch_operation(
         &mut self,
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,

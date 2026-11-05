@@ -295,6 +295,20 @@ where
         self.data.reclaim_data_pages(page_ids).await
     }
 
+    async fn initialize_schema_name(&mut self, name: String) -> eyre::Result<()> {
+        let info = self.data.get_mut_info();
+        if self.created_data_file
+            && info.inner.row_schema.is_empty()
+            && info.inner.primary_key_fields.is_empty()
+            && info.inner.secondary_index_types.is_empty()
+            && info.inner.name != name
+        {
+            info.inner.name = name;
+            self.data.save_info().await?;
+        }
+        Ok(())
+    }
+
     async fn ensure_schema(
         &mut self,
         row_schema: Vec<(String, String)>,

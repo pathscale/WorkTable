@@ -410,6 +410,10 @@ where
         self.sync_to_database(&dirty_data_pages)
     }
 
+    async fn initialize_schema_name(&mut self, name: String) -> eyre::Result<()> {
+        self.inner.initialize_schema_name(name).await
+    }
+
     async fn ensure_schema(
         &mut self,
         row_schema: Vec<(String, String)>,
