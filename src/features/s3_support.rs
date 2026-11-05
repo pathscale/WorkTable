@@ -10,9 +10,9 @@ use alloc::string::ToString;
 use core::{fmt::Debug, hash::Hash, marker::PhantomData};
 use data_bucket::storage::legacy_snapshot::HttpAgent as Agent;
 pub use data_bucket::storage::legacy_snapshot::{
-    ExclusiveFencedLegacyDestination, LegacyPublicationSummary, LegacyS3Config as S3Config,
-    LegacySnapshotConfig, LegacySnapshotStore, MigrationCaptureLimits, MigrationCaptureOutcome,
-    MigrationCaptureProvenance, RestoredLegacySnapshot,
+    ExclusiveFencedLegacyDestination, LegacyPublicationSummary, LegacyS3Config as S3Config, LegacySnapshotConfig,
+    LegacySnapshotStore, MigrationCaptureLimits, MigrationCaptureOutcome, MigrationCaptureProvenance,
+    RestoredLegacySnapshot,
 };
 use rkyv::Archive;
 #[derive(Debug, Clone)]
@@ -88,9 +88,9 @@ where
 {
     /// Initialize from a snapshot that the caller already restored and preflighted.
     ///
-    /// The logical table version is checked before opening the disk engine, which
-    /// may create or update files. Token identity is checked before reading the
-    /// local header. Adoption does not perform another remote restore.
+    /// The required index files and logical table version are checked before
+    /// opening the writable disk engine. Token identity is checked before
+    /// reading the local header. Adoption does not perform another remote restore.
     /// The caller must declare the source state layout from known provenance.
     pub async fn from_restored_snapshot<SourcePkGenState>(
         config: S3DiskConfig,
@@ -106,6 +106,21 @@ where
             table_path: config.disk.table_path().to_string(),
             s3: config.s3.clone(),
         };
+        let primary_files = SpacePrimaryIndex::REQUIRED_PRIMARY_INDEX_FILES
+            .ok_or_else(|| eyre::eyre!("primary index implementation does not declare its required files"))?;
+        let secondary_files = SpaceSecondaryIndexes::REQUIRED_SECONDARY_INDEX_FILES
+            .ok_or_else(|| eyre::eyre!("secondary index implementation does not declare its required files"))?;
+        let table_path = std::path::Path::new(config.disk.table_path());
+        for &name in primary_files.iter().chain(secondary_files) {
+            let path = table_path.join(name);
+            eyre::ensure!(
+                restored.restored_files().contains(&path)
+                    && std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file()),
+                "required index file {} is missing from restored snapshot",
+                path.display()
+            );
+        }
+
         let mut snapshot = restored.into_store_for(&snapshot_config)?;
         let stored_version = crate::migration::detect_source_version(config.disk.table_path(), source_layout).await?;
         eyre::ensure!(
@@ -211,7 +226,9 @@ where
         primary_key_fields: alloc::vec::Vec<alloc::string::String>,
         secondary_index_types: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,
     ) -> eyre::Result<()> {
-        self.inner.ensure_schema(row_schema, primary_key_fields, secondary_index_types).await
+        self.inner
+            .ensure_schema(row_schema, primary_key_fields, secondary_index_types)
+            .await
     }
 
     async fn validate_schema(
@@ -220,7 +237,9 @@ where
         primary_key_fields: alloc::vec::Vec<alloc::string::String>,
         secondary_index_types: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>,
     ) -> eyre::Result<()> {
-        self.inner.validate_schema(row_schema, primary_key_fields, secondary_index_types).await
+        self.inner
+            .validate_schema(row_schema, primary_key_fields, secondary_index_types)
+            .await
     }
 
     async fn apply_batch_operation(

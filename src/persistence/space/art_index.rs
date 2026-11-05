@@ -24,7 +24,7 @@ use crate::index::{
     PersistentArcticMultiIndex, PersistentArtIndex, PersistentCongeeIndex, UniqueIndex,
 };
 use crate::persistence::SpaceIndexOps;
-use crate::persistence::space::BatchChangeEvent;
+use crate::persistence::space::{BatchChangeEvent, PRIMARY_INDEX_FILE};
 use crate::prelude::WT_INDEX_EXTENSION;
 use crate::util::OffsetEqLink;
 
@@ -652,9 +652,11 @@ where
     K: ArtPersistenceKey + ArcticKey,
     K::Raw: arctic::topology::Key,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
-            PathBuf::from(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION)),
+            PathBuf::from(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref())),
             version,
         )
         .await
@@ -766,9 +768,11 @@ impl<K, const INNER_PAGE_SIZE: u32> SpaceIndexOps<K> for SpaceArcticStringIndex<
 where
     K: ArtPersistenceKey + ArcticKey,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
-            PathBuf::from(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION)),
+            PathBuf::from(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref())),
             version,
         )
         .await
@@ -867,9 +871,11 @@ impl<K, const INNER_PAGE_SIZE: u32> SpaceIndexOps<K> for SpaceCongeeIndex<K, INN
 where
     K: ArtPersistenceKey + CongeeKey,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
-            PathBuf::from(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION)),
+            PathBuf::from(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref())),
             version,
         )
         .await
@@ -971,9 +977,11 @@ impl<K, const INNER_PAGE_SIZE: u32> SpaceIndexOps<K> for SpaceArcticMultiIndex<K
 where
     K: ArtPersistenceKey + ArcticKey,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
-            PathBuf::from(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION)),
+            PathBuf::from(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref())),
             version,
         )
         .await

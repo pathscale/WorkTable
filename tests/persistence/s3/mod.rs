@@ -200,9 +200,23 @@ async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
     (format!("http://{address}"), state, task)
 }
 
+worktable!(
+    name: TestS3Adoption,
+    persist: true,
+    columns: {
+        id: u64 primary_key autoincrement,
+        value: u64,
+        payload: String,
+    },
+    indexes: {
+        value_idx: value unique,
+    },
+);
+
+s3_sync_persistence!(TestS3AdoptionWorkTable);
+
 #[test]
 fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
-    use worktable::data_bucket::storage::legacy_snapshot::{LegacySnapshotConfig, LegacySnapshotStore};
     use worktable::migration::SourceLayout;
 
     // Include names and bytes, so refusal cannot silently create an index or
@@ -230,8 +244,8 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
         let config = S3DiskConfig {
             disk: DiskConfig::new_with_table_name(
                 path,
-                TestS3WorkTable::name_snake_case(),
-                TestS3WorkTable::version(),
+                TestS3AdoptionWorkTable::name_snake_case(),
+                TestS3AdoptionWorkTable::version(),
             ),
             s3: S3Config {
                 bucket_name: "test".to_string(),
@@ -247,10 +261,12 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
             s3: config.s3.clone(),
         };
         {
-            let engine = TestS3S3SyncPersistenceEngine::new(config.clone()).await.unwrap();
-            let table = TestS3WorkTable::load(engine).await.unwrap();
+            let engine = TestS3AdoptionS3SyncPersistenceEngine::new(config.clone())
+                .await
+                .unwrap();
+            let table = TestS3AdoptionWorkTable::load(engine).await.unwrap();
             table
-                .insert(TestS3Row {
+                .insert(TestS3AdoptionRow {
                     id: table.get_next_pk().into(),
                     value: 7,
                     payload: "strict snapshot".to_string(),
@@ -258,6 +274,63 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
                 .await
                 .unwrap();
             table.wait_for_ops().await.unwrap();
+        }
+        // Publish each incomplete fixture through DataBucket, then restore it
+        // from the remote manifest into an empty directory.
+        let complete = local_files(config.disk.table_path());
+        let incomplete_disk = DiskConfig::new_with_table_name(
+            format!("{path}/incomplete"),
+            TestS3AdoptionWorkTable::name_snake_case(),
+            TestS3AdoptionWorkTable::version(),
+        );
+        let incomplete_path = std::path::Path::new(incomplete_disk.table_path());
+        for omitted in ["primary", "value_idx"] {
+            let missing = format!("{omitted}{WT_INDEX_EXTENSION}");
+            let mut expected = complete.clone();
+            assert!(expected.remove(std::ffi::OsStr::new(&missing)).is_some());
+            std::fs::create_dir_all(incomplete_path).unwrap();
+            for (name, bytes) in &expected {
+                std::fs::write(incomplete_path.join(name), bytes).unwrap();
+            }
+
+            let mut incomplete = config.clone();
+            incomplete.disk = incomplete_disk.clone();
+            incomplete.s3.prefix = Some(format!("wt-adoption-missing-{omitted}"));
+            let snapshot = LegacySnapshotConfig {
+                table_path: incomplete.disk.table_path().to_string(),
+                s3: incomplete.s3.clone(),
+            };
+            let published = LegacySnapshotStore::publish_new_fenced(
+                snapshot.clone(),
+                ExclusiveFencedLegacyDestination::acknowledge_external_fence(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(published.file_count, expected.len());
+            remove_dir_if_exists(incomplete.disk.table_path().to_string()).await;
+
+            let restored = LegacySnapshotStore::restore_required(snapshot).await.unwrap();
+            assert!(!restored.restored_files().contains(&incomplete_path.join(&missing)));
+            assert_eq!(local_files(incomplete.disk.table_path()), expected);
+            let puts = s3.puts.lock().unwrap().clone();
+            let gets = s3.gets.lock().unwrap().clone();
+            let error = TestS3AdoptionS3SyncPersistenceEngine::from_restored_snapshot(
+                incomplete,
+                restored,
+                SourceLayout::<u64>::new(),
+            )
+            .await
+            .expect_err("strict adoption must refuse an incomplete manifest")
+            .to_string();
+
+            assert_eq!(local_files(incomplete_disk.table_path()), expected, "{omitted}");
+            assert!(
+                error.contains("required index file") && error.contains(&missing),
+                "{error}"
+            );
+            assert_eq!(*s3.puts.lock().unwrap(), puts);
+            assert_eq!(*s3.gets.lock().unwrap(), gets);
+            remove_dir_if_exists(incomplete_disk.table_path().to_string()).await;
         }
         remove_dir_if_exists(config.disk.table_path().to_string()).await;
 
@@ -281,7 +354,7 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
             let result = if refusal == "layout" {
                 // Larger than a metadata page: a valid u64-state archive cannot
                 // validate as this declared source layout.
-                TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+                TestS3AdoptionS3SyncPersistenceEngine::from_restored_snapshot(
                     refused_config,
                     restored,
                     SourceLayout::<[u64; 4096]>::new(),
@@ -291,11 +364,11 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
                 if refusal == "version" {
                     refused_config.disk = DiskConfig::new_with_table_name(
                         path,
-                        TestS3WorkTable::name_snake_case(),
-                        TestS3WorkTable::version() + 1,
+                        TestS3AdoptionWorkTable::name_snake_case(),
+                        TestS3AdoptionWorkTable::version() + 1,
                     );
                 }
-                TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+                TestS3AdoptionS3SyncPersistenceEngine::from_restored_snapshot(
                     refused_config,
                     restored,
                     SourceLayout::<u64>::new(),
@@ -321,14 +394,14 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
         let gets = s3.gets.lock().unwrap().clone();
         let puts = s3.puts.lock().unwrap().clone();
         {
-            let engine = TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+            let engine = TestS3AdoptionS3SyncPersistenceEngine::from_restored_snapshot(
                 config.clone(),
                 restored,
                 SourceLayout::<u64>::new(),
             )
             .await
             .unwrap();
-            let table = TestS3WorkTable::load(engine).await.unwrap();
+            let table = TestS3AdoptionWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select(0).unwrap().value, 7);
             assert_eq!(*s3.gets.lock().unwrap(), gets, "adoption/load refetched the snapshot");
             assert_eq!(*s3.puts.lock().unwrap(), puts, "adoption/load published a write");
@@ -350,14 +423,14 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
         let restored = LegacySnapshotStore::restore_required(snapshot_config).await.unwrap();
         let gets = s3.gets.lock().unwrap().clone();
         {
-            let engine = TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+            let engine = TestS3AdoptionS3SyncPersistenceEngine::from_restored_snapshot(
                 config.clone(),
                 restored,
                 SourceLayout::<u64>::new(),
             )
             .await
             .unwrap();
-            let table = TestS3WorkTable::load(engine).await.unwrap();
+            let table = TestS3AdoptionWorkTable::load(engine).await.unwrap();
             assert_eq!(table.select_all().execute().unwrap().len(), 1);
             let row = table.select(0).unwrap();
             assert_eq!(row.value, 91);

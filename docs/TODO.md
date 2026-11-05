@@ -18,3 +18,8 @@
 - [x] Re-run the concrete S3 adoption regression and consumer whole-database preservation regression after schema-name initialization and adapter forwarding changes. Both passed on 2026-11-06 against WorkTable source `74ffd6c` and local codegen 2.0.0. The offline no-default-features check also passed. This verifies the previously failing new-store name preservation, not migration of existing stores or deployed S3 acceptance.
 - [ ] Validate default/std/no-std and S3 builds plus package publication. The generated schema-name hook requires codegen 2.0.0 to avoid breaking older WorkTable consumers that accept codegen 1.x. Neither codegen 2 nor WorkTable 1.13.1 is published yet.
 - [ ] Confirm legacy-store migration for preexisting metadata names; do not relax exact schema checks or infer missing tables.
+
+## Verification phase before writable adoption
+
+- Required primary and generated secondary index files are checked before opening restored snapshots for writes. Implementations without an explicit file inventory refuse adoption. The focused adoption regression passed locally: genuine manifests missing either index were rejected without changing local names/bytes or remote request counts; valid adoption and the next persisted mutation passed.
+- The existing detect_version API keeps its previous generic bounds; strict migration/adoption continues through detect_source_version. Release-wide compatibility, actual downstream migration, and deployment validation remain separate gates.

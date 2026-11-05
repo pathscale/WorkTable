@@ -47,10 +47,15 @@ pub trait SpaceDataOps<PkGenState> {
     fn save_info(&mut self) -> impl Future<Output = eyre::Result<()>> + Send;
 }
 
+const PRIMARY_INDEX_FILE: &str = "primary.wt.idx";
+
 pub trait SpaceIndexOps<T>
 where
     T: Ord,
 {
+    /// Paths relative to the table directory that must exist before opening the primary index.
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = None;
+
     fn primary_from_table_files_path<S: AsRef<str> + Send>(
         path: S,
         version: u32,
@@ -76,6 +81,10 @@ where
 }
 
 pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
+    /// Paths relative to the table directory that must exist before opening the secondary indexes.
+    /// Use `Some(&[])` for an implementation with no persisted secondary indexes.
+    const REQUIRED_SECONDARY_INDEX_FILES: Option<&'static [&'static str]> = None;
+
     fn from_table_files_path<S: AsRef<str> + Send>(
         path: S,
         version: u32,

@@ -28,7 +28,7 @@ use rkyv::{Archive, Deserialize, Serialize, rancor};
 
 use crate::UnsizedNode;
 use crate::convert_multi_change_events;
-use crate::persistence::space::BatchChangeEvent;
+use crate::persistence::space::{BatchChangeEvent, PRIMARY_INDEX_FILE};
 use crate::persistence::{PersistenceIndexCorruption, SpaceIndex, SpaceIndexOps, SpaceIndexUnsized};
 use crate::prelude::WT_INDEX_EXTENSION;
 
@@ -230,8 +230,10 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
-        Self::new(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION), version).await
+        Self::new(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref()), version).await
     }
 
     async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
@@ -337,8 +339,10 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
-        Self::new(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION), version).await
+        Self::new(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref()), version).await
     }
 
     async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
@@ -442,8 +446,10 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
-        Self::new(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION), version).await
+        Self::new(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref()), version).await
     }
 
     async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
@@ -550,8 +556,10 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
-        Self::new(format!("{}/primary{}", path.as_ref(), WT_INDEX_EXTENSION), version).await
+        Self::new(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref()), version).await
     }
 
     async fn secondary_from_table_files_path<S1: AsRef<str> + Send, S2: AsRef<str> + Send>(
