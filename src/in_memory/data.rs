@@ -662,18 +662,18 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             });
         }
         let length = length as u32;
-        let offset = self.free_offset.fetch_add(length, Ordering::AcqRel);
-        if offset > DATA_LENGTH as u32 - length {
-            // Roll back this call's own reservation, or free_offset inflates
-            // permanently: it is persisted as the initialized-bytes bound and
-            // fed to used-bytes accounting. Subtracting exactly what was added
-            // is safe under concurrent adds.
-            self.free_offset.fetch_sub(length, Ordering::AcqRel);
-            return Err(ExecutionError::PageIsFull {
-                need: length,
-                left: DATA_LENGTH as i64 - offset as i64,
-            });
-        }
+        let offset = self
+            .free_offset
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
+                offset
+                    .checked_add(length)
+                    .filter(|end| usize::try_from(*end).is_ok_and(|end| end <= DATA_LENGTH))
+            })
+            .map_err(|offset| {
+                let offset = usize::try_from(offset).unwrap_or(usize::MAX);
+                let left = i64::try_from(DATA_LENGTH.saturating_sub(offset)).unwrap_or(i64::MAX);
+                ExecutionError::PageIsFull { need: length, left }
+            })?;
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[offset as usize..][..length as usize].copy_from_slice(bytes.as_slice());
@@ -962,16 +962,18 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             });
         }
         let length = length as u32;
-        let offset = self.free_offset.fetch_add(length, Ordering::AcqRel);
-        if offset > DATA_LENGTH as u32 - length {
-            // Same rollback as in save_row: undo this call's own reservation
-            // so the persisted initialized-bytes bound stays accurate.
-            self.free_offset.fetch_sub(length, Ordering::AcqRel);
-            return Err(ExecutionError::PageIsFull {
-                need: length,
-                left: DATA_LENGTH as i64 - offset as i64,
-            });
-        }
+        let offset = self
+            .free_offset
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
+                offset
+                    .checked_add(length)
+                    .filter(|end| usize::try_from(*end).is_ok_and(|end| end <= DATA_LENGTH))
+            })
+            .map_err(|offset| {
+                let offset = usize::try_from(offset).unwrap_or(usize::MAX);
+                let left = i64::try_from(DATA_LENGTH.saturating_sub(offset)).unwrap_or(i64::MAX);
+                ExecutionError::PageIsFull { need: length, left }
+            })?;
 
         let inner_data = unsafe { &mut *self.inner_data.get() };
         inner_data[offset as usize..][..length as usize].copy_from_slice(data);
@@ -1074,7 +1076,7 @@ pub enum ExecutionError {
 mod tests {
     use alloc::sync::Arc;
     use core::sync::atomic::Ordering;
-    use std::sync::mpsc;
+    use std::sync::{Barrier, mpsc};
     use std::thread;
 
     use rkyv::{Archive, Deserialize, Serialize};
@@ -1550,6 +1552,56 @@ mod tests {
             offset_before,
             "a failed raw save must roll back its free_offset reservation"
         );
+    }
+
+    #[test]
+    fn concurrent_raw_reservations_are_disjoint_and_bounded() {
+        const CAPACITY: usize = 64;
+        const WORKERS: usize = 32;
+
+        let page = Arc::new(Data::<TestRow, CAPACITY>::new(1.into()));
+        let barrier = Arc::new(Barrier::new(WORKERS));
+        let handles: Vec<_> = (0..WORKERS)
+            .map(|index| {
+                let page = page.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    let length = index % 9 + 1;
+                    let bytes = vec![index as u8 + 1; length];
+                    barrier.wait();
+                    (bytes.clone(), page.save_raw_row(&bytes))
+                })
+            })
+            .collect();
+
+        let mut accepted = Vec::new();
+        for handle in handles {
+            let (bytes, result) = handle.join().expect("reservation worker must finish");
+            match result {
+                Ok(link) => accepted.push((bytes, link)),
+                Err(ExecutionError::PageIsFull { .. }) => {}
+                Err(error) => panic!("unexpected raw reservation error: {error:?}"),
+            }
+        }
+        assert!(!accepted.is_empty());
+        for (index, (bytes, link)) in accepted.iter().enumerate() {
+            let start = link.offset as usize;
+            let end = start + link.length as usize;
+            assert!(end <= CAPACITY, "reservation must stay inside the page");
+            assert_eq!(link.length as usize, bytes.len());
+            assert_eq!(page.get_raw_row(*link).unwrap(), *bytes);
+            for (_, other) in accepted.iter().skip(index + 1) {
+                let other_start = other.offset as usize;
+                let other_end = other_start + other.length as usize;
+                assert!(end <= other_start || other_end <= start, "reservations overlap");
+            }
+        }
+        let maximum_end = accepted
+            .iter()
+            .map(|(_, link)| link.offset as usize + link.length as usize)
+            .max()
+            .unwrap();
+        assert_eq!(page.free_offset.load(Ordering::Acquire) as usize, maximum_end);
     }
 
     #[test]

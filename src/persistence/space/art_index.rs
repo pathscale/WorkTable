@@ -577,7 +577,7 @@ fn encode_multi_pairs<K: ArtPersistenceKey>(pairs: impl Iterator<Item = (K, Link
 fn decode_multi_pairs<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<Vec<(K, Link)>> {
     let mut decoder = Decoder::new(bytes);
     let count = decoder.u64()?;
-    let mut pairs = Vec::with_capacity(usize::try_from(count).map_err(|_| eyre!("ART pair count overflow"))?);
+    let mut pairs = Vec::new();
     for _ in 0..count {
         let key_len = if K::WIDTH == 0 {
             decoder.u32()? as usize
@@ -1443,6 +1443,12 @@ mod tests {
             decode_multi_pairs::<u64>(&encode_multi_pairs(core::iter::empty::<(u64, Link)>())).unwrap(),
             vec![]
         );
+    }
+
+    #[test]
+    fn multi_pair_decoder_does_not_preallocate_from_untrusted_count() {
+        let bytes = u64::MAX.to_le_bytes();
+        assert!(decode_multi_pairs::<u64>(&bytes).is_err());
     }
 
     #[test]
