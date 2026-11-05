@@ -1,5 +1,7 @@
 # Open work index
 
+- Strict legacy snapshot adoption is implemented through DataBucket's restore token and `S3SyncDiskPersistenceEngine::from_restored_snapshot`. Callers must name the known source primary-key layout; fallible metadata preflight checks the application version before opening the disk engine. This does not migrate data or certify a deployment. Finish downstream whole-database preflight, physical/application migration verification, dependency publication, and externally enforced writer fencing before enabling the new startup path.
+
 - [Detailed follow-ups](plans/detailed-followups.md): unresolved legacy release-yank decision, safety context, and disposition of the removed TODO items.
 - [Deferred queue follow-ups](plans/deferred-queue-follow-ups.md): source requirements and release decision that were tracked only by the retired patch-queue README.
 - [Consolidated open work](plans/open-work.md): persistence durability and space-layer follow-through, ART persistence, current paper evidence, and columnar side-index follow-up.
