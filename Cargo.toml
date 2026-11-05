@@ -3,7 +3,7 @@ members = ["codegen", "dsl", "examples", "performance_measurement", "performance
 
 [package]
 name = "worktable"
-version = "1.13.1"
+version = "1.13.2"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -70,7 +70,7 @@ congee = { package = "congee-wt", version = "^0.4.6", default-features = false }
 convert_case = { version = "0.6", default-features = false, optional = true }
 crc32fast = { version = "1", default-features = false }
 # 0.7 supplies the v3 row directory, integrity checks and configurable stride.
-data_bucket = { version = "^0.7.4" }
+data_bucket = { version = "^0.7.5" }
 derive_more = { version = "2", default-features = false, features = ["from", "error", "display", "debug", "into"] }
 eyre = { version = "0.6", optional = true }
 hashbrown = "0.15"
