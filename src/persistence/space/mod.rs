@@ -56,6 +56,18 @@ where
     /// Paths relative to the table directory that must exist before opening the primary index.
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = None;
 
+    /// Read-only adoption preflight for an index file. Implementations that cannot
+    /// prove opening is non-mutating must retain this conservative rejection.
+    fn verify_adoption_file(path: &Path, _version: u32) -> impl Future<Output = eyre::Result<()>> + Send {
+        let path = path.to_path_buf();
+        async move {
+            eyre::bail!(
+                "index implementation does not support strict adoption preflight: {}",
+                path.display()
+            )
+        }
+    }
+
     fn primary_from_table_files_path<S: AsRef<str> + Send>(
         path: S,
         version: u32,
@@ -84,6 +96,11 @@ pub trait SpaceSecondaryIndexOps<SecondaryIndexEvents> {
     /// Paths relative to the table directory that must exist before opening the secondary indexes.
     /// Use `Some(&[])` for an implementation with no persisted secondary indexes.
     const REQUIRED_SECONDARY_INDEX_FILES: Option<&'static [&'static str]> = None;
+
+    /// Read-only preflight for all generated secondary indexes.
+    fn verify_adoption(_path: &Path, _version: u32) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { eyre::bail!("secondary index implementation does not support strict adoption preflight") }
+    }
 
     fn from_table_files_path<S: AsRef<str> + Send>(
         path: S,

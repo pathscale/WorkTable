@@ -222,6 +222,25 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
         })
     }
 
+    async fn verify_read_only(path: &Path, backend: Backend, table_version: u32) -> eyre::Result<()> {
+        let temporary = temporary_path(path);
+        match std::fs::symlink_metadata(&temporary) {
+            Ok(_) => bail!("ART index {} has a stale temporary sibling", path.display()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let image = Self::read_image(path, backend, table_version).await?;
+        let actual_len = std::fs::symlink_metadata(path)?.len();
+        eyre::ensure!(
+            image.durable_len == actual_len,
+            "ART index {} has a recoverable torn WAL tail (durable length {}, actual length {})",
+            path.display(),
+            image.durable_len,
+            actual_len
+        );
+        Ok(())
+    }
+
     async fn read_image(path: &Path, backend: Backend, table_version: u32) -> eyre::Result<Image<K>> {
         let mut file = crate::fsx::open_read_only(path)
             .await
@@ -654,6 +673,10 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
+    async fn verify_adoption_file(path: &Path, version: u32) -> eyre::Result<()> {
+        ArtFile::<K>::verify_read_only(path, Backend::Arctic, version).await
+    }
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
             PathBuf::from(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref())),
@@ -770,6 +793,10 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
+    async fn verify_adoption_file(path: &Path, version: u32) -> eyre::Result<()> {
+        ArtFile::<K>::verify_read_only(path, Backend::ArcticVariable, version).await
+    }
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
             PathBuf::from(format!("{}/{PRIMARY_INDEX_FILE}", path.as_ref())),
@@ -872,6 +899,10 @@ where
     K: ArtPersistenceKey + CongeeKey,
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
+    async fn verify_adoption_file(path: &Path, version: u32) -> eyre::Result<()> {
+        ArtFile::<K>::verify_read_only(path, Backend::Congee, version).await
+    }
 
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(
@@ -978,6 +1009,10 @@ where
     K: ArtPersistenceKey + ArcticKey,
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
+    async fn verify_adoption_file(path: &Path, version: u32) -> eyre::Result<()> {
+        ArtFile::<K>::verify_read_only(path, Backend::ArcticMulti, version).await
+    }
 
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(path: S, version: u32) -> eyre::Result<Self> {
         Self::new(

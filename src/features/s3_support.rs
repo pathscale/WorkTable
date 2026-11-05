@@ -128,6 +128,12 @@ where
             "stored table version {stored_version} does not match configured version {}",
             config.disk.version
         );
+        for &name in primary_files {
+            SpacePrimaryIndex::verify_adoption_file(&table_path.join(name), config.disk.version).await?;
+        }
+        // Secondary verification is static and read-only; unsupported custom
+        // implementations keep the trait default refusal.
+        SpaceSecondaryIndexes::verify_adoption(table_path, config.disk.version).await?;
 
         let inner = DiskPersistenceEngine::new(config.disk.clone()).await?;
         snapshot.capture_baseline()?;

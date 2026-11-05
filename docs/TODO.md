@@ -23,3 +23,5 @@
 
 - Required primary and generated secondary index files are checked before opening restored snapshots for writes. Implementations without an explicit file inventory refuse adoption. The focused adoption regression passed locally: genuine manifests missing either index were rejected without changing local names/bytes or remote request counts; valid adoption and the next persisted mutation passed.
 - The existing detect_version API keeps its previous generic bounds; strict migration/adoption continues through detect_source_version. Release-wide compatibility, actual downstream migration, and deployment validation remain separate gates.
+
+- Strict adoption now calls typed read-only primary and secondary index verification before writable construction. ART verification rejects repairable WAL tails and stale checkpoint siblings; ordinary recovery remains unchanged. Genuine missing-index and torn-primary/torn-secondary snapshot regression passed locally, including valid adoption and the next persisted write; no-default-features and formatting checks passed. Deployed-data acceptance remains pending.

@@ -71,6 +71,27 @@ impl Generator {
             let name = field.ident.as_ref().expect("index fields should be named");
             Literal::string(&format!("{name}{WT_INDEX_EXTENSION}"))
         });
+        let inner_const_name = name_generator.get_disk_page_capacity();
+        let page_const_name = name_generator.get_page_size_const_ident();
+        let verify_fields = self.struct_def.fields.iter().map(|field| {
+            let layout = index_layout(field)?;
+            let name = field.ident.as_ref().expect("index fields should be named");
+            let t = self.field_types.get(name).expect("field type was collected");
+            let file = Literal::string(&format!("{name}{WT_INDEX_EXTENSION}"));
+            let ty = match layout.art_backend {
+                Some(ArtBackend::Congee) => quote! { SpaceCongeeIndex<#t, {#inner_const_name as u32}> },
+                Some(ArtBackend::ArcticMulti) if is_unsized(&t.to_string()) => quote! { SpaceLogicalMultiIndexUnsized<#t, {#inner_const_name as u32}, {#page_const_name as u32}> },
+                Some(ArtBackend::ArcticMulti) => quote! { SpaceLogicalMultiIndex<#t, {#inner_const_name as u32}, {#page_const_name as u32}> },
+                Some(ArtBackend::Arctic) | None if layout.art_backend.is_some() || layout.logical_wti => {
+                    if is_unsized(&t.to_string()) { quote! { SpaceLogicalIndexUnsized<#t, {#inner_const_name as u32}, {#page_const_name as u32}> } }
+                    else { quote! { SpaceLogicalIndex<#t, {#inner_const_name as u32}, {#page_const_name as u32}> } }
+                },
+                None if is_unsized(&t.to_string()) => quote! { SpaceIndexUnsized<#t, {#inner_const_name as u32}, {#page_const_name as u32}> },
+                None => quote! { SpaceIndex<#t, {#inner_const_name as u32}, {#page_const_name as u32}> },
+                Some(ArtBackend::Arctic) => unreachable!("Arctic handled above"),
+            };
+            Ok(quote! { <#ty as SpaceIndexOps<#t>>::verify_adoption_file(&path.join(#file), version).await?; })
+        }).collect::<syn::Result<Vec<_>>>()?;
         let from_table_files_path_fn = self.gen_space_secondary_index_from_table_files_path_fn()?;
         let index_process_change_events_fn = self.gen_space_secondary_index_process_change_events_fn();
         let index_process_change_event_batch_fn = self.gen_space_secondary_index_process_change_event_batch_fn();
@@ -79,6 +100,21 @@ impl Generator {
             impl SpaceSecondaryIndexOps<#events_ident> for #ident {
                 const REQUIRED_SECONDARY_INDEX_FILES: Option<&'static [&'static str]> =
                     Some(&[#(#required_files),*]);
+
+                async fn verify_adoption(path: &std::path::Path, version: u32) -> worktable::prelude::eyre::Result<()> {
+                    // This generated hook is deliberately static and read-only.
+                    // It rejects checkpoint leftovers before the writable loader can remove them.
+                    for name in Self::REQUIRED_SECONDARY_INDEX_FILES.ok_or_else(|| worktable::prelude::eyre::eyre!("generated secondary indexes do not declare their files"))? {
+                        let temporary = path.join(format!("{name}.tmp"));
+                        match std::fs::symlink_metadata(&temporary) {
+                            Ok(_) => worktable::prelude::eyre::bail!("secondary index has a stale temporary sibling: {}", temporary.display()),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
+                    #(#verify_fields)*
+                    Ok(())
+                }
 
                 #from_table_files_path_fn
                 #index_process_change_events_fn

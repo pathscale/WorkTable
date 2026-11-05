@@ -415,6 +415,17 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
+    async fn verify_adoption_file(path: &std::path::Path, _version: u32) -> eyre::Result<()> {
+        // Existing page-backed indexes are read without repair during open.
+        // Refuse absence rather than allowing their normal bootstrap path.
+        eyre::ensure!(
+            std::fs::symlink_metadata(path)?.is_file(),
+            "index is not a regular file"
+        );
+        let _file = crate::fsx::open_read_only(path).await?;
+        Ok(())
+    }
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
         let path = format!("{}/{PRIMARY_INDEX_FILE}", table_path.as_ref());
         Self::new(path, 0.into(), version).await
