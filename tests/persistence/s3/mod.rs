@@ -204,12 +204,12 @@ worktable!(
     name: TestS3Adoption,
     persist: true,
     columns: {
-        id: u64 primary_key autoincrement,
+        id: u64 primary_key autoincrement using congee,
         value: u64,
         payload: String,
     },
     indexes: {
-        value_idx: value unique,
+        value_idx: value unique using congee,
     },
 );
 
@@ -333,6 +333,64 @@ fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
             remove_dir_if_exists(incomplete_disk.table_path().to_string()).await;
         }
         remove_dir_if_exists(config.disk.table_path().to_string()).await;
+
+        // Publish an ART image with a real incomplete WAL frame so DataBucket
+        // creates a genuine manifest and restore token for the damaged bytes.
+        for damaged_index in ["primary", "value_idx"] {
+            let damaged_disk = DiskConfig::new_with_table_name(
+                format!("{path}/damaged-tail-{damaged_index}"),
+                TestS3AdoptionWorkTable::name_snake_case(),
+                TestS3AdoptionWorkTable::version(),
+            );
+            let damaged_path = std::path::Path::new(damaged_disk.table_path());
+            std::fs::create_dir_all(damaged_path).unwrap();
+            let mut damaged_files = complete.clone();
+            let primary_name = format!("{damaged_index}{WT_INDEX_EXTENSION}");
+            let primary = damaged_files.get_mut(std::ffi::OsStr::new(&primary_name)).unwrap();
+            primary.extend_from_slice(&[0x57, 0x41]);
+            for (name, bytes) in &damaged_files {
+                std::fs::write(damaged_path.join(name), bytes).unwrap();
+            }
+            let mut damaged_config = config.clone();
+            damaged_config.disk = damaged_disk.clone();
+            damaged_config.s3.prefix = Some(format!("wt-adoption-damaged-tail-{damaged_index}"));
+            LegacySnapshotStore::publish_new_fenced(
+                LegacySnapshotConfig {
+                    table_path: damaged_config.disk.table_path().to_string(),
+                    s3: damaged_config.s3.clone(),
+                },
+                ExclusiveFencedLegacyDestination::acknowledge_external_fence(),
+            )
+            .await
+            .unwrap();
+            remove_dir_if_exists(damaged_config.disk.table_path().to_string()).await;
+            let restored = LegacySnapshotStore::restore_required(LegacySnapshotConfig {
+                table_path: damaged_config.disk.table_path().to_string(),
+                s3: damaged_config.s3.clone(),
+            })
+            .await
+            .unwrap();
+            let before = local_files(damaged_config.disk.table_path());
+            let puts = s3.puts.lock().unwrap().clone();
+            let gets = s3.gets.lock().unwrap().clone();
+            let error = TestS3AdoptionS3SyncPersistenceEngine::from_restored_snapshot(
+                damaged_config.clone(),
+                restored,
+                SourceLayout::<u64>::new(),
+            )
+            .await
+            .expect_err("strict adoption must reject a torn ART WAL without repairing the restored bytes")
+            .to_string();
+            assert_eq!(*s3.puts.lock().unwrap(), puts);
+            assert_eq!(*s3.gets.lock().unwrap(), gets);
+            assert!(error.contains("recoverable torn WAL tail"), "{error}");
+            assert_eq!(
+                local_files(damaged_config.disk.table_path()),
+                before,
+                "torn-tail refusal mutated restored files"
+            );
+            remove_dir_if_exists(damaged_config.disk.table_path().to_string()).await;
+        }
 
         // Each refusal gets a fresh genuine token. Check the concrete generated
         // adapter, before opening a disk engine or publishing anything remotely.

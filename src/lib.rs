@@ -277,9 +277,8 @@ pub mod prelude {
 
     #[cfg(feature = "s3-support")]
     pub use crate::features::{
-        ExclusiveFencedLegacyDestination, LegacyPublicationSummary, LegacySnapshotConfig,
-        LegacySnapshotStore, MigrationCaptureLimits, MigrationCaptureOutcome,
-        MigrationCaptureProvenance, RestoredLegacySnapshot, S3Config, S3DiskConfig,
-        S3SyncDiskPersistenceEngine,
+        ExclusiveFencedLegacyDestination, LegacyPublicationSummary, LegacySnapshotConfig, LegacySnapshotStore,
+        MigrationCaptureLimits, MigrationCaptureOutcome, MigrationCaptureProvenance, RestoredLegacySnapshot, S3Config,
+        S3DiskConfig, S3SyncDiskPersistenceEngine,
     };
 }
