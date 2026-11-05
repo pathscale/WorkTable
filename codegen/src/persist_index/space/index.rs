@@ -3,6 +3,7 @@ use quote::quote;
 
 use crate::common::name_generator::is_unsized;
 use crate::persist_index::generator::{ArtBackend, Generator, index_layout};
+use crate::persist_table::WT_INDEX_EXTENSION;
 
 impl Generator {
     pub fn gen_space_secondary_index_type(&self) -> syn::Result<TokenStream> {
@@ -66,12 +67,19 @@ impl Generator {
         let events_ident = name_generator.get_space_secondary_index_events_ident();
         let ident = name_generator.get_space_secondary_index_ident();
 
+        let required_files = self.struct_def.fields.iter().map(|field| {
+            let name = field.ident.as_ref().expect("index fields should be named");
+            Literal::string(&format!("{name}{WT_INDEX_EXTENSION}"))
+        });
         let from_table_files_path_fn = self.gen_space_secondary_index_from_table_files_path_fn()?;
         let index_process_change_events_fn = self.gen_space_secondary_index_process_change_events_fn();
         let index_process_change_event_batch_fn = self.gen_space_secondary_index_process_change_event_batch_fn();
 
         Ok(quote! {
             impl SpaceSecondaryIndexOps<#events_ident> for #ident {
+                const REQUIRED_SECONDARY_INDEX_FILES: Option<&'static [&'static str]> =
+                    Some(&[#(#required_files),*]);
+
                 #from_table_files_path_fn
                 #index_process_change_events_fn
                 #index_process_change_event_batch_fn

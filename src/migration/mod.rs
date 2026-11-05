@@ -7,7 +7,7 @@ use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::prelude::{Persistable, SpaceInfoPage, WT_DATA_EXTENSION};
+use crate::prelude::{GeneralPage, Persistable, SpaceInfoPage, WT_DATA_EXTENSION, parse_page};
 use core::marker::PhantomData;
 
 /// Declares the source archive layout from known provenance, not the target schema.
@@ -51,8 +51,10 @@ where
     PkGenState: Default + Clone + Archive + Send,
     for<'a> PkGenState: Serialize<Strategy<Serializer<AlignedVec, ArenaHandle<'a>, Share>, rkyv::rancor::Error>>,
     <PkGenState as Archive>::Archived: Deserialize<PkGenState, HighDeserializer<rkyv::rancor::Error>>,
-    PkGenState::Archived: for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>,
     SpaceInfoPage<PkGenState>: Persistable,
 {
-    detect_source_version(table_path, SourceLayout::<PkGenState>::new()).await
+    let data_file_path = format!("{}/{}", table_path, WT_DATA_EXTENSION);
+    let mut file = crate::fsx::open_read_only(&data_file_path).await?;
+    let info: GeneralPage<SpaceInfoPage<PkGenState>> = parse_page::<_, 4096, DEFAULT_PAGE_STRIDE>(&mut file, 0).await?;
+    Ok(info.inner.version)
 }

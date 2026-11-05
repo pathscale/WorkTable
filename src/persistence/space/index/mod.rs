@@ -34,7 +34,7 @@ use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize, rancor};
 
 use crate::persistence::SpaceIndexOps;
-use crate::persistence::space::{BatchChangeEvent, open_or_create_file};
+use crate::persistence::space::{BatchChangeEvent, PRIMARY_INDEX_FILE, open_or_create_file};
 use crate::prelude::WT_INDEX_EXTENSION;
 
 pub use reconstruct::reconstruct_multi_index_nodes;
@@ -413,8 +413,10 @@ where
         + Debug
         + for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>,
 {
+    const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
+
     async fn primary_from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
-        let path = format!("{}/primary{}", table_path.as_ref(), WT_INDEX_EXTENSION);
+        let path = format!("{}/{PRIMARY_INDEX_FILE}", table_path.as_ref());
         Self::new(path, 0.into(), version).await
     }
 
