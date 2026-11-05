@@ -15,6 +15,6 @@
 
 ## Pending schema-name release verification
 
-- [ ] Re-run the concrete S3 adoption regression and consumer whole-database preservation regression after schema-name initialization and adapter forwarding changes. Adoption passed before these final changes; consumer previously failed on digit/acronym casing in persisted table names. Existing stores are intentionally not renamed.
+- [x] Re-run the concrete S3 adoption regression and consumer whole-database preservation regression after schema-name initialization and adapter forwarding changes. Both passed on 2026-11-06 against WorkTable source `74ffd6c` and local codegen 2.0.0. The offline no-default-features check also passed. This verifies the previously failing new-store name preservation, not migration of existing stores or deployed S3 acceptance.
 - [ ] Validate default/std/no-std and S3 builds plus package publication. The generated schema-name hook requires codegen 2.0.0 to avoid breaking older WorkTable consumers that accept codegen 1.x. Neither codegen 2 nor WorkTable 1.13.1 is published yet.
 - [ ] Confirm legacy-store migration for preexisting metadata names; do not relax exact schema checks or infer missing tables.
