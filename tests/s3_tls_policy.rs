@@ -59,7 +59,7 @@ fn supplied_s3_agent_enforces_tls_roots_and_hostname() {
                 .with_root_certificates(roots)
                 .with_no_client_auth(),
         );
-        let agent = ureq::AgentBuilder::new()
+        let agent = worktable::data_bucket::storage::legacy_snapshot::HttpAgentBuilder::new()
             .tls_config(tls)
             .timeout(std::time::Duration::from_secs(5))
             .redirects(0)

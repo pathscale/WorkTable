@@ -94,6 +94,14 @@ The older `s3_sync_persistence!` callsite remains available for existing per-tab
 manifests. New databases should use the shared domain so tables commit against one
 catalog and restore through catalog page mappings.
 
+Both physical storage implementations belong to DataBucket. The legacy engine is
+a typed adapter over `data_bucket::storage::legacy_snapshot`, preserving existing
+manifest bytes and restoration behavior. WorkTable does not implement S3 signing,
+HTTP, object listing, chunk publication or snapshot restoration. This extraction
+requires DataBucket's new compatibility API; validate both checkouts together and
+release DataBucket before releasing the dependent WorkTable version. It does not
+migrate existing snapshots or enable obsolete-chunk garbage collection.
+
 ```rust
 use worktable::{database_s3_persistence, DatabaseS3DiskConfig, S3Database};
 
