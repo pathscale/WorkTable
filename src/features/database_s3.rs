@@ -439,7 +439,7 @@ where
 
 fn safe_index_file_name(name: &CatalogName) -> eyre::Result<PathBuf> {
     let name = name.as_str();
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':', '\0']) {
         return Err(eyre::eyre!("remote index name is not a single file-name component"));
     }
     Ok(PathBuf::from(format!("{name}{WT_INDEX_EXTENSION}")))
@@ -657,9 +657,17 @@ mod tests {
 
     #[test]
     fn remote_index_names_cannot_escape_the_restore_directory() {
-        for name in ["../victim", "/absolute", r"..\victim", r"C:\victim"] {
-            let name = CatalogName::new(name).unwrap();
-            assert!(safe_index_file_name(&name).is_err(), "accepted {name:?}");
+        for name in [
+            "../victim",
+            "/absolute",
+            r"..\victim",
+            r"C:\victim",
+            "name:stream",
+            "bad\0name",
+        ] {
+            if let Ok(name) = CatalogName::new(name) {
+                assert!(safe_index_file_name(&name).is_err(), "accepted {name:?}");
+            }
         }
         let name = CatalogName::new("orders_by_date").unwrap();
         assert_eq!(

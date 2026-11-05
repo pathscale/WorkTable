@@ -32,7 +32,7 @@ const CHANGE_BLOCK_SIZE: usize = data_bucket::PAGE_SIZE;
 const MAX_MANIFEST_FILES: usize = 16_384;
 const MAX_MANIFEST_EXTENTS: usize = 4_194_304;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct S3Config {
     pub bucket_name: String,
     pub endpoint: String,
@@ -40,6 +40,12 @@ pub struct S3Config {
     pub secret_key: String,
     pub region: Option<String>,
     pub prefix: Option<String>,
+}
+
+impl core::fmt::Debug for S3Config {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("S3Config").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1101,6 +1107,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn s3_config_debug_redacts_credentials() {
+        let config = S3Config {
+            bucket_name: "bucket".to_owned(),
+            endpoint: "https://example.invalid".to_owned(),
+            access_key: "test-access-marker".to_owned(),
+            secret_key: "test-secret-marker".to_owned(),
+            region: Some("region".to_owned()),
+            prefix: None,
+        };
+
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("test-access-marker"));
+        assert!(!debug.contains("test-secret-marker"));
+        assert!(debug.contains("S3Config"));
+    }
 
     fn extent(file_offset: u64, bytes: &[u8]) -> SegmentExtent {
         SegmentExtent {
