@@ -10,7 +10,9 @@ use alloc::string::ToString;
 use core::{fmt::Debug, hash::Hash, marker::PhantomData};
 use data_bucket::storage::legacy_snapshot::HttpAgent as Agent;
 pub use data_bucket::storage::legacy_snapshot::{
-    LegacyS3Config as S3Config, LegacySnapshotConfig, LegacySnapshotStore, RestoredLegacySnapshot,
+    ExclusiveFencedLegacyDestination, LegacyPublicationSummary, LegacyS3Config as S3Config,
+    LegacySnapshotConfig, LegacySnapshotStore, MigrationCaptureLimits, MigrationCaptureOutcome,
+    MigrationCaptureProvenance, RestoredLegacySnapshot,
 };
 use rkyv::Archive;
 #[derive(Debug, Clone)]
