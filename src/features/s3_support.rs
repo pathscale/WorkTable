@@ -8,8 +8,11 @@ use crate::persistence::{
 use crate::prelude::{PrimaryKeyGeneratorState, TablePrimaryKey};
 use alloc::string::ToString;
 use core::{fmt::Debug, hash::Hash, marker::PhantomData};
-pub use data_bucket::storage::legacy_snapshot::LegacyS3Config as S3Config;
-use data_bucket::storage::legacy_snapshot::{HttpAgent as Agent, LegacySnapshotConfig, LegacySnapshotStore};
+use data_bucket::storage::legacy_snapshot::HttpAgent as Agent;
+pub use data_bucket::storage::legacy_snapshot::{
+    LegacyS3Config as S3Config, LegacySnapshotConfig, LegacySnapshotStore, RestoredLegacySnapshot,
+};
+use rkyv::Archive;
 #[derive(Debug, Clone)]
 pub struct S3DiskConfig {
     pub disk: DiskConfig,
@@ -81,6 +84,44 @@ where
     PrimaryKeyGenState: Clone + Debug + Send + Sync,
     AvailableIndexes: Clone + Copy + Debug + Eq + Hash + Send + Sync,
 {
+    /// Initialize from a snapshot that the caller already restored and preflighted.
+    ///
+    /// The logical table version is checked before opening the disk engine, which
+    /// may create or update files. Token identity is checked before reading the
+    /// local header. Adoption does not perform another remote restore.
+    /// The caller must declare the source state layout from known provenance.
+    pub async fn from_restored_snapshot<SourcePkGenState>(
+        config: S3DiskConfig,
+        restored: RestoredLegacySnapshot,
+        source_layout: crate::migration::SourceLayout<SourcePkGenState>,
+    ) -> eyre::Result<Self>
+    where
+        SourcePkGenState: Archive,
+        SourcePkGenState::Archived:
+            for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>,
+    {
+        let snapshot_config = LegacySnapshotConfig {
+            table_path: config.disk.table_path().to_string(),
+            s3: config.s3.clone(),
+        };
+        let mut snapshot = restored.into_store_for(&snapshot_config)?;
+        let stored_version = crate::migration::detect_source_version(config.disk.table_path(), source_layout).await?;
+        eyre::ensure!(
+            stored_version == config.disk.version,
+            "stored table version {stored_version} does not match configured version {}",
+            config.disk.version
+        );
+
+        let inner = DiskPersistenceEngine::new(config.disk.clone()).await?;
+        snapshot.capture_baseline()?;
+        Ok(Self {
+            inner,
+            config,
+            snapshot,
+            phantom: PhantomData,
+        })
+    }
+
     /// Open with a caller-owned HTTP agent, including its TLS trust policy.
     pub async fn new_with_agent(config: S3DiskConfig, client: Agent) -> eyre::Result<Self> {
         let mut snapshot = LegacySnapshotStore::open_with_agent(
