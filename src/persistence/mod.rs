@@ -218,6 +218,16 @@ pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents
         async { Ok(()) }
     }
 
+    /// Preserves the original generated name when initializing a new store.
+    ///
+    /// Directory names cannot recover acronym or digit casing. Disk engines
+    /// replace that provisional name only for newly created data files, before
+    /// installing schema metadata; existing stores remain unchanged. Custom
+    /// engines may keep the default no-op.
+    fn initialize_schema_name(&mut self, _name: String) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { Ok(()) }
+    }
+
     /// Installs the generated table schema and rejects a non-empty schema that
     /// belongs to a different table shape.
     /// Custom engines may keep the default no-op when they do not expose

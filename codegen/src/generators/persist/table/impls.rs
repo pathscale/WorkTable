@@ -315,6 +315,7 @@ impl PersistGenerator {
             {
                 async fn new(mut engine: E) -> worktable::prelude::eyre::Result<Self> {
                     let schema = Self::space_info_default().inner;
+                    engine.initialize_schema_name(schema.name).await?;
                     engine
                         .ensure_schema(
                             schema.row_schema,
@@ -337,6 +338,7 @@ impl PersistGenerator {
 
                 async fn load_with(mut engine: E, mode: LoadMode) -> worktable::prelude::eyre::Result<Self> {
                     let schema = Self::space_info_default().inner;
+                    engine.initialize_schema_name(schema.name).await?;
                     engine
                         .validate_schema(
                             schema.row_schema,

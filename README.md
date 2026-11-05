@@ -175,6 +175,13 @@ completely empty remain readable and are not rewritten merely by loading them;
 their schema therefore cannot be validated. A non-empty schema mismatch is
 rejected before rows are loaded.
 
+New stores created through generated persisted tables preserve the original table
+name in data-file `SpaceInfo`, including acronym and digit casing, instead of
+reconstructing it from the directory name. Existing stored names are left intact;
+this does not repair names written by older versions. Custom persistence engines
+that wrap the disk engine should forward `initialize_schema_name` as well as the
+schema validation methods.
+
 Persisted vacuum compacts the live in-memory layout and keeps disk indexes
 consistent with moved rows, but it does not truncate `.wt.data`. Use
 `persisted_data_file_size_bytes().await` on a generated persisted table to
@@ -604,3 +611,5 @@ S3 engine aliases) uses the supplied `ureq::Agent` for every restore, manifest a
 upload request. A host can supply restricted TLS trust anchors and redirect
 policy without changing table configuration. `PersistenceEngine::new(config)`
 retains the existing default agent for other consumers.
+
+The code generator uses major version 2 for the new schema-name initialization hook. Older WorkTable releases accept codegen 1.x and do not define that hook, so publishing the changed expansion under 1.x would break their builds. Publish and validate the new generator before publishing the dependent WorkTable release.

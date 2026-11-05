@@ -113,6 +113,9 @@ async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
                 let target = request_parts.next().unwrap();
                 let path = target.split('?').next().unwrap();
                 let key = path.strip_prefix("/test/").unwrap_or(path.trim_start_matches('/'));
+                if method == "GET" {
+                    state.gets.lock().unwrap().push(key.to_string());
+                }
 
                 let headers = std::str::from_utf8(&request[..header_end])
                     .unwrap()
@@ -164,7 +167,6 @@ async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
                         None,
                     )
                 } else if let Some(stored) = state.objects.lock().unwrap().get(key).cloned() {
-                    state.gets.lock().unwrap().push(key.to_string());
                     let etag = format!("\"{}\"", blake3::hash(&stored).to_hex());
                     if method == "HEAD" {
                         ("200 OK", "application/octet-stream", Vec::new(), Some(etag))
@@ -196,6 +198,175 @@ async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
         }
     });
     (format!("http://{address}"), state, task)
+}
+
+#[test]
+fn generated_table_adopts_strict_snapshot_and_persists_next_mutation() {
+    use worktable::data_bucket::storage::legacy_snapshot::{LegacySnapshotConfig, LegacySnapshotStore};
+    use worktable::migration::SourceLayout;
+
+    // Include names and bytes, so refusal cannot silently create an index or
+    // rewrite metadata while still returning an error.
+    fn local_files(path: &str) -> std::collections::BTreeMap<std::ffi::OsString, Vec<u8>> {
+        std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), std::fs::read(entry.path()).unwrap())
+            })
+            .collect()
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let path = "tests/data/s3/restored_adoption";
+        remove_dir_if_exists(path.to_string()).await;
+        let (endpoint, s3, server) = fake_s3().await;
+        let config = S3DiskConfig {
+            disk: DiskConfig::new_with_table_name(
+                path,
+                TestS3WorkTable::name_snake_case(),
+                TestS3WorkTable::version(),
+            ),
+            s3: S3Config {
+                bucket_name: "test".to_string(),
+                endpoint,
+                access_key: "test".to_string(),
+                secret_key: "test".to_string(),
+                region: None,
+                prefix: Some("wt-adoption".to_string()),
+            },
+        };
+        let snapshot_config = LegacySnapshotConfig {
+            table_path: config.disk.table_path().to_string(),
+            s3: config.s3.clone(),
+        };
+        {
+            let engine = TestS3S3SyncPersistenceEngine::new(config.clone()).await.unwrap();
+            let table = TestS3WorkTable::load(engine).await.unwrap();
+            table
+                .insert(TestS3Row {
+                    id: table.get_next_pk().into(),
+                    value: 7,
+                    payload: "strict snapshot".to_string(),
+                })
+                .await
+                .unwrap();
+            table.wait_for_ops().await.unwrap();
+        }
+        remove_dir_if_exists(config.disk.table_path().to_string()).await;
+
+        // Each refusal gets a fresh genuine token. Check the concrete generated
+        // adapter, before opening a disk engine or publishing anything remotely.
+        for refusal in ["version", "layout", "content"] {
+            let restored = LegacySnapshotStore::restore_required(snapshot_config.clone())
+                .await
+                .unwrap();
+            if refusal == "content" {
+                let data_path = std::path::Path::new(config.disk.table_path()).join(WT_DATA_EXTENSION);
+                let mut bytes = std::fs::read(&data_path).unwrap();
+                let last = bytes.len() - 1;
+                bytes[last] ^= 1;
+                std::fs::write(data_path, bytes).unwrap();
+            }
+            let before = local_files(config.disk.table_path());
+            let puts = s3.puts.lock().unwrap().clone();
+            let gets = s3.gets.lock().unwrap().clone();
+            let mut refused_config = config.clone();
+            let result = if refusal == "layout" {
+                // Larger than a metadata page: a valid u64-state archive cannot
+                // validate as this declared source layout.
+                TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+                    refused_config,
+                    restored,
+                    SourceLayout::<[u64; 4096]>::new(),
+                )
+                .await
+            } else {
+                if refusal == "version" {
+                    refused_config.disk = DiskConfig::new_with_table_name(
+                        path,
+                        TestS3WorkTable::name_snake_case(),
+                        TestS3WorkTable::version() + 1,
+                    );
+                }
+                TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+                    refused_config,
+                    restored,
+                    SourceLayout::<u64>::new(),
+                )
+                .await
+            };
+            let error = result.err().expect(refusal).to_string();
+            if refusal == "version" {
+                assert!(error.contains("stored table version"), "{error}");
+            } else if refusal == "layout" {
+                assert!(error.contains("space-info source layout"), "{error}");
+            } else if refusal == "content" {
+                assert!(error.contains("no longer matches its token"), "{error}");
+            }
+            assert_eq!(local_files(config.disk.table_path()), before, "{refusal}");
+            assert_eq!(*s3.puts.lock().unwrap(), puts, "{refusal}");
+            assert_eq!(*s3.gets.lock().unwrap(), gets, "{refusal}");
+        }
+
+        let restored = LegacySnapshotStore::restore_required(snapshot_config.clone())
+            .await
+            .unwrap();
+        let gets = s3.gets.lock().unwrap().clone();
+        let puts = s3.puts.lock().unwrap().clone();
+        {
+            let engine = TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+                config.clone(),
+                restored,
+                SourceLayout::<u64>::new(),
+            )
+            .await
+            .unwrap();
+            let table = TestS3WorkTable::load(engine).await.unwrap();
+            assert_eq!(table.select(0).unwrap().value, 7);
+            assert_eq!(*s3.gets.lock().unwrap(), gets, "adoption/load refetched the snapshot");
+            assert_eq!(*s3.puts.lock().unwrap(), puts, "adoption/load published a write");
+            let mut row = table.select(0).unwrap();
+            row.value = 91;
+            row.payload = "mutation after adoption".to_string();
+            table.replace(row).await.unwrap();
+            table.wait_for_ops().await.unwrap();
+            assert!(
+                s3.puts.lock().unwrap()[puts.len()..]
+                    .iter()
+                    .any(|(key, _)| key.ends_with("/manifest.v1"))
+            );
+        }
+
+        // Remove all local files: readback must come from the newly committed
+        // remote generation, through the same strict restore and typed caller.
+        remove_dir_if_exists(config.disk.table_path().to_string()).await;
+        let restored = LegacySnapshotStore::restore_required(snapshot_config).await.unwrap();
+        let gets = s3.gets.lock().unwrap().clone();
+        {
+            let engine = TestS3S3SyncPersistenceEngine::from_restored_snapshot(
+                config.clone(),
+                restored,
+                SourceLayout::<u64>::new(),
+            )
+            .await
+            .unwrap();
+            let table = TestS3WorkTable::load(engine).await.unwrap();
+            assert_eq!(table.select_all().execute().unwrap().len(), 1);
+            let row = table.select(0).unwrap();
+            assert_eq!(row.value, 91);
+            assert_eq!(row.payload, "mutation after adoption");
+            assert_eq!(*s3.gets.lock().unwrap(), gets, "readback adoption refetched");
+        }
+        remove_dir_if_exists(path.to_string()).await;
+        server.abort();
+    });
 }
 
 #[test]

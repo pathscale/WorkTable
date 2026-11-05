@@ -130,7 +130,7 @@ uuid = { version = "^1", default-features = false, features = ["v4", "v7"] }
 # These pre-release workspace crates move as one train. The explicit caret
 # keeps the dependency policy consistent while the local path selects this
 # checkout during validation.
-worktable_codegen = { path = "codegen", version = "^1.13.0" }
+worktable_codegen = { path = "codegen", version = "^2.0.0" }
 # Re-exported below. Each generated table carries its declaration as a const
 # whose documentation says to read it with `worktable_dsl::Schema::parse`; that
 # instruction is only true if a plain `worktable` dependency can reach the
