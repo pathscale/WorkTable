@@ -662,6 +662,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             });
         }
         let length = length as u32;
+        // Keep compatibility with toolchains predating the try_update rename.
+        #[allow(deprecated)]
         let offset = self
             .free_offset
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
@@ -962,6 +964,8 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
             });
         }
         let length = length as u32;
+        // Keep compatibility with toolchains predating the try_update rename.
+        #[allow(deprecated)]
         let offset = self
             .free_offset
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |offset| {
