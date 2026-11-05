@@ -11,3 +11,4 @@
 - [Paper two plan](paper-2-plan.md): thesis, evidence requirements, and technical gaps; refresh time-sensitive status before relying on it.
 - [Security review follow-up](plans/security-review-follow-up.md): recheck historical static-review topics against current source; no finding is assumed confirmed.
 - [Queue dispositions](plans/security-review-follow-up.md#queue-dispositions-2026-11-05): four narrow source fixes landed; unresolved overlap, S3 error-redaction, mutation-safety, and codegen type-identity work remains explicitly tracked.
+- [Historical root release requirements](plans/historical-root-requirements.md): reconcile reclamation/unload/accounting, vacuum, backend migration, malformed-input diagnostics and application acceptance against current source; historical notes do not establish defects or completion.
