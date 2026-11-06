@@ -4,9 +4,10 @@
 //! library and integration suites pass against it, and a persisted table
 //! survives open, write, close and reload. Performance belongs to the backend.
 //! This file is the half of that sentence a test can hold. It runs one body
-//! against `nagoya(locality)`, `nagoya(spread)`, `nagoya(throughput)` and
-//! `tokio`, the same way `base_backend_suite!` and `vacuum_backend_suite!` run
-//! one body across the index backends.
+//! across three Nagoya flavors when `runtime-backends` is enabled, and Tokio
+//! when both `runtime-backends` and `tokio-runtime` are enabled, the same way
+//! `base_backend_suite!` and `vacuum_backend_suite!` run one body across the
+//! index backends.
 //!
 //! The body covers four things, and each one is here because leaving it out
 //! would let a broken backend pass:
@@ -57,12 +58,12 @@
 //!
 //! ## Status
 //!
-//! The four-backend arms are behind the `runtime-backends` feature, off by
-//! default, because the DSL `runtime:` keyword and the `Runtime` trait are
-//! landing separately. The `hardcoded_default` arm has no `runtime:` at all and
-//! runs today against the runtime the engine currently hardcodes. That arm is
-//! the pre-merge baseline: it proves the body is correct before the body is
-//! asked to tell four backends apart.
+//! The three Nagoya arms are behind `runtime-backends`, off by default. The
+//! Tokio arm additionally requires `tokio-runtime`, which enables the public
+//! Tokio adapter used by its generated declaration. The `hardcoded_default`
+//! arm has no `runtime:` at all and runs today against the runtime the engine
+//! currently hardcodes. That arm is the pre-merge baseline: it proves the body
+//! is correct before the body is asked to tell backends apart.
 
 /// One arm of the matrix.
 ///
@@ -489,13 +490,13 @@ macro_rules! runtime_backend_suite {
 // proves the body before the body is asked to discriminate between backends.
 runtime_backend_suite!(hardcoded_default, "hardcoded_default");
 
-// The matrix. Off by default until the DSL `runtime:` keyword and the `Runtime`
-// trait land; `cargo test --features runtime-backends` is what turns it on.
+// The three Nagoya matrix arms are opted into with `runtime-backends`.
+// Tokio also requires `tokio-runtime`, which provides its public adapter.
 #[cfg(feature = "runtime-backends")]
 runtime_backend_suite!(nagoya_locality, "nagoya_locality", runtime: nagoya(locality));
 #[cfg(feature = "runtime-backends")]
 runtime_backend_suite!(nagoya_spread, "nagoya_spread", runtime: nagoya(spread));
 #[cfg(feature = "runtime-backends")]
 runtime_backend_suite!(nagoya_throughput, "nagoya_throughput", runtime: nagoya(throughput));
-#[cfg(feature = "runtime-backends")]
+#[cfg(all(feature = "runtime-backends", feature = "tokio-runtime"))]
 runtime_backend_suite!(tokio_rt, "tokio", runtime: tokio);

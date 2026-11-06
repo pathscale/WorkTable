@@ -34,11 +34,10 @@ tokio-runtime = ["dep:tokio", "std"]
 # rather than something the table needs.
 vanilla-index = ["dep:vanilla_indexset", "std"]
 perf_measurements = ["std", "dep:performance_measurement", "dep:performance_measurement_codegen"]
-# Test-only, and empty on purpose: it compiles the four-backend arms of
+# Test-only, and empty on purpose: it opts into the three Nagoya arms in
 # `tests/worktable/runtime_backends.rs`, which declare `runtime:` on a table.
-# Off by default because the DSL keyword and the `Runtime` trait land
-# separately, and a default-on flag would make this branch red until they do.
-# The arm that runs today declares no runtime and is not behind this flag.
+# The Tokio arm additionally requires `tokio-runtime`; the default arm remains
+# unconditional.
 runtime-backends = []
 s3-support = ["std", "data_bucket/s3-support", "dep:blake3", "worktable_codegen/s3-support"]
 # Moves unique WorkTablesIndex structural CDC work out of the table mutation
