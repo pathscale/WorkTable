@@ -3,7 +3,7 @@ members = ["codegen", "dsl", "examples", "performance_measurement", "performance
 
 [package]
 name = "worktable"
-version = "1.13.2"
+version = "1.13.3"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -84,7 +84,7 @@ futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # It also re-exports `Tuning`, which is why `ps-st3` is no longer a direct
 # dependency here: it was named for that one type.
 nagoya = { version = "^0.1", default-features = false }
-indexset = { package = "WorkTablesIndex", version = "^0.0", default-features = false, features = ["concurrent", "cdc", "multimap"] }
+indexset = { package = "WorkTablesIndex", version = "^0.0, >=0.0.16", default-features = false, features = ["concurrent", "cdc", "multimap"] }
 # Pulls `serde` and `serde_core` into every build, and nothing here uses them.
 # They are not reachable from this line: `indexset` 0.15 declares `ftree` with
 # `features = ["serde"]` unconditionally, so no `default-features = false` here

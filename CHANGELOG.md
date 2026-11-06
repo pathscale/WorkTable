@@ -1,6 +1,15 @@
 Change Log
 ==========
 
+## [1.13.3]
+
+### Fixed
+
+- Require WorkTablesIndex 0.0.16 or newer so final deletion of a replaced
+  singleton cannot leave stale persisted primary-index links. A cold-reopen
+  regression covers replacement, deletion, storage reuse and both primary-key
+  deletion entry points, including the empty-table case.
+
 ## [1.13.0]
 
 ### Fixed
