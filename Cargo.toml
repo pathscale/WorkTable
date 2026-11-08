@@ -60,7 +60,7 @@ versioned-row-publication = ["worktable_codegen/versioned-row-publication"]
 arc-swap = { version = "1", default-features = false, optional = true }
 async-trait = "0.1"
 arctic = { package = "arctic-wt", version = "^0.1", default-features = false, features = ["smr-ps-reclaim"] }
-blake3 = { version = "1", optional = true }
+blake3 = { version = "1", optional = true, features = ["pure"] }
 # `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
 # crate links the standard library through a dependency. That matters for
 # EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
