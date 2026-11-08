@@ -362,52 +362,44 @@ where
             let written_by_this_batch = ids_to_create.iter().copied().collect::<HashSet<_>>();
             self.create_pages_up_to(max, &written_by_this_batch).await?;
         }
-        let created_pages = ids_to_create
-            .into_iter()
-            .map(|id| GeneralPage {
-                header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
-                inner: DataPage {
-                    rows: Vec::new(),
-                    length: 0,
-                    data: [0; INNER_PAGE_SIZE],
-                },
-            })
-            .collect::<Vec<_>>();
-        let parsed_pages =
+        let mut pages =
             parse_data_pages_batch::<PAGE_SIZE, INNER_PAGE_SIZE, PAGE_SIZE>(&mut self.data_file, ids_to_parse).await?;
+        // DataPage stores its payload inline. Push new pages directly and
+        // edit all pages in place to avoid moving them through iterator frames.
+        pages.reserve(ids_to_create.len());
+        for id in ids_to_create {
+            pages.push(GeneralPage {
+                header: GeneralHeader::new(id.into(), PageType::Data, 0.into()),
+                inner: DataPage::<INNER_PAGE_SIZE>::new(),
+            });
+        }
 
-        let updated_pages = vec![parsed_pages, created_pages]
-            .into_iter()
-            .flatten()
-            .map(|mut page| {
-                let id = page.header.page_id;
-                let ops = batch_data
-                    .get(&id)
-                    .expect("should be available as pages parsed from these ids");
-                for (link, bytes) in ops {
-                    if bytes.is_empty() {
-                        page.inner.remove_at(*link);
-                    } else {
-                        page.inner.update_at(*link, bytes)?;
-                    }
+        for page in &mut pages {
+            let ops = batch_data
+                .get(&page.header.page_id)
+                .expect("should be available as pages parsed from these ids");
+            for (link, bytes) in ops {
+                if bytes.is_empty() {
+                    page.inner.remove_at(*link);
+                } else {
+                    page.inner.update_at(*link, bytes)?;
                 }
-                Ok::<_, eyre::Report>(page)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            }
+        }
 
         // The batch writes each touched page's occupied extent into its header
         // (`persist_page_in_place` persists `inner.length` as data_length), so
         // the in-memory mirror for the last page must follow it. Leaving it
         // stale would make the next single-row save on the last page publish
         // an outdated length over the freshly persisted one.
-        if let Some(page) = updated_pages
+        if let Some(page) = pages
             .iter()
             .find(|page| u32::from(page.header.page_id) == self.last_page_id)
         {
             self.current_data_length = page.inner.length;
         }
 
-        persist_pages_batch::<_, PAGE_SIZE>(updated_pages, &mut self.data_file).await?;
+        persist_pages_batch::<_, PAGE_SIZE>(pages, &mut self.data_file).await?;
         // The batch's last page write is a buffered `write_all`; flush so the
         // batch is visible to other handles once it reports done.
         self.data_file.flush().await?;
