@@ -292,7 +292,9 @@ where
     }
 
     async fn reclaim_data_pages(&mut self, page_ids: Vec<data_bucket::page::PageId>) -> eyre::Result<()> {
-        self.data.reclaim_data_pages(page_ids).await
+        // The page batch holds inline page buffers across awaits. Box it so
+        // spawning the persistence worker doesn't move those buffers by value.
+        Box::pin(self.data.reclaim_data_pages(page_ids)).await
     }
 
     async fn initialize_schema_name(&mut self, name: String) -> eyre::Result<()> {
