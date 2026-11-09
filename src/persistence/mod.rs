@@ -209,6 +209,21 @@ pub trait PersistenceEngine<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> impl Future<Output = eyre::Result<()>> + Send;
 
+    /// Applies an analyzer batch on the persistence worker. Engines that defer
+    /// publication here must complete it in `flush_pending`.
+    fn apply_queued_batch(
+        &mut self,
+        batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
+    ) -> impl Future<Output = eyre::Result<()>> + Send {
+        self.apply_batch_operation(batch_op)
+    }
+
+    /// Completes deferred publication before the worker reports idle or
+    /// crosses a maintenance barrier. Errors are terminal for the worker.
+    fn flush_pending(&mut self) -> impl Future<Output = eyre::Result<()>> + Send {
+        async { Ok(()) }
+    }
+
     /// Persists whole data pages made reusable by vacuum.
     ///
     /// The persistence task invokes this only after every row move queued

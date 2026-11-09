@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use worktable::database_s3_persistence;
 use worktable::prelude::*;
@@ -58,6 +59,12 @@ struct FakeS3State {
     puts: Arc<Mutex<Vec<(String, usize)>>>,
     gets: Arc<Mutex<Vec<String>>>,
     reject_manifest_puts: Arc<AtomicBool>,
+    next_manifest_put: Arc<Mutex<Option<ManifestPutGate>>>,
+}
+
+struct ManifestPutGate {
+    entered: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
 }
 
 async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
@@ -127,7 +134,15 @@ async fn fake_s3() -> (String, FakeS3State, JoinHandle<()>) {
 
                 let (status, content_type, body, etag) = if method == "PUT" {
                     let body = request[header_end..header_end + content_length].to_vec();
-                    if key.ends_with("/manifest.v1") && state.reject_manifest_puts.load(Ordering::Acquire) {
+                    let manifest = key.ends_with("/manifest.v1");
+                    if manifest {
+                        let gate = state.next_manifest_put.lock().unwrap().take();
+                        if let Some(ManifestPutGate { entered, release }) = gate {
+                            let _ = entered.send(());
+                            let _ = release.await;
+                        }
+                    }
+                    if manifest && state.reject_manifest_puts.load(Ordering::Acquire) {
                         (
                             "500 Internal Server Error",
                             "text/plain",
@@ -665,6 +680,93 @@ fn generated_table_uses_the_shared_database_domain_and_restores() {
         remove_dir_if_exists(path.to_string()).await;
         server.abort();
     });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn queued_s3_writes_share_a_publication_and_survive_restore() {
+    use std::time::Duration;
+
+    let root = "tests/data/s3/coalesced_drain";
+    remove_dir_if_exists(root.to_string()).await;
+    let (endpoint, s3, server) = fake_s3().await;
+    let config = S3DiskConfig {
+        disk: DiskConfig::new_with_table_name(root, TestS3WorkTable::name_snake_case(), TestS3WorkTable::version()),
+        s3: S3Config {
+            bucket_name: "test".into(),
+            endpoint,
+            access_key: "test".into(),
+            secret_key: "test".into(),
+            region: None,
+            prefix: None,
+        },
+    };
+    let engine = TestS3S3SyncPersistenceEngine::new(config.clone()).await.unwrap();
+    let table = TestS3WorkTable::load(engine).await.unwrap();
+    let (entered, publishing) = oneshot::channel();
+    let (finish, release) = oneshot::channel();
+    *s3.next_manifest_put.lock().unwrap() = Some(ManifestPutGate { entered, release });
+    table
+        .insert(TestS3Row {
+            id: table.get_next_pk().into(),
+            value: 0,
+            payload: String::new(),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), publishing)
+        .await
+        .unwrap()
+        .unwrap();
+
+    {
+        let waiter = table.wait_for_ops();
+        tokio::pin!(waiter);
+        tokio::select! {
+            biased;
+            result = &mut waiter => panic!("drain finished before publication: {result:?}"),
+            () = async {} => {}
+        }
+        // Queue more than the analyzer's 512-operation limit while the first
+        // publication is held. The backlog needs at least two local batches.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            for value in 1..=513 {
+                table
+                    .insert(TestS3Row {
+                        id: table.get_next_pk().into(),
+                        value,
+                        payload: String::new(),
+                    })
+                    .await
+                    .unwrap();
+            }
+        })
+        .await
+        .expect("ordinary writes must complete while the manifest PUT is blocked");
+        finish.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), waiter)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    table.close().await.unwrap();
+    let manifest_puts = s3
+        .puts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(key, _)| key.ends_with("/manifest.v1"))
+        .count();
+    assert_eq!(manifest_puts, 2, "initial publication plus one for the backlog");
+
+    remove_dir_if_exists(config.disk.table_path().to_string()).await;
+    let engine = TestS3S3SyncPersistenceEngine::new(config).await.unwrap();
+    let restored = TestS3WorkTable::load(engine).await.unwrap();
+    for value in 0..=513 {
+        assert_eq!(restored.select(value).unwrap().value, value);
+    }
+    restored.close().await.unwrap();
+    remove_dir_if_exists(root.to_string()).await;
+    server.abort();
 }
 
 #[test]

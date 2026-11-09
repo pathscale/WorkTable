@@ -17,7 +17,7 @@ This is an explicit product boundary, not an implied durability guarantee.
 | Graceful process exit after `close()` | The WorkTable worker completed all writes it reported. | Survival of a subsequent power loss before the operating system commits buffered writes. |
 | Process crash or `SIGKILL` | No row-fidelity guarantee for an interrupted batch. The next load either returns a state whose primary links and rows validate, or returns `PersistenceLoadError`. | Preservation of the latest acknowledged changes. |
 | Power loss | The next load applies the same validation/refusal boundary. | Any acknowledged-change retention window; current batches do not call `fsync`. |
-| S3 synchronization | A successful persistence operation has uploaded every new immutable segment and then committed one checksummed manifest covering the data, primary index, and secondary indexes. Restore validates all referenced segments before atomically installing the local directory. | S3 makes the local disk engine's completed state remotely recoverable; it does not make the local multi-file update power-loss atomic, call `fsync`, or provide multi-writer coordination between processes. |
+| S3 synchronization | A successful drain or close has published pending local changes by uploading new immutable segments before committing a checksummed manifest covering the data and indexes. Restore validates all referenced segments before atomically installing the local directory. | S3 makes the published state remotely recoverable; it does not make the local multi-file update power-loss atomic, call `fsync`, or provide multi-writer coordination between processes. |
 
 Call `close()` during orderly shutdown. If `wait_for_ops()` is used before a
 non-consuming shutdown path, stop application writers first; otherwise a writer can
@@ -64,9 +64,9 @@ uploaded segment by its BLAKE3 content hash. Adjacent changed pages are coalesce
 the 4 MiB throughput target, but that target is not a minimum. One isolated page change
 uploads one 16 KiB segment plus the small manifest. The integration fixture measures
 16,842 uploaded bytes for a one-row update to a 14,385,146-byte table, or 0.117% of the
-local table size. A mutation still scans and hashes the local files after the disk engine
-completes. Dirty-page reporting from DataBucket can remove that local scan in a future
-compatible optimization.
+local table size. The background worker scans and hashes the local files once per
+publication. It publishes after eight completed analyzer batches under load, or sooner
+before going idle, waiting for missing events, or processing page reclamation.
 
 The mutable `manifest.v1` object is the only remote commit point. It is written after
 all referenced immutable segments. A failed manifest PUT leaves the preceding generation
@@ -84,7 +84,7 @@ it. Object reclamation therefore belongs in an explicit offline or lease-aware g
 collector; the alpha engine does not delete remote segments automatically.
 
 When `manifest.v1` is absent, startup lists and restores the former whole-file layout.
-The next successful mutation uploads segments and establishes the first manifest. Once a
+The next successful background publication uploads segments and establishes the first manifest. Once a
 manifest exists, its failure is fatal; WorkTable will not silently continue from stale
 local files and overwrite a newer remote generation.
 

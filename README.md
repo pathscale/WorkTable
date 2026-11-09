@@ -137,12 +137,15 @@ table.close().await?;        // stop intake, drain, and join the engine task
 
 `wait_for_ops()` requires application-level writer quiescence if it is being used as
 a shutdown boundary; it does not prevent another task from queueing later work.
+S3-backed workers publish completed analyzer batches together when possible.
+Both `wait_for_ops()` and `close()` wait for that publication.
 Neither method is an `fsync` or a transaction commit. The exact guarantees and the
 snapshot-restore/replay procedure are documented in
 [`docs/persistence-durability.md`](docs/persistence-durability.md).
 
-An unrecoverable event gap, queue-analysis error, batch-apply error, or engine-task
-failure moves persistence into a terminal failed state. The original error is
+An unrecoverable event gap, queue-analysis error, batch-apply error, snapshot
+publication error, or engine-task failure moves persistence into a terminal
+failed state. The original error is
 returned to waiters, graceful close, and later mutation attempts; later durable
 operations are not applied after that failure. Dropping a busy table remains a
 last-resort diagnostic path, so applications should call `close()` during orderly
