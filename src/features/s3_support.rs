@@ -252,7 +252,18 @@ where
         &mut self,
         batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
     ) -> eyre::Result<()> {
-        self.inner.apply_batch_operation(batch_op).await?;
+        self.apply_queued_batch(batch_op).await?;
+        self.flush_pending().await
+    }
+
+    async fn apply_queued_batch(
+        &mut self,
+        batch_op: BatchOperation<PrimaryKeyGenState, PrimaryKey, SecondaryIndexEvents, AvailableIndexes>,
+    ) -> eyre::Result<()> {
+        self.inner.apply_batch_operation(batch_op).await
+    }
+
+    async fn flush_pending(&mut self) -> eyre::Result<()> {
         self.snapshot.sync().await
     }
 

@@ -54,6 +54,10 @@ const MAX_PAGE_AMOUNT: usize = 16;
 /// past the contiguous prefix is trimmed by validation either way.
 const MAX_BATCH_OPERATIONS: usize = 512;
 
+// Publish at least this often under a sustained backlog. A short burst
+// publishes as soon as the worker runs out of ready work.
+const MAX_BATCHES_PER_FLUSH: usize = 8;
+
 /// Attempts after which batch collection stops grouping by data page and takes
 /// the whole queue.
 ///
@@ -680,6 +684,7 @@ where
 mod lifecycle_tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use hashbrown::HashMap;
+    use tokio::sync::oneshot;
 
     use super::*;
 
@@ -741,7 +746,11 @@ mod lifecycle_tests {
         failure: TestFailure,
     }
 
-    #[derive(Clone)]
+    struct FlushGate {
+        entered: oneshot::Sender<()>,
+        release: oneshot::Receiver<eyre::Result<()>>,
+    }
+
     enum TestFailure {
         None,
         Engine,
@@ -751,6 +760,7 @@ mod lifecycle_tests {
             entered: Arc<std::sync::Barrier>,
             release: Arc<std::sync::Barrier>,
         },
+        GatedFlush(Option<FlushGate>),
     }
 
     impl PersistenceEngine<(), u64, TestEvents, TestIndex> for TestEngine {
@@ -774,7 +784,7 @@ mod lifecycle_tests {
             _batch_op: BatchOperation<(), u64, TestEvents, TestIndex>,
         ) -> eyre::Result<()> {
             match &self.failure {
-                TestFailure::None => {}
+                TestFailure::None | TestFailure::GatedFlush(_) => {}
                 TestFailure::Engine => return Err(eyre::eyre!("injected batch failure")),
                 TestFailure::IndexCorruption => {
                     return Err(
@@ -790,6 +800,17 @@ mod lifecycle_tests {
             }
             self.batches.fetch_add(1, Ordering::Relaxed);
             self.events.lock().push("batch");
+            Ok(())
+        }
+
+        async fn flush_pending(&mut self) -> eyre::Result<()> {
+            if let TestFailure::GatedFlush(gate) = &mut self.failure {
+                self.events.lock().push("flush");
+                if let Some(FlushGate { entered, release }) = gate.take() {
+                    let _ = entered.send(());
+                    release.await??;
+                }
+            }
             Ok(())
         }
 
@@ -1148,6 +1169,46 @@ mod lifecycle_tests {
         );
     }
 
+    fn event_ordered_inserts(count: usize) -> Vec<Operation<(), u64, TestEvents>> {
+        (0..count)
+            .map(|i| insert_operation_with_event(i as u128 + 1, (i % 40) as u32 + 1, i as u64))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn flush_failure_stops_a_backlogged_worker_and_reaches_all_fences() {
+        let batches = Arc::new(AtomicUsize::new(0));
+        let (entered, flushing) = oneshot::channel();
+        let (finish, release) = oneshot::channel();
+        let task = PersistenceTask::run_engine(TestEngine {
+            batches: batches.clone(),
+            events: Arc::new(ParkingMutex::new(Vec::new())),
+            config: TestConfig,
+            failure: TestFailure::GatedFlush(Some(FlushGate { entered, release })),
+        });
+        let count = MAX_BATCH_OPERATIONS * MAX_BATCHES_PER_FLUSH + 1;
+        task.apply_operations(event_ordered_inserts(count)).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), flushing)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(batches.load(Ordering::Relaxed), MAX_BATCHES_PER_FLUSH);
+
+        finish.send(Err(eyre::eyre!("injected manifest failure"))).unwrap();
+        let wait_error = tokio::time::timeout(Duration::from_secs(10), task.wait_for_ops())
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(wait_error.to_string().contains("injected manifest failure"));
+        let monitor_error = task.wait_for_failure().await.unwrap_err();
+        let intake_error = task.apply_operation(insert_operation(count as u128 + 1)).unwrap_err();
+        let close_error = task.close().await.unwrap_err();
+        assert!(Arc::ptr_eq(&wait_error, &monitor_error));
+        assert!(Arc::ptr_eq(&wait_error, &intake_error));
+        assert!(Arc::ptr_eq(&wait_error, &close_error));
+        assert_eq!(batches.load(Ordering::Relaxed), MAX_BATCHES_PER_FLUSH);
+    }
+
     #[tokio::test]
     async fn batched_intake_refuses_operations_after_failure() {
         let task = PersistenceTask::run_engine(TestEngine {
@@ -1480,15 +1541,15 @@ mod lifecycle_tests {
             batches: Arc::new(AtomicUsize::new(0)),
             events: events.clone(),
             config: TestConfig,
-            failure: TestFailure::None,
+            failure: TestFailure::GatedFlush(None),
         });
 
         task.apply_operation(insert_operation(1)).unwrap();
         task.queue.reclaim_pages(vec![1.into()]).unwrap();
         task.apply_operation(insert_operation(2)).unwrap();
-        task.wait_for_ops().await.unwrap();
+        task.close().await.unwrap();
 
-        assert_eq!(&*events.lock(), &["batch", "reclaim", "batch"]);
+        assert_eq!(&*events.lock(), &["batch", "flush", "reclaim", "batch", "flush"]);
     }
 
     #[tokio::test]
@@ -2117,6 +2178,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
 
         let worker = async move {
             let mut pending_reclaim: Option<Vec<PageId>> = None;
+            let mut pending_batches = 0;
             loop {
                 let message = if pending_reclaim.is_none() {
                     engine_queue.immediate_pop()
@@ -2126,6 +2188,10 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 let message = if message.is_some() {
                     message
                 } else if analyzer.len() == 0 && pending_reclaim.is_none() {
+                    if pending_batches != 0 {
+                        engine.flush_pending().await?;
+                        pending_batches = 0;
+                    }
                     task_analyzer_in_progress.store(false, Ordering::Release);
                     engine_lifecycle.progress_notify.notify_waiters();
                     // The gap between the poll above and the state read below
@@ -2151,7 +2217,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                             }
                             None => {
                                 engine_lifecycle.finish_close();
-                                return;
+                                return Ok(());
                             }
                         }
                     } else {
@@ -2167,25 +2233,22 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 if let Some(message) = message {
                     match message {
                         PersistenceMessage::Operation(op) => {
-                            if let Err(err) = analyzer.push(op) {
-                                engine_lifecycle.fail(err);
-                                return;
-                            }
+                            analyzer.push(op)?;
                         }
                         PersistenceMessage::ReclaimPages(page_ids) => pending_reclaim = Some(page_ids),
                     }
                 }
 
-                // Pull operations up to, but never past, a reclamation
-                // barrier. This gives the analyzer every CDC event required
-                // for a batch while preserving FIFO ordering for maintenance.
-                while pending_reclaim.is_none() {
+                // Take a finite snapshot of the incoming queue, stopping at
+                // reclamation. Push-many accounts for the whole group in one
+                // increment and inserts it under the queue lock.
+                for _ in 0..engine_queue.len() {
+                    if pending_reclaim.is_some() {
+                        break;
+                    }
                     match engine_queue.immediate_pop() {
                         Some(PersistenceMessage::Operation(op)) => {
-                            if let Err(err) = analyzer.push(op) {
-                                engine_lifecycle.fail(err);
-                                return;
-                            }
+                            analyzer.push(op)?;
                         }
                         Some(PersistenceMessage::ReclaimPages(page_ids)) => pending_reclaim = Some(page_ids),
                         None => break,
@@ -2193,17 +2256,18 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 }
 
                 if let Some(op_id) = analyzer.get_first_op_id_available() {
-                    let batch_op = analyzer.collect_batch_from_op_id(op_id).await;
-                    if let Err(e) = batch_op {
-                        engine_lifecycle.fail(e);
-                        return;
-                    } else if let Some(batch_op) = batch_op.unwrap() {
-                        let res = engine.apply_batch_operation(batch_op).await;
-                        if let Err(e) = res {
-                            engine_lifecycle.fail(e);
-                            return;
+                    if let Some(batch_op) = analyzer.collect_batch_from_op_id(op_id).await? {
+                        engine.apply_queued_batch(batch_op).await?;
+                        pending_batches += 1;
+                        if pending_batches == MAX_BATCHES_PER_FLUSH {
+                            engine.flush_pending().await?;
+                            pending_batches = 0;
                         }
                     } else if analyzer.needs_more_operations() {
+                        if pending_batches != 0 {
+                            engine.flush_pending().await?;
+                            pending_batches = 0;
+                        }
                         // Only here is waiting the right thing: collection has
                         // already taken the whole queue and the stream still
                         // has a hole, so the event it needs is not yet queued.
@@ -2226,15 +2290,15 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                     // durable. Fail terminally instead of trusting that state.
                     let buffered_operations = analyzer.len();
                     if buffered_operations != 0 {
-                        engine_lifecycle.fail(eyre::eyre!(
+                        eyre::bail!(
                             "persistence reclamation barrier found {buffered_operations} buffered operations without an operation-id index entry"
-                        ));
-                        return;
+                        );
                     }
-                    if let Err(error) = engine.reclaim_data_pages(page_ids).await {
-                        engine_lifecycle.fail(error);
-                        return;
+                    if pending_batches != 0 {
+                        engine.flush_pending().await?;
+                        pending_batches = 0;
                     }
+                    engine.reclaim_data_pages(page_ids).await?;
                 }
             }
         };
@@ -2252,7 +2316,9 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
         }));
         let task = async move {
             let _stop_pool = stop_pool;
-            worker.await;
+            if let Err(error) = worker.await {
+                completion_guard.lifecycle.fail(error);
+            }
             completion_guard.disarm();
         };
         let engine_task_handle = engine_runtime.spawn(task);
@@ -2292,6 +2358,11 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
     /// is that proof.
     pub async fn wait_for_ops(&self) -> PersistenceResult {
         loop {
+            let notified = self.lifecycle.progress_notify.notified();
+            let mut notified = core::pin::pin!(notified);
+            // A final flush can complete between the idle check and the await.
+            // Register before the check so that completion wakes this waiter.
+            notified.as_mut().enable();
             match self.lifecycle.state() {
                 PersistenceState::Failed(error) => return Err(error),
                 PersistenceState::Closed => return Ok(()),
@@ -2315,10 +2386,7 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes>
                 tracing::info!("Waiting for {} operations", count);
             }
 
-            // A `tokio::select!` racing the notify against a sleep, which is
-            // what a timeout is. The second arm exists so a wake lost to a
-            // race still gets re-checked, not to measure anything.
-            let _ = nagoya::timeout(Duration::from_secs(1), self.lifecycle.progress_notify.notified()).await;
+            let _ = nagoya::timeout(Duration::from_secs(1), notified).await;
         }
     }
 
