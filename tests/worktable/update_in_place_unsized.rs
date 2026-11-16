@@ -17,8 +17,7 @@
 //! inline, so the swap is self-contained; LONG strings are out-of-line — a
 //! relative pointer + length whose characters live in `archived_row`'s buffer.
 //! Swapping only the pointer into the slot leaves it pointing at bytes never
-//! written to the slot. See `codegen/.../queries/update.rs` (`gen_size_check`)
-//! and `docs/pr46-review-findings.md` (F4).
+//! written to the slot. See `codegen/.../queries/update.rs` (`gen_size_check`).
 //!
 //! ## Why run it on every backend
 //! The in-place fast path re-resolves the row's current `Link` and republishes
