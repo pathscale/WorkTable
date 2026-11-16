@@ -25,8 +25,7 @@ in it has landed since beta.6 and has numbers. Contributions:
 4. The 1-32 thread grid across three index backends: the lock-discipline scaling result the
    CIDR paper promised (`docs/beta18-validation.md`).
 5. `partition_by` with the loom model of the slot protocol (`src/partition/loom_tests.rs`),
-   the first model-checked component; HFT review that produced `partition_ref`
-   (`wt-review.md`).
+   the first model-checked component, and the HFT work that produced `partition_ref`.
 
 **B. Persistence paper.** "Index persistence by replaying the tree's own CDC stream, and what
 it costs." Needs the durability work first: structural CDC is ~28% of a 126 ns insert
