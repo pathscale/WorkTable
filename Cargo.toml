@@ -63,7 +63,7 @@ arctic = { package = "arctic-wt", version = "^0.1", default-features = false, fe
 blake3 = { version = "1", optional = true, features = ["pure"] }
 # `default-features = false`, or its `std` turns `ps-reclaim/std` on and this
 # crate links the standard library through a dependency. That matters for
-# EKOPathRS bootstrapping, which is what `no_std` here is for, not for any
+# toolchain bootstrapping, which is what `no_std` here is for, not for any
 # bare-metal target: we ship on Linux, macOS and Windows.
 congee = { package = "congee-wt", version = "^0.4.6", default-features = false }
 convert_case = { version = "0.6", default-features = false, optional = true }
