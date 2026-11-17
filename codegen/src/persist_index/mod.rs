@@ -105,4 +105,53 @@ mod tests {
         assert!(!persisted_fields.contains("columnar"));
         assert!(output.contains("columnar : Default :: default"));
     }
+
+    #[test]
+    fn secondary_index_events_preserve_declaration_order() {
+        let input = quote! {
+            #[derive(Debug, Default)]
+            pub struct TestOrderIndex {
+                zeta_idx: TreeIndex<i64, Link>,
+                alpha_idx: TreeIndex<u64, Link>,
+                middle_idx: TreeIndex<u32, Link>,
+                tail_idx: TreeIndex<i32, Link>,
+            }
+        };
+
+        let output = expand(input).unwrap().to_string();
+        let events_struct = output
+            .split("struct TestOrderSpaceSecondaryIndexEvents")
+            .nth(1)
+            .expect("secondary index events struct")
+            .split('}')
+            .next()
+            .expect("secondary index events fields");
+        let zeta_field = events_struct.find("zeta_idx").expect("zeta_idx field");
+        let alpha_field = events_struct.find("alpha_idx").expect("alpha_idx field");
+        let middle_field = events_struct.find("middle_idx").expect("middle_idx field");
+        let tail_field = events_struct.find("tail_idx").expect("tail_idx field");
+        assert!(zeta_field < alpha_field);
+        assert!(alpha_field < middle_field);
+        assert!(middle_field < tail_field);
+
+        let batch_fn = output
+            .split("fn process_change_event_batch")
+            .nth(1)
+            .expect("process_change_event_batch fn");
+        let zeta_batch = batch_fn
+            .find("events . zeta_idx")
+            .expect("zeta_idx batch call");
+        let alpha_batch = batch_fn
+            .find("events . alpha_idx")
+            .expect("alpha_idx batch call");
+        let middle_batch = batch_fn
+            .find("events . middle_idx")
+            .expect("middle_idx batch call");
+        let tail_batch = batch_fn
+            .find("events . tail_idx")
+            .expect("tail_idx batch call");
+        assert!(zeta_batch < alpha_batch);
+        assert!(alpha_batch < middle_batch);
+        assert!(middle_batch < tail_batch);
+    }
 }

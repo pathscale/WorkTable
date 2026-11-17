@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::__private::Span;
 use quote::{ToTokens, quote};
@@ -16,7 +15,7 @@ pub struct PersistIndexAttributes {
 pub struct Generator {
     pub struct_def: ItemStruct,
     pub name_generator: WorktableNameGenerator,
-    pub field_types: HashMap<Ident, TokenStream>,
+    pub field_types: IndexMap<Ident, TokenStream>,
     pub attributes: PersistIndexAttributes,
     pub skipped_fields: Vec<Ident>,
 }
@@ -183,7 +182,7 @@ impl Generator {
                 .cloned()
                 .collect();
         }
-        let map = fields.into_iter().zip(types).collect::<HashMap<_, _>>();
+        let map = fields.into_iter().zip(types).collect::<IndexMap<_, _>>();
 
         Ok(Self {
             struct_def,
