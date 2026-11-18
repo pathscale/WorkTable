@@ -120,7 +120,7 @@ impl PersistGenerator {
                     #pk_ident,
                     #secondary_events_ident
                 > = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                     primary_key_events: vec![],
                     secondary_keys_events,
                 });
@@ -161,7 +161,7 @@ impl PersistGenerator {
                     #pk_ident,
                     #secondary_events_ident
                 > = Operation::Acknowledge(AcknowledgeOperation {
-                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                     primary_key_events,
                     secondary_keys_events,
                 });
@@ -173,7 +173,7 @@ impl PersistGenerator {
                 #pk_ident,
                 #secondary_events_ident
             > = Operation::Delete(DeleteOperation {
-                id: worktable::prelude::uuid::Uuid::now_v7().into(),
+                id: worktable::uuid_compat::now_v7().into(),
                 secondary_keys_events,
                 primary_key_events,
                 link,

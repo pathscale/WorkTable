@@ -99,7 +99,7 @@ impl InMemoryGenerator {
                     #pk_ident,
                     #secondary_events_ident
                 > = Operation::Delete(DeleteOperation {
-                    id: worktable::prelude::uuid::Uuid::now_v7().into(),
+                    id: worktable::uuid_compat::now_v7().into(),
                     secondary_keys_events,
                     primary_key_events,
                     link,

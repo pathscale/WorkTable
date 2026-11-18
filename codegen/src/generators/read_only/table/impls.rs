@@ -297,7 +297,7 @@ impl ReadOnlyGenerator {
 
                 async fn load_with(engine: E, mode: LoadMode) -> worktable::prelude::eyre::Result<Self> {
                     let table_path = engine.config().table_path().to_owned();
-                    if !std::path::Path::new(&table_path).exists() {
+                    if !worktable::prelude::FsPath::new(&table_path).exists() {
                         return worktable::prelude::Box::pin(Self::new(engine)).await;
                     };
                     let table = load_persisted_state(&table_path, async {

@@ -105,7 +105,7 @@ impl PersistGenerator {
                             #secondary_events_ident
                         > = Operation::Update(UpdateOperation {
                             retired_link: None,
-                            id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                            id: OperationId::Single(worktable::uuid_compat::now_v7()),
                             primary_key_events: vec![],
                             secondary_keys_events,
                             bytes: self.0.data.select_raw(link)?,
@@ -151,7 +151,7 @@ impl PersistGenerator {
                 let mut bytes = worktable::prelude::rkyv::to_bytes::<worktable::prelude::rkyv::rancor::Error>(&row).map_err(|_| WorkTableError::SerializeError)?;
                 let mut archived_row = unsafe { worktable::prelude::rkyv::access_unchecked_mut::<<#row_ident as worktable::prelude::rkyv::Archive>::Archived>(&mut bytes[..]).unseal_unchecked() };
 
-                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::uuid_compat::now_v7());
                 #diff_process_insert
                 #data_write
                 #persist_op
@@ -357,7 +357,7 @@ impl PersistGenerator {
                         merged_events.extend(rollback_events);
                     }
                     let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                        id: OperationId::Single(worktable::uuid_compat::now_v7()),
                         primary_key_events: vec![],
                         secondary_keys_events: merged_events,
                     });
@@ -421,7 +421,7 @@ impl PersistGenerator {
                     #secondary_events_ident
                 > = Operation::Update(UpdateOperation {
                     retired_link: None,
-                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                     primary_key_events: vec![],
                     secondary_keys_events,
                     bytes: self.0.data.select_raw(current_link)?,
@@ -505,7 +505,7 @@ impl PersistGenerator {
                             #secondary_events_ident
                         > = Operation::Update(UpdateOperation {
                             retired_link: None,
-                            id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                            id: OperationId::Single(worktable::uuid_compat::now_v7()),
                             primary_key_events: vec![],
                             secondary_keys_events,
                             bytes: self.0.data.select_raw(current_link)?,
@@ -633,7 +633,7 @@ impl PersistGenerator {
                                 merged_events.extend(rollback_secondary_events);
 
                                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                                     primary_key_events: vec![],
                                     secondary_keys_events: merged_events,
                                 });
@@ -659,7 +659,7 @@ impl PersistGenerator {
                                     #pk_ident,
                                     #secondary_events_ident
                                 > = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                                     primary_key_events: vec![],
                                     secondary_keys_events: merged_events,
                                 });
@@ -680,7 +680,7 @@ impl PersistGenerator {
                                     #pk_ident,
                                     #secondary_events_ident
                                 > = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                                     primary_key_events: vec![],
                                     secondary_keys_events: secondary_events.clone(),
                                 });
@@ -723,7 +723,7 @@ impl PersistGenerator {
                         #pk_ident,
                         #secondary_events_ident
                     > = Operation::Acknowledge(AcknowledgeOperation {
-                        id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                        id: OperationId::Single(worktable::uuid_compat::now_v7()),
                         primary_key_events: vec![],
                         secondary_keys_events: secondary_keys_events_remove,
                     });
@@ -780,7 +780,7 @@ impl PersistGenerator {
         let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let finish_update = if archived_swap_is_safe {
             quote! {
-                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::uuid_compat::now_v7());
                 #diff_process_insert
                 #data_write
                 #persist_op
@@ -892,7 +892,7 @@ impl PersistGenerator {
                                 #secondary_events_ident
                             > = Operation::Update(UpdateOperation {
                                 retired_link: None,
-                                id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                id: OperationId::Single(worktable::uuid_compat::now_v7()),
                                 primary_key_events: vec![],
                                 secondary_keys_events,
                                 bytes: self.0.data.select_raw(link)?,
@@ -1077,7 +1077,7 @@ impl PersistGenerator {
                     guards.insert(pk.clone(), pending_lock.into_guard());
                 }
 
-                let op_id = OperationId::Multi(worktable::prelude::uuid::Uuid::now_v7());
+                let op_id = OperationId::Multi(worktable::uuid_compat::now_v7());
                 for pk in pks.into_iter() {
                     // Re-resolve and re-validate under the held lock. The
                     // query's lock set includes the predicate column, so the
@@ -1192,7 +1192,7 @@ impl PersistGenerator {
         let columnar_dirty = crate::generators::columnar::table_mark_dirty(&self.columns);
         let finish_update = if archived_swap_is_safe {
             quote! {
-                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::uuid_compat::now_v7());
                 #diff_process_insert
                 #data_write
                 #persist_op

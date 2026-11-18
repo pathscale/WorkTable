@@ -573,7 +573,7 @@ impl InMemoryGenerator {
 
                                 // Create AcknowledgeOperation with all events
                                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                                     primary_key_events: vec![],  // Updates don't modify primary key
                                     secondary_keys_events: merged_events,
                                 });
@@ -595,7 +595,7 @@ impl InMemoryGenerator {
                                 merged_events.extend(rollback_secondary_events);
 
                                 let ack_op = Operation::Acknowledge(AcknowledgeOperation {
-                                    id: OperationId::Single(worktable::prelude::uuid::Uuid::now_v7()),
+                                    id: OperationId::Single(worktable::uuid_compat::now_v7()),
                                     primary_key_events: vec![],
                                     secondary_keys_events: merged_events,
                                 });

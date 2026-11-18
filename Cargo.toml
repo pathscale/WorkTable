@@ -3,7 +3,7 @@ members = ["codegen", "dsl", "examples", "performance_measurement", "performance
 
 [package]
 name = "worktable"
-version = "1.13.6"
+version = "1.13.7"
 edition = "2024"
 authors = ["Handy-caT"]
 license = "MIT"
@@ -120,7 +120,7 @@ tracing = { version = "0.1", default-features = false }
 # These pre-release workspace crates move as one train. The explicit caret
 # keeps the dependency policy consistent while the local path selects this
 # checkout during validation.
-worktable_codegen = { path = "codegen", version = "^1.13.6" }
+worktable_codegen = { path = "codegen", version = "^1.13.7" }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
 uuid = { version = "^1", default-features = false, features = ["v4", "v7"] }

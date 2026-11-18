@@ -101,14 +101,14 @@ impl Generator {
                 const REQUIRED_SECONDARY_INDEX_FILES: Option<&'static [&'static str]> =
                     Some(&[#(#required_files),*]);
 
-                async fn verify_adoption(path: &std::path::Path, version: u32) -> worktable::prelude::eyre::Result<()> {
+                async fn verify_adoption(path: &worktable::prelude::FsPath, version: u32) -> worktable::prelude::eyre::Result<()> {
                     // This generated hook is deliberately static and read-only.
                     // It rejects checkpoint leftovers before the writable loader can remove them.
                     for name in Self::REQUIRED_SECONDARY_INDEX_FILES.ok_or_else(|| worktable::prelude::eyre::eyre!("generated secondary indexes do not declare their files"))? {
                         let temporary = path.join(format!("{name}.tmp"));
-                        match std::fs::symlink_metadata(&temporary) {
+                        match worktable::prelude::fs_symlink_metadata(&temporary) {
                             Ok(_) => worktable::prelude::eyre::bail!("secondary index has a stale temporary sibling: {}", temporary.display()),
-                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                            Err(error) if error.kind() == worktable::prelude::FsErrorKind::NotFound => {},
                             Err(error) => return Err(error.into()),
                         }
                     }

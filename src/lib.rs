@@ -122,6 +122,9 @@ pub mod prelude {
     /// this path, so a consumer of `worktable!` gets the same backend the
     /// crate itself uses without naming it.
     pub use crate::fsx;
+    pub use eko::compat::fs::symlink_metadata as fs_symlink_metadata;
+    pub use eko::compat::io::ErrorKind as FsErrorKind;
+    pub use eko::compat::path::Path as FsPath;
     /// The runtime a table names, and the registry of pool flavors it can
     /// pick between. `worktable!` emits these type names, so they have to
     /// resolve in the consumer's crate for the same reason `fsx` does.

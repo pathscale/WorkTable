@@ -133,7 +133,7 @@ impl PersistGenerator {
                 // reverted on restart. In-place queries cannot touch indexed
                 // columns (rejected at parse time), so the event vectors stay
                 // empty.
-                let op_id = OperationId::Single(worktable::prelude::uuid::Uuid::now_v7());
+                let op_id = OperationId::Single(worktable::uuid_compat::now_v7());
                 let secondary_keys_events: #secondary_events_ident = core::default::Default::default();
                 let mut op: Operation<
                     <<#pk_type as TablePrimaryKey>::Generator as PrimaryKeyGeneratorState>::State,
