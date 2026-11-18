@@ -17,6 +17,7 @@ use parking_lot::Mutex as ParkingMutex;
 use nagoya::JoinHandle;
 use worktable_codegen::worktable;
 
+use crate::eyre;
 use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
 use crate::persistence::operation::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, OperationId, OperationType};
 use crate::persistence::{
@@ -142,9 +143,10 @@ impl PersistenceLifecycle {
         let error = match &*state {
             PersistenceState::Failed(error) => error.clone(),
             _ => {
-                let error = Arc::new(match report.downcast::<PersistenceIndexCorruption>() {
-                    Ok(corruption) => PersistenceError::IndexCorruption(corruption),
-                    Err(report) => PersistenceError::Engine(report),
+                let error = Arc::new(if let Some(corruption) = report.downcast_ref::<PersistenceIndexCorruption>() {
+                    PersistenceError::IndexCorruption(corruption.clone())
+                } else {
+                    PersistenceError::Engine(report)
                 });
                 *state = PersistenceState::Failed(error.clone());
                 error
@@ -196,12 +198,15 @@ impl WorkerCompletionGuard {
 impl Drop for WorkerCompletionGuard {
     fn drop(&mut self) {
         if self.armed {
+            #[cfg(feature = "std")]
             let reason = if std::thread::panicking() {
                 "persistence worker panicked"
             } else {
                 "persistence worker was cancelled"
             };
-            self.lifecycle.fail(eyre::eyre!(reason));
+            #[cfg(not(feature = "std"))]
+            let reason = "persistence worker was cancelled";
+            self.lifecycle.fail(eyre::Report::msg(reason));
         }
     }
 }
@@ -1034,7 +1039,7 @@ mod lifecycle_tests {
                 .unwrap();
         }
 
-        let draining = std::time::Instant::now();
+        let draining = eko::time::Instant::now();
         task.close().await.unwrap();
         let elapsed = draining.elapsed();
 
@@ -1324,6 +1329,7 @@ mod lifecycle_tests {
         assert!(Arc::ptr_eq(&wait_error, &close_error));
     }
 
+    #[cfg(feature = "std")]
     #[tokio::test]
     async fn engine_panic_is_terminal_and_reported_to_waiters() {
         let task = PersistenceTask::run_engine(TestEngine {
@@ -1351,6 +1357,7 @@ mod lifecycle_tests {
     /// Hold the worker inside the engine until `Drop` has entered `Closing`,
     /// proving that the drop path is awaiting this still-busy worker when the
     /// injected panic lands.
+    #[cfg(feature = "std")]
     #[test]
     fn busy_drop_contains_a_worker_panic() {
         let entered = Arc::new(std::sync::Barrier::new(2));
@@ -1414,7 +1421,7 @@ mod lifecycle_tests {
             })
         };
 
-        let started = std::time::Instant::now();
+        let started = eko::time::Instant::now();
         let finished = join_with_timeout(handle, Duration::from_millis(50));
         let waited = started.elapsed();
 
@@ -1436,7 +1443,7 @@ mod lifecycle_tests {
         let runtime = nagoya::runtime::Runtime::new(1);
         let handle = runtime.spawn(async {});
 
-        let started = std::time::Instant::now();
+        let started = eko::time::Instant::now();
         assert!(
             join_with_timeout(handle, Duration::from_secs(30)),
             "a completed worker must be reported as joined"
@@ -1580,7 +1587,7 @@ mod lifecycle_tests {
 
         match error.as_ref() {
             PersistenceError::IndexCorruption(corruption) => {
-                assert_eq!(corruption.path(), std::path::Path::new("table/primary.wt.idx"));
+                assert_eq!(corruption.path(), eko::compat::path::Path::new("table/primary.wt.idx"));
                 assert!(corruption.reason().contains("shadow diverged"));
             }
             other => panic!("expected typed index corruption, got {other:?}"),
@@ -1934,7 +1941,7 @@ where
         self.push_at(
             Operation::Update(UpdateOperation {
                 retired_link: Some(old_link),
-                id: OperationId::Single(uuid::Uuid::now_v7()),
+                id: OperationId::Single(crate::persistence::operation::new_operation_uuid()),
                 primary_key_events,
                 secondary_keys_events,
                 bytes,
@@ -1982,36 +1989,48 @@ fn join_with_timeout<T>(handle: JoinHandle<T>, timeout: Duration) -> bool {
     use core::future::Future;
     use core::pin::pin;
     use core::task::{Context, Waker};
-    use std::time::Instant;
+    use eko::time::Instant;
 
-    /// Unparks the dropping thread when the engine task makes progress.
-    struct Unpark(std::thread::Thread);
+    struct ParkState {
+        mutex: eko::thread::Mutex<bool>,
+        condvar: eko::thread::Condvar,
+    }
+
+    struct Unpark(Arc<ParkState>);
 
     impl Wake for Unpark {
         fn wake(self: Arc<Self>) {
-            self.0.unpark();
+            *self.0.mutex.lock() = true;
+            self.0.condvar.notify_one();
         }
 
         fn wake_by_ref(self: &Arc<Self>) {
-            self.0.unpark();
+            *self.0.mutex.lock() = true;
+            self.0.condvar.notify_one();
         }
     }
 
     let deadline = Instant::now() + timeout;
-    let waker = Waker::from(Arc::new(Unpark(std::thread::current())));
+    let state = Arc::new(ParkState {
+        mutex: eko::thread::Mutex::new(false),
+        condvar: eko::thread::Condvar::new(),
+    });
+    let waker = Waker::from(Arc::new(Unpark(Arc::clone(&state))));
     let mut context = Context::from_waker(&waker);
     let mut handle = pin!(handle);
 
     loop {
+        *state.mutex.lock() = false;
         if handle.as_mut().poll(&mut context).is_ready() {
             return true;
         }
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
             return false;
         };
-        // A wake that landed before this park leaves a permit, so this cannot
-        // miss one; a spurious return is absorbed by re-polling.
-        std::thread::park_timeout(remaining);
+        if !*state.mutex.lock() {
+            let sleep_ms = (remaining.as_millis() as u64).clamp(1, 5);
+            eko::sleep_ms(sleep_ms);
+        }
     }
 }
 
@@ -2081,10 +2100,8 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys, AvailableIndexes> Drop
             // rethrows a worker panic, which must not escape a destructor (and
             // would abort the process if this drop is already unwinding).
             // `WorkerCompletionGuard` records that panic in the lifecycle.
-            let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                join_with_timeout(handle, BUSY_DROP_JOIN_TIMEOUT)
-            }));
-            if matches!(joined, Ok(false)) {
+            let joined = join_with_timeout(handle, BUSY_DROP_JOIN_TIMEOUT);
+            if !joined {
                 tracing::error!(
                     "PersistenceTask dropped with work in flight and the engine did not finish within {:?}; it keeps draining detached and then stops, but its errors can no longer be observed. Call close() (or wait_for_ops() before dropping) to guarantee a clean shutdown.",
                     BUSY_DROP_JOIN_TIMEOUT

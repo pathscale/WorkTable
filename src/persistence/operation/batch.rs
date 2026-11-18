@@ -1,6 +1,9 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use alloc::{string::ToString, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::marker::PhantomData;
@@ -12,6 +15,7 @@ use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use worktable_codegen::{MemStat, worktable};
 
+use crate::eyre;
 use crate::persistence::OperationType;
 use crate::persistence::event_ledger::{self, EventLedger, EventStream, Stages};
 use crate::persistence::space::{BatchChangeEvent, BatchData};
@@ -389,7 +393,7 @@ where
             // 0, so there is no id below it to name.
             Some(ledger) => ledger.gap_report(stream, last_applied.map_or(0, |id| id.inner()), next_available.inner()),
             None => {
-                " This batch was built without event bookkeeping attached, so the gap cannot be attributed.".to_owned()
+                String::from(" This batch was built without event bookkeeping attached, so the gap cannot be attributed.")
             }
         }
     }
@@ -646,7 +650,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{BatchInnerRow, BatchInnerWorkTable, BatchOperation, latest_data_writes};
-    use crate::persistence::OperationType;
+    use crate::eyre;
+use crate::persistence::OperationType;
     use crate::persistence::operation::{InsertOperation, Operation, OperationId, UpdateOperation};
     use crate::persistence::task::LastEventIds;
     use crate::prelude::{IndexChangeEvent, IndexChangeEventId, TableSecondaryIndexEventsOps};

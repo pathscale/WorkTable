@@ -1,14 +1,17 @@
 //! Database-wide S3 persistence through DataBucket generations.
 
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    format,
+    string::String,
+    vec::Vec,
+};
 use core::fmt::{Debug, Formatter};
 use core::hash::Hash;
 use core::marker::PhantomData;
-use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use eko::compat::path::{Path, PathBuf};
 
+use crate::eyre;
 use data_bucket::storage::{
     CatalogMutation, CatalogName, CatalogRecord, PageAddress, PageKind, SystemIndexRecord, TableId,
 };
@@ -134,7 +137,7 @@ where
         let table_path = Path::new(config.disk.table_path());
         let stage = staging_path(table_path, "domain-stage")?;
         remove_path_if_exists(&stage)?;
-        std::fs::create_dir_all(&stage)?;
+        eko::compat::fs::create_dir_all(&stage)?;
 
         let restore = (|| {
             let mut lengths = BTreeMap::<PathBuf, u64>::new();
@@ -181,12 +184,12 @@ where
                 }
                 .ok_or_else(|| eyre::eyre!("remote page offset overflow"))?;
                 let path = stage.join(relative);
-                let mut file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .write(true)
-                    .open(&path)?;
-                file.seek(SeekFrom::Start(offset))?;
+                let mut file = if path.exists() {
+                    eko::file::File::open_rw(&path)?
+                } else {
+                    eko::file::File::create_rw(&path)?
+                };
+                file.seek(offset)?;
                 file.write_all(&image)?;
                 lengths
                     .entry(path)
@@ -194,14 +197,26 @@ where
                     .or_insert(offset + image.len() as u64);
             }
             for (path, length) in lengths {
-                let file = std::fs::OpenOptions::new().write(true).open(path)?;
-                file.set_len(length)?;
+                let mut file = eko::file::File::open_rw(&path)?;
+                let current_len = file.len()?;
+                if length < current_len {
+                    return Err(eyre::eyre!("remote page length shorter than written extent"));
+                } else if length > current_len {
+                    file.seek(current_len)?;
+                    let zeros = [0_u8; 4096];
+                    let mut rem = (length - current_len) as usize;
+                    while rem > 0 {
+                        let chunk = rem.min(zeros.len());
+                        file.write_all(&zeros[..chunk])?;
+                        rem -= chunk;
+                    }
+                }
                 file.sync_all()?;
             }
             Ok::<(), eyre::Report>(())
         })();
         if let Err(error) = restore {
-            let _ = std::fs::remove_dir_all(&stage);
+            let _ = eko::compat::fs::remove_dir_all(&stage);
             return Err(error);
         }
         publish_stage(table_path, &stage)
@@ -484,7 +499,7 @@ fn scan_table(
             indexes,
         });
     }
-    let mut paths = std::fs::read_dir(root)?
+    let mut paths = eko::compat::fs::read_dir(root)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
@@ -498,20 +513,27 @@ fn scan_table(
             continue;
         }
         if is_data {
-            let length = std::fs::metadata(&path)?.len();
+            let length = eko::compat::fs::metadata(&path)?.len();
             if length % u64::from(stride) != 0 {
                 return Err(eyre::eyre!("data file length is not a whole number of pages"));
             }
-            let mut file = std::fs::File::open(&path)?;
+            let mut file = eko::file::File::open(&path)?;
             let page_count = length / u64::from(stride);
             for page_id in dirty_data_pages {
                 let page_number = usize::from(*page_id) as u64;
                 if page_number >= page_count {
                     continue;
                 }
-                file.seek(SeekFrom::Start(page_number * u64::from(stride)))?;
+                file.seek(page_number * u64::from(stride))?;
                 let mut image = vec![0; stride as usize];
-                file.read_exact(&mut image)?;
+                let mut filled = 0;
+                while filled < image.len() {
+                    let n = file.read(&mut image[filled..])?;
+                    if n == 0 {
+                        return Err(eyre::eyre!("unexpected EOF reading data page"));
+                    }
+                    filled += n;
+                }
                 let header = data_bucket::inspect_page_image_header(&image)?;
                 if header.page_id != *page_id {
                     return Err(eyre::eyre!("data page identity does not match its file position"));
@@ -560,7 +582,7 @@ fn scan_table(
             } else {
                 PageKind::SecondaryIndex
             };
-            let mut file = std::fs::File::open(&path)?;
+            let mut file = eko::file::File::open(&path)?;
             let mut page_id = 0_u32;
             loop {
                 let mut image = vec![0; INDEX_CHUNK_BYTES];
@@ -617,20 +639,24 @@ fn insert_scanned_page(
 }
 
 fn staging_path(table_path: &Path, label: &str) -> eyre::Result<PathBuf> {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
     let parent = table_path.parent().unwrap_or_else(|| Path::new("."));
     let name = table_path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| eyre::eyre!("invalid table path"))?;
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    Ok(parent.join(format!(".{name}.{label}-{}-{nonce}", std::process::id())))
+    let secs = u128::try_from(eko::time::epoch_secs().max(0)).unwrap_or(0);
+    let seq = u128::from(STAGING_SEQ.fetch_add(1, Ordering::Relaxed));
+    let nonce = secs * 1_000_000_000 + seq;
+    Ok(parent.join(format!(".{name}.{label}-{}-{nonce}", eko::proc::id())))
 }
 
 fn remove_path_if_exists(path: &Path) -> eyre::Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path)?,
-        Ok(_) => std::fs::remove_file(path)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+    match eko::compat::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => eko::compat::fs::remove_dir_all(path)?,
+        Ok(_) => eko::compat::fs::remove_file(path)?,
+        Err(error) if error.kind() == eko::compat::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
     Ok(())
@@ -638,19 +664,19 @@ fn remove_path_if_exists(path: &Path) -> eyre::Result<()> {
 
 fn publish_stage(table_path: &Path, stage: &Path) -> eyre::Result<()> {
     if let Some(parent) = table_path.parent() {
-        std::fs::create_dir_all(parent)?;
+        eko::compat::fs::create_dir_all(parent)?;
     }
     if !table_path.exists() {
-        std::fs::rename(stage, table_path)?;
+        eko::compat::fs::rename(stage, table_path)?;
         return Ok(());
     }
     let backup = staging_path(table_path, "domain-backup")?;
-    std::fs::rename(table_path, &backup)?;
-    if let Err(error) = std::fs::rename(stage, table_path) {
-        std::fs::rename(&backup, table_path)?;
+    eko::compat::fs::rename(table_path, &backup)?;
+    if let Err(error) = eko::compat::fs::rename(stage, table_path) {
+        eko::compat::fs::rename(&backup, table_path)?;
         return Err(error.into());
     }
-    std::fs::remove_dir_all(backup)?;
+    eko::compat::fs::remove_dir_all(backup)?;
     Ok(())
 }
 
@@ -676,7 +702,7 @@ mod tests {
         let name = CatalogName::new("orders_by_date").unwrap();
         assert_eq!(
             safe_index_file_name(&name).unwrap(),
-            std::path::PathBuf::from(format!("orders_by_date{}", crate::prelude::WT_INDEX_EXTENSION))
+            eko::compat::path::PathBuf::from(format!("orders_by_date{}", crate::prelude::WT_INDEX_EXTENSION))
         );
     }
 }

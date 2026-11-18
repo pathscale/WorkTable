@@ -72,7 +72,6 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
 
     /// Row-directory changes in the same order as this operation's index
     /// changes. Empty bytes are an exact-link tombstone, never a row archive.
-    #[cfg(feature = "std")]
     pub(crate) fn row_mutations(&self) -> Vec<(Link, Vec<u8>)> {
         self.row_mutation_refs()
             .map(|(link, bytes)| (link, bytes.to_vec()))
@@ -81,7 +80,6 @@ impl<PrimaryKeyGenState, PrimaryKey, SecondaryKeys> Operation<PrimaryKeyGenState
 
     /// Borrow this operation's row images so a batch can discard superseded
     /// mutations before allocating their owned copies.
-    #[cfg(feature = "std")]
     pub(crate) fn row_mutation_refs(&self) -> impl Iterator<Item = (Link, &[u8])> {
         let retired_link = match self {
             Self::Insert(insert) => insert.retired_link,

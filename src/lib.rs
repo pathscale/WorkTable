@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../docs/crate.md")]
 
 #[macro_use]
@@ -8,26 +8,60 @@ extern crate alloc;
 /// this crate, where `worktable!` is invoked for the persistence queue.
 extern crate self as worktable;
 
+pub use data_bucket::eyre;
+
+pub(crate) fn snake_to_pascal(input: &str) -> alloc::string::String {
+    let mut out = alloc::string::String::with_capacity(input.len());
+    for part in input.split('_') {
+        let mut chars = part.chars();
+        if let Some(first) = chars.next() {
+            for uc in first.to_uppercase() {
+                out.push(uc);
+            }
+            for ch in chars {
+                for lc in ch.to_lowercase() {
+                    out.push(lc);
+                }
+            }
+        }
+    }
+    out
+}
+
+#[doc(hidden)]
+pub mod uuid_compat {
+    pub use ::uuid::*;
+
+    #[cfg(not(target_os = "none"))]
+    pub use ::uuid::Uuid;
+
+    #[cfg(target_os = "none")]
+    pub type Uuid = ::uuid::Uuid;
+
+    #[cfg(not(target_os = "none"))]
+    pub fn now_v7() -> ::uuid::Uuid {
+        crate::persistence::operation::new_operation_uuid()
+    }
+
+    #[cfg(target_os = "none")]
+    pub fn now_v7() -> ::uuid::Uuid {
+        crate::persistence::operation::new_operation_uuid()
+    }
+}
+
 /// A fixed-capacity table whose rows are claimed without blocking.
 pub mod atomic_key_table;
 mod columnar;
-#[cfg(feature = "std")]
 pub mod fsx;
 pub mod in_memory;
 mod index;
 pub mod linear_table;
 pub mod lock;
 mod mem_stat;
-#[cfg(feature = "std")]
 pub mod migration;
 pub mod partition;
 pub mod persistence;
 /// Which async runtime a table's work runs on.
-///
-/// The module is available to a `no_std` build even though the backends inside
-/// it are not. The trait and the profile machinery are types a table names, and
-/// a table names them whether or not it ever spawns; only the impls need
-/// threads, and those are gated within.
 pub mod runtime;
 mod storage_catalog;
 
@@ -49,7 +83,6 @@ pub use columnar::{
 };
 pub use index::*;
 pub use linear_table::{InsertError as LinearInsertError, LinearTable, VecTable};
-#[cfg(feature = "std")]
 pub use persistence::{
     LoadMode, PersistedWorkTable, PersistenceConfig, PersistenceLoadError, UnloadFailure, UnloadReport,
 };
@@ -67,7 +100,7 @@ pub use worktable_codegen::worktable;
 pub use worktable_codegen::worktable_version;
 /// The schema language, so the declaration each table embeds can be read
 /// without taking a second dependency and matching its version by hand.
-#[cfg(feature = "std")]
+#[cfg(not(target_os = "none"))]
 pub use worktable_dsl;
 
 #[cfg(feature = "s3-support")]
@@ -75,54 +108,30 @@ pub use worktable_codegen::database_s3_persistence;
 #[cfg(feature = "s3-support")]
 pub use worktable_codegen::s3_sync_persistence;
 
-/// Emits its body only when `worktable` itself was built with `std`.
+/// Emits its body unconditionally.
 ///
-/// `worktable!` expands in the consumer's crate, so a `#[cfg(feature = "std")]`
-/// it emits would test the *consumer's* feature of that name, which is a
-/// different flag or no flag at all. This macro is expanded here, against this
-/// crate's features, and so says what the macro actually needs to ask: does the
-/// `worktable` I am generating against have a disk and threads?
-///
-/// It exists for the generated `vacuum` method and the `ArtPersistenceKey`
-/// impl. Both name types that are std-only for real reasons rather than by
-/// grouping: `EmptyDataVacuum` is not empty despite the name and holds the
-/// data pages, lock manager and persistence sink.
-#[cfg(feature = "std")]
+/// Retained as a compatibility macro for generated code.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __wt_if_std {
     ($($item:tt)*) => { $($item)* };
 }
 
-#[cfg(not(feature = "std"))]
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __wt_if_std {
-    ($($item:tt)*) => {};
-}
-
 pub mod prelude {
     /// The filesystem this crate goes through. Generated code opens files by
     /// this path, so a consumer of `worktable!` gets the same backend the
     /// crate itself uses without naming it.
-    #[cfg(feature = "std")]
     pub use crate::fsx;
     /// The runtime a table names, and the registry of pool flavors it can
     /// pick between. `worktable!` emits these type names, so they have to
     /// resolve in the consumer's crate for the same reason `fsx` does.
     pub use crate::runtime::{
-        Elapsed, FLAVOR_COUNT, Flavor, FlavorMarker, Profile, Runtime, RuntimeJoinHandle, RuntimeNotified,
-        RuntimeNotify, RuntimeRwLock, RuntimeSemaphore, RuntimeSemaphorePermit, RuntimeUnpinned, TableRuntime, Tuning,
+        Elapsed, FLAVOR_COUNT, Flavor, FlavorMarker, Locality, LowLatency, NagoyaRt, Profile, Runtime,
+        RuntimeJoinHandle, RuntimeNotified, RuntimeNotify, RuntimeRwLock, RuntimeSemaphore, RuntimeSemaphorePermit,
+        RuntimeUnpinned, SharedSlot, Spread, TableRuntime, Throughput, Tuning, WideInjector, describe_tuning,
+        engine_executor, engine_flavor, env_override, executor_for_flavor, parse_selection,
     };
-    /// The house backend and its pool flavors, plus the process-level
-    /// selection a benchmark reads. Gated with the backends themselves: a
-    /// `no_std` build has the trait but nothing that spawns.
-    #[cfg(feature = "std")]
-    pub use crate::runtime::{
-        Locality, LowLatency, NagoyaRt, SharedSlot, Spread, Throughput, WideInjector, describe_tuning, engine_executor,
-        engine_flavor, env_override, executor_for_flavor, parse_selection,
-    };
-    #[cfg(all(feature = "std", feature = "tokio-runtime"))]
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::runtime::{TokioJoinHandle, TokioRt};
     /// The three async primitives generated code awaits on. Re-exported for
     /// the same reason `fsx` is: `worktable!` expands inside the consumer's
@@ -193,19 +202,17 @@ pub mod prelude {
     pub use crate::lock::{LockAcquirer, LockGuard, PendingLock};
     pub use crate::mem_stat::MemStat;
     pub use crate::partition::{DenseError, DenseRows, MAX_PARTITIONS, PartRef, PartitionError, PartitionSet};
-    pub use crate::persistence::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, OperationId};
-    #[cfg(feature = "std")]
     pub use crate::persistence::{
-        ArtPersistenceKey, DiskConfig, DiskPersistenceEngine, IndexTableOfContents, LoadMode, PersistedWorkTable,
+        AcknowledgeOperation, ArtPersistenceKey, DeleteOperation, DiskConfig, DiskPersistenceEngine,
+        IndexTableOfContents, InsertOperation, LoadMode, Operation, OperationId, OperationType, PersistedWorkTable,
         PersistenceConfig, PersistenceEngine, PersistenceError, PersistenceIndexCorruption, PersistenceLoadError,
         PersistenceMonitor, PersistenceResult, PersistenceState, PersistenceTask, ReadOnlyPersistenceEngine,
         SpaceArcticIndex, SpaceArcticMultiIndex, SpaceArcticStringIndex, SpaceCongeeIndex, SpaceData, SpaceDataOps,
         SpaceIndex, SpaceIndexOps, SpaceIndexUnsized, SpaceLogicalIndex, SpaceLogicalIndexUnsized,
         SpaceLogicalMultiIndex, SpaceLogicalMultiIndexUnsized, SpaceSecondaryIndexOps, TocEntryOversizedError,
-        UnloadFailure, UnloadReport, load_persisted_state, map_index_pages_to_toc_and_general,
-        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes,
+        UnloadFailure, UnloadReport, UpdateOperation, load_persisted_state, map_index_pages_to_toc_and_general,
+        map_unsized_index_pages_to_toc_and_general, reconstruct_multi_index_nodes, validate_events,
     };
-    pub use crate::persistence::{OperationType, UpdateOperation, validate_events};
     pub use crate::primary_key::{
         PrimaryKeyGenerator, PrimaryKeyGeneratorRange, PrimaryKeyGeneratorState, TablePrimaryKey,
     };
@@ -234,7 +241,6 @@ pub mod prelude {
     /// The upstream IndexSet backend, when the `vanilla-index` feature selects it.
     #[cfg(feature = "vanilla-index")]
     pub use crate::{UpstreamIndexMap, UpstreamIndexPair};
-    #[cfg(feature = "std")]
     pub use crate::{
         vacuum::EmptyDataVacuum, vacuum::VacuumPacing, vacuum::VacuumPersistence, vacuum::WorkTableVacuum,
     };
@@ -243,8 +249,7 @@ pub mod prelude {
     /// there. Emitting a bare `eyre::` made that crate part of the macro's
     /// contract, and a consumer who never mentions eyre had to depend on it
     /// anyway to compile a table declaration.
-    #[cfg(feature = "std")]
-    pub use ::eyre;
+    pub use crate::eyre;
     pub use ::uuid;
     pub use data_bucket::{
         DATA_VERSION, DataPage, GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, INNER_PAGE_SIZE, IndexPage, Interval,

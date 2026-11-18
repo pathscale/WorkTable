@@ -24,8 +24,8 @@
 pub type File = nagoya::io::HostFile;
 
 /// Open a snapshot for reading without requesting write permission.
-pub async fn open_read_only(path: impl AsRef<std::path::Path>) -> Result<File, nagoya::io::Error> {
-    std::fs::File::open(path).map(File::new).map_err(Into::into)
+pub async fn open_read_only(path: impl nagoya::io::AsPath) -> Result<File, nagoya::io::Error> {
+    nagoya::io::open(path).await
 }
 
 pub use nagoya::io::{

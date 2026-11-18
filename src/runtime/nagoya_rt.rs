@@ -6,7 +6,7 @@ use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
 use core::time::Duration;
-use std::sync::OnceLock;
+use eko::thread::OnceLock;
 
 use nagoya::Executor;
 
@@ -109,11 +109,11 @@ fn workers() -> usize {
     // that drain their queues substantially slower than the other twelve.
     static WORKERS: OnceLock<usize> = OnceLock::new();
     *WORKERS.get_or_init(|| {
-        std::env::var("WT_RUNTIME_WORKERS")
+        eko::compat::env::var("WT_RUNTIME_WORKERS")
             .ok()
             .and_then(|raw| raw.trim().parse::<usize>().ok())
             .filter(|count| *count > 0)
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(2, core::num::NonZeroUsize::get))
+            .unwrap_or_else(|| eko::proc::available_parallelism().max(2))
             // Nagoya's worker membership is represented by one `usize` bitset.
             // A larger count shifts past that bitset while the pool starts.
             .min(usize::BITS as usize)

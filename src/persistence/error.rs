@@ -3,9 +3,12 @@ use alloc::{string::String, string::ToString};
 use core::error::Error;
 use core::fmt::{Display, Formatter};
 use core::future::Future;
-use std::panic::AssertUnwindSafe;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "std")]
+use core::panic::AssertUnwindSafe;
+use eko::compat::path::{Path, PathBuf};
 
+use crate::eyre;
+#[cfg(feature = "std")]
 use futures::FutureExt;
 
 /// A persisted table could not be loaded without risking invalid data.
@@ -61,6 +64,7 @@ impl Error for PersistenceLoadError {}
 /// establish that containment boundary; no value from the failed future is
 /// reused.
 #[doc(hidden)]
+#[cfg(feature = "std")]
 pub async fn load_persisted_state<T, F>(path: impl AsRef<Path>, future: F) -> Result<T, PersistenceLoadError>
 where
     F: Future<Output = eyre::Result<T>>,
@@ -80,6 +84,19 @@ where
     }
 }
 
+#[doc(hidden)]
+#[cfg(not(feature = "std"))]
+pub async fn load_persisted_state<T, F>(path: impl AsRef<Path>, future: F) -> Result<T, PersistenceLoadError>
+where
+    F: Future<Output = eyre::Result<T>>,
+{
+    let path = path.as_ref();
+    match future.await {
+        Ok(value) => Ok(value),
+        Err(error) => Err(PersistenceLoadError::corrupt(path, format!("{error:#}"))),
+    }
+}
+
 /// A persisted index no longer agrees with the logical mutation stream.
 ///
 /// The safe quarantine boundary is the table's entire persistence engine: a
@@ -88,7 +105,7 @@ where
 /// recovered consistently. The in-memory table remains inspectable, while
 /// `wait_for_ops`, `close`, and all later persistence submissions return this
 /// terminal error through [`PersistenceError::IndexCorruption`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PersistenceIndexCorruption {
     path: PathBuf,
     reason: String,
@@ -164,7 +181,10 @@ pub enum PersistenceState {
 #[cfg(test)]
 mod tests {
     use super::{PersistenceLoadError, load_persisted_state};
+    use crate::eyre;
+    use eko::compat::path::Path;
 
+    #[cfg(feature = "std")]
     #[tokio::test]
     async fn persisted_state_panics_are_typed_load_errors() {
         let error = load_persisted_state("table/path", async {
@@ -175,7 +195,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(error.path(), std::path::Path::new("table/path"));
+        assert_eq!(error.path(), Path::new("table/path"));
         assert_eq!(error.reason(), "dependency decoder rejected torn bytes");
     }
 
@@ -187,7 +207,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(error.path(), std::path::Path::new("table/path"));
+        assert_eq!(error.path(), Path::new("table/path"));
         assert_eq!(error.reason(), "invalid persisted page");
     }
 }

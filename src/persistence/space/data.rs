@@ -1,12 +1,12 @@
-use alloc::{string::String, string::ToString, vec::Vec};
+use alloc::{string::String, vec::Vec};
+use eko::compat::path::Path;
 use hashbrown::HashSet;
-use std::path::Path;
 
+use crate::eyre;
 use crate::fsx::File;
 use crate::persistence::SpaceDataOps;
 use crate::persistence::space::{BatchData, open_or_create_file};
 use crate::prelude::WT_DATA_EXTENSION;
-use convert_case::{Case, Casing};
 use data_bucket::{
     DataPage, GeneralHeader, GeneralPage, Link, PageType, Persistable, SizeMeasurable, SpaceInfoPage,
     parse_data_pages_batch, parse_general_header_by_index, persist_page, persist_pages_batch,
@@ -193,7 +193,7 @@ impl<PkGenState, const INNER_PAGE_SIZE: usize, const PAGE_SIZE: u32> SpaceData<P
             return;
         }
 
-        static TRUNCATION_WARNING: std::sync::Once = std::sync::Once::new();
+        static TRUNCATION_WARNING: eko::thread::Once = eko::thread::Once::new();
         TRUNCATION_WARNING.call_once(|| {
             tracing::warn!(
                 budget,
@@ -243,14 +243,13 @@ where
     async fn from_table_files_path<S: AsRef<str> + Send>(table_path: S, version: u32) -> eyre::Result<Self> {
         let path = format!("{}/{}", table_path.as_ref(), WT_DATA_EXTENSION);
         let mut data_file = if !Path::new(&path).exists() {
-            let name = table_path
-                .as_ref()
-                .split("/")
-                .last()
-                .expect("is not in root...")
-                .to_string()
-                .from_case(Case::Snake)
-                .to_case(Case::Pascal);
+            let name = crate::snake_to_pascal(
+                table_path
+                    .as_ref()
+                    .split("/")
+                    .last()
+                    .expect("is not in root..."),
+            );
             let mut data_file = open_or_create_file(path).await?;
             Self::bootstrap(&mut data_file, name, version).await?;
             data_file

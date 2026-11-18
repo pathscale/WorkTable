@@ -1,4 +1,3 @@
-#[cfg(feature = "std")]
 mod batch;
 mod clock;
 #[allow(clippy::module_inception)]
@@ -17,7 +16,6 @@ use uuid::Uuid;
 
 use crate::prelude::From;
 
-#[cfg(feature = "std")]
 pub use batch::{BatchInnerRow, BatchInnerWorkTable, BatchOperation};
 pub use operation::{AcknowledgeOperation, DeleteOperation, InsertOperation, Operation, UpdateOperation};
 pub use util::validate_events;

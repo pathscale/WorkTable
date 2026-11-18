@@ -1,4 +1,4 @@
-use alloc::{string::String, string::ToString, vec::Vec};
+use alloc::{string::String, vec::Vec};
 mod page_aliases;
 mod reconstruct;
 mod table_of_contents;
@@ -9,17 +9,16 @@ use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::sync::atomic::{AtomicU32, Ordering};
+use eko::compat::path::Path;
 use hashbrown::HashMap;
-use std::path::Path;
 
+use crate::eyre;
 use crate::fsx::File;
-use convert_case::{Case, Casing};
 use data_bucket::page::{IndexValue, PageId};
 use data_bucket::{
     GENERAL_HEADER_SIZE, GeneralHeader, GeneralPage, IndexPage, IndexPageUtility, Link, PageType, SizeMeasurable,
     SpaceId, SpaceInfoPage, parse_page, persist_page, persist_pages_batch,
 };
-use eyre::eyre;
 use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
 use indexset::concurrent::multimap::BTreeMultiMap;
@@ -120,17 +119,16 @@ where
 
     pub async fn new<S: AsRef<str>>(index_file_path: S, space_id: SpaceId, version: u32) -> eyre::Result<Self> {
         let mut index_file = if !Path::new(index_file_path.as_ref()).exists() {
-            let name = index_file_path
-                .as_ref()
-                .split("/")
-                .collect::<Vec<_>>()
-                .iter()
-                .rev()
-                .nth(1)
-                .expect("is not in root...")
-                .to_string()
-                .from_case(Case::Snake)
-                .to_case(Case::Pascal);
+            let name = crate::snake_to_pascal(
+                index_file_path
+                    .as_ref()
+                    .split("/")
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .rev()
+                    .nth(1)
+                    .expect("is not in root..."),
+            );
             let mut index_file = open_or_create_file(index_file_path.as_ref()).await?;
             Self::bootstrap(&mut index_file, name, version).await?;
             index_file
@@ -262,7 +260,7 @@ where
         let page_id = self
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
-            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+            .ok_or(eyre::eyre!("Node with {:?} id is not found", node_id))?;
         if let Some(new_node_id) = self
             .insert_on_index_page(page_id, node_id.clone(), index, value)
             .await?
@@ -283,7 +281,7 @@ where
         let page_id = self
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
-            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+            .ok_or(eyre::eyre!("Node with {:?} id is not found", node_id))?;
         if let Some(new_node_id) = self
             .remove_from_index_page(page_id, node_id.clone(), index, value)
             .await?
@@ -324,7 +322,7 @@ where
         let page_id = self
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
-            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+            .ok_or(eyre::eyre!("Node with {:?} id is not found", node_id))?;
         let mut page =
             parse_page::<IndexPage<T>, INNER_PAGE_SIZE, STRIDE>(&mut self.index_file, page_id.into()).await?;
         let splitted_page = page.inner.split(split_index);
@@ -415,11 +413,11 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
-    async fn verify_adoption_file(path: &std::path::Path, _version: u32) -> eyre::Result<()> {
+    async fn verify_adoption_file(path: &Path, _version: u32) -> eyre::Result<()> {
         // Existing page-backed indexes are read without repair during open.
         // Refuse absence rather than allowing their normal bootstrap path.
         eyre::ensure!(
-            std::fs::symlink_metadata(path)?.is_file(),
+            eko::compat::fs::symlink_metadata(path)?.is_file(),
             "index is not a regular file"
         );
         let _file = crate::fsx::open_read_only(path).await?;
@@ -529,7 +527,7 @@ where
                         // what node maximum, which is what distinguishes a
                         // stream applied out of order from two writers sharing
                         // one file.
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "index event {:?} references a missing page {:?} (toc_segments={}, buffered_pages={}, aliases={})",
                             ev.id(),
                             event_page_key,
@@ -570,13 +568,13 @@ where
                             .table_of_contents
                             .try_update_key(&pre_event_page_key, updated_page_key.clone())?
                         {
-                            return Err(eyre!(
+                            return Err(eyre::eyre!(
                                 "index page identity is absent from the table of contents (page={page_index:?}, toc_segments={})",
                                 self.table_of_contents.pages.len()
                             ));
                         }
                         if self.table_of_contents.get(&updated_page_key) != Some(page_index) {
-                            return Err(eyre!(
+                            return Err(eyre::eyre!(
                                 "index page identity update did not become canonical (page={page_index:?})"
                             ));
                         }
@@ -617,7 +615,7 @@ where
                     let Some((page_index, aliased_page_key)) =
                         self.resolve_batch_page(&page_aliases, &event_page_key, None)
                     else {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
                             self.table_of_contents.pages.len(),
                             pages.len(),
@@ -642,7 +640,7 @@ where
                     if page_to_update.inner.node_id.key != canonical_page_key.0
                         || page_to_update.inner.node_id.link != canonical_page_key.1
                     {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "index split found a buffered page with a mismatched identity (page={page_index:?})"
                         ));
                     }
@@ -663,14 +661,14 @@ where
                         .table_of_contents
                         .try_update_key(&pre_split_page_key, left_page_key)?
                     {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "index split identity is absent from the table of contents (page={page_index:?})"
                         ));
                     }
                     let right_page_key = (splitted_page.node_id.key.clone(), splitted_page.node_id.link);
                     self.table_of_contents.try_insert(right_page_key.clone(), new_page_id)?;
                     if self.table_of_contents.get(&right_page_key) != Some(new_page_id) {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "index split identity did not become canonical (page={new_page_id:?})"
                         ));
                     }

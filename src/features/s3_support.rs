@@ -1,4 +1,5 @@
 //! Typed compatibility adapter; DataBucket owns all physical snapshot storage.
+use crate::eyre;
 use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{
@@ -110,12 +111,12 @@ where
             .ok_or_else(|| eyre::eyre!("primary index implementation does not declare its required files"))?;
         let secondary_files = SpaceSecondaryIndexes::REQUIRED_SECONDARY_INDEX_FILES
             .ok_or_else(|| eyre::eyre!("secondary index implementation does not declare its required files"))?;
-        let table_path = std::path::Path::new(config.disk.table_path());
+        let table_path = eko::compat::path::Path::new(config.disk.table_path());
         for &name in primary_files.iter().chain(secondary_files) {
             let path = table_path.join(name);
             eyre::ensure!(
                 restored.restored_files().contains(&path)
-                    && std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file()),
+                    && eko::compat::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file()),
                 "required index file {} is missing from restored snapshot",
                 path.display()
             );

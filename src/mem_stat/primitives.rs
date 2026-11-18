@@ -42,7 +42,8 @@ impl_memstat_zero!(
     core::num::NonZeroI64,
     core::num::NonZeroI128,
     core::num::NonZeroIsize,
-    core::time::Duration
+    core::time::Duration,
+    eko::time::Instant
 );
 
 #[cfg(feature = "std")]

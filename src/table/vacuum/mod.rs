@@ -7,6 +7,7 @@ use data_bucket::page::PageId;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 
+use crate::eyre;
 use crate::persistence::PersistenceResult;
 use crate::vacuum::fragmentation_info::FragmentationInfo;
 

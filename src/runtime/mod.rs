@@ -6,9 +6,7 @@
 //! Persistence I/O has its own worker pool; schema selection does not replace it.
 //!
 //! The primitive traits expose backend integration to callers. Their existence
-//! does not make every table primitive generic over a backend. Hosted backends
-//! require std; trait definitions and the inline owned select path remain
-//! available without default features.
+//! does not make every table primitive generic over a backend.
 
 use alloc::sync::Arc;
 use core::future::Future;
@@ -22,42 +20,28 @@ use core::time::Duration;
 /// that costs the other impl.
 pub use nagoya::Elapsed;
 /// The idle policy a nagoya pool runs with.
-///
-/// Through nagoya rather than from `ps-st3` directly. Selecting an idle
-/// policy is a nagoya-level decision, and naming the type through the crate
-/// that owns that decision is what lets this crate stop depending on the
-/// queues underneath it for one struct.
 pub use nagoya::Tuning;
 
-/// The backends themselves need `std`, because the only reason a backend
-/// exists is to spawn and spawning needs threads. The trait, the flavor
-/// markers' contract and the profile machinery do not, so they stay available
-/// to a `no_std` build: a table that never spawns still names its runtime in
-/// types that have to resolve.
-#[cfg(feature = "std")]
 mod nagoya_rt;
 
 mod dispatch;
 mod flavor;
 mod profile;
 pub use dispatch::{Dispatch, dispatcher, run_on, run_owned, run_profile};
-#[cfg(all(feature = "std", feature = "tokio-runtime"))]
+#[cfg(feature = "tokio-runtime")]
 mod tokio_rt;
 
-pub use flavor::{FLAVOR_COUNT, Flavor, RESERVED};
-#[cfg(feature = "std")]
-pub use flavor::{describe_tuning, env_override, parse_selection, tuning_overrides};
-#[cfg(feature = "std")]
+pub use flavor::{FLAVOR_COUNT, Flavor, RESERVED, describe_tuning, env_override, parse_selection, tuning_overrides};
 pub use nagoya_rt::{
     Locality, LowLatency, NagoyaRt, SharedSlot, Spread, Throughput, WideInjector, engine_executor, engine_flavor,
     executor_for_flavor,
 };
 
 pub use profile::{Profile, RuntimeCompatibleWith, RuntimeUnpinned, TableRuntime};
-#[cfg(all(feature = "std", feature = "tokio-runtime"))]
+#[cfg(feature = "tokio-runtime")]
 pub use tokio_rt::{TokioJoinHandle, TokioRt};
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(test)]
 mod tests;
 
 /// An async runtime, named by a table rather than assumed.

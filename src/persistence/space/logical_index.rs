@@ -8,8 +8,9 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt::Debug;
 use core::hash::Hash;
-use std::path::{Path, PathBuf};
+use eko::compat::path::{Path, PathBuf};
 
+use crate::eyre;
 use crate::fsx::File;
 use data_bucket::{Link, SizeMeasurable, SpaceId, VariableSizeMeasurable};
 use indexset::cdc::change::ChangeEvent;
@@ -232,11 +233,11 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
-    async fn verify_adoption_file(path: &std::path::Path, _version: u32) -> eyre::Result<()> {
+    async fn verify_adoption_file(path: &Path, _version: u32) -> eyre::Result<()> {
         // Existing page-backed indexes are read without repair during open.
         // Refuse absence rather than allowing their normal bootstrap path.
         eyre::ensure!(
-            std::fs::symlink_metadata(path)?.is_file(),
+            eko::compat::fs::symlink_metadata(path)?.is_file(),
             "index is not a regular file"
         );
         let _file = crate::fsx::open_read_only(path).await?;
@@ -352,11 +353,11 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
-    async fn verify_adoption_file(path: &std::path::Path, _version: u32) -> eyre::Result<()> {
+    async fn verify_adoption_file(path: &Path, _version: u32) -> eyre::Result<()> {
         // Existing page-backed indexes are read without repair during open.
         // Refuse absence rather than allowing their normal bootstrap path.
         eyre::ensure!(
-            std::fs::symlink_metadata(path)?.is_file(),
+            eko::compat::fs::symlink_metadata(path)?.is_file(),
             "index is not a regular file"
         );
         let _file = crate::fsx::open_read_only(path).await?;
@@ -470,11 +471,11 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
-    async fn verify_adoption_file(path: &std::path::Path, _version: u32) -> eyre::Result<()> {
+    async fn verify_adoption_file(path: &Path, _version: u32) -> eyre::Result<()> {
         // Existing page-backed indexes are read without repair during open.
         // Refuse absence rather than allowing their normal bootstrap path.
         eyre::ensure!(
-            std::fs::symlink_metadata(path)?.is_file(),
+            eko::compat::fs::symlink_metadata(path)?.is_file(),
             "index is not a regular file"
         );
         let _file = crate::fsx::open_read_only(path).await?;
@@ -591,11 +592,11 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
-    async fn verify_adoption_file(path: &std::path::Path, _version: u32) -> eyre::Result<()> {
+    async fn verify_adoption_file(path: &Path, _version: u32) -> eyre::Result<()> {
         // Existing page-backed indexes are read without repair during open.
         // Refuse absence rather than allowing their normal bootstrap path.
         eyre::ensure!(
-            std::fs::symlink_metadata(path)?.is_file(),
+            eko::compat::fs::symlink_metadata(path)?.is_file(),
             "index is not a regular file"
         );
         let _file = crate::fsx::open_read_only(path).await?;

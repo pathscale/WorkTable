@@ -1,15 +1,20 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::fmt::Debug;
 use core::future::Future;
 use core::hash::Hash;
 use core::marker::PhantomData;
-use std::fs;
-use std::panic::{AssertUnwindSafe, resume_unwind};
-use std::path::Path;
+#[cfg(feature = "std")]
+use core::panic::AssertUnwindSafe;
+use eko::compat::fs;
+use eko::compat::path::Path;
+
+use crate::eyre;
 
 use futures::future::Either;
 use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
+#[cfg(feature = "std")]
+use futures::FutureExt;
+use futures::StreamExt;
 
 use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
@@ -28,6 +33,7 @@ fn classify_existing_store_error<T>(path: &str, existed: bool, result: eyre::Res
     })
 }
 
+#[cfg(feature = "std")]
 async fn load_store_component<T, F>(path: &str, existed: bool, future: F) -> eyre::Result<T>
 where
     F: Future<Output = eyre::Result<T>>,
@@ -42,8 +48,23 @@ where
                 .unwrap_or("persisted-state loader panicked");
             Err(PersistenceLoadError::corrupt(path, reason).into())
         }
-        Err(payload) => resume_unwind(payload),
+        Err(payload) => {
+            let reason = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("persisted-state loader panicked");
+            panic!("{reason}");
+        }
     }
+}
+
+#[cfg(not(feature = "std"))]
+async fn load_store_component<T, F>(path: &str, existed: bool, future: F) -> eyre::Result<T>
+where
+    F: Future<Output = eyre::Result<T>>,
+{
+    classify_existing_store_error(path, existed, future.await)
 }
 
 #[derive(Debug, Clone)]

@@ -73,19 +73,13 @@
 // environment. Without `std` the ledger is simply never enabled, which is the
 // right answer for a diagnostic that an environment variable turns on.
 use alloc::borrow::ToOwned as _;
-// Only the gated backtrace field boxes anything.
-#[cfg(feature = "std")]
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 use core::panic::Location;
+use core::sync::atomic::{AtomicU8, Ordering};
 use hashbrown::HashMap;
-#[cfg(feature = "std")]
-use std::backtrace::Backtrace;
-#[cfg(feature = "std")]
-use std::sync::LazyLock;
 
 use data_bucket::Link;
 use indexset::cdc::change::ChangeEvent;
@@ -102,23 +96,7 @@ const WINDOW: usize = 8192;
 /// Gap ids listed individually in a report before it summarises the rest.
 const MAX_LISTED_GAP_IDS: usize = 64;
 
-#[cfg(feature = "std")]
-static ENABLED: LazyLock<bool> = LazyLock::new(|| {
-    if cfg!(debug_assertions) {
-        return true;
-    }
-    match std::env::var("WT_EVENT_LEDGER") {
-        Ok(value) => !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false"),
-        Err(_) => false,
-    }
-});
-
-/// Without `std` there is no environment to read the switch from, so the
-/// ledger stays off. Everything below still compiles and can be driven
-/// directly by a caller that wants it; what is missing is the ambient way to
-/// turn it on.
-#[cfg(not(feature = "std"))]
-static ENABLED: bool = false;
+static ENABLED_STATE: AtomicU8 = AtomicU8::new(0);
 
 /// Whether event bookkeeping is recording in this process.
 ///
@@ -126,13 +104,21 @@ static ENABLED: bool = false;
 /// environment override rather than a cargo feature.
 #[inline]
 pub fn enabled() -> bool {
-    #[cfg(feature = "std")]
-    {
-        *ENABLED
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        ENABLED
+    match ENABLED_STATE.load(Ordering::Relaxed) {
+        1 => false,
+        2 => true,
+        _ => {
+            let on = if cfg!(debug_assertions) {
+                true
+            } else {
+                match eko::compat::env::var("WT_EVENT_LEDGER") {
+                    Ok(value) => !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false"),
+                    Err(_) => false,
+                }
+            };
+            ENABLED_STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+            on
+        }
     }
 }
 
@@ -225,14 +211,6 @@ struct IdRecord {
     op_type: Option<OperationType>,
     /// Producer call site, from `#[track_caller]` at the queue push.
     site: Option<&'static Location<'static>>,
-    /// Captured only when `RUST_BACKTRACE` is set; otherwise `Disabled` and
-    /// free. Boxed so that the common empty case costs a pointer instead of an
-    /// inline `Backtrace` in each of the thousands of records held per stream.
-    // Gated with the capture below: without `std` there is no `Backtrace`,
-    // and the ledger keeps the call site from `#[track_caller]` regardless,
-    // which is the half that names the producer.
-    #[cfg(feature = "std")]
-    backtrace: Option<Box<Backtrace>>,
     collected: u32,
     requeued: u32,
 }
@@ -244,8 +222,6 @@ impl IdRecord {
             op_id: None,
             op_type: None,
             site: None,
-            #[cfg(feature = "std")]
-            backtrace: None,
             collected: 0,
             requeued: 0,
         }
@@ -358,15 +334,6 @@ impl EventLedger {
         if !enabled() || ids.is_empty() {
             return;
         }
-        // Costs nothing unless RUST_BACKTRACE is set: `capture` returns
-        // `Disabled` without walking any frames. One capture per push, moved
-        // onto the first newly recorded id, because every id in this vector
-        // came from the same producer.
-        #[cfg(feature = "std")]
-        let backtrace = Backtrace::capture();
-        #[cfg(feature = "std")]
-        let mut backtrace =
-            matches!(backtrace.status(), std::backtrace::BacktraceStatus::Captured).then_some(backtrace);
         let mut streams = self.streams.lock();
         let ledger = streams.entry(stream).or_default();
         for id in ids.iter().copied() {
@@ -377,13 +344,6 @@ impl EventLedger {
                 record.op_id = Some(op_id);
                 record.op_type = Some(op_type);
                 record.site = Some(site);
-                // One backtrace per push, not per id: every id in this vector
-                // has the same producer, and keeping one each would multiply
-                // the cost of a `RUST_BACKTRACE` run for no extra signal.
-                #[cfg(feature = "std")]
-                if record.backtrace.is_none() {
-                    record.backtrace = backtrace.take().map(Box::new);
-                }
             } else {
                 record.stages.insert(Stages::REQUEUED);
                 record.requeued = record.requeued.saturating_add(1);
@@ -589,17 +549,6 @@ fn bracketing_producers(ledger: &StreamLedger, last_applied: u64, next_available
             op_type = OptionDisplay(record.op_type.as_ref().map(|t| format!("{t:?}"))),
             op_id = OptionDisplay(record.op_id.as_ref().map(|id| format!("{id:?}"))),
             site = OptionDisplay(record.site.map(|site| site.to_string())),
-        );
-        #[cfg(feature = "std")]
-        if let Some(backtrace) = &record.backtrace {
-            let _ = write!(out, " Backtrace:\n{backtrace}\n");
-        }
-    }
-    #[cfg(feature = "std")]
-    if !ledger.ids.values().any(|record| record.backtrace.is_some()) {
-        let _ = write!(
-            out,
-            " Re-run with RUST_BACKTRACE=1 for the full producer backtraces, which this run did not capture."
         );
     }
     out

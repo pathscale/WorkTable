@@ -29,8 +29,8 @@ use rkyv::{
 use crate::in_memory::{ArchivedRowWrapper, InlineArchived};
 use crate::prelude::Link;
 
-#[cfg(all(not(wt_loom), not(any(unix, windows))))]
-compile_error!("archived cell locks require a hosted unix or Windows target");
+#[cfg(all(not(wt_loom), not(any(unix, windows, target_os = "none"))))]
+compile_error!("archived cell locks require a hosted unix, Windows, or eko target");
 
 const CELL_LOCK_SLOTS: usize = 256;
 const CELL_READER_MASK: u32 = (1_u32 << 31) - 1;
@@ -133,6 +133,11 @@ fn current_owner() -> usize {
         // thread's identity. POSIX keeps it unique until this thread exits;
         // a cell guard necessarily drops before that can happen.
         (unsafe { libc::pthread_self() } as usize).max(1)
+    }
+
+    #[cfg(all(not(wt_loom), target_os = "none"))]
+    {
+        (eko::thread::current_id().as_u64() as usize).max(1)
     }
 
     #[cfg(all(not(wt_loom), windows))]
@@ -1035,12 +1040,10 @@ impl<Row, const DATA_LENGTH: usize> Data<Row, DATA_LENGTH> {
         }
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn has_live_cells(&self) -> bool {
         self.live_cells.load(Ordering::Acquire) != 0
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn live_cell_count(&self) -> u32 {
         self.live_cells.load(Ordering::Acquire)
     }

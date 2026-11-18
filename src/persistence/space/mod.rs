@@ -5,9 +5,10 @@ mod index;
 mod logical_index;
 
 use core::future::Future;
+use eko::compat::path::Path;
 use hashbrown::HashMap;
-use std::path::Path;
 
+use crate::eyre;
 use crate::fsx::File;
 use data_bucket::page::PageId;
 use data_bucket::{GeneralPage, Link, SpaceInfoPage};

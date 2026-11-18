@@ -1,11 +1,9 @@
 use alloc::{string::String, vec::Vec};
 pub mod select;
 pub mod system_info;
-#[cfg(feature = "std")]
 pub mod vacuum;
 
 use crate::in_memory::{ArchivedRowWrapper, DataPages, InlineArchived, RowWrapper, SelectRef, StorableRow};
-#[cfg(feature = "std")]
 use crate::persistence::PersistenceLoadError;
 use crate::persistence::operation::new_operation_uuid;
 use crate::persistence::{AcknowledgeOperation, InsertOperation, Operation};
@@ -21,7 +19,6 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use data_bucket::INNER_PAGE_SIZE;
 use derive_more::{Display, Error, From};
-#[cfg(feature = "std")]
 use hashbrown::HashSet;
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
@@ -34,8 +31,7 @@ use rkyv::ser::allocator::ArenaHandle;
 use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Portable, Serialize};
-#[cfg(feature = "std")]
-use std::path::Path;
+use eko::compat::path::Path;
 /// Keys per chunk when a bulk delete takes its mutation guards.
 ///
 /// Guards are striped 64 ways, so any batch wider than that holds every stripe
@@ -144,7 +140,6 @@ where
     /// This load-only scan prevents a torn index link from turning zeroed or
     /// unrelated bytes into a plausible row. It deliberately does not run on
     /// steady-state operations.
-    #[cfg(feature = "std")]
     pub fn validate_persisted_state(&self, path: impl AsRef<Path>) -> Result<(), PersistenceLoadError>
     where
         <<Row as StorableRow>::WrappedRow as Archive>::Archived: Portable
@@ -1561,6 +1556,5 @@ pub enum WorkTableError {
     PrimaryUpdateTry,
     PagesError(in_memory::PagesExecutionError),
     #[display("{}", _0)]
-    #[cfg(feature = "std")]
     PersistenceError(#[error(not(source))] alloc::sync::Arc<crate::persistence::PersistenceError>),
 }

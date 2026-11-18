@@ -218,7 +218,9 @@ pub type UpstreamIndexPair<K, V> = VanillaPair<K, V>;
 mod tests {
     use alloc::sync::Arc;
 
-    use super::{UniqueIndex, UpstreamIndexMap};
+    use super::UniqueIndex;
+    #[cfg(feature = "vanilla-index")]
+    use super::UpstreamIndexMap;
     use crate::{ArcticIndex, CongeeIndex, IndexMap};
 
     fn assert_unique_index_contract<I>()
@@ -332,6 +334,7 @@ mod tests {
         assert_unique_index_contract::<IndexMap<u64, u64>>();
     }
 
+    #[cfg(feature = "vanilla-index")]
     #[test]
     fn upstream_indexset_implements_contract() {
         assert_unique_index_contract::<UpstreamIndexMap<u64, u64>>();
@@ -340,6 +343,7 @@ mod tests {
     #[test]
     fn all_backends_preserve_disjoint_concurrent_mutations() {
         assert_disjoint_concurrent_insert_then_remove::<IndexMap<u64, u64>>();
+        #[cfg(feature = "vanilla-index")]
         assert_disjoint_concurrent_insert_then_remove::<UpstreamIndexMap<u64, u64>>();
         assert_disjoint_concurrent_insert_then_remove::<CongeeIndex<u64, u64>>();
         assert_disjoint_concurrent_insert_then_remove::<ArcticIndex<u64, u64>>();

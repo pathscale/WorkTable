@@ -143,14 +143,18 @@ mod tests {
     #[test]
     fn concurrent_reservations_never_overlap() {
         use alloc::sync::Arc;
+        use alloc::vec::Vec;
 
         let generator = Arc::new(AtomicU64::from_state(0));
         let mut handles = vec![];
         for _ in 0..8 {
             let generator = generator.clone();
-            handles.push(std::thread::spawn(move || {
-                (0..100).map(|_| generator.reserve(3)).collect::<Vec<_>>()
-            }));
+            handles.push(
+                eko::thread::spawn(move || {
+                    (0..100).map(|_| generator.reserve(3)).collect::<Vec<_>>()
+                })
+                .unwrap(),
+            );
         }
         let mut ranges = vec![];
         for handle in handles {

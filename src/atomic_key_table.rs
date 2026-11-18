@@ -326,10 +326,9 @@ mod tests {
 
     #[test]
     fn concurrent_writers_agree_on_one_row_per_key() {
-        extern crate std;
         let table: AtomicKeyTable<Counter> = AtomicKeyTable::with_capacity(512);
         let shared = &table;
-        std::thread::scope(|scope| {
+        eko::thread::scope(|scope| {
             for _ in 0..8 {
                 scope.spawn(move || {
                     for round in 0..1_000usize {
@@ -355,8 +354,6 @@ mod tests {
     /// tests rather than only in prose.
     #[test]
     fn two_values_packed_into_one_atomic_stay_consistent() {
-        extern crate std;
-
         /// Count in the high 32 bits, total in the low 32.
         #[derive(Default)]
         struct CountAndTotal(AtomicU64);
@@ -375,7 +372,7 @@ mod tests {
 
         let table: AtomicKeyTable<CountAndTotal> = AtomicKeyTable::with_capacity(64);
         let shared = &table;
-        std::thread::scope(|scope| {
+        eko::thread::scope(|scope| {
             for _ in 0..8 {
                 scope.spawn(move || {
                     for _ in 0..500 {

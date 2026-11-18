@@ -181,7 +181,6 @@ where
             .collect()
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn export_topology<T>(
         &mut self,
         mut encode: impl FnMut(&V) -> T,
@@ -193,7 +192,6 @@ where
         })
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn from_topology<T>(
         topology: congee::topology::Topology<T>,
         mut decode: impl FnMut(T) -> V,

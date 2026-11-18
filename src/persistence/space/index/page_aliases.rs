@@ -7,8 +7,8 @@
 
 use alloc::vec::Vec;
 use data_bucket::Link;
+use crate::eyre;
 use data_bucket::page::PageId;
-use eyre::eyre;
 
 // Normal persistence batches begin at 16 source pages. Keep that common case
 // inline while allowing analyzer retries to grow beyond it without turning a
@@ -105,7 +105,7 @@ impl<T: Eq> PageAliases<T> {
                 .entries()
                 .find(|entry| entry.page_id != page_id && entry.aliases.iter().flatten().any(|stored| stored == alias))
             {
-                return Err(eyre!(
+                return Err(eyre::eyre!(
                     "page alias ownership collision between {:?} and {page_id:?}",
                     owner.page_id
                 ));

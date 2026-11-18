@@ -338,7 +338,6 @@ where
         self.inner.allocated_node_bytes()
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn export_topology<T>(
         &mut self,
         mut encode: impl FnMut(&V) -> T,
@@ -349,7 +348,6 @@ where
         self.inner.export_topology(|value| encode(&V::from_arctic(*value)))
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn from_topology<T>(
         topology: arctic::topology::Topology<T>,
         mut decode: impl FnMut(T) -> V,

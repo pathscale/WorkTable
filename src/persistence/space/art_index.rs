@@ -6,15 +6,15 @@
 //! applies the WAL, writes a new native checkpoint atomically, and drops the
 //! temporary tree; no duplicate ART is retained during normal operation.
 
-use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use core::fmt::Debug;
 use core::hash::Hash;
 use core::marker::PhantomData;
-use std::path::{Path, PathBuf};
+use eko::compat::path::{Path, PathBuf};
 
+use crate::eyre::{self, Context, bail};
 use crate::fsx::File;
 use data_bucket::{Link, page::PageId};
-use eyre::{Context, bail, eyre};
 use indexset::cdc::change::ChangeEvent;
 use indexset::core::pair::Pair;
 use nagoya::io::{Read as _, Seek as _, Write as _};
@@ -86,7 +86,7 @@ macro_rules! impl_art_persistence_key {
                 fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
                     let bytes: [u8; core::mem::size_of::<Self>()] = bytes
                         .try_into()
-                        .map_err(|_| eyre!("invalid {}-byte ART key", Self::WIDTH))?;
+                        .map_err(|_| eyre::eyre!("invalid {}-byte ART key", Self::WIDTH))?;
                     Ok(Self::from_be_bytes(bytes))
                 }
             }
@@ -123,7 +123,7 @@ macro_rules! impl_art_persistence_key_signed {
                 fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
                     let bytes: [u8; core::mem::size_of::<Self>()] = bytes
                         .try_into()
-                        .map_err(|_| eyre!("invalid {}-byte ART key", Self::WIDTH))?;
+                        .map_err(|_| eyre::eyre!("invalid {}-byte ART key", Self::WIDTH))?;
                     let raw = <$raw>::from_be_bytes(bytes) ^ ((1 as $raw) << (<$raw>::BITS - 1));
                     Ok(raw as Self)
                 }
@@ -142,7 +142,7 @@ impl ArtPersistenceKey for String {
     }
 
     fn decode_art_key(bytes: &[u8]) -> eyre::Result<Self> {
-        String::from_utf8(bytes.to_vec()).map_err(|error| eyre!("invalid UTF-8 ART key: {error}"))
+        String::from_utf8(bytes.to_vec()).map_err(|error| eyre::eyre!("invalid UTF-8 ART key: {error}"))
     }
 }
 
@@ -188,9 +188,12 @@ struct ArtFile<K> {
 /// `primary.wt.<new>` and two different index files could collide on one
 /// temporary name.
 fn temporary_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().map(ToOwned::to_owned).unwrap_or_default();
-    name.push(".tmp");
-    path.with_file_name(name)
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let tmp_name = format!("{name}.tmp");
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(tmp_name),
+        _ => PathBuf::from(tmp_name),
+    }
 }
 
 impl<K: ArtPersistenceKey> ArtFile<K> {
@@ -224,13 +227,13 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
 
     async fn verify_read_only(path: &Path, backend: Backend, table_version: u32) -> eyre::Result<()> {
         let temporary = temporary_path(path);
-        match std::fs::symlink_metadata(&temporary) {
+        match eko::compat::fs::symlink_metadata(&temporary) {
             Ok(_) => bail!("ART index {} has a stale temporary sibling", path.display()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == eko::compat::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
         let image = Self::read_image(path, backend, table_version).await?;
-        let actual_len = std::fs::symlink_metadata(path)?.len();
+        let actual_len = eko::compat::fs::symlink_metadata(path)?.len();
         eyre::ensure!(
             image.durable_len == actual_len,
             "ART index {} has a recoverable torn WAL tail (durable length {}, actual length {})",
@@ -244,7 +247,7 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
     async fn read_image(path: &Path, backend: Backend, table_version: u32) -> eyre::Result<Image<K>> {
         let mut file = crate::fsx::open_read_only(path)
             .await
-            .wrap_err_with(|| format!("open ART index {}", path.display()))?;
+            .with_context(|| format!("open ART index {}", path.display()))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).await?;
         if bytes.len() < HEADER_LEN {
@@ -269,11 +272,11 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
             bail!("ART index table version mismatch: expected {table_version}, found {found_table_version}");
         }
         let snapshot_len = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
-        let snapshot_len = usize::try_from(snapshot_len).map_err(|_| eyre!("ART snapshot is too large"))?;
+        let snapshot_len = usize::try_from(snapshot_len).map_err(|_| eyre::eyre!("ART snapshot is too large"))?;
         let snapshot_crc = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
         let snapshot_end = HEADER_LEN
             .checked_add(snapshot_len)
-            .ok_or_else(|| eyre!("ART snapshot length overflow"))?;
+            .ok_or_else(|| eyre::eyre!("ART snapshot length overflow"))?;
         if snapshot_end > bytes.len() {
             bail!("ART index {} has a truncated snapshot", path.display());
         }
@@ -308,7 +311,7 @@ impl<K: ArtPersistenceKey> ArtFile<K> {
             let payload_start = position + WAL_HEADER_LEN;
             let payload_end = payload_start
                 .checked_add(payload_len)
-                .ok_or_else(|| eyre!("ART WAL frame length overflow"))?;
+                .ok_or_else(|| eyre::eyre!("ART WAL frame length overflow"))?;
             if payload_end > bytes.len() {
                 break;
             }
@@ -443,7 +446,7 @@ fn decode_wal_record<K: ArtPersistenceKey>(bytes: &[u8]) -> eyre::Result<WalReco
     };
     let key_end = key_start
         .checked_add(key_len)
-        .ok_or_else(|| eyre!("ART WAL key length overflow"))?;
+        .ok_or_else(|| eyre::eyre!("ART WAL key length overflow"))?;
     if key_end.checked_add(link_len) != Some(bytes.len()) {
         bail!("invalid ART WAL payload length {}", bytes.len());
     }
@@ -1080,11 +1083,11 @@ impl<'a> Decoder<'a> {
         let end = self
             .position
             .checked_add(count)
-            .ok_or_else(|| eyre!("ART topology length overflow"))?;
+            .ok_or_else(|| eyre::eyre!("ART topology length overflow"))?;
         let value = self
             .bytes
             .get(self.position..end)
-            .ok_or_else(|| eyre!("truncated ART topology at byte {}", self.position))?;
+            .ok_or_else(|| eyre::eyre!("truncated ART topology at byte {}", self.position))?;
         self.position = end;
         Ok(value)
     }
@@ -1166,7 +1169,7 @@ fn encode_arctic_node(node: &arctic::topology::Node<Link>, output: &mut Vec<u8>)
     };
     output.push(kind);
     output.extend_from_slice(&node.slot_count.to_le_bytes());
-    let branch_count = u16::try_from(node.branches.len()).map_err(|_| eyre!("too many Arctic branches"))?;
+    let branch_count = u16::try_from(node.branches.len()).map_err(|_| eyre::eyre!("too many Arctic branches"))?;
     output.extend_from_slice(&branch_count.to_le_bytes());
     for branch in &node.branches {
         output.push(branch.key);
@@ -1244,12 +1247,12 @@ fn encode_congee_node(node: &congee::topology::Node<Link>, output: &mut Vec<u8>)
         congee::topology::NodeKind::N256 => 255,
     };
     output.push(kind);
-    let prefix_len = u8::try_from(node.prefix.len()).map_err(|_| eyre!("Congee prefix is too long"))?;
+    let prefix_len = u8::try_from(node.prefix.len()).map_err(|_| eyre::eyre!("Congee prefix is too long"))?;
     output.push(prefix_len);
     output.extend_from_slice(&node.prefix);
-    let branch_count = u16::try_from(node.branches.len()).map_err(|_| eyre!("too many Congee branches"))?;
+    let branch_count = u16::try_from(node.branches.len()).map_err(|_| eyre::eyre!("too many Congee branches"))?;
     output.extend_from_slice(&branch_count.to_le_bytes());
-    let free_count = u16::try_from(node.free_slots.len()).map_err(|_| eyre!("too many Congee free slots"))?;
+    let free_count = u16::try_from(node.free_slots.len()).map_err(|_| eyre::eyre!("too many Congee free slots"))?;
     output.extend_from_slice(&free_count.to_le_bytes());
     output.extend_from_slice(&node.free_slots);
     for branch in &node.branches {
@@ -1395,7 +1398,7 @@ mod tests {
 
     #[tokio::test]
     async fn torn_wal_tail_is_truncated_before_new_appends() {
-        let path = std::env::temp_dir().join(format!("worktable-art-torn-{}.wt.idx", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(std::env::temp_dir().to_str().unwrap()).join(format!("worktable-art-torn-{}.wt.idx", uuid::Uuid::new_v4()));
         let mut space = SpaceArcticIndex::<u64, 4096>::new(path.clone(), 1).await.unwrap();
         space.process_change_event(set_event(0, 7, link(7))).await.unwrap();
         drop(space);
@@ -1422,7 +1425,7 @@ mod tests {
 
     #[tokio::test]
     async fn compaction_replaces_wal_with_native_checkpoint() {
-        let path = std::env::temp_dir().join(format!("worktable-art-compact-{}.wt.idx", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(std::env::temp_dir().to_str().unwrap()).join(format!("worktable-art-compact-{}.wt.idx", uuid::Uuid::new_v4()));
         let mut space = SpaceCongeeIndex::<u64, 4096>::new(path.clone(), 3).await.unwrap();
         let events = (0..128).map(|key| set_event(key, key, link(key as u32 + 1))).collect();
         space.process_change_event_batch(events).await.unwrap();
@@ -1515,7 +1518,7 @@ mod tests {
 
     #[tokio::test]
     async fn multi_space_replays_wal_and_compacts() {
-        let path = std::env::temp_dir().join(format!("worktable-art-multi-{}.wt.idx", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(std::env::temp_dir().to_str().unwrap()).join(format!("worktable-art-multi-{}.wt.idx", uuid::Uuid::new_v4()));
         let mut space = SpaceArcticMultiIndex::<u64, 4096>::new(path.clone(), 5).await.unwrap();
         // Three links under key 7, one later removed; one link under key 9.
         let events = vec![
@@ -1555,7 +1558,7 @@ mod tests {
 
     #[tokio::test]
     async fn multi_checkpoint_round_trips_through_write_and_load() {
-        let path = std::env::temp_dir().join(format!("worktable-art-multi-ckpt-{}.wt.idx", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(std::env::temp_dir().to_str().unwrap()).join(format!("worktable-art-multi-ckpt-{}.wt.idx", uuid::Uuid::new_v4()));
         let mut index = SpaceArcticMultiIndex::<u128, 4096>::new(path.clone(), 1)
             .await
             .map(|_| PersistentArcticMultiIndex::<u128, OffsetEqLink<4096>>::default())
@@ -1577,7 +1580,7 @@ mod tests {
 
     #[tokio::test]
     async fn variable_string_keys_survive_wal_and_checkpoint() {
-        let path = std::env::temp_dir().join(format!("worktable-art-string-{}.wt.idx", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(std::env::temp_dir().to_str().unwrap()).join(format!("worktable-art-string-{}.wt.idx", uuid::Uuid::new_v4()));
         let mut space = SpaceArcticStringIndex::<String, 4096>::new(path.clone(), 3)
             .await
             .unwrap();
@@ -1614,7 +1617,7 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoints_go_through_a_temporary_file_and_stale_temporaries_are_removed() {
-        let path = std::env::temp_dir().join(format!("worktable-art-atomic-{}.wt.idx", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(std::env::temp_dir().to_str().unwrap()).join(format!("worktable-art-atomic-{}.wt.idx", uuid::Uuid::new_v4()));
         let temporary = temporary_path(&path);
 
         // A leftover temporary from a crashed checkpoint must be cleaned up
@@ -1652,7 +1655,7 @@ mod tests {
 
     #[tokio::test]
     async fn complete_corruption_and_header_mismatches_are_rejected() {
-        let path = std::env::temp_dir().join(format!("worktable-art-corrupt-{}.wt.idx", uuid::Uuid::new_v4()));
+        let path = PathBuf::from(std::env::temp_dir().to_str().unwrap()).join(format!("worktable-art-corrupt-{}.wt.idx", uuid::Uuid::new_v4()));
         let mut space = SpaceArcticIndex::<u64, 4096>::new(path.clone(), 7).await.unwrap();
         space.process_change_event(set_event(0, 9, link(9))).await.unwrap();
         drop(space);

@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::eyre;
 use crate::fsx::File;
 use data_bucket::page::PageId;
 use data_bucket::{

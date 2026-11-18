@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
-use std::time::Instant;
+use eko::time::Instant;
 
 /// How long retirements have to stop arriving for a delete burst to count as
 /// over. Short enough that a sweep still follows a delete promptly, long
@@ -26,6 +26,7 @@ use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
+use crate::eyre;
 use crate::in_memory::{ArchivedRowWrapper, DataPages, RowWrapper, StorableRow};
 use crate::lock::{Lock, LockGuard, LockMap, RowLock};
 use crate::prelude::{OffsetEqLink, TablePrimaryKey};

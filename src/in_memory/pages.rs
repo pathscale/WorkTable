@@ -1452,19 +1452,16 @@ where
         Ok(())
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn page_has_cells(&self, page_id: PageId) -> Result<bool, ExecutionError> {
         let page = self.page_ref(page_id)?;
         Ok(page.has_live_cells())
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn page_live_cell_count(&self, page_id: PageId) -> Result<u32, ExecutionError> {
         let page = self.page_ref(page_id)?;
         Ok(page.live_cell_count())
     }
 
-    #[cfg(feature = "std")]
     pub(crate) fn set_loaded_row_count(&self, count: usize) -> Result<(), ExecutionError> {
         let count = u64::try_from(count).map_err(|_| ExecutionError::RowCountOverflow)?;
         self.row_count.store(count, Ordering::Release);
@@ -1473,7 +1470,6 @@ where
 
     /// Completes the vacuum's source-side accounting after every index has
     /// been swung to the destination link.
-    #[cfg(feature = "std")]
     pub(crate) fn remove_moved_cell(&self, link: Link) -> Result<(), ExecutionError> {
         self.remove_cell(link)
     }
@@ -1505,7 +1501,6 @@ where
     /// concurrent low-level mutation may access either physical row while the
     /// move is in progress. After success, the caller must swing every index
     /// reference to the returned link before retiring `from_link`.
-    #[cfg(feature = "std")]
     pub(crate) unsafe fn move_row_for_vacuum(
         &self,
         from_link: Link,
@@ -1633,7 +1628,6 @@ where
     /// current page serves as the sweep's first destination. Concurrent
     /// inserts are safe: the insert path rechecks `current_page_id` under the
     /// page barrier before writing and retries if the target changed.
-    #[cfg(feature = "std")]
     pub(crate) fn rotate_current_for_vacuum(&self, page_id: PageId) {
         debug_assert!(
             self.get_page(page_id).is_some(),

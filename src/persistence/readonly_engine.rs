@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 use core::hash::Hash;
 
+use crate::eyre;
 use crate::TableSecondaryIndexEventsOps;
 use crate::persistence::operation::{BatchOperation, Operation};
 use crate::persistence::{PersistenceConfig, PersistenceEngine};

@@ -11,7 +11,7 @@ use data_bucket::{
     GeneralHeader, GeneralPage, IndexPageUtility, IndexValue, Link, PageType, SizeMeasurable, SpaceId, SpaceInfoPage,
     UnsizedIndexPage, UnsizedIndexPageUtility, VariableSizeMeasurable, parse_page, persist_page, persist_pages_batch,
 };
-use eyre::eyre;
+use crate::eyre;
 use indexset::cdc::change::ChangeEvent;
 use indexset::concurrent::map::BTreeMap;
 use indexset::concurrent::multimap::BTreeMultiMap;
@@ -111,7 +111,7 @@ where
             UnsizedIndexPageUtility::<T>::persisted_size(page.slots_size as usize, page.node_id_size as usize)
                 + page.last_value_offset as usize;
         if compacted_size > DATA_LENGTH as usize {
-            return Err(eyre!(
+            return Err(eyre::eyre!(
                 "unsized index page requires {compacted_size} bytes after compaction, but its capacity is {DATA_LENGTH}"
             ));
         }
@@ -181,7 +181,7 @@ where
         let page_id = self
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
-            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+            .ok_or(eyre::eyre!("Node with {:?} id is not found", node_id))?;
         if let Some(new_node_id) = self
             .insert_on_index_page(page_id, node_id.clone(), index, value)
             .await?
@@ -275,7 +275,7 @@ where
         let page_id = self
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
-            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+            .ok_or(eyre::eyre!("Node with {:?} id is not found", node_id))?;
         if let Some(new_node_id) = self
             .remove_from_index_page(page_id, node_id.clone(), index, value)
             .await?
@@ -332,7 +332,7 @@ where
         let page_id = self
             .table_of_contents
             .get(&(node_id.key.clone(), node_id.value))
-            .ok_or(eyre!("Node with {:?} id is not found", node_id))?;
+            .ok_or(eyre::eyre!("Node with {:?} id is not found", node_id))?;
         let mut page =
             parse_page::<UnsizedIndexPage<T, DATA_LENGTH>, DATA_LENGTH, STRIDE>(&mut self.index_file, page_id.into())
                 .await?;
@@ -436,11 +436,11 @@ where
 {
     const REQUIRED_PRIMARY_INDEX_FILES: Option<&'static [&'static str]> = Some(&[PRIMARY_INDEX_FILE]);
 
-    async fn verify_adoption_file(path: &std::path::Path, _version: u32) -> eyre::Result<()> {
+    async fn verify_adoption_file(path: &eko::compat::path::Path, _version: u32) -> eyre::Result<()> {
         // Existing page-backed indexes are read without repair during open.
         // Refuse absence rather than allowing their normal bootstrap path.
         eyre::ensure!(
-            std::fs::symlink_metadata(path)?.is_file(),
+            eko::compat::fs::symlink_metadata(path)?.is_file(),
             "index is not a regular file"
         );
         let _file = crate::fsx::open_read_only(path).await?;
@@ -528,7 +528,7 @@ where
                     let Some((page_index, aliased_page_key)) =
                         self.resolve_batch_page(&page_aliases, &event_page_key, Some(&event_value))
                     else {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "unsized index event references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
                             self.table_of_contents.pages.len(),
                             pages.len(),
@@ -567,13 +567,13 @@ where
                             .table_of_contents
                             .try_update_key(&pre_event_page_key, updated_page_key.clone())?
                         {
-                            return Err(eyre!(
+                            return Err(eyre::eyre!(
                                 "unsized index page identity is absent from the table of contents (page={page_index:?}, toc_segments={})",
                                 self.table_of_contents.pages.len()
                             ));
                         }
                         if self.table_of_contents.get(&updated_page_key) != Some(page_index) {
-                            return Err(eyre!(
+                            return Err(eyre::eyre!(
                                 "unsized index page identity update did not become canonical (page={page_index:?})"
                             ));
                         }
@@ -607,7 +607,7 @@ where
                     let Some((page_index, aliased_page_key)) =
                         self.resolve_batch_page(&page_aliases, &event_page_key, None)
                     else {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "unsized index split references a missing page (toc_segments={}, buffered_pages={}, aliases={})",
                             self.table_of_contents.pages.len(),
                             pages.len(),
@@ -632,7 +632,7 @@ where
                     if page_to_update.inner.node_id.key != canonical_page_key.0
                         || page_to_update.inner.node_id.link != canonical_page_key.1
                     {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "unsized index split found a buffered page with a mismatched identity (page={page_index:?})"
                         ));
                     }
@@ -653,14 +653,14 @@ where
                         .table_of_contents
                         .try_update_key(&pre_split_page_key, left_page_key)?
                     {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "unsized index split identity is absent from the table of contents (page={page_index:?})"
                         ));
                     }
                     let right_page_key = (splitted_page.node_id.key.clone(), splitted_page.node_id.link);
                     self.table_of_contents.try_insert(right_page_key.clone(), new_page_id)?;
                     if self.table_of_contents.get(&right_page_key) != Some(new_page_id) {
-                        return Err(eyre!(
+                        return Err(eyre::eyre!(
                             "unsized index split identity did not become canonical (page={new_page_id:?})"
                         ));
                     }

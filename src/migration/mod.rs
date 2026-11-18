@@ -7,6 +7,7 @@ use rkyv::ser::sharing::Share;
 use rkyv::util::AlignedVec;
 use rkyv::{Archive, Deserialize, Serialize};
 
+use crate::eyre;
 use crate::prelude::{GeneralPage, Persistable, SpaceInfoPage, WT_DATA_EXTENSION, parse_page};
 use core::marker::PhantomData;
 

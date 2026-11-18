@@ -162,7 +162,6 @@ impl Flavor {
     /// environment overrides.
     ///
     /// See [`tuning_overrides`] for the four knobs and why they exist.
-    #[cfg(feature = "std")]
     #[must_use]
     pub fn tuned(self) -> Tuning {
         tuning_overrides(self.tuning())
@@ -229,12 +228,11 @@ impl core::fmt::Display for Flavor {
 /// default is the easiest possible way to publish a wrong table, and it has
 /// happened on this project already, so a typo fails loudly at startup rather
 /// than quietly at the top of a results column.
-#[cfg(feature = "std")]
 #[inline]
 pub fn env_override() -> Option<Flavor> {
-    static SELECTED: std::sync::OnceLock<Option<Flavor>> = std::sync::OnceLock::new();
+    static SELECTED: eko::thread::OnceLock<Option<Flavor>> = eko::thread::OnceLock::new();
     *SELECTED.get_or_init(|| {
-        let raw = std::env::var("WT_DEFAULT_RUNTIME").ok()?;
+        let raw = eko::compat::env::var("WT_DEFAULT_RUNTIME").ok()?;
         Some(parse_selection(raw.trim()).unwrap_or_else(|error| {
             panic!("WT_DEFAULT_RUNTIME={raw:?} is not a runtime selection: {error}");
         }))
@@ -246,7 +244,6 @@ pub fn env_override() -> Option<Flavor> {
 /// # Errors
 ///
 /// What was wrong with the spelling.
-#[cfg(feature = "std")]
 pub fn parse_selection(source: &str) -> Result<Flavor, alloc::string::String> {
     let inner = match source.split_once('(') {
         Some((backend, rest)) => {
@@ -264,8 +261,9 @@ pub fn parse_selection(source: &str) -> Result<Flavor, alloc::string::String> {
     Flavor::from_name(inner.trim())
 }
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(test)]
 mod tests {
+    use alloc::string::ToString as _;
     use super::{FLAVOR_COUNT, Flavor, RESERVED, parse_selection};
 
     #[test]
@@ -466,11 +464,10 @@ mod tests {
 /// The names match the `ROUNDS` / `BACKOFF` / `PROMOTE` / `BATCH` variables
 /// the `perf-benchmarks` examples already take, prefixed so they cannot
 /// collide with a host's own environment.
-#[cfg(feature = "std")]
 #[must_use]
 pub fn tuning_overrides(base: Tuning) -> Tuning {
     fn read<T: core::str::FromStr>(name: &str) -> Option<T> {
-        std::env::var(name).ok()?.trim().parse().ok()
+        eko::compat::env::var(name).ok()?.trim().parse().ok()
     }
     /// The five knobs, each present only if its variable was set.
     ///
@@ -486,7 +483,7 @@ pub fn tuning_overrides(base: Tuning) -> Tuning {
         lifo: Option<u32>,
     }
 
-    static OVERRIDES: std::sync::OnceLock<Overrides> = std::sync::OnceLock::new();
+    static OVERRIDES: eko::thread::OnceLock<Overrides> = eko::thread::OnceLock::new();
     let overrides = OVERRIDES.get_or_init(|| Overrides {
         rounds: read("WT_ROUNDS"),
         backoff: read("WT_BACKOFF"),
@@ -519,7 +516,6 @@ pub fn tuning_overrides(base: Tuning) -> Tuning {
 /// A results row that says only `spread` when `WT_BACKOFF` was set describes a
 /// tuning nobody can reproduce from the flavor name, so this prints the fields
 /// rather than the label.
-#[cfg(feature = "std")]
 #[must_use]
 pub fn describe_tuning(flavor: Flavor) -> alloc::string::String {
     let tuning = flavor.tuned();

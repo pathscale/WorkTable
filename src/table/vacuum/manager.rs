@@ -140,7 +140,6 @@ impl VacuumManager {
     /// quiescence.
     ///
     /// [`VacuumPacing::wait_until_quiet`]: crate::vacuum::VacuumPacing
-    #[cfg(feature = "std")]
     pub fn run_vacuum_task(self: Arc<Self>) -> JoinHandle<()> {
         // The engine's pool, not nagoya's process-wide one: see
         // `runtime::engine_executor` for why the sweep has to follow whatever
