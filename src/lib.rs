@@ -8,7 +8,12 @@ extern crate alloc;
 /// this crate, where `worktable!` is invoked for the persistence queue.
 extern crate self as worktable;
 
-pub use data_bucket::eyre;
+pub use data_bucket::report;
+pub mod eyre {
+    pub use data_bucket::report::{
+        bail, ensure, report_msg as eyre, Chain, Context, Report, Result, WrapErr,
+    };
+}
 
 pub(crate) fn snake_to_pascal(input: &str) -> alloc::string::String {
     let mut out = alloc::string::String::with_capacity(input.len());
